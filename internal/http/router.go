@@ -201,7 +201,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			if err := syncDomainsWithCaddy(r.Context()); err != nil {
-				removed, rollbackErr := app.Domains.Delete(r.Context(), record.ID)
+				_, removed, rollbackErr := app.Domains.Delete(r.Context(), record.ID)
 				if rollbackErr != nil {
 					app.Logger.Error("rollback created domain failed",
 						zap.String("domain_id", record.ID),
@@ -226,9 +226,142 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		domainsUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			var input domain.UpdateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			if input.Kind == domain.KindPHP {
+				if app.PHP == nil {
+					writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+						"error": "php runtime is not configured",
+					})
+					return
+				}
+
+				phpStatus := app.PHP.Status(r.Context())
+				if !phpStatus.Ready {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "php runtime is not ready",
+						"field_errors": map[string]string{
+							"kind": phpStatus.Message,
+						},
+					})
+					return
+				}
+			}
+
+			domainID := chi.URLParam(r, "domainID")
+			record, previous, err := app.Domains.Update(r.Context(), domainID, input)
+			if err != nil {
+				var validation domain.ValidationErrors
+				switch {
+				case errors.As(err, &validation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				case errors.Is(err, domain.ErrDuplicateHostname):
+					writeJSON(w, stdhttp.StatusConflict, map[string]any{
+						"error": "domain already exists",
+						"field_errors": map[string]string{
+							"hostname": "This hostname already exists.",
+						},
+					})
+					return
+				case errors.Is(err, domain.ErrNotFound):
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "domain not found",
+					})
+					return
+				default:
+					app.Logger.Error("update domain failed",
+						zap.String("domain_id", domainID),
+						zap.Error(err),
+					)
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to update domain",
+					})
+					return
+				}
+			}
+
+			if err := syncDomainsWithCaddy(r.Context()); err != nil {
+				if rollbackErr := app.Domains.Restore(r.Context(), previous); rollbackErr != nil {
+					app.Logger.Error("rollback updated domain failed",
+						zap.String("domain_id", previous.ID),
+						zap.Error(rollbackErr),
+					)
+				}
+				app.Logger.Error("publish updated domain failed",
+					zap.String("domain_id", record.ID),
+					zap.String("hostname", record.Hostname),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to update domain",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"domain": record,
+			})
+		})
+
+		domainsDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			domainID := chi.URLParam(r, "domainID")
+			record, removed, err := app.Domains.Delete(r.Context(), domainID)
+			if err != nil {
+				app.Logger.Error("delete domain failed",
+					zap.String("domain_id", domainID),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to delete domain",
+				})
+				return
+			}
+			if !removed {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "domain not found",
+				})
+				return
+			}
+
+			if err := syncDomainsWithCaddy(r.Context()); err != nil {
+				if rollbackErr := app.Domains.Restore(r.Context(), record); rollbackErr != nil {
+					app.Logger.Error("rollback deleted domain failed",
+						zap.String("domain_id", record.ID),
+						zap.Error(rollbackErr),
+					)
+				}
+				app.Logger.Error("publish deleted domain failed",
+					zap.String("domain_id", record.ID),
+					zap.String("hostname", record.Hostname),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to delete domain",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"domain": record,
+			})
+		})
+
 		r.Method(stdhttp.MethodGet, "/domains", domainsListHandler)
 		r.Method(stdhttp.MethodHead, "/domains", domainsListHandler)
 		r.Method(stdhttp.MethodPost, "/domains", domainsCreateHandler)
+		r.Method(stdhttp.MethodPut, "/domains/{domainID}", domainsUpdateHandler)
+		r.Method(stdhttp.MethodDelete, "/domains/{domainID}", domainsDeleteHandler)
 
 		r.NotFound(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusNotFound, map[string]any{

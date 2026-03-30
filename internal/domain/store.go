@@ -105,6 +105,34 @@ VALUES (?, ?, ?, ?, ?)
 	return fmt.Errorf("insert domain %q: %w", record.Hostname, err)
 }
 
+func (s *Store) Update(ctx context.Context, record Record) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+UPDATE domains
+SET hostname = ?, kind = ?, target = ?, created_at = ?
+WHERE id = ?
+`, record.Hostname, string(record.Kind), record.Target, record.CreatedAt.UTC().UnixNano(), record.ID)
+	if err == nil {
+		rowsAffected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("update domain %q: %w", record.ID, rowsErr)
+		}
+		if rowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	}
+
+	if isDuplicateHostnameError(err) {
+		return ErrDuplicateHostname
+	}
+
+	return fmt.Errorf("update domain %q: %w", record.ID, err)
+}
+
 func (s *Store) Delete(ctx context.Context, id string) error {
 	if s == nil || s.db == nil {
 		return nil

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import {
   createDomain,
+  deleteDomain,
   fetchDomains,
+  updateDomain,
   type DomainApiError,
   type DomainKind,
   type DomainRecord,
@@ -38,6 +40,8 @@ type FormErrors = {
   hostname?: string;
   target?: string;
 };
+
+type FormMode = "create" | "edit";
 
 const domainKinds: DomainKind[] = [
   "Static site",
@@ -161,8 +165,11 @@ export function DomainsPage() {
   const [form, setForm] = useState<FormState>(initialFormState);
   const [errors, setErrors] = useState<FormErrors>({});
   const [formOpen, setFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<FormMode>("create");
+  const [editingDomainId, setEditingDomainId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const hostnameInputRef = useRef<HTMLInputElement | null>(null);
@@ -199,17 +206,33 @@ export function DomainsPage() {
     };
   }, []);
 
+  const isEditing = formMode === "edit" && editingDomainId !== null;
   const config = kindConfig[form.kind];
-
-  function openForm() {
-    setFormError(null);
-    setFormOpen(true);
-  }
 
   function resetForm() {
     setForm(initialFormState);
     setErrors({});
     setFormError(null);
+    setFormMode("create");
+    setEditingDomainId(null);
+  }
+
+  function openCreateForm() {
+    resetForm();
+    setFormOpen(true);
+  }
+
+  function openEditForm(domain: DomainRecord) {
+    setForm({
+      hostname: domain.hostname,
+      kind: domain.kind,
+      target: isSiteBackedKind(domain.kind) ? "" : domain.target,
+    });
+    setErrors({});
+    setFormError(null);
+    setFormMode("edit");
+    setEditingDomainId(domain.id);
+    setFormOpen(true);
   }
 
   function closeForm() {
@@ -227,7 +250,7 @@ export function DomainsPage() {
       return;
     }
 
-    openForm();
+    setFormOpen(true);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -244,7 +267,10 @@ export function DomainsPage() {
 
     if (
       !nextErrors.hostname &&
-      domains.some((domain) => domain.hostname === hostname)
+      domains.some(
+        (domain) =>
+          domain.id !== editingDomainId && domain.hostname === hostname,
+      )
     ) {
       nextErrors.hostname = "This hostname already exists.";
     }
@@ -258,13 +284,25 @@ export function DomainsPage() {
     setFormError(null);
 
     try {
-      const createdDomain = await createDomain({
+      const input = {
         hostname,
         kind: form.kind,
         target: isSiteBackedKind(form.kind) ? "" : target,
-      });
+      };
 
-      setDomains((current) => [createdDomain, ...current]);
+      if (isEditing && editingDomainId) {
+        const updatedDomain = await updateDomain(editingDomainId, input);
+        setDomains((current) =>
+          current.map((domain) =>
+            domain.id === updatedDomain.id ? updatedDomain : domain,
+          ),
+        );
+      } else {
+        const createdDomain = await createDomain(input);
+        setDomains((current) => [createdDomain, ...current]);
+      }
+
+      setLoadError(null);
       resetForm();
       setFormOpen(false);
     } catch (error) {
@@ -276,9 +314,47 @@ export function DomainsPage() {
         });
       }
 
-      setFormError(getErrorMessage(error, "Failed to create domain."));
+      setFormError(
+        getErrorMessage(
+          error,
+          isEditing ? "Failed to update domain." : "Failed to create domain.",
+        ),
+      );
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleDelete(domain: DomainRecord) {
+    if (submitting || deletingDomainId !== null) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${domain.hostname}? This removes it from FlowPanel and republishes the active routing.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingDomainId(domain.id);
+    setLoadError(null);
+
+    try {
+      await deleteDomain(domain.id);
+      setDomains((current) =>
+        current.filter((currentDomain) => currentDomain.id !== domain.id),
+      );
+      if (editingDomainId === domain.id) {
+        resetForm();
+        setFormOpen(false);
+      }
+    } catch (error) {
+      setLoadError(
+        getErrorMessage(error, `Failed to delete ${domain.hostname}.`),
+      );
+    } finally {
+      setDeletingDomainId(null);
     }
   }
 
@@ -294,7 +370,11 @@ export function DomainsPage() {
               : "No domains have been added yet."
         }
         actions={
-          <Button type="button" onClick={openForm}>
+          <Button
+            type="button"
+            onClick={openCreateForm}
+            disabled={deletingDomainId !== null}
+          >
             <Plus className="h-4 w-4" />
             Add domain
           </Button>
@@ -328,6 +408,7 @@ export function DomainsPage() {
                     <TableHead>Type</TableHead>
                     <TableHead>Target</TableHead>
                     <TableHead>Created</TableHead>
+                    <TableHead className="w-[168px] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -342,6 +423,33 @@ export function DomainsPage() {
                       </TableCell>
                       <TableCell className="text-[12px] text-[var(--app-text-muted)]">
                         {formatDateTime(domain.created_at)}
+                      </TableCell>
+                      <TableCell className="w-[168px]">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="quiet"
+                            size="sm"
+                            onClick={() => openEditForm(domain)}
+                            disabled={deletingDomainId !== null}
+                          >
+                            <Pencil className="h-4 w-4" />
+                            Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="quiet"
+                            size="sm"
+                            onClick={() => {
+                              void handleDelete(domain);
+                            }}
+                            disabled={deletingDomainId !== null}
+                            className="text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            {deletingDomainId === domain.id ? "Deleting..." : "Delete"}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -381,10 +489,11 @@ export function DomainsPage() {
         }}
       >
         <DialogHeader>
-          <DialogTitle>New domain</DialogTitle>
+          <DialogTitle>{isEditing ? "Edit domain" : "New domain"}</DialogTitle>
           <DialogDescription>
-            Define the hostname and route target. Static and PHP domains use the
-            default directories automatically.
+            {isEditing
+              ? "Update the hostname and route target. Static and PHP domains use the default directories automatically."
+              : "Define the hostname and route target. Static and PHP domains use the default directories automatically."}
           </DialogDescription>
         </DialogHeader>
 
@@ -516,7 +625,13 @@ export function DomainsPage() {
                 Cancel
               </Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? "Creating..." : "Create domain"}
+                {submitting
+                  ? isEditing
+                    ? "Saving..."
+                    : "Creating..."
+                  : isEditing
+                    ? "Save changes"
+                    : "Create domain"}
               </Button>
             </div>
           </DialogFooter>

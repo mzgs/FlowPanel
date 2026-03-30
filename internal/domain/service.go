@@ -21,6 +21,7 @@ const (
 )
 
 var ErrDuplicateHostname = errors.New("duplicate hostname")
+var ErrNotFound = errors.New("domain not found")
 
 type Kind string
 
@@ -40,6 +41,12 @@ type Record struct {
 }
 
 type CreateInput struct {
+	Hostname string `json:"hostname"`
+	Kind     Kind   `json:"kind"`
+	Target   string `json:"target"`
+}
+
+type UpdateInput struct {
 	Hostname string `json:"hostname"`
 	Kind     Kind   `json:"kind"`
 	Target   string `json:"target"`
@@ -113,7 +120,7 @@ func (s *Service) Load(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) Delete(ctx context.Context, id string) (bool, error) {
+func (s *Service) Delete(ctx context.Context, id string) (Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -124,39 +131,21 @@ func (s *Service) Delete(ctx context.Context, id string) (bool, error) {
 
 		if s.store != nil {
 			if err := s.store.Delete(ctx, record.ID); err != nil {
-				return false, err
+				return Record{}, false, err
 			}
 		}
 
 		s.records = append(s.records[:i], s.records[i+1:]...)
-		return true, nil
+		return record, true, nil
 	}
 
-	return false, nil
+	return Record{}, false, nil
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
-	hostname := normalizeHostname(input.Hostname)
-	target := strings.TrimSpace(input.Target)
-
-	validation := ValidationErrors{}
-
-	if message := validateKind(input.Kind); message != "" {
-		validation["kind"] = message
-	}
-
-	if message := validateHostname(hostname); message != "" {
-		validation["hostname"] = message
-	}
-
-	if input.Kind == KindApp || input.Kind == KindReverseProxy {
-		if message := validateTarget(input.Kind, target); message != "" {
-			validation["target"] = message
-		}
-	}
-
-	if len(validation) > 0 {
-		return Record{}, validation
+	hostname, target, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target)
+	if err != nil {
+		return Record{}, err
 	}
 
 	s.mu.Lock()
@@ -187,9 +176,81 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		}
 	}
 
-	s.records = append([]Record{record}, s.records...)
+	s.insertRecordLocked(record)
 
 	return record, nil
+}
+
+func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Record, Record, error) {
+	hostname, target, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target)
+	if err != nil {
+		return Record{}, Record{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, current, ok := s.findRecordLocked(id)
+	if !ok {
+		return Record{}, Record{}, ErrNotFound
+	}
+
+	for _, record := range s.records {
+		if record.ID != id && record.Hostname == hostname {
+			return Record{}, Record{}, ErrDuplicateHostname
+		}
+	}
+
+	resolvedTarget, err := s.deriveTarget(hostname, input.Kind, target)
+	if err != nil {
+		return Record{}, Record{}, err
+	}
+
+	updated := current
+	updated.Hostname = hostname
+	updated.Kind = input.Kind
+	updated.Target = resolvedTarget
+
+	if s.store != nil {
+		if err := s.store.Update(ctx, updated); err != nil {
+			return Record{}, Record{}, err
+		}
+	}
+
+	s.records[index] = updated
+
+	return updated, current, nil
+}
+
+func (s *Service) Restore(ctx context.Context, record Record) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, _, exists := s.findRecordLocked(record.ID)
+	for _, existing := range s.records {
+		if existing.ID != record.ID && existing.Hostname == record.Hostname {
+			return ErrDuplicateHostname
+		}
+	}
+
+	if s.store != nil {
+		var err error
+		if exists {
+			err = s.store.Update(ctx, record)
+		} else {
+			err = s.store.Insert(ctx, record)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	if exists {
+		s.records = append(s.records[:index], s.records[index+1:]...)
+	}
+	s.insertRecordLocked(record)
+
+	return nil
 }
 
 func normalizeHostname(value string) string {
@@ -257,6 +318,58 @@ func validateTarget(kind Kind, value string) string {
 	}
 
 	return ""
+}
+
+func normalizeAndValidateInput(hostname string, kind Kind, target string) (string, string, error) {
+	normalizedHostname := normalizeHostname(hostname)
+	trimmedTarget := strings.TrimSpace(target)
+
+	validation := ValidationErrors{}
+
+	if message := validateKind(kind); message != "" {
+		validation["kind"] = message
+	}
+
+	if message := validateHostname(normalizedHostname); message != "" {
+		validation["hostname"] = message
+	}
+
+	if kind == KindApp || kind == KindReverseProxy {
+		if message := validateTarget(kind, trimmedTarget); message != "" {
+			validation["target"] = message
+		}
+	}
+
+	if len(validation) > 0 {
+		return "", "", validation
+	}
+
+	return normalizedHostname, trimmedTarget, nil
+}
+
+func (s *Service) findRecordLocked(id string) (int, Record, bool) {
+	for i, record := range s.records {
+		if record.ID == id {
+			return i, record, true
+		}
+	}
+
+	return -1, Record{}, false
+}
+
+func (s *Service) insertRecordLocked(record Record) {
+	index := len(s.records)
+	for i, existing := range s.records {
+		if record.CreatedAt.After(existing.CreatedAt) ||
+			(record.CreatedAt.Equal(existing.CreatedAt) && record.ID > existing.ID) {
+			index = i
+			break
+		}
+	}
+
+	s.records = append(s.records, Record{})
+	copy(s.records[index+1:], s.records[index:])
+	s.records[index] = record
 }
 
 func (s *Service) deriveTarget(hostname string, kind Kind, target string) (string, error) {
