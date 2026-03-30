@@ -11,7 +11,6 @@ import {
   Globe,
   LayoutDashboard,
   Menu,
-  ServerCog,
   Settings,
   TimerReset,
   X,
@@ -23,11 +22,9 @@ import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
 import { JobsPage } from "@/pages/jobs-page";
 import { SettingsPage } from "@/pages/settings-page";
-import { SitesPage } from "@/pages/sites-page";
 
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
-  { to: "/sites", label: "Sites", icon: ServerCog },
   { to: "/domains", label: "Domains", icon: Globe },
   { to: "/jobs", label: "Jobs", icon: TimerReset },
   { to: "/settings", label: "Settings", icon: Settings },
@@ -141,12 +138,6 @@ const indexRoute = createRoute({
   component: DashboardPage,
 });
 
-const sitesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/sites",
-  component: SitesPage,
-});
-
 const domainsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/domains",
@@ -167,7 +158,6 @@ const settingsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  sitesRoute,
   domainsRoute,
   jobsRoute,
   settingsRoute,

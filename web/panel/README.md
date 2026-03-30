@@ -24,4 +24,4 @@ The panel is an operator console:
 - table-first screens
 - strong status handling
 - minimal decoration
-- fast navigation between sites, domains, jobs, and settings
+- fast navigation between domains, jobs, and settings

@@ -9,7 +9,7 @@ Build a Go-based server and website domain management panel with these core tech
 - Sessions: `scs`
 - Logging: `zap`
 - Jobs: `robfig/cron`
-- Reverse proxy / TLS / site serving: `Caddy`
+- Reverse proxy / TLS / domain serving: `Caddy`
 - Admin panel frontend: `React`
 
 ## Frontend Stack Decision
@@ -34,7 +34,7 @@ The panel should feel like an infrastructure operator console, not a generic adm
 - clean, restrained visual language
 - designed for frequent operational use rather than marketing-style presentation
 
-The product should let an operator manage sites and domains from a React-based web panel, persist configuration in SQLite, schedule reconciliation/background jobs, and keep Caddy in sync so domains are served with TLS.
+The product should let an operator manage domains and their upstream targets from a React-based web panel, persist configuration in SQLite, schedule reconciliation/background jobs, and keep Caddy in sync so domains are served with TLS.
 
 This project will be designed as a **single binary**: one Go executable runs the backend APIs, embedded React admin panel assets, domain management logic, cron jobs, SQLite-backed state, and embedded Caddy-based reverse proxy/TLS handling.
 
@@ -45,7 +45,7 @@ These assumptions keep the first version focused. We can adjust them later if ne
 1. FlowPanel is a single Go binary.
 2. The binary embeds Caddy and owns reverse proxy plus TLS responsibilities directly.
 3. FlowPanel manages Caddy through in-process Go integration instead of an external Admin API or Caddyfile reload flow.
-4. SQLite stores panel state, site/domain mappings, users, sessions metadata if needed, and job history.
+4. SQLite stores panel state, domain records, users, sessions metadata if needed, and job history.
 5. First release supports one organization and an admin user model; multi-tenant support can come later.
 6. Authentication starts with local email/password login.
 7. Domains will point to upstream targets such as `http://127.0.0.1:3000`, container endpoints, or internal services.
@@ -63,7 +63,7 @@ These assumptions keep the first version focused. We can adjust them later if ne
 - `internal/config`: environment and runtime config loading
 - `internal/db`: SQLite connection, migrations, repositories
 - `internal/auth`: login, password hashing, session lifecycle with scs
-- `internal/domain`: sites, domains, upstreams, validation, business logic
+- `internal/domain`: domains, upstream routing, validation, business logic
 - `internal/caddy`: embedded Caddy runtime manager and config reconciliation
 - `internal/jobs`: cron registration, periodic reconciliation, health checks
 - `internal/logging`: zap logger setup
@@ -72,8 +72,8 @@ These assumptions keep the first version focused. We can adjust them later if ne
 
 ### Data flow
 
-1. Admin creates a site and attaches one or more domains.
-2. Admin defines the upstream target for that site.
+1. Admin creates a domain record.
+2. Admin defines the upstream target for that domain.
 3. FlowPanel stores desired state in SQLite.
 4. The React panel talks to Go JSON endpoints for authentication and CRUD operations.
 5. A service layer validates the request and triggers reconciliation.
@@ -93,7 +93,7 @@ We will build this in small, testable phases. After each step:
 
 ## Step 1: Project bootstrap and application skeleton [Completed]
 
-Status: Completed on March 30, 2026. The current baseline is an empty admin shell with sidebar navigation only. No users, sites, domains, or jobs are seeded yet.
+Status: Completed on March 30, 2026. The current baseline is an empty admin shell with sidebar navigation only. No users, domains, or jobs are seeded yet.
 
 ### Objective
 
@@ -187,9 +187,7 @@ Create durable data storage with migration support and a minimal schema foundati
   - WAL mode
 - Create initial tables:
   - `users`
-  - `sites`
   - `domains`
-  - `domain_routes` or `site_domains` if many-to-many is needed
   - `job_runs`
   - `audit_logs` optional in phase 1, but recommended
 - Add timestamps and status columns where useful.
@@ -204,18 +202,11 @@ Create durable data storage with migration support and a minimal schema foundati
   - role
   - created_at
   - updated_at
-- `sites`
-  - id
-  - name
-  - upstream_url
-  - status
-  - created_at
-  - updated_at
 - `domains`
   - id
-  - site_id
   - hostname
-  - is_primary
+  - upstream_url
+  - description
   - tls_mode
   - status
   - last_synced_at
@@ -317,7 +308,6 @@ Create the React-based admin UI structure used to manage the entire system.
 - Add the first screens:
   - login
   - dashboard
-  - sites list
   - domains list
 - Add app-level concerns:
   - route protection
@@ -340,57 +330,19 @@ Create the React-based admin UI structure used to manage the entire system.
 - Admin can navigate the panel comfortably
 - The React panel is a reliable shell for the remaining CRUD work
 
-## Step 5: Sites CRUD
+## Step 5: Domains CRUD and validation
 
 ### Objective
 
-Manage upstream applications that will receive proxied traffic.
-
-### Deliverables
-
-- Site CRUD API endpoints
-- React pages/forms for create/edit/delete/list
-- Site validation
-- Status handling
-
-### Detailed tasks
-
-- Define site rules:
-  - unique name
-  - valid upstream URL
-  - optional description
-  - active/inactive status
-- Add repository and service methods for CRUD.
-- Add JSON API handlers for the React panel.
-- Prevent deletion if domains are still attached unless explicitly forced.
-- Show last sync state or proxy state later once embedded Caddy integration lands.
-
-### Manual test
-
-- Create a site with valid upstream
-- Reject invalid upstream URL
-- Edit site
-- Delete unused site
-- Confirm persistence after restart
-- Confirm the React form and list flows work cleanly
-
-### Done when
-
-- Sites can be managed reliably from the panel
-
-## Step 6: Domains CRUD and validation
-
-### Objective
-
-Attach domains to sites and validate hostnames before syncing to Caddy.
+Manage domain routing records directly and validate hostnames plus upstream targets before syncing to Caddy.
 
 ### Deliverables
 
 - Domain CRUD API endpoints
 - React pages/forms for create/edit/delete/list
-- Associate domains with sites
 - Hostname normalization and validation
-- Primary domain support
+- Upstream URL validation
+- Status handling
 
 ### Detailed tasks
 
@@ -403,27 +355,31 @@ Attach domains to sites and validate hostnames before syncing to Caddy.
   - no scheme
   - no path
   - valid DNS label structure
+- Validate the upstream URL stored on each domain record.
 - Track domain states such as:
   - pending
   - active
   - error
   - disabled
-- Support one primary domain per site if needed for UI clarity.
+- Support optional operator-facing metadata such as description or notes.
 - Expose domain operations through JSON endpoints consumed by React pages.
 
 ### Manual test
 
-- Add multiple domains to a site
+- Create a domain with a valid upstream
 - Reject duplicate hostnames
 - Reject malformed hostnames
+- Reject invalid upstream URLs
+- Edit a domain
 - Delete a domain
+- Confirm persistence after restart
 - Confirm the React flows handle validation errors properly
 
 ### Done when
 
-- Desired host-to-site mappings are stored correctly
+- Desired host-to-upstream mappings are stored correctly
 
-## Step 7: Embedded Caddy runtime and configuration reconciliation
+## Step 6: Embedded Caddy runtime and configuration reconciliation
 
 ### Objective
 
@@ -463,7 +419,7 @@ This step is simpler under the single-binary model because FlowPanel owns the em
 ### Manual test
 
 - Start the FlowPanel binary with public ports available
-- Create a site and domain in FlowPanel
+- Create a domain in FlowPanel
 - Trigger sync
 - Confirm embedded Caddy serves the hostname and proxies to the upstream
 - Confirm TLS provisions successfully after DNS points correctly
@@ -473,7 +429,7 @@ This step is simpler under the single-binary model because FlowPanel owns the em
 
 - FlowPanel can create working live routes through embedded Caddy
 
-## Step 8: Background jobs with cron
+## Step 7: Background jobs with cron
 
 ### Objective
 
@@ -508,7 +464,7 @@ Run periodic maintenance and reconciliation jobs.
 
 - Periodic jobs work safely and observably
 
-## Step 9: Observability and auditability
+## Step 8: Observability and auditability
 
 ### Objective
 
@@ -526,12 +482,11 @@ Make the system debuggable and operationally safe.
 - Standardize log fields:
   - request_id
   - user_id
-  - site_id
-  - domain
+  - domain_id
+  - hostname
   - job_name
 - Add audit entries for:
   - login
-  - site create/update/delete
   - domain create/update/delete
   - manual sync
 - Add admin-visible sync errors and job failures.
@@ -547,7 +502,7 @@ Make the system debuggable and operationally safe.
 
 - Operators can understand what happened and why
 
-## Step 10: Domain health, diagnostics, and UX polish
+## Step 9: Domain health, diagnostics, and UX polish
 
 ### Objective
 
@@ -570,7 +525,7 @@ Help the operator understand why a domain is or is not working.
   - DNS not pointed yet
   - upstream unavailable
   - embedded proxy runtime failed to reload
-- Surface timestamps and last errors near each domain/site row.
+- Surface timestamps and last errors near each domain row.
 
 ### Manual test
 
@@ -581,7 +536,7 @@ Help the operator understand why a domain is or is not working.
 
 - Troubleshooting is practical without reading raw logs only
 
-## Step 11: Hardening and production readiness
+## Step 10: Hardening and production readiness
 
 ### Objective
 
@@ -618,7 +573,7 @@ Reduce operational risk before broader use.
 
 - App is safe enough for controlled production use
 
-## Step 12: Documentation and handoff
+## Step 11: Documentation and handoff
 
 ### Objective
 
@@ -660,14 +615,13 @@ We should implement in this exact order:
 2. Step 2: SQLite and migrations
 3. Step 3: authentication and sessions
 4. Step 4: React admin panel foundation
-5. Step 5: sites CRUD
-6. Step 6: domains CRUD
-7. Step 7: embedded Caddy reconciliation
-8. Step 8: cron jobs
-9. Step 9: observability and audit
-10. Step 10: diagnostics UX
-11. Step 11: hardening
-12. Step 12: documentation
+5. Step 5: domains CRUD
+6. Step 6: embedded Caddy reconciliation
+7. Step 7: cron jobs
+8. Step 8: observability and audit
+9. Step 9: diagnostics UX
+10. Step 10: hardening
+11. Step 11: documentation
 
 ## Risks and Design Choices To Revisit
 
