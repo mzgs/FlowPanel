@@ -214,6 +214,9 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 		if err := os.MkdirAll(siteRoot, 0o755); err != nil {
 			return "", fmt.Errorf("create site directory: %w", err)
 		}
+		if err := ensureStaticSiteIndex(siteRoot, hostname); err != nil {
+			return "", err
+		}
 		return siteRoot, nil
 	case KindPHP:
 		publicRoot := filepath.Join(s.basePath, hostname, "public")
@@ -226,4 +229,97 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 	default:
 		return "", fmt.Errorf("unsupported domain kind %q", kind)
 	}
+}
+
+func ensureStaticSiteIndex(siteRoot string, hostname string) error {
+	indexPath := filepath.Join(siteRoot, "index.html")
+	if _, err := os.Stat(indexPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat site index: %w", err)
+	}
+
+	if err := os.WriteFile(indexPath, []byte(staticSiteIndexContent(hostname)), 0o644); err != nil {
+		return fmt.Errorf("create site index: %w", err)
+	}
+
+	return nil
+}
+
+func staticSiteIndexContent(hostname string) string {
+	return fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>%s</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0b1220;
+      color: #e2e8f0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top, rgba(37, 99, 235, 0.35), transparent 40%%),
+        linear-gradient(180deg, #0f172a 0%%, #020617 100%%);
+      padding: 24px;
+    }
+
+    main {
+      width: min(720px, 100%%);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 20px;
+      padding: 32px;
+      background: rgba(15, 23, 42, 0.82);
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(12px);
+    }
+
+    p {
+      margin: 0 0 12px;
+      line-height: 1.6;
+      color: #cbd5e1;
+    }
+
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 12px;
+      color: #93c5fd;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: clamp(2rem, 4vw, 3.5rem);
+      line-height: 1;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.95em;
+      color: #bfdbfe;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">FlowPanel static site</p>
+    <h1>%s</h1>
+    <p>This domain is ready to serve static content.</p>
+    <p>Replace <code>index.html</code> in this folder with your own site files.</p>
+  </main>
+</body>
+</html>
+`, hostname, hostname)
 }
