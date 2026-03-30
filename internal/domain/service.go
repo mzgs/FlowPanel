@@ -92,6 +92,22 @@ func (s *Service) List() []Record {
 	return records
 }
 
+func (s *Service) Delete(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i, record := range s.records {
+		if record.ID != id {
+			continue
+		}
+
+		s.records = append(s.records[:i], s.records[i+1:]...)
+		return true
+	}
+
+	return false
+}
+
 func (s *Service) Create(input CreateInput) (Record, error) {
 	hostname := normalizeHostname(input.Hostname)
 	target := strings.TrimSpace(input.Target)
@@ -201,6 +217,9 @@ func validateTarget(kind Kind, value string) string {
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
 			return "Enter a full upstream URL starting with http:// or https://."
+		}
+		if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "Enter an upstream origin without credentials, paths, queries, or fragments."
 		}
 	}
 

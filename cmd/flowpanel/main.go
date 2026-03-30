@@ -79,6 +79,9 @@ func run() error {
 	if err := caddyRuntime.Start(context.Background()); err != nil {
 		return fmt.Errorf("start embedded caddy runtime: %w", err)
 	}
+	if err := caddyRuntime.Sync(context.Background(), domainService.List()); err != nil {
+		return fmt.Errorf("sync embedded caddy runtime: %w", err)
+	}
 	scheduler.Start()
 
 	server := &stdhttp.Server{

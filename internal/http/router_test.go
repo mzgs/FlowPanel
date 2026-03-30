@@ -1,0 +1,76 @@
+package httpx
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"flowpanel/internal/app"
+	"flowpanel/internal/auth"
+	"flowpanel/internal/caddy"
+	"flowpanel/internal/config"
+	"flowpanel/internal/domain"
+	"flowpanel/internal/jobs"
+
+	"go.uber.org/zap"
+)
+
+func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
+	cfg := config.Config{
+		Env:             "test",
+		AdminListenAddr: ":18080",
+		PublicHTTPAddr:  ":19080",
+		PublicHTTPSAddr: ":19443",
+		Database: config.DatabaseConfig{
+			Path: ":memory:",
+		},
+		Session: config.SessionConfig{
+			Secret:     strings.Repeat("s", 32),
+			CookieName: "flowpanel_test",
+			Lifetime:   time.Hour,
+		},
+		Cron: config.CronConfig{
+			Enabled: false,
+		},
+	}
+
+	logger := zap.NewNop()
+	domains := domain.NewService()
+	router, err := NewRouter(app.New(
+		cfg,
+		logger,
+		nil,
+		domains,
+		auth.NewSessionManager(cfg),
+		jobs.NewScheduler(logger.Named("jobs"), false),
+		caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr),
+	))
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/domains", strings.NewReader(`{"hostname":"app.example.com","kind":"App","target":"3000"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["error"] != "failed to publish domain" {
+		t.Fatalf("error = %q, want failed to publish domain", payload["error"])
+	}
+
+	if got := domains.List(); len(got) != 0 {
+		t.Fatalf("domain count after failed publish = %d, want 0", len(got))
+	}
+}

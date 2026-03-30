@@ -124,6 +124,21 @@ function validateTarget(kind: DomainKind, value: string) {
     if (!/^https?:\/\//i.test(trimmed)) {
       return "Enter a full upstream URL starting with http:// or https://.";
     }
+
+    try {
+      const parsed = new URL(trimmed);
+      if (
+        parsed.username ||
+        parsed.password ||
+        (parsed.pathname && parsed.pathname !== "/") ||
+        parsed.search ||
+        parsed.hash
+      ) {
+        return "Enter an upstream origin without credentials, paths, queries, or fragments.";
+      }
+    } catch {
+      return "Enter a full upstream URL starting with http:// or https://.";
+    }
   }
 
   return undefined;

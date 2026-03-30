@@ -50,12 +50,12 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
 
-			domainsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-				writeJSON(w, stdhttp.StatusOK, map[string]any{
-					"sites_base_path": app.Domains.BasePath(),
-					"domains":         app.Domains.List(),
-				})
+		domainsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"sites_base_path": app.Domains.BasePath(),
+				"domains":         app.Domains.List(),
 			})
+		})
 
 		domainsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			var input domain.CreateInput
@@ -91,6 +91,21 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					})
 					return
 				}
+			}
+
+			if err := app.Caddy.Sync(r.Context(), app.Domains.List()); err != nil {
+				if removed := app.Domains.Delete(record.ID); !removed {
+					app.Logger.Error("rollback created domain failed", zap.String("domain_id", record.ID))
+				}
+				app.Logger.Error("publish domain failed",
+					zap.String("domain_id", record.ID),
+					zap.String("hostname", record.Hostname),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to publish domain",
+				})
+				return
 			}
 
 			writeJSON(w, stdhttp.StatusCreated, map[string]any{

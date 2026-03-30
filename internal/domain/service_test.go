@@ -101,3 +101,46 @@ func TestCreatePHPCreatePublicDirectory(t *testing.T) {
 		t.Fatalf("stat php public directory: %v", err)
 	}
 }
+
+func TestCreateReverseProxyRejectsPathTargets(t *testing.T) {
+	service := newService(t.TempDir())
+
+	_, err := service.Create(CreateInput{
+		Hostname: "proxy.example.com",
+		Kind:     KindReverseProxy,
+		Target:   "https://backend.example.com/base",
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	validation, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("error = %T, want ValidationErrors", err)
+	}
+
+	if validation["target"] == "" {
+		t.Fatalf("target validation error missing: %#v", validation)
+	}
+}
+
+func TestDeleteRemovesMatchingRecord(t *testing.T) {
+	service := newService(t.TempDir())
+
+	record, err := service.Create(CreateInput{
+		Hostname: "app.example.com",
+		Kind:     KindApp,
+		Target:   "3000",
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	if !service.Delete(record.ID) {
+		t.Fatal("expected delete to succeed")
+	}
+
+	if got := service.List(); len(got) != 0 {
+		t.Fatalf("list length = %d, want 0", len(got))
+	}
+}
