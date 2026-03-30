@@ -12,6 +12,28 @@ Build a Go-based server and website domain management panel with these core tech
 - Reverse proxy / TLS / site serving: `Caddy`
 - Admin panel frontend: `React`
 
+## Frontend Stack Decision
+
+The admin panel stack is locked in as:
+
+- Build tool: `Vite`
+- App framework: `React + TypeScript`
+- UI layer: `shadcn/ui`
+- Routing: `TanStack Router`
+- Server state: `TanStack Query`
+- Data grids: `TanStack Table`
+
+### UI direction
+
+The panel should feel like an infrastructure operator console, not a generic admin template:
+
+- dense left navigation
+- table-first screens
+- strong status indicators
+- fast list/detail workflows
+- clean, restrained visual language
+- designed for frequent operational use rather than marketing-style presentation
+
 The product should let an operator manage sites and domains from a React-based web panel, persist configuration in SQLite, schedule reconciliation/background jobs, and keep Caddy in sync so domains are served with TLS.
 
 This project will be designed as a **single binary**: one Go executable runs the backend APIs, embedded React admin panel assets, domain management logic, cron jobs, SQLite-backed state, and embedded Caddy-based reverse proxy/TLS handling.
@@ -269,17 +291,27 @@ Create the React-based admin UI structure used to manage the entire system.
 ### Deliverables
 
 - React app scaffold
+- Vite and TypeScript setup
 - Shared layout and navigation
 - Login page
 - Dashboard page
 - Global API client and auth handling
 - Error boundaries and loading states
 - Embedded static asset serving from the Go binary
+- `shadcn/ui` component setup
+- `TanStack Router` route foundation
+- `TanStack Query` provider setup
 
 ### Detailed tasks
 
 - Create the React app under `web/panel`.
-- Build the panel with a frontend toolchain suitable for embedding into the Go binary.
+- Build the panel with:
+  - `Vite`
+  - `React + TypeScript`
+  - `shadcn/ui`
+  - `TanStack Router`
+  - `TanStack Query`
+  - `TanStack Table`
 - Add the first screens:
   - login
   - dashboard
@@ -292,6 +324,7 @@ Create the React-based admin UI structure used to manage the entire system.
   - loading and empty states
 - Serve the compiled app from Go using embedded files for production.
 - Keep the visual system clean and operator-focused because the UI is now the main control surface.
+- Avoid generic template dashboards; favor a compact operations console feel.
 
 ### Manual test
 
