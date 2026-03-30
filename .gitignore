@@ -34,3 +34,4 @@ data/*.db
 # .vscode/
 .DS_Store
 bin/flowpanel-linux-amd64
+dist/
