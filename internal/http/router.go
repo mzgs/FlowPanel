@@ -2,16 +2,19 @@ package httpx
 
 import (
 	"encoding/json"
+	"errors"
 	"io/fs"
 	stdhttp "net/http"
 	"path"
 	"strings"
 
 	"flowpanel/internal/app"
+	"flowpanel/internal/domain"
 	"flowpanel/web"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"go.uber.org/zap"
 )
 
 func NewRouter(app *app.App) (stdhttp.Handler, error) {
@@ -46,6 +49,58 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
+
+			domainsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+				writeJSON(w, stdhttp.StatusOK, map[string]any{
+					"sites_base_path": app.Domains.BasePath(),
+					"domains":         app.Domains.List(),
+				})
+			})
+
+		domainsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			var input domain.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			record, err := app.Domains.Create(input)
+			if err != nil {
+				var validation domain.ValidationErrors
+				switch {
+				case errors.As(err, &validation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				case errors.Is(err, domain.ErrDuplicateHostname):
+					writeJSON(w, stdhttp.StatusConflict, map[string]any{
+						"error": "domain already exists",
+						"field_errors": map[string]string{
+							"hostname": "This hostname already exists.",
+						},
+					})
+					return
+				default:
+					app.Logger.Error("create domain failed", zap.Error(err))
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to create domain",
+					})
+					return
+				}
+			}
+
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{
+				"domain": record,
+			})
+		})
+
+		r.Method(stdhttp.MethodGet, "/domains", domainsListHandler)
+		r.Method(stdhttp.MethodHead, "/domains", domainsListHandler)
+		r.Method(stdhttp.MethodPost, "/domains", domainsCreateHandler)
 
 		r.NotFound(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusNotFound, map[string]any{
@@ -119,4 +174,10 @@ func writeJSON(w stdhttp.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func decodeJSON(r *stdhttp.Request, payload any) error {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(payload)
 }

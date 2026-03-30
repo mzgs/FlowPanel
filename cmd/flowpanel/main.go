@@ -15,6 +15,7 @@ import (
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
 	"flowpanel/internal/db"
+	"flowpanel/internal/domain"
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/logging"
@@ -63,11 +64,12 @@ func run() error {
 		_ = dbConn.Close()
 	}()
 
+	domainService := domain.NewService()
 	sessionManager := auth.NewSessionManager(cfg)
 	scheduler := jobs.NewScheduler(logger.Named("jobs"), cfg.Cron.Enabled)
 	caddyRuntime := caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr)
 
-	appContainer := app.New(cfg, logger, dbConn, sessionManager, scheduler, caddyRuntime)
+	appContainer := app.New(cfg, logger, dbConn, domainService, sessionManager, scheduler, caddyRuntime)
 
 	router, err := httpx.NewRouter(appContainer)
 	if err != nil {
