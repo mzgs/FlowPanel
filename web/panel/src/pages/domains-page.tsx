@@ -68,7 +68,7 @@ const kindConfig: Record<
     helpText: "FlowPanel uses the default site directory automatically.",
   },
   "Php site": {
-    helpText: "FlowPanel uses the default PHP public directory automatically and requires PHP-FPM to be ready in Overview.",
+    helpText: "FlowPanel uses the default PHP site directory automatically and requires PHP-FPM to be ready in Overview.",
   },
   App: {
     targetLabel: "Internal port",

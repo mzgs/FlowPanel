@@ -101,7 +101,7 @@ func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
 		{
 			Hostname: "php.example.com",
 			Kind:     domain.KindPHP,
-			Target:   "/var/www/php.example.com/public",
+			Target:   "/var/www/php.example.com",
 		},
 	}, &phpRouteConfig{fastCGIAddress: "127.0.0.1:9000"}, runtimeSyncModeStandard)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestBuildConfigNormalizesUnixSocketFastCGIAddress(t *testing.T) {
 		{
 			Hostname: "php.example.com",
 			Kind:     domain.KindPHP,
-			Target:   "/var/www/php.example.com/public",
+			Target:   "/var/www/php.example.com",
 		},
 	}, &phpRouteConfig{fastCGIAddress: "/run/php/php8.3-fpm.sock"}, runtimeSyncModeStandard)
 	if err != nil {

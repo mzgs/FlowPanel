@@ -383,11 +383,14 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 		}
 		return siteRoot, nil
 	case KindPHP:
-		publicRoot := filepath.Join(s.basePath, hostname, "public")
-		if err := os.MkdirAll(publicRoot, 0o755); err != nil {
-			return "", fmt.Errorf("create php public directory: %w", err)
+		siteRoot := filepath.Join(s.basePath, hostname)
+		if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+			return "", fmt.Errorf("create php site directory: %w", err)
 		}
-		return publicRoot, nil
+		if err := ensurePHPSiteIndex(siteRoot, hostname); err != nil {
+			return "", err
+		}
+		return siteRoot, nil
 	case KindApp, KindReverseProxy:
 		return target, nil
 	default:
@@ -405,6 +408,21 @@ func ensureStaticSiteIndex(siteRoot string, hostname string) error {
 
 	if err := os.WriteFile(indexPath, []byte(staticSiteIndexContent(hostname)), 0o644); err != nil {
 		return fmt.Errorf("create site index: %w", err)
+	}
+
+	return nil
+}
+
+func ensurePHPSiteIndex(siteRoot string, hostname string) error {
+	indexPath := filepath.Join(siteRoot, "index.php")
+	if _, err := os.Stat(indexPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat php site index: %w", err)
+	}
+
+	if err := os.WriteFile(indexPath, []byte(phpSiteIndexContent(hostname)), 0o644); err != nil {
+		return fmt.Errorf("create php site index: %w", err)
 	}
 
 	return nil
@@ -486,4 +504,25 @@ func staticSiteIndexContent(hostname string) string {
 </body>
 </html>
 `, hostname, hostname)
+}
+
+func phpSiteIndexContent(hostname string) string {
+	return fmt.Sprintf(`<?php
+declare(strict_types=1);
+
+$hostname = %q;
+?>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><?= htmlspecialchars($hostname, ENT_QUOTES, 'UTF-8') ?></title>
+</head>
+<body>
+  <h1><?= htmlspecialchars($hostname, ENT_QUOTES, 'UTF-8') ?></h1>
+  <p>PHP is working.</p>
+</body>
+</html>
+`, hostname)
 }

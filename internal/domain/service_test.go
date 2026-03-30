@@ -83,7 +83,7 @@ func TestCreateStaticSiteDoesNotOverwriteExistingIndex(t *testing.T) {
 	}
 }
 
-func TestCreatePHPCreatePublicDirectory(t *testing.T) {
+func TestCreatePHPCreatesSiteDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	basePath := filepath.Join(tempDir, "var", "www")
 
@@ -96,13 +96,62 @@ func TestCreatePHPCreatePublicDirectory(t *testing.T) {
 		t.Fatalf("create php site: %v", err)
 	}
 
-	expectedTarget := filepath.Join(basePath, "php.example.com", "public")
+	expectedTarget := filepath.Join(basePath, "php.example.com")
 	if record.Target != expectedTarget {
 		t.Fatalf("target = %q, want %q", record.Target, expectedTarget)
 	}
 
 	if _, err := os.Stat(expectedTarget); err != nil {
-		t.Fatalf("stat php public directory: %v", err)
+		t.Fatalf("stat php site directory: %v", err)
+	}
+
+	indexPath := filepath.Join(expectedTarget, "index.php")
+	indexContent, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read php site index: %v", err)
+	}
+
+	if !strings.Contains(string(indexContent), `"php.example.com"`) {
+		t.Fatalf("php site index missing hostname: %s", string(indexContent))
+	}
+}
+
+func TestCreatePHPDoesNotOverwriteExistingIndex(t *testing.T) {
+	tempDir := t.TempDir()
+	basePath := filepath.Join(tempDir, "var", "www")
+	siteRoot := filepath.Join(basePath, "php.example.com")
+
+	if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+		t.Fatalf("mkdir php site root: %v", err)
+	}
+
+	const existingIndex = "<?php echo 'custom php site';"
+	indexPath := filepath.Join(siteRoot, "index.php")
+	if err := os.WriteFile(indexPath, []byte(existingIndex), 0o644); err != nil {
+		t.Fatalf("write existing php index: %v", err)
+	}
+
+	service := newService(basePath, nil)
+	record, err := service.Create(context.Background(), CreateInput{
+		Hostname: "php.example.com",
+		Kind:     KindPHP,
+	})
+	if err != nil {
+		t.Fatalf("create php site: %v", err)
+	}
+
+	expectedTarget := filepath.Join(basePath, "php.example.com")
+	if record.Target != expectedTarget {
+		t.Fatalf("target = %q, want %q", record.Target, expectedTarget)
+	}
+
+	indexContent, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read existing php index: %v", err)
+	}
+
+	if string(indexContent) != existingIndex {
+		t.Fatalf("index content = %q, want %q", string(indexContent), existingIndex)
 	}
 }
 
