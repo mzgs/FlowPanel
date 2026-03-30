@@ -21,6 +21,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 	fastcgi "github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy/fastcgi"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/rewrite"
+	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
 	"go.uber.org/zap"
 )
@@ -33,6 +34,7 @@ type Runtime struct {
 
 	mu      sync.Mutex
 	started bool
+	rawJSON []byte
 }
 
 type configSummary struct {
@@ -44,6 +46,13 @@ type configSummary struct {
 type phpRouteConfig struct {
 	fastCGIAddress string
 }
+
+type runtimeSyncMode int
+
+const (
+	runtimeSyncModeStandard runtimeSyncMode = iota
+	runtimeSyncModeHTTPSOnly
+)
 
 func NewRuntime(logger *zap.Logger, publicHTTPAddr, publicHTTPSAddr string, phpManager phpenv.Manager) *Runtime {
 	return &Runtime{
@@ -66,13 +75,18 @@ func (r *Runtime) Start(ctx context.Context) error {
 		return nil
 	}
 
-	cfg, summary, err := buildConfig(r.publicHTTPAddr, r.publicHTTPSAddr, nil, nil)
+	cfg, summary, err := buildConfig(r.publicHTTPAddr, r.publicHTTPSAddr, nil, nil, runtimeSyncModeStandard)
 	if err != nil {
 		return fmt.Errorf("build caddy config: %w", err)
 	}
-	if err := loadConfig(cfg, true); err != nil {
+	rawConfig, err := encodeAndValidateConfig(cfg)
+	if err != nil {
 		return err
 	}
+	if err := loadRawConfig(rawConfig, true); err != nil {
+		return err
+	}
+	r.rawJSON = append(r.rawJSON[:0], rawConfig...)
 
 	r.started = true
 	r.logger.Info("embedded caddy runtime started",
@@ -101,21 +115,47 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record) error {
 		return err
 	}
 
-	cfg, summary, err := buildConfig(r.publicHTTPAddr, r.publicHTTPSAddr, records, phpConfig)
-	if err != nil {
-		return fmt.Errorf("build caddy config: %w", err)
-	}
-	if err := loadConfig(cfg, false); err != nil {
-		return err
-	}
+	mode := runtimeSyncModeStandard
+	for {
+		cfg, summary, err := buildConfig(r.publicHTTPAddr, r.publicHTTPSAddr, records, phpConfig, mode)
+		if err != nil {
+			return fmt.Errorf("build caddy config: %w", err)
+		}
+		rawConfig, err := encodeAndValidateConfig(cfg)
+		if err != nil {
+			return err
+		}
+		if err := r.applyConfigWithFallback(rawConfig); err != nil {
+			if mode == runtimeSyncModeStandard && isPublicHTTPListenerConflict(err, r.publicHTTPAddr) {
+				r.logger.Warn("public HTTP listener is unavailable; retrying with HTTPS-only Caddy config",
+					zap.String("public_http_addr", r.publicHTTPAddr),
+					zap.Error(err),
+				)
+				mode = runtimeSyncModeHTTPSOnly
+				continue
+			}
+			if mode == runtimeSyncModeHTTPSOnly {
+				return fmt.Errorf("apply https-only caddy config: %w", err)
+			}
+			return err
+		}
 
-	r.logger.Info("embedded caddy runtime synchronized",
-		zap.Int("configured_domains", summary.configuredDomains),
-		zap.Int("active_routes", summary.activeRoutes),
-		zap.Int("placeholder_routes", summary.placeholderRoutes),
-	)
+		r.rawJSON = append(r.rawJSON[:0], rawConfig...)
 
-	return nil
+		fields := []zap.Field{
+			zap.Int("configured_domains", summary.configuredDomains),
+			zap.Int("active_routes", summary.activeRoutes),
+			zap.Int("placeholder_routes", summary.placeholderRoutes),
+		}
+		if mode == runtimeSyncModeHTTPSOnly {
+			fields = append(fields, zap.Bool("https_only_mode", true))
+			r.logger.Warn("embedded caddy runtime synchronized without a public HTTP listener", fields...)
+		} else {
+			r.logger.Info("embedded caddy runtime synchronized", fields...)
+		}
+
+		return nil
+	}
 }
 
 func (r *Runtime) Stop(ctx context.Context) error {
@@ -135,6 +175,7 @@ func (r *Runtime) Stop(ctx context.Context) error {
 	}
 
 	r.started = false
+	r.rawJSON = nil
 	r.logger.Info("embedded caddy runtime stopped")
 
 	return nil
@@ -166,7 +207,7 @@ func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Re
 	return nil, nil
 }
 
-func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record, phpConfig *phpRouteConfig) (*caddyv2.Config, configSummary, error) {
+func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record, phpConfig *phpRouteConfig, mode runtimeSyncMode) (*caddyv2.Config, configSummary, error) {
 	summary := configSummary{
 		configuredDomains: len(records),
 	}
@@ -182,11 +223,6 @@ func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record
 
 	if len(records) == 0 {
 		return cfg, summary, nil
-	}
-
-	httpPort, err := parseTCPPort(publicHTTPAddr)
-	if err != nil {
-		return nil, configSummary{}, fmt.Errorf("parse public HTTP listener: %w", err)
 	}
 
 	httpsPort, err := parseTCPPort(publicHTTPSAddr)
@@ -210,7 +246,6 @@ func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record
 	}
 
 	httpApp := caddyhttp.App{
-		HTTPPort:  httpPort,
 		HTTPSPort: httpsPort,
 		Servers: map[string]*caddyhttp.Server{
 			"public": {
@@ -223,12 +258,47 @@ func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record
 			},
 		},
 	}
+	if mode == runtimeSyncModeStandard {
+		httpPort, err := parseTCPPort(publicHTTPAddr)
+		if err != nil {
+			return nil, configSummary{}, fmt.Errorf("parse public HTTP listener: %w", err)
+		}
+		httpApp.HTTPPort = httpPort
+	} else {
+		httpApp.Servers["public"].AutoHTTPS = &caddyhttp.AutoHTTPSConfig{
+			DisableRedir: true,
+		}
+	}
 
 	cfg.AppsRaw = caddyv2.ModuleMap{
 		"http": caddyconfig.JSON(httpApp, nil),
 	}
+	if mode == runtimeSyncModeHTTPSOnly {
+		cfg.AppsRaw["tls"] = caddyconfig.JSON(httpsOnlyTLSApp(httpsPort), nil)
+	}
 
 	return cfg, summary, nil
+}
+
+func httpsOnlyTLSApp(httpsPort int) caddytls.TLS {
+	return caddytls.TLS{
+		Automation: &caddytls.AutomationConfig{
+			Policies: []*caddytls.AutomationPolicy{{
+				IssuersRaw: []json.RawMessage{
+					caddyconfig.JSONModuleObject(caddytls.ACMEIssuer{
+						Challenges: &caddytls.ChallengesConfig{
+							HTTP: &caddytls.HTTPChallengeConfig{
+								Disabled: true,
+							},
+							TLSALPN: &caddytls.TLSALPNChallengeConfig{
+								AlternatePort: httpsPort,
+							},
+						},
+					}, "module", "acme", nil),
+				},
+			}},
+		},
+	}
 }
 
 func routeForRecord(record domain.Record, phpConfig *phpRouteConfig) (caddyhttp.Route, bool, error) {
@@ -311,7 +381,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 								}, "protocol", "fastcgi", nil),
 								Upstreams: reverseproxy.UpstreamPool{
 									&reverseproxy.Upstream{
-										Dial: phpConfig.fastCGIAddress,
+										Dial: fastCGIDialAddress(phpConfig.fastCGIAddress),
 									},
 								},
 							}, "handler", "reverse_proxy", nil),
@@ -367,6 +437,26 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 	}
 }
 
+func fastCGIDialAddress(address string) string {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(strings.ToLower(address), "unix:") {
+		address = strings.TrimSpace(address[len("unix:"):])
+	}
+
+	if strings.HasPrefix(strings.ToLower(address), "unix/") {
+		return address
+	}
+	if strings.HasPrefix(address, "/") {
+		return "unix/" + address
+	}
+
+	return address
+}
+
 func parseUpstreamURL(record domain.Record) (*url.URL, error) {
 	targetURL, err := url.Parse(record.Target)
 	if err != nil {
@@ -415,26 +505,81 @@ func parseTCPPort(address string) (int, error) {
 	return int(parsed.StartPort), nil
 }
 
-func loadConfig(cfg *caddyv2.Config, forceReload bool) error {
+func (r *Runtime) applyConfigWithFallback(rawConfig []byte) error {
+	if err := loadRawConfig(rawConfig, false); err == nil {
+		return nil
+	} else if !isAddressInUseError(err) {
+		return err
+	}
+
+	r.logger.Warn("embedded caddy reload hit listener conflict, retrying with full restart")
+
+	previousConfig := append([]byte(nil), r.rawJSON...)
+	if err := caddyv2.Stop(); err != nil {
+		return fmt.Errorf("stop embedded caddy runtime before retry: %w", err)
+	}
+
+	if err := loadRawConfig(rawConfig, true); err == nil {
+		return nil
+	} else if len(previousConfig) == 0 {
+		return err
+	} else {
+		restoreErr := loadRawConfig(previousConfig, true)
+		if restoreErr != nil {
+			return fmt.Errorf("load caddy config after restart: %v; restore previous config: %w", err, restoreErr)
+		}
+		return err
+	}
+}
+
+func encodeAndValidateConfig(cfg *caddyv2.Config) ([]byte, error) {
 	rawConfig, err := json.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("marshal caddy config: %w", err)
+		return nil, fmt.Errorf("marshal caddy config: %w", err)
 	}
 
 	var validateCfg caddyv2.Config
 	if err := json.Unmarshal(rawConfig, &validateCfg); err != nil {
-		return fmt.Errorf("decode caddy config for validation: %w", err)
+		return nil, fmt.Errorf("decode caddy config for validation: %w", err)
 	}
 
 	if err := caddyv2.Validate(&validateCfg); err != nil {
-		return fmt.Errorf("validate caddy config: %w", err)
+		return nil, fmt.Errorf("validate caddy config: %w", err)
 	}
 
+	return rawConfig, nil
+}
+
+func loadRawConfig(rawConfig []byte, forceReload bool) error {
 	if err := caddyv2.Load(rawConfig, forceReload); err != nil {
 		return fmt.Errorf("load caddy config: %w", err)
 	}
 
 	return nil
+}
+
+func isAddressInUseError(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "address already in use")
+}
+
+func isPublicHTTPListenerConflict(err error, address string) bool {
+	if !isAddressInUseError(err) {
+		return false
+	}
+
+	normalizedAddress := strings.ToLower(strings.TrimSpace(address))
+	message := strings.ToLower(err.Error())
+	if normalizedAddress != "" && strings.Contains(message, "listen tcp "+normalizedAddress) {
+		return true
+	}
+
+	port, parseErr := parseTCPPort(address)
+	if parseErr != nil {
+		return false
+	}
+
+	return strings.Contains(message, fmt.Sprintf("listen tcp :%d", port)) ||
+		strings.Contains(message, fmt.Sprintf("listening on :%d", port))
 }
 
 func boolPtr(value bool) *bool {
