@@ -179,7 +179,7 @@ func TestUpdatePersistsDomain(t *testing.T) {
 	}
 
 	updated, previous, err := service.Update(ctx, record.ID, UpdateInput{
-		Hostname: "proxy.example.com",
+		Hostname: "app.example.com",
 		Kind:     KindReverseProxy,
 		Target:   "https://backend.example.com",
 	})
@@ -198,8 +198,8 @@ func TestUpdatePersistsDomain(t *testing.T) {
 	if updated.ID != record.ID {
 		t.Fatalf("updated id = %q, want %q", updated.ID, record.ID)
 	}
-	if updated.Hostname != "proxy.example.com" {
-		t.Fatalf("updated hostname = %q, want proxy.example.com", updated.Hostname)
+	if updated.Hostname != "app.example.com" {
+		t.Fatalf("updated hostname = %q, want app.example.com", updated.Hostname)
 	}
 	if updated.Kind != KindReverseProxy {
 		t.Fatalf("updated kind = %q, want %q", updated.Kind, KindReverseProxy)
@@ -224,6 +224,36 @@ func TestUpdatePersistsDomain(t *testing.T) {
 		records[0].Target != updated.Target ||
 		!records[0].CreatedAt.Equal(updated.CreatedAt) {
 		t.Fatalf("persisted record = %#v, want %#v", records[0], updated)
+	}
+}
+
+func TestUpdateRejectsHostnameChange(t *testing.T) {
+	service := newService(t.TempDir(), nil)
+
+	record, err := service.Create(context.Background(), CreateInput{
+		Hostname: "app.example.com",
+		Kind:     KindApp,
+		Target:   "3000",
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	_, _, err = service.Update(context.Background(), record.ID, UpdateInput{
+		Hostname: "proxy.example.com",
+		Kind:     KindReverseProxy,
+		Target:   "https://backend.example.com",
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	validation, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("error = %T, want ValidationErrors", err)
+	}
+	if validation["hostname"] != "Domain cannot be changed after creation." {
+		t.Fatalf("hostname validation = %q, want immutable domain message", validation["hostname"])
 	}
 }
 

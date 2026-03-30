@@ -195,19 +195,18 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 		return Record{}, Record{}, ErrNotFound
 	}
 
-	for _, record := range s.records {
-		if record.ID != id && record.Hostname == hostname {
-			return Record{}, Record{}, ErrDuplicateHostname
+	if hostname != current.Hostname {
+		return Record{}, Record{}, ValidationErrors{
+			"hostname": "Domain cannot be changed after creation.",
 		}
 	}
 
-	resolvedTarget, err := s.deriveTarget(hostname, input.Kind, target)
+	resolvedTarget, err := s.deriveTarget(current.Hostname, input.Kind, target)
 	if err != nil {
 		return Record{}, Record{}, err
 	}
 
 	updated := current
-	updated.Hostname = hostname
 	updated.Kind = input.Kind
 	updated.Target = resolvedTarget
 
@@ -268,15 +267,15 @@ func validateKind(kind Kind) string {
 
 func validateHostname(value string) string {
 	if value == "" {
-		return "Hostname is required."
+		return "Domain is required."
 	}
 
 	if strings.Contains(value, "://") {
-		return "Enter a hostname, not a full URL."
+		return "Enter a domain, not a full URL."
 	}
 
 	if strings.ContainsAny(value, "/ \t\n\r") {
-		return "Hostname must not contain spaces or paths."
+		return "Domain must not contain spaces or paths."
 	}
 
 	for _, char := range value {
@@ -286,7 +285,7 @@ func validateHostname(value string) string {
 			continue
 		}
 
-		return "Hostname can contain only letters, numbers, dots, and hyphens."
+		return "Domain can contain only letters, numbers, dots, and hyphens."
 	}
 
 	return ""

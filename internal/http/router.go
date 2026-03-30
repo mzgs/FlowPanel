@@ -187,7 +187,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					writeJSON(w, stdhttp.StatusConflict, map[string]any{
 						"error": "domain already exists",
 						"field_errors": map[string]string{
-							"hostname": "This hostname already exists.",
+							"hostname": "This domain already exists.",
 						},
 					})
 					return
@@ -270,7 +270,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					writeJSON(w, stdhttp.StatusConflict, map[string]any{
 						"error": "domain already exists",
 						"field_errors": map[string]string{
-							"hostname": "This hostname already exists.",
+							"hostname": "This domain already exists.",
 						},
 					})
 					return

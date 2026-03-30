@@ -88,19 +88,19 @@ function normalizeHostname(value: string) {
 
 function validateHostname(value: string) {
   if (!value) {
-    return "Hostname is required.";
+    return "Domain is required.";
   }
 
   if (value.includes("://")) {
-    return "Enter a hostname, not a full URL.";
+    return "Enter a domain, not a full URL.";
   }
 
   if (/[\/\s]/.test(value)) {
-    return "Hostname must not contain spaces or paths.";
+    return "Domain must not contain spaces or paths.";
   }
 
   if (!/^[a-z0-9.-]+$/i.test(value)) {
-    return "Hostname can contain only letters, numbers, dots, and hyphens.";
+    return "Domain can contain only letters, numbers, dots, and hyphens.";
   }
 
   return undefined;
@@ -272,7 +272,7 @@ export function DomainsPage() {
           domain.id !== editingDomainId && domain.hostname === hostname,
       )
     ) {
-      nextErrors.hostname = "This hostname already exists.";
+      nextErrors.hostname = "This domain already exists.";
     }
 
     setErrors(nextErrors);
@@ -404,7 +404,7 @@ export function DomainsPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead>Hostname</TableHead>
+                    <TableHead>Domain</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Target</TableHead>
                     <TableHead>Created</TableHead>
@@ -492,8 +492,8 @@ export function DomainsPage() {
           <DialogTitle>{isEditing ? "Edit domain" : "New domain"}</DialogTitle>
           <DialogDescription>
             {isEditing
-              ? "Update the hostname and route target. Static and PHP domains use the default directories automatically."
-              : "Define the hostname and route target. Static and PHP domains use the default directories automatically."}
+              ? "Update the route target and domain type. Domains stay fixed after creation."
+              : "Define the domain and route target. Static and PHP domains use the default directories automatically."}
           </DialogDescription>
         </DialogHeader>
 
@@ -542,12 +542,13 @@ export function DomainsPage() {
                 htmlFor="domain-hostname"
                 className="text-[13px] font-medium text-[var(--app-text)]"
               >
-                Hostname
+                Domain
               </label>
               <Input
                 id="domain-hostname"
                 ref={hostnameInputRef}
                 value={form.hostname}
+                readOnly={isEditing}
                 onChange={(event) => {
                   setForm((current) => ({
                     ...current,
@@ -563,10 +564,20 @@ export function DomainsPage() {
                 placeholder="example.com"
                 autoComplete="off"
                 aria-invalid={errors.hostname ? "true" : "false"}
-                className={errors.hostname ? "border-[var(--app-danger)]" : ""}
+                className={
+                  errors.hostname
+                    ? "border-[var(--app-danger)]"
+                    : isEditing
+                      ? "bg-[var(--app-surface-muted)]"
+                      : ""
+                }
               />
               {errors.hostname ? (
                 <p className="text-[12px] text-[var(--app-danger)]">{errors.hostname}</p>
+              ) : isEditing ? (
+                <p className="text-[12px] text-[var(--app-text-muted)]">
+                  Domain cannot be changed after creation.
+                </p>
               ) : null}
             </div>
           </div>

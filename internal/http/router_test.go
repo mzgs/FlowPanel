@@ -84,7 +84,7 @@ func TestUpdateDomainRollsBackWhenPublishFails(t *testing.T) {
 		t.Fatalf("create domain: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPut, "/api/domains/"+record.ID, strings.NewReader(`{"hostname":"proxy.example.com","kind":"Reverse proxy","target":"https://backend.example.com"}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/domains/"+record.ID, strings.NewReader(`{"hostname":"app.example.com","kind":"Reverse proxy","target":"https://backend.example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
@@ -116,6 +116,43 @@ func TestUpdateDomainRollsBackWhenPublishFails(t *testing.T) {
 		t.Fatalf("persisted domain count after failed update = %d, want 1", len(persisted))
 	}
 	assertDomainRecordEqual(t, persisted[0], record)
+}
+
+func TestUpdateDomainRejectsHostnameChange(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	record, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "app.example.com",
+		Kind:     domain.KindApp,
+		Target:   "3000",
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/domains/"+record.ID, strings.NewReader(`{"hostname":"proxy.example.com","kind":"Reverse proxy","target":"https://backend.example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+
+	var payload struct {
+		Error       string            `json:"error"`
+		FieldErrors map[string]string `json:"field_errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error != "validation failed" {
+		t.Fatalf("error = %q, want validation failed", payload.Error)
+	}
+	if payload.FieldErrors["hostname"] != "Domain cannot be changed after creation." {
+		t.Fatalf("hostname validation = %q, want immutable domain message", payload.FieldErrors["hostname"])
+	}
 }
 
 func TestDeleteDomainRollsBackWhenPublishFails(t *testing.T) {
