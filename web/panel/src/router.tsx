@@ -17,7 +17,6 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DashboardPage } from "@/pages/dashboard-page";
@@ -108,18 +107,6 @@ function RootLayout() {
               })}
             </div>
           </nav>
-
-          <div className="px-4 py-4">
-            <div className="rounded-[10px] border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
-              <div className="mb-2 text-[12px] font-medium text-[var(--app-text-muted)]">
-                Current build
-              </div>
-              <div className="mb-3 text-[13px] leading-5 text-[var(--app-text)]">
-                Admin shell is live. Auth, CRUD, and sync actions will attach to these screens next.
-              </div>
-              <Badge variant="accent">React shell</Badge>
-            </div>
-          </div>
         </aside>
 
         <main className="min-w-0">

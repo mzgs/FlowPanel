@@ -91,7 +91,9 @@ We will build this in small, testable phases. After each step:
 
 ## Step-by-Step Plan
 
-## Step 1: Project bootstrap and application skeleton
+## Step 1: Project bootstrap and application skeleton [Completed]
+
+Status: Completed on March 30, 2026. The current baseline is an empty admin shell with sidebar navigation only. No users, sites, domains, or jobs are seeded yet.
 
 ### Objective
 
