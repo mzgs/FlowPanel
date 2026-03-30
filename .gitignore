@@ -32,3 +32,5 @@ data/*.db
 # Editor/IDE
 # .idea/
 # .vscode/
+.DS_Store
+bin/flowpanel-linux-amd64

@@ -19,6 +19,7 @@ import (
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/logging"
+	"flowpanel/internal/phpenv"
 
 	"go.uber.org/zap"
 )
@@ -67,9 +68,10 @@ func run() error {
 	domainService := domain.NewService()
 	sessionManager := auth.NewSessionManager(cfg)
 	scheduler := jobs.NewScheduler(logger.Named("jobs"), cfg.Cron.Enabled)
-	caddyRuntime := caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr)
+	phpManager := phpenv.NewService(logger.Named("php"))
+	caddyRuntime := caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, phpManager)
 
-	appContainer := app.New(cfg, logger, dbConn, domainService, sessionManager, scheduler, caddyRuntime)
+	appContainer := app.New(cfg, logger, dbConn, domainService, sessionManager, scheduler, caddyRuntime, phpManager)
 
 	router, err := httpx.NewRouter(appContainer)
 	if err != nil {

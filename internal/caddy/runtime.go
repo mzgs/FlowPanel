@@ -12,12 +12,15 @@ import (
 	"time"
 
 	"flowpanel/internal/domain"
+	"flowpanel/internal/phpenv"
 
 	caddyv2 "github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/fileserver"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
+	fastcgi "github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy/fastcgi"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp/rewrite"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
 	"go.uber.org/zap"
 )
@@ -26,6 +29,7 @@ type Runtime struct {
 	logger          *zap.Logger
 	publicHTTPAddr  string
 	publicHTTPSAddr string
+	php             phpenv.Manager
 
 	mu      sync.Mutex
 	started bool
@@ -37,11 +41,16 @@ type configSummary struct {
 	placeholderRoutes int
 }
 
-func NewRuntime(logger *zap.Logger, publicHTTPAddr, publicHTTPSAddr string) *Runtime {
+type phpRouteConfig struct {
+	fastCGIAddress string
+}
+
+func NewRuntime(logger *zap.Logger, publicHTTPAddr, publicHTTPSAddr string, phpManager phpenv.Manager) *Runtime {
 	return &Runtime{
 		logger:          logger,
 		publicHTTPAddr:  strings.TrimSpace(publicHTTPAddr),
 		publicHTTPSAddr: strings.TrimSpace(publicHTTPSAddr),
+		php:             phpManager,
 	}
 }
 
@@ -57,7 +66,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 		return nil
 	}
 
-	cfg, summary, err := buildConfig(r.publicHTTPAddr, r.publicHTTPSAddr, nil)
+	cfg, summary, err := buildConfig(r.publicHTTPAddr, r.publicHTTPSAddr, nil, nil)
 	if err != nil {
 		return fmt.Errorf("build caddy config: %w", err)
 	}
@@ -87,7 +96,12 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record) error {
 		return fmt.Errorf("embedded caddy runtime is not started")
 	}
 
-	cfg, summary, err := buildConfig(r.publicHTTPAddr, r.publicHTTPSAddr, records)
+	phpConfig, err := r.resolvePHPRouteConfig(ctx, records)
+	if err != nil {
+		return err
+	}
+
+	cfg, summary, err := buildConfig(r.publicHTTPAddr, r.publicHTTPSAddr, records, phpConfig)
 	if err != nil {
 		return fmt.Errorf("build caddy config: %w", err)
 	}
@@ -126,7 +140,33 @@ func (r *Runtime) Stop(ctx context.Context) error {
 	return nil
 }
 
-func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record) (*caddyv2.Config, configSummary, error) {
+func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Record) (*phpRouteConfig, error) {
+	for _, record := range records {
+		if record.Kind != domain.KindPHP {
+			continue
+		}
+
+		if r.php == nil {
+			return nil, fmt.Errorf("php-fpm support is not configured")
+		}
+
+		status := r.php.Status(ctx)
+		if !status.Ready {
+			return nil, fmt.Errorf("php-fpm is not ready: %s", status.Message)
+		}
+		if strings.TrimSpace(status.ListenAddress) == "" {
+			return nil, fmt.Errorf("php-fpm listen address is not configured")
+		}
+
+		return &phpRouteConfig{
+			fastCGIAddress: status.ListenAddress,
+		}, nil
+	}
+
+	return nil, nil
+}
+
+func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record, phpConfig *phpRouteConfig) (*caddyv2.Config, configSummary, error) {
 	summary := configSummary{
 		configuredDomains: len(records),
 	}
@@ -156,7 +196,7 @@ func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record
 
 	routes := make(caddyhttp.RouteList, 0, len(records))
 	for _, record := range records {
-		route, placeholder, err := routeForRecord(record)
+		route, placeholder, err := routeForRecord(record, phpConfig)
 		if err != nil {
 			return nil, configSummary{}, err
 		}
@@ -191,8 +231,8 @@ func buildConfig(publicHTTPAddr, publicHTTPSAddr string, records []domain.Record
 	return cfg, summary, nil
 }
 
-func routeForRecord(record domain.Record) (caddyhttp.Route, bool, error) {
-	handlers, placeholder, err := handlersForRecord(record)
+func routeForRecord(record domain.Record, phpConfig *phpRouteConfig) (caddyhttp.Route, bool, error) {
+	handlers, placeholder, err := handlersForRecord(record, phpConfig)
 	if err != nil {
 		return caddyhttp.Route{}, false, err
 	}
@@ -206,7 +246,7 @@ func routeForRecord(record domain.Record) (caddyhttp.Route, bool, error) {
 	}, placeholder, nil
 }
 
-func handlersForRecord(record domain.Record) ([]json.RawMessage, bool, error) {
+func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.RawMessage, bool, error) {
 	switch record.Kind {
 	case domain.KindStaticSite:
 		return []json.RawMessage{
@@ -215,15 +255,79 @@ func handlersForRecord(record domain.Record) ([]json.RawMessage, bool, error) {
 			}, "handler", "file_server", nil),
 		}, false, nil
 	case domain.KindPHP:
+		if phpConfig == nil || strings.TrimSpace(phpConfig.fastCGIAddress) == "" {
+			return nil, false, fmt.Errorf("php-fpm is not configured for %q", record.Hostname)
+		}
+
 		return []json.RawMessage{
-			caddyconfig.JSONModuleObject(caddyhttp.StaticResponse{
-				StatusCode: caddyhttp.WeakString("503"),
-				Headers: http.Header{
-					"Content-Type": []string{"text/plain; charset=utf-8"},
+			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
+				Routes: caddyhttp.RouteList{
+					{
+						MatcherSetsRaw: []caddyv2.ModuleMap{{
+							"file": caddyconfig.JSON(fileserver.MatchFile{
+								Root:     record.Target,
+								TryFiles: []string{"{http.request.uri.path}/index.php"},
+							}, nil),
+							"not": caddyconfig.JSON(caddyhttp.MatchNot{
+								MatcherSetsRaw: []caddyv2.ModuleMap{{
+									"path": caddyconfig.JSON(caddyhttp.MatchPath{"*/"}, nil),
+								}},
+							}, nil),
+						}},
+						HandlersRaw: []json.RawMessage{
+							caddyconfig.JSONModuleObject(caddyhttp.StaticResponse{
+								StatusCode: caddyhttp.WeakString("308"),
+								Headers: http.Header{
+									"Location": []string{"{http.request.orig_uri.path}/{http.request.orig_uri.prefixed_query}"},
+								},
+							}, "handler", "static_response", nil),
+						},
+					},
+					{
+						Group: "php-rewrite",
+						MatcherSetsRaw: []caddyv2.ModuleMap{{
+							"file": caddyconfig.JSON(fileserver.MatchFile{
+								Root:      record.Target,
+								TryFiles:  []string{"{http.request.uri.path}", "{http.request.uri.path}/index.php", "index.php"},
+								TryPolicy: "first_exist_fallback",
+								SplitPath: []string{".php"},
+							}, nil),
+						}},
+						HandlersRaw: []json.RawMessage{
+							caddyconfig.JSONModuleObject(rewrite.Rewrite{
+								URI: "{http.matchers.file.relative}",
+							}, "handler", "rewrite", nil),
+						},
+					},
+					{
+						MatcherSetsRaw: []caddyv2.ModuleMap{{
+							"path": caddyconfig.JSON(caddyhttp.MatchPath{"*.php"}, nil),
+						}},
+						HandlersRaw: []json.RawMessage{
+							caddyconfig.JSONModuleObject(reverseproxy.Handler{
+								TransportRaw: caddyconfig.JSONModuleObject(fastcgi.Transport{
+									Root:      record.Target,
+									SplitPath: []string{".php"},
+								}, "protocol", "fastcgi", nil),
+								Upstreams: reverseproxy.UpstreamPool{
+									&reverseproxy.Upstream{
+										Dial: phpConfig.fastCGIAddress,
+									},
+								},
+							}, "handler", "reverse_proxy", nil),
+						},
+					},
+					{
+						HandlersRaw: []json.RawMessage{
+							caddyconfig.JSONModuleObject(fileserver.FileServer{
+								Root: record.Target,
+							}, "handler", "file_server", nil),
+						},
+						Terminal: true,
+					},
 				},
-				Body: "PHP site execution is not implemented yet.\n",
-			}, "handler", "static_response", nil),
-		}, true, nil
+			}, "handler", "subroute", nil),
+		}, false, nil
 	case domain.KindApp:
 		return []json.RawMessage{
 			caddyconfig.JSONModuleObject(reverseproxy.Handler{

@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -38,6 +39,10 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	router.Method(stdhttp.MethodHead, "/healthz", healthHandler)
 
 	router.Route("/api", func(r chi.Router) {
+		syncDomainsWithCaddy := func(ctx context.Context) error {
+			return app.Caddy.Sync(ctx, app.Domains.List())
+		}
+
 		bootstrapHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"name":              "FlowPanel",
@@ -49,6 +54,88 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
+
+		phpStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime is not configured",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": app.PHP.Status(r.Context()),
+			})
+		})
+
+		phpInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.PHP.Install(r.Context()); err != nil {
+				app.Logger.Error("install php failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			status := app.PHP.Status(r.Context())
+			if status.Ready {
+				if err := syncDomainsWithCaddy(r.Context()); err != nil {
+					app.Logger.Error("sync domains after php install failed", zap.Error(err))
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "php installed but failed to republish domains",
+					})
+					return
+				}
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": status,
+			})
+		})
+
+		phpStartHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.PHP.Start(r.Context()); err != nil {
+				app.Logger.Error("start php failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			status := app.PHP.Status(r.Context())
+			if status.Ready {
+				if err := syncDomainsWithCaddy(r.Context()); err != nil {
+					app.Logger.Error("sync domains after php start failed", zap.Error(err))
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "php started but failed to republish domains",
+					})
+					return
+				}
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": status,
+			})
+		})
+
+		r.Method(stdhttp.MethodGet, "/php", phpStatusHandler)
+		r.Method(stdhttp.MethodHead, "/php", phpStatusHandler)
+		r.Method(stdhttp.MethodPost, "/php/install", phpInstallHandler)
+		r.Method(stdhttp.MethodPost, "/php/start", phpStartHandler)
 
 		domainsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
@@ -64,6 +151,26 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					"error": "invalid request body",
 				})
 				return
+			}
+
+			if input.Kind == domain.KindPHP {
+				if app.PHP == nil {
+					writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+						"error": "php runtime is not configured",
+					})
+					return
+				}
+
+				phpStatus := app.PHP.Status(r.Context())
+				if !phpStatus.Ready {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "php runtime is not ready",
+						"field_errors": map[string]string{
+							"kind": phpStatus.Message,
+						},
+					})
+					return
+				}
 			}
 
 			record, err := app.Domains.Create(input)
@@ -93,7 +200,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 			}
 
-			if err := app.Caddy.Sync(r.Context(), app.Domains.List()); err != nil {
+			if err := syncDomainsWithCaddy(r.Context()); err != nil {
 				if removed := app.Domains.Delete(record.ID); !removed {
 					app.Logger.Error("rollback created domain failed", zap.String("domain_id", record.ID))
 				}

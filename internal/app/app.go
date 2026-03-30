@@ -7,6 +7,7 @@ import (
 	"flowpanel/internal/config"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/jobs"
+	"flowpanel/internal/phpenv"
 
 	"github.com/alexedwards/scs/v2"
 	"go.uber.org/zap"
@@ -20,6 +21,7 @@ type App struct {
 	Sessions *scs.SessionManager
 	Jobs     *jobs.Scheduler
 	Caddy    *caddy.Runtime
+	PHP      phpenv.Manager
 }
 
 func New(
@@ -30,6 +32,7 @@ func New(
 	sessions *scs.SessionManager,
 	scheduler *jobs.Scheduler,
 	caddyRuntime *caddy.Runtime,
+	phpManager phpenv.Manager,
 ) *App {
 	return &App{
 		Config:   cfg,
@@ -39,5 +42,6 @@ func New(
 		Sessions: sessions,
 		Jobs:     scheduler,
 		Caddy:    caddyRuntime,
+		PHP:      phpManager,
 	}
 }

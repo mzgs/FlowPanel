@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,9 +15,27 @@ import (
 	"flowpanel/internal/config"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/jobs"
+	"flowpanel/internal/phpenv"
 
 	"go.uber.org/zap"
 )
+
+type fakePHPManager struct{}
+
+func (fakePHPManager) Status(context.Context) phpenv.Status {
+	return phpenv.Status{
+		Ready:         true,
+		ListenAddress: "127.0.0.1:9000",
+	}
+}
+
+func (fakePHPManager) Install(context.Context) error {
+	return nil
+}
+
+func (fakePHPManager) Start(context.Context) error {
+	return nil
+}
 
 func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
 	cfg := config.Config{
@@ -46,7 +65,8 @@ func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
 		domains,
 		auth.NewSessionManager(cfg),
 		jobs.NewScheduler(logger.Named("jobs"), false),
-		caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr),
+		caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, fakePHPManager{}),
+		fakePHPManager{},
 	))
 	if err != nil {
 		t.Fatalf("new router: %v", err)

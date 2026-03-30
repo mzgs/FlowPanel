@@ -25,7 +25,7 @@ func TestBuildConfigValidatesStaticAndAppDomains(t *testing.T) {
 			Kind:     domain.KindApp,
 			Target:   "3000",
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -68,23 +68,23 @@ func TestBuildConfigValidatesStaticAndAppDomains(t *testing.T) {
 	}
 }
 
-func TestBuildConfigUsesPlaceholderRouteForPHPDomains(t *testing.T) {
+func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
 	cfg, summary, err := buildConfig(":9080", ":9443", []domain.Record{
 		{
 			Hostname: "php.example.com",
 			Kind:     domain.KindPHP,
 			Target:   "/var/www/php.example.com/public",
 		},
-	})
+	}, &phpRouteConfig{fastCGIAddress: "127.0.0.1:9000"})
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
 
-	if summary.activeRoutes != 0 {
-		t.Fatalf("active routes = %d, want 0", summary.activeRoutes)
+	if summary.activeRoutes != 1 {
+		t.Fatalf("active routes = %d, want 1", summary.activeRoutes)
 	}
-	if summary.placeholderRoutes != 1 {
-		t.Fatalf("placeholder routes = %d, want 1", summary.placeholderRoutes)
+	if summary.placeholderRoutes != 0 {
+		t.Fatalf("placeholder routes = %d, want 0", summary.placeholderRoutes)
 	}
 
 	var httpApp caddyhttp.App
@@ -102,11 +102,12 @@ func TestBuildConfigUsesPlaceholderRouteForPHPDomains(t *testing.T) {
 		t.Fatalf("unmarshal handler: %v", err)
 	}
 
-	if handler["handler"] != "static_response" {
-		t.Fatalf("handler = %#v, want static_response", handler["handler"])
+	if handler["handler"] != "subroute" {
+		t.Fatalf("handler = %#v, want subroute", handler["handler"])
 	}
-	if handler["status_code"] != float64(503) {
-		t.Fatalf("status_code = %#v, want 503", handler["status_code"])
+
+	if err := caddyv2.Validate(cfg); err != nil {
+		t.Fatalf("validate config: %v", err)
 	}
 }
 
@@ -117,7 +118,7 @@ func TestBuildConfigRejectsReverseProxyTargetsWithPaths(t *testing.T) {
 			Kind:     domain.KindReverseProxy,
 			Target:   "https://backend.example.com/base",
 		},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected build config to fail")
 	}
@@ -130,7 +131,7 @@ func TestConfigMarshalRemainsLoadableAfterValidationClone(t *testing.T) {
 			Kind:     domain.KindStaticSite,
 			Target:   t.TempDir(),
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
