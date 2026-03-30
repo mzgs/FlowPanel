@@ -67,7 +67,7 @@ function RootLayout() {
                     to={item.to}
                     onClick={() => setMenuOpen(false)}
                     className={cn(
-                      "flex items-center gap-3 rounded-[10px] px-3 py-2 text-[13px] font-medium",
+                      "flex items-center gap-3 rounded-[10px] px-3 py-2 text-[14px] font-medium",
                       active
                         ? "bg-[var(--app-accent)] text-[#f7fbff]"
                         : "text-[var(--app-text-muted)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]",
@@ -99,7 +99,7 @@ function RootLayout() {
                     key={item.to}
                     to={item.to}
                     className={cn(
-                      "flex items-center justify-between rounded-[10px] px-3 py-2.5 text-[13px] font-medium transition-colors duration-150",
+                      "flex items-center justify-between rounded-[10px] px-3 py-2.5 text-[14px] font-medium transition-colors duration-150",
                       active
                         ? "bg-[var(--app-accent)] text-[#f7fbff]"
                         : "text-[var(--app-text-muted)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]",
