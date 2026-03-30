@@ -62,10 +62,16 @@ case "$goarch" in
     ;;
 esac
 
-if [[ ! -d web/dist ]]; then
-  echo "missing web/dist; build the frontend first with 'npm run build' in web/panel" >&2
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm is required to build the frontend bundle" >&2
   exit 1
 fi
+
+echo "Building frontend bundle"
+(
+  cd web/panel
+  npm run build
+)
 
 ext=""
 if [[ "$goos" == "windows" ]]; then

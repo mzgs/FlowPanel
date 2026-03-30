@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"flowpanel/internal/app"
@@ -198,6 +199,71 @@ func TestDeleteDomainRollsBackWhenPublishFails(t *testing.T) {
 		t.Fatalf("persisted domain count after failed delete = %d, want 1", len(persisted))
 	}
 	assertDomainRecordEqual(t, persisted[0], record)
+}
+
+func TestNewPanelHandlerRejectsMissingReferencedAsset(t *testing.T) {
+	_, err := newPanelHandlerWithFS(fstest.MapFS{
+		"index.html": {
+			Data: []byte(`<!doctype html><html><head><script type="module" src="/assets/index.js"></script></head><body><div id="root"></div></body></html>`),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for missing referenced asset")
+	}
+	if !strings.Contains(err.Error(), "assets/index.js") {
+		t.Fatalf("error = %q, want missing asset path", err)
+	}
+}
+
+func TestPanelHandlerDoesNotFallbackToIndexForMissingAssets(t *testing.T) {
+	handler, err := newPanelHandlerWithFS(fstest.MapFS{
+		"index.html": {
+			Data: []byte(`<!doctype html><html><head><link rel="stylesheet" href="/assets/index.css"><script type="module" src="/assets/index.js"></script></head><body><div id="root"></div></body></html>`),
+		},
+		"assets/index.css": {
+			Data: []byte("body { background: #fff; }"),
+		},
+		"assets/index.js": {
+			Data: []byte("console.log('ok')"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("new panel handler: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil))
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}
+
+func TestPanelHandlerFallsBackToIndexForClientRoutes(t *testing.T) {
+	handler, err := newPanelHandlerWithFS(fstest.MapFS{
+		"index.html": {
+			Data: []byte(`<!doctype html><html><head><link rel="stylesheet" href="/assets/index.css"><script type="module" src="/assets/index.js"></script></head><body><div id="root"></div></body></html>`),
+		},
+		"assets/index.css": {
+			Data: []byte("body { background: #fff; }"),
+		},
+		"assets/index.js": {
+			Data: []byte("console.log('ok')"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("new panel handler: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/domains", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), `<div id="root"></div>`) {
+		t.Fatalf("body = %q, want index html", recorder.Body.String())
+	}
 }
 
 func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.Store) {

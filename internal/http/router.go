@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	stdhttp "net/http"
 	"path"
+	"regexp"
 	"strings"
 
 	"flowpanel/internal/app"
@@ -384,14 +386,24 @@ type panelHandler struct {
 	fileServer stdhttp.Handler
 }
 
+var panelAssetPattern = regexp.MustCompile(`(?:src|href)=["']([^"']+)["']`)
+
 func newPanelHandler() (*panelHandler, error) {
 	distFS, err := web.DistFS()
 	if err != nil {
 		return nil, err
 	}
 
+	return newPanelHandlerWithFS(distFS)
+}
+
+func newPanelHandlerWithFS(distFS fs.FS) (*panelHandler, error) {
 	index, err := fs.ReadFile(distFS, "index.html")
 	if err != nil {
+		return nil, err
+	}
+
+	if err := validatePanelAssets(distFS, index); err != nil {
 		return nil, err
 	}
 
@@ -422,6 +434,11 @@ func (h *panelHandler) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		_ = file.Close()
 	}
 
+	if cleanPath != "index.html" && path.Ext(cleanPath) != "" {
+		stdhttp.NotFound(w, r)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(stdhttp.StatusOK)
 	if r.Method == stdhttp.MethodHead {
@@ -429,6 +446,48 @@ func (h *panelHandler) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 
 	_, _ = w.Write(h.index)
+}
+
+func validatePanelAssets(distFS fs.FS, index []byte) error {
+	matches := panelAssetPattern.FindAllSubmatch(index, -1)
+	for _, match := range matches {
+		assetPath, ok := normalizePanelAssetPath(string(match[1]))
+		if !ok {
+			continue
+		}
+
+		stat, err := fs.Stat(distFS, assetPath)
+		if err != nil {
+			return fmt.Errorf("panel bundle is invalid: missing asset %q referenced by index.html: %w", assetPath, err)
+		}
+		if stat.IsDir() {
+			return fmt.Errorf("panel bundle is invalid: asset %q referenced by index.html is a directory", assetPath)
+		}
+	}
+
+	return nil
+}
+
+func normalizePanelAssetPath(ref string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" ||
+		strings.HasPrefix(ref, "#") ||
+		strings.HasPrefix(ref, "http://") ||
+		strings.HasPrefix(ref, "https://") ||
+		strings.HasPrefix(ref, "//") ||
+		strings.HasPrefix(ref, "data:") {
+		return "", false
+	}
+
+	ref = strings.SplitN(ref, "#", 2)[0]
+	ref = strings.SplitN(ref, "?", 2)[0]
+	ref = strings.TrimPrefix(ref, "./")
+	ref = strings.TrimPrefix(ref, "/")
+	if ref == "" || ref == "index.html" {
+		return "", false
+	}
+
+	return ref, true
 }
 
 func writeJSON(w stdhttp.ResponseWriter, status int, payload any) {
