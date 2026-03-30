@@ -7,32 +7,43 @@ import {
   useLocation,
 } from "@tanstack/react-router";
 import {
+  Database,
+  FolderOpen,
   ChevronRight,
   Globe,
   LayoutDashboard,
   Menu,
   Settings,
+  TerminalSquare,
   TimerReset,
   X,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
+import { FilesPage } from "@/pages/files-page";
 import { JobsPage } from "@/pages/jobs-page";
 import { SettingsPage } from "@/pages/settings-page";
+import { SshPage } from "@/pages/ssh-page";
 
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
+  { to: "/database", label: "Database", icon: Database },
   { to: "/domains", label: "Domains", icon: Globe },
+  { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/jobs", label: "Jobs", icon: TimerReset },
+  { to: "/ssh", label: "SSH", icon: TerminalSquare },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 function RootLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
+  const isNavItemActive = (to: string) =>
+    location.pathname === to || (to === "/files" && location.pathname === "/file-manager");
 
   return (
     <div className="min-h-screen bg-[var(--app-bg)] text-[var(--app-text)]">
@@ -48,7 +59,7 @@ function RootLayout() {
             <div className="space-y-1">
               {navigationItems.map((item) => {
                 const Icon = item.icon;
-                const active = location.pathname === item.to;
+                const active = isNavItemActive(item.to);
 
                 return (
                   <Link
@@ -81,7 +92,7 @@ function RootLayout() {
             <div className="space-y-1">
               {navigationItems.map((item) => {
                 const Icon = item.icon;
-                const active = location.pathname === item.to;
+                const active = isNavItemActive(item.to);
 
                 return (
                   <Link
@@ -144,6 +155,24 @@ const domainsRoute = createRoute({
   component: DomainsPage,
 });
 
+const databaseRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/database",
+  component: DatabasePage,
+});
+
+const filesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/files",
+  component: FilesPage,
+});
+
+const legacyFileManagerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/file-manager",
+  component: FilesPage,
+});
+
 const jobsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/jobs",
@@ -156,10 +185,20 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const sshRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/ssh",
+  component: SshPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  databaseRoute,
   domainsRoute,
+  filesRoute,
+  legacyFileManagerRoute,
   jobsRoute,
+  sshRoute,
   settingsRoute,
 ]);
 
