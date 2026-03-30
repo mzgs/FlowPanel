@@ -403,7 +403,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 			caddyconfig.JSONModuleObject(reverseproxy.Handler{
 				Upstreams: reverseproxy.UpstreamPool{
 					&reverseproxy.Upstream{
-						Dial: net.JoinHostPort("127.0.0.1", record.Target),
+						Dial: net.JoinHostPort("localhost", record.Target),
 					},
 				},
 			}, "handler", "reverse_proxy", nil),

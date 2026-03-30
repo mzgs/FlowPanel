@@ -74,6 +74,28 @@ func TestBuildConfigValidatesStaticAndAppDomains(t *testing.T) {
 	}
 }
 
+func TestBuildConfigUsesLocalhostForAppDomains(t *testing.T) {
+	cfg, _, err := buildConfig(":9080", ":9443", []domain.Record{
+		{
+			Hostname: "app.example.com",
+			Kind:     domain.KindApp,
+			Target:   "3000",
+		},
+	}, nil, runtimeSyncModeStandard)
+	if err != nil {
+		t.Fatalf("build config: %v", err)
+	}
+
+	rawConfig, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+
+	if !bytes.Contains(rawConfig, []byte(`"dial":"localhost:3000"`)) {
+		t.Fatalf("raw config = %s, want localhost app dial target", string(rawConfig))
+	}
+}
+
 func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
 	cfg, summary, err := buildConfig(":9080", ":9443", []domain.Record{
 		{
