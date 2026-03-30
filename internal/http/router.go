@@ -173,7 +173,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 			}
 
-			record, err := app.Domains.Create(input)
+			record, err := app.Domains.Create(r.Context(), input)
 			if err != nil {
 				var validation domain.ValidationErrors
 				switch {
@@ -201,8 +201,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			if err := syncDomainsWithCaddy(r.Context()); err != nil {
-				if removed := app.Domains.Delete(record.ID); !removed {
-					app.Logger.Error("rollback created domain failed", zap.String("domain_id", record.ID))
+				removed, rollbackErr := app.Domains.Delete(r.Context(), record.ID)
+				if rollbackErr != nil {
+					app.Logger.Error("rollback created domain failed",
+						zap.String("domain_id", record.ID),
+						zap.Error(rollbackErr),
+					)
+				} else if !removed {
+					app.Logger.Error("rollback created domain missing", zap.String("domain_id", record.ID))
 				}
 				app.Logger.Error("publish domain failed",
 					zap.String("domain_id", record.ID),

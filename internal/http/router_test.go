@@ -13,6 +13,7 @@ import (
 	"flowpanel/internal/auth"
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
+	"flowpanel/internal/db"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/phpenv"
@@ -57,11 +58,24 @@ func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
 	}
 
 	logger := zap.NewNop()
-	domains := domain.NewService()
+	dbConn, err := db.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		_ = dbConn.Close()
+	}()
+
+	store := domain.NewStore(dbConn)
+	if err := store.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure store: %v", err)
+	}
+
+	domains := domain.NewService(store)
 	router, err := NewRouter(app.New(
 		cfg,
 		logger,
-		nil,
+		dbConn,
 		domains,
 		auth.NewSessionManager(cfg),
 		jobs.NewScheduler(logger.Named("jobs"), false),
@@ -92,5 +106,13 @@ func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
 
 	if got := domains.List(); len(got) != 0 {
 		t.Fatalf("domain count after failed publish = %d, want 0", len(got))
+	}
+
+	persisted, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("list persisted domains: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted domain count after failed publish = %d, want 0", len(persisted))
 	}
 }

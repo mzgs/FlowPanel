@@ -1,18 +1,22 @@
 package domain
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"flowpanel/internal/db"
 )
 
 func TestCreateStaticSiteCreatesSiteDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	basePath := filepath.Join(tempDir, "var", "www")
 
-	service := newService(basePath)
-	record, err := service.Create(CreateInput{
+	service := newService(basePath, nil)
+	record, err := service.Create(context.Background(), CreateInput{
 		Hostname: "Example.com",
 		Kind:     KindStaticSite,
 	})
@@ -55,8 +59,8 @@ func TestCreateStaticSiteDoesNotOverwriteExistingIndex(t *testing.T) {
 		t.Fatalf("write existing index: %v", err)
 	}
 
-	service := newService(basePath)
-	record, err := service.Create(CreateInput{
+	service := newService(basePath, nil)
+	record, err := service.Create(context.Background(), CreateInput{
 		Hostname: "Example.com",
 		Kind:     KindStaticSite,
 	})
@@ -83,8 +87,8 @@ func TestCreatePHPCreatePublicDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	basePath := filepath.Join(tempDir, "var", "www")
 
-	service := newService(basePath)
-	record, err := service.Create(CreateInput{
+	service := newService(basePath, nil)
+	record, err := service.Create(context.Background(), CreateInput{
 		Hostname: "php.example.com",
 		Kind:     KindPHP,
 	})
@@ -103,9 +107,9 @@ func TestCreatePHPCreatePublicDirectory(t *testing.T) {
 }
 
 func TestCreateReverseProxyRejectsPathTargets(t *testing.T) {
-	service := newService(t.TempDir())
+	service := newService(t.TempDir(), nil)
 
-	_, err := service.Create(CreateInput{
+	_, err := service.Create(context.Background(), CreateInput{
 		Hostname: "proxy.example.com",
 		Kind:     KindReverseProxy,
 		Target:   "https://backend.example.com/base",
@@ -125,9 +129,9 @@ func TestCreateReverseProxyRejectsPathTargets(t *testing.T) {
 }
 
 func TestDeleteRemovesMatchingRecord(t *testing.T) {
-	service := newService(t.TempDir())
+	service := newService(t.TempDir(), nil)
 
-	record, err := service.Create(CreateInput{
+	record, err := service.Create(context.Background(), CreateInput{
 		Hostname: "app.example.com",
 		Kind:     KindApp,
 		Target:   "3000",
@@ -136,11 +140,104 @@ func TestDeleteRemovesMatchingRecord(t *testing.T) {
 		t.Fatalf("create domain: %v", err)
 	}
 
-	if !service.Delete(record.ID) {
+	removed, err := service.Delete(context.Background(), record.ID)
+	if err != nil {
+		t.Fatalf("delete domain: %v", err)
+	}
+	if !removed {
 		t.Fatal("expected delete to succeed")
 	}
 
 	if got := service.List(); len(got) != 0 {
 		t.Fatalf("list length = %d, want 0", len(got))
+	}
+}
+
+func TestCreatePersistsDomain(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	store := NewStore(conn)
+	if err := store.Ensure(ctx); err != nil {
+		t.Fatalf("ensure store: %v", err)
+	}
+
+	service := newService(t.TempDir(), store)
+	record, err := service.Create(ctx, CreateInput{
+		Hostname: "app.example.com",
+		Kind:     KindApp,
+		Target:   "3000",
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	records, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("list store domains: %v", err)
+	}
+
+	if len(records) != 1 {
+		t.Fatalf("persisted domain count = %d, want 1", len(records))
+	}
+
+	if records[0].ID != record.ID ||
+		records[0].Hostname != record.Hostname ||
+		records[0].Kind != record.Kind ||
+		records[0].Target != record.Target ||
+		!records[0].CreatedAt.Equal(record.CreatedAt) {
+		t.Fatalf("persisted record = %#v, want %#v", records[0], record)
+	}
+}
+
+func TestLoadRestoresPersistedDomains(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	store := NewStore(conn)
+	if err := store.Ensure(ctx); err != nil {
+		t.Fatalf("ensure store: %v", err)
+	}
+
+	expected := Record{
+		ID:        "domain-1",
+		Hostname:  "restored.example.com",
+		Kind:      KindReverseProxy,
+		Target:    "https://backend.example.com",
+		CreatedAt: time.Unix(1711972800, 123456789).UTC(),
+	}
+
+	if err := store.Insert(ctx, expected); err != nil {
+		t.Fatalf("insert domain: %v", err)
+	}
+
+	service := newService(t.TempDir(), store)
+	if err := service.Load(ctx); err != nil {
+		t.Fatalf("load persisted domains: %v", err)
+	}
+
+	records := service.List()
+	if len(records) != 1 {
+		t.Fatalf("loaded domain count = %d, want 1", len(records))
+	}
+
+	if records[0].ID != expected.ID ||
+		records[0].Hostname != expected.Hostname ||
+		records[0].Kind != expected.Kind ||
+		records[0].Target != expected.Target ||
+		!records[0].CreatedAt.Equal(expected.CreatedAt) {
+		t.Fatalf("loaded record = %#v, want %#v", records[0], expected)
 	}
 }

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -52,17 +53,19 @@ func (e ValidationErrors) Error() string {
 
 type Service struct {
 	basePath string
+	store    *Store
 	mu       sync.RWMutex
 	records  []Record
 }
 
-func NewService() *Service {
-	return newService(defaultSitesBasePath())
+func NewService(store *Store) *Service {
+	return newService(defaultSitesBasePath(), store)
 }
 
-func newService(basePath string) *Service {
+func newService(basePath string, store *Store) *Service {
 	return &Service{
 		basePath: strings.TrimSpace(basePath),
+		store:    store,
 		records:  make([]Record, 0),
 	}
 }
@@ -92,7 +95,25 @@ func (s *Service) List() []Record {
 	return records
 }
 
-func (s *Service) Delete(id string) bool {
+func (s *Service) Load(ctx context.Context) error {
+	if s.store == nil {
+		return nil
+	}
+
+	records, err := s.store.List(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.records = append([]Record(nil), records...)
+
+	return nil
+}
+
+func (s *Service) Delete(ctx context.Context, id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -101,14 +122,20 @@ func (s *Service) Delete(id string) bool {
 			continue
 		}
 
+		if s.store != nil {
+			if err := s.store.Delete(ctx, record.ID); err != nil {
+				return false, err
+			}
+		}
+
 		s.records = append(s.records[:i], s.records[i+1:]...)
-		return true
+		return true, nil
 	}
 
-	return false
+	return false, nil
 }
 
-func (s *Service) Create(input CreateInput) (Record, error) {
+func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
 	hostname := normalizeHostname(input.Hostname)
 	target := strings.TrimSpace(input.Target)
 
@@ -152,6 +179,12 @@ func (s *Service) Create(input CreateInput) (Record, error) {
 		Kind:      input.Kind,
 		Target:    resolvedTarget,
 		CreatedAt: time.Now().UTC(),
+	}
+
+	if s.store != nil {
+		if err := s.store.Insert(ctx, record); err != nil {
+			return Record{}, err
+		}
 	}
 
 	s.records = append([]Record{record}, s.records...)

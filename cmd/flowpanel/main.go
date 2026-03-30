@@ -65,7 +65,16 @@ func run() error {
 		_ = dbConn.Close()
 	}()
 
-	domainService := domain.NewService()
+	domainStore := domain.NewStore(dbConn)
+	if err := domainStore.Ensure(startupCtx); err != nil {
+		return fmt.Errorf("ensure domain storage: %w", err)
+	}
+
+	domainService := domain.NewService(domainStore)
+	if err := domainService.Load(startupCtx); err != nil {
+		return fmt.Errorf("load persisted domains: %w", err)
+	}
+
 	sessionManager := auth.NewSessionManager(cfg)
 	scheduler := jobs.NewScheduler(logger.Named("jobs"), cfg.Cron.Enabled)
 	phpManager := phpenv.NewService(logger.Named("php"))
