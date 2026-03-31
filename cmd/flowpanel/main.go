@@ -71,6 +71,10 @@ func run() error {
 	if err := domainStore.Ensure(startupCtx); err != nil {
 		return fmt.Errorf("ensure domain storage: %w", err)
 	}
+	mariaDBStore := mariadb.NewStore(dbConn)
+	if err := mariaDBStore.Ensure(startupCtx); err != nil {
+		return fmt.Errorf("ensure mariadb storage: %w", err)
+	}
 
 	domainService := domain.NewService(domainStore)
 	if err := domainService.Load(startupCtx); err != nil {
@@ -79,7 +83,7 @@ func run() error {
 
 	sessionManager := auth.NewSessionManager(cfg)
 	scheduler := jobs.NewScheduler(logger.Named("jobs"), cfg.Cron.Enabled)
-	mariadbManager := mariadb.NewService(logger.Named("mariadb"))
+	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
 	phpManager := phpenv.NewService(logger.Named("php"))
 	caddyRuntime := caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, phpManager)
 	fileManager, err := files.NewService(domainService.BasePath())

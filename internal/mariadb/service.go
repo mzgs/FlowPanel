@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -31,7 +30,6 @@ const (
 	defaultDBUser        = "root"
 	localhostHost        = "localhost"
 	defaultPasswordFile  = "mariadb-root-password"
-	defaultCredsFile     = "mariadb-database-credentials.json"
 	passwordBytesLength  = 24
 )
 
@@ -126,9 +124,9 @@ func (v ValidationErrors) Error() string {
 }
 
 type Service struct {
-	logger                  *zap.Logger
-	rootPasswordPath        string
-	databaseCredentialsPath string
+	logger           *zap.Logger
+	rootPasswordPath string
+	store            *Store
 }
 
 type actionPlan struct {
@@ -137,15 +135,15 @@ type actionPlan struct {
 	installCmds    [][]string
 }
 
-func NewService(logger *zap.Logger) *Service {
+func NewService(logger *zap.Logger, store *Store) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
 	return &Service{
-		logger:                  logger,
-		rootPasswordPath:        resolvePasswordFilePath(),
-		databaseCredentialsPath: resolveDatabaseCredentialsFilePath(),
+		logger:           logger,
+		rootPasswordPath: resolvePasswordFilePath(),
+		store:            store,
 	}
 }
 
@@ -272,11 +270,10 @@ func (s *Service) ListDatabases(ctx context.Context) ([]DatabaseRecord, error) {
 		return nil, err
 	}
 
-	grantsRows, err := s.queryRows(ctx, "SELECT Db, User, Host FROM mysql.db ORDER BY Db ASC, User ASC, Host ASC")
+	metadata, err := s.store.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	credentials := s.loadDatabaseCredentials()
 
 	recordsByName := make(map[string]DatabaseRecord, len(databaseRows))
 	for _, row := range databaseRows {
@@ -295,35 +292,7 @@ func (s *Service) ListDatabases(ctx context.Context) ([]DatabaseRecord, error) {
 		}
 	}
 
-	for _, row := range grantsRows {
-		if len(row) < 3 {
-			continue
-		}
-
-		name := strings.TrimSpace(row[0])
-		if name == "" || isSystemDatabase(name) {
-			continue
-		}
-
-		record, exists := recordsByName[name]
-		if !exists {
-			record = DatabaseRecord{
-				Name: name,
-				Host: localhostHost,
-			}
-		}
-
-		if record.Username == "" {
-			record.Username = strings.TrimSpace(row[1])
-			host := strings.TrimSpace(row[2])
-			if host != "" {
-				record.Host = host
-			}
-			recordsByName[name] = record
-		}
-	}
-
-	for name, credential := range credentials {
+	for name, credential := range metadata {
 		if name == "" || isSystemDatabase(name) {
 			continue
 		}
@@ -393,18 +362,17 @@ func (s *Service) CreateDatabase(ctx context.Context, input CreateDatabaseInput)
 		return DatabaseRecord{}, err
 	}
 
-	s.storeDatabaseCredential(input.Name, databaseCredential{
-		Username: input.Username,
-		Password: input.Password,
-		Host:     localhostHost,
-	})
-
-	return DatabaseRecord{
+	record := DatabaseRecord{
 		Name:     input.Name,
 		Username: input.Username,
 		Host:     localhostHost,
 		Password: input.Password,
-	}, nil
+	}
+	if err := s.store.Upsert(ctx, record); err != nil {
+		return DatabaseRecord{}, err
+	}
+
+	return record, nil
 }
 
 func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input UpdateDatabaseInput) (DatabaseRecord, error) {
@@ -412,6 +380,9 @@ func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input
 	input.CurrentUsername = strings.TrimSpace(input.CurrentUsername)
 	input.Username = strings.TrimSpace(input.Username)
 	input.Password = strings.TrimSpace(input.Password)
+	if input.CurrentUsername == "" {
+		input.CurrentUsername = input.Username
+	}
 
 	if validation := validateUpdateInput(databaseName, input); len(validation) > 0 {
 		return DatabaseRecord{}, validation
@@ -467,18 +438,17 @@ func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input
 		}
 	}
 
-	s.storeDatabaseCredential(databaseName, databaseCredential{
-		Username: input.Username,
-		Password: input.Password,
-		Host:     localhostHost,
-	})
-
-	return DatabaseRecord{
+	record := DatabaseRecord{
 		Name:     databaseName,
 		Username: input.Username,
 		Host:     localhostHost,
 		Password: input.Password,
-	}, nil
+	}
+	if err := s.store.Upsert(ctx, record); err != nil {
+		return DatabaseRecord{}, err
+	}
+
+	return record, nil
 }
 
 func (s *Service) DeleteDatabase(ctx context.Context, databaseName string, input DeleteDatabaseInput) error {
@@ -510,7 +480,9 @@ func (s *Service) DeleteDatabase(ctx context.Context, databaseName string, input
 		}
 	}
 
-	s.deleteDatabaseCredential(databaseName)
+	if err := s.store.Delete(ctx, databaseName); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -668,18 +640,6 @@ func resolvePasswordFilePath() string {
 	return filepath.Join(".", "data", defaultPasswordFile)
 }
 
-func resolveDatabaseCredentialsFilePath() string {
-	if value := strings.TrimSpace(os.Getenv("FLOWPANEL_MARIADB_DATABASE_CREDENTIALS_FILE")); value != "" {
-		return value
-	}
-
-	if dbPath := strings.TrimSpace(os.Getenv("FLOWPANEL_DB_PATH")); dbPath != "" && dbPath != ":memory:" {
-		return filepath.Join(filepath.Dir(dbPath), defaultCredsFile)
-	}
-
-	return filepath.Join(".", "data", defaultCredsFile)
-}
-
 func rootPasswordFromEnv() (string, bool) {
 	password, configured := os.LookupEnv("FLOWPANEL_MARIADB_PASSWORD")
 	if !configured {
@@ -725,97 +685,6 @@ func writePasswordFile(path, password string) error {
 	}
 
 	return os.WriteFile(path, []byte(password+"\n"), 0o600)
-}
-
-type databaseCredential struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Host     string `json:"host"`
-}
-
-func readDatabaseCredentialsFile(path string) (map[string]databaseCredential, error) {
-	if strings.TrimSpace(path) == "" {
-		return map[string]databaseCredential{}, nil
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return map[string]databaseCredential{}, nil
-		}
-		return nil, err
-	}
-
-	if len(bytes.TrimSpace(content)) == 0 {
-		return map[string]databaseCredential{}, nil
-	}
-
-	credentials := map[string]databaseCredential{}
-	if err := json.Unmarshal(content, &credentials); err != nil {
-		return nil, err
-	}
-
-	return credentials, nil
-}
-
-func writeDatabaseCredentialsFile(path string, credentials map[string]databaseCredential) error {
-	if strings.TrimSpace(path) == "" {
-		return errors.New("mariadb database credentials file path is empty")
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-
-	payload, err := json.MarshalIndent(credentials, "", "  ")
-	if err != nil {
-		return err
-	}
-	payload = append(payload, '\n')
-
-	return os.WriteFile(path, payload, 0o600)
-}
-
-func (s *Service) loadDatabaseCredentials() map[string]databaseCredential {
-	credentials, err := readDatabaseCredentialsFile(s.databaseCredentialsPath)
-	if err == nil {
-		return credentials
-	}
-
-	s.logger.Warn("failed to read mariadb database credentials file",
-		zap.String("path", s.databaseCredentialsPath),
-		zap.Error(err),
-	)
-	return map[string]databaseCredential{}
-}
-
-func (s *Service) storeDatabaseCredential(databaseName string, credential databaseCredential) {
-	credentials := s.loadDatabaseCredentials()
-	credentials[databaseName] = credential
-
-	if err := writeDatabaseCredentialsFile(s.databaseCredentialsPath, credentials); err != nil {
-		s.logger.Warn("failed to persist mariadb database credentials",
-			zap.String("path", s.databaseCredentialsPath),
-			zap.String("database", databaseName),
-			zap.Error(err),
-		)
-	}
-}
-
-func (s *Service) deleteDatabaseCredential(databaseName string) {
-	credentials := s.loadDatabaseCredentials()
-	if _, exists := credentials[databaseName]; !exists {
-		return
-	}
-
-	delete(credentials, databaseName)
-	if err := writeDatabaseCredentialsFile(s.databaseCredentialsPath, credentials); err != nil {
-		s.logger.Warn("failed to persist mariadb database credentials",
-			zap.String("path", s.databaseCredentialsPath),
-			zap.String("database", databaseName),
-			zap.Error(err),
-		)
-	}
 }
 
 func generatePassword() (string, error) {
