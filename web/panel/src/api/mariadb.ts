@@ -21,6 +21,7 @@ export type MariaDBDatabase = {
   name: string;
   username: string;
   host: string;
+  password?: string;
 };
 
 export type CreateMariaDBDatabaseInput = {

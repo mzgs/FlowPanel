@@ -260,7 +260,7 @@ export function DatabasePage() {
       return true;
     }
 
-    return `${database.name} ${database.username} ${database.host}`
+    return `${database.name} ${database.username} ${database.host} ${database.password ?? ""}`
       .toLowerCase()
       .includes(normalizedSearch);
   });
@@ -580,7 +580,7 @@ export function DatabasePage() {
                         <td className="px-3 py-3 align-middle">{database.name}</td>
                         <td className="px-3 py-3 align-middle">{database.username || "Not set"}</td>
                         <td className="px-3 py-3 align-middle font-mono text-[13px] text-[var(--app-text-muted)]">
-                          **********
+                          {database.password || "Not available"}
                         </td>
                         <td className="px-3 py-3 align-middle text-emerald-500">Not set</td>
                         <td className="px-3 py-3 align-middle text-[var(--app-text-muted)]">Not set</td>

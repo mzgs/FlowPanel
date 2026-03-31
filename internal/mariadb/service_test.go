@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"go.uber.org/zap"
@@ -74,5 +75,52 @@ func TestRootPasswordPrefersEnvOverFile(t *testing.T) {
 	}
 	if password != "from-env" {
 		t.Fatalf("password = %q, want from-env", password)
+	}
+}
+
+func TestDatabaseCredentialsFileRoundTrip(t *testing.T) {
+	credentialsFile := filepath.Join(t.TempDir(), "mariadb-database-credentials.json")
+	expected := map[string]databaseCredential{
+		"flowpanel": {
+			Username: "flowpanel_user",
+			Password: "secret123",
+			Host:     "localhost",
+		},
+	}
+
+	if err := writeDatabaseCredentialsFile(credentialsFile, expected); err != nil {
+		t.Fatalf("write credentials file: %v", err)
+	}
+
+	actual, err := readDatabaseCredentialsFile(credentialsFile)
+	if err != nil {
+		t.Fatalf("read credentials file: %v", err)
+	}
+
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("credentials = %#v, want %#v", actual, expected)
+	}
+}
+
+func TestReadDatabaseCredentialsFileReturnsEmptyWhenMissing(t *testing.T) {
+	credentialsFile := filepath.Join(t.TempDir(), "missing.json")
+
+	credentials, err := readDatabaseCredentialsFile(credentialsFile)
+	if err != nil {
+		t.Fatalf("read credentials file: %v", err)
+	}
+
+	if len(credentials) != 0 {
+		t.Fatalf("credential count = %d, want 0", len(credentials))
+	}
+}
+
+func TestWriteDatabaseCredentialsFileRejectsEmptyPath(t *testing.T) {
+	err := writeDatabaseCredentialsFile("", map[string]databaseCredential{})
+	if err == nil {
+		t.Fatal("expected error for empty path")
+	}
+	if err.Error() != "mariadb database credentials file path is empty" {
+		t.Fatalf("error = %v, want empty path error", err)
 	}
 }
