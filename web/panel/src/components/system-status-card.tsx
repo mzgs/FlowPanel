@@ -127,8 +127,8 @@ function GaugePanel({ caption, detail, percent, title, value }: GaugePanelProps)
       : gaugeCircumference - (normalized / 100) * gaugeCircumference;
 
   return (
-    <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
-      <div className="flex flex-col items-center gap-5 text-center">
+    <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-5">
+      <div className="flex flex-col items-center gap-4 text-center">
         <div className="relative h-36 w-36">
           <svg
             aria-hidden="true"
@@ -163,9 +163,9 @@ function GaugePanel({ caption, detail, percent, title, value }: GaugePanelProps)
           </div>
         </div>
 
-        <div className="space-y-2">
-          <div className="text-[15px] font-semibold text-[var(--app-text)]">{title}</div>
-          <div className="text-[13px] text-[var(--app-text)]">{detail}</div>
+        <div className="space-y-1.5">
+          <div className="text-[15px] font-semibold leading-5 text-[var(--app-text)]">{title}</div>
+          <div className="text-[13px] leading-5 text-[var(--app-text)]">{detail}</div>
           {caption ? (
             <div className="text-[12px] text-[var(--app-text-muted)]">{caption}</div>
           ) : null}
@@ -181,33 +181,32 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
   const cpuPercent = clampPercent(status.cpu_usage_percent ?? null);
 
   return (
-    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
-      <div className="border-b border-[var(--app-border)] px-5 py-4">
-        <h2 className="text-[15px] font-semibold text-[var(--app-text)]">System status</h2>
-      </div>
-
-      <div className="grid gap-4 px-5 py-5 md:grid-cols-2 xl:grid-cols-3">
-        <GaugePanel
-          caption="Load average"
-          detail={formatLoadSeries(status)}
-          percent={loadPercent}
-          title={getLoadTitle(loadPercent)}
-          value={formatPercent(loadPercent)}
-        />
-        <GaugePanel
-          caption=""
-          detail="CPU usage"
-          percent={cpuPercent}
-          title={`${status.cores} ${status.cores === 1 ? "core" : "cores"}`}
-          value={formatPercent(cpuPercent)}
-        />
-        <GaugePanel
-          caption=""
-          detail="RAM usage"
-          percent={memoryPercent}
-          title={formatMemoryLine(status)}
-          value={formatPercent(memoryPercent)}
-        />
+    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-[var(--app-shadow)]">
+      <div className="space-y-4">
+        <h2 className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">System status</h2>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <GaugePanel
+            caption="Load average"
+            detail={formatLoadSeries(status)}
+            percent={loadPercent}
+            title={getLoadTitle(loadPercent)}
+            value={formatPercent(loadPercent)}
+          />
+          <GaugePanel
+            caption=""
+            detail="CPU usage"
+            percent={cpuPercent}
+            title={`${status.cores} ${status.cores === 1 ? "core" : "cores"}`}
+            value={formatPercent(cpuPercent)}
+          />
+          <GaugePanel
+            caption=""
+            detail="RAM usage"
+            percent={memoryPercent}
+            title={formatMemoryLine(status)}
+            value={formatPercent(memoryPercent)}
+          />
+        </div>
       </div>
     </section>
   );
