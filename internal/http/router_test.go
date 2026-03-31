@@ -16,6 +16,7 @@ import (
 	"flowpanel/internal/config"
 	"flowpanel/internal/db"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/files"
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/phpenv"
 
@@ -302,6 +303,11 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	}
 
 	domains := domain.NewService(store)
+	fileManager, err := files.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file manager: %v", err)
+	}
+
 	router, err := NewRouter(app.New(
 		cfg,
 		logger,
@@ -311,6 +317,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		jobs.NewScheduler(logger.Named("jobs"), false),
 		caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, fakePHPManager{}),
 		fakePHPManager{},
+		fileManager,
 	))
 	if err != nil {
 		t.Fatalf("new router: %v", err)

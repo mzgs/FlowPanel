@@ -16,6 +16,7 @@ import (
 	"flowpanel/internal/config"
 	"flowpanel/internal/db"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/files"
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/logging"
@@ -79,8 +80,12 @@ func run() error {
 	scheduler := jobs.NewScheduler(logger.Named("jobs"), cfg.Cron.Enabled)
 	phpManager := phpenv.NewService(logger.Named("php"))
 	caddyRuntime := caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, phpManager)
+	fileManager, err := files.NewService(domainService.BasePath())
+	if err != nil {
+		return fmt.Errorf("initialize file manager: %w", err)
+	}
 
-	appContainer := app.New(cfg, logger, dbConn, domainService, sessionManager, scheduler, caddyRuntime, phpManager)
+	appContainer := app.New(cfg, logger, dbConn, domainService, sessionManager, scheduler, caddyRuntime, phpManager, fileManager)
 
 	router, err := httpx.NewRouter(appContainer)
 	if err != nil {

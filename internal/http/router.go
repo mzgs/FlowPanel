@@ -13,6 +13,7 @@ import (
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/domain"
+	filesvc "flowpanel/internal/files"
 	"flowpanel/web"
 
 	"github.com/go-chi/chi/v5"
@@ -365,6 +366,247 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodPut, "/domains/{domainID}", domainsUpdateHandler)
 		r.Method(stdhttp.MethodDelete, "/domains/{domainID}", domainsDeleteHandler)
 
+		filesListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			listing, err := app.Files.List(r.URL.Query().Get("path"))
+			if err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, listing)
+		})
+
+		filesCreateDirectoryHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Path string `json:"path"`
+				Name string `json:"name"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			if err := app.Files.CreateDirectory(input.Path, input.Name); err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{"ok": true})
+		})
+
+		filesCreateFileHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Path string `json:"path"`
+				Name string `json:"name"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			if err := app.Files.CreateFile(input.Path, input.Name); err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{"ok": true})
+		})
+
+		filesRenameHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Path string `json:"path"`
+				Name string `json:"name"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			newPath, err := app.Files.Rename(input.Path, input.Name)
+			if err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"path": newPath,
+			})
+		})
+
+		filesDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			if err := app.Files.Delete(r.URL.Query().Get("path")); err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+		})
+
+		filesContentHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			content, err := app.Files.ReadTextFile(r.URL.Query().Get("path"))
+			if err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, content)
+		})
+
+		filesUpdateContentHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Path    string `json:"path"`
+				Content string `json:"content"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			if err := app.Files.WriteTextFile(input.Path, input.Content); err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+		})
+
+		filesUploadHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			if err := r.ParseMultipartForm(64 << 20); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid upload payload",
+				})
+				return
+			}
+
+			if err := app.Files.Upload(r.FormValue("path"), r.MultipartForm.File["files"]); err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{"ok": true})
+		})
+
+		filesDownloadHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			absolutePath, name, err := app.Files.DownloadPath(r.URL.Query().Get("path"))
+			if err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+			stdhttp.ServeFile(w, r, absolutePath)
+		})
+
+		filesTransferHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Mode   string   `json:"mode"`
+				Paths  []string `json:"paths"`
+				Target string   `json:"target"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			if err := app.Files.Transfer(input.Mode, input.Paths, input.Target); err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+		})
+
+		r.Method(stdhttp.MethodGet, "/files", filesListHandler)
+		r.Method(stdhttp.MethodPost, "/files/directories", filesCreateDirectoryHandler)
+		r.Method(stdhttp.MethodPost, "/files/documents", filesCreateFileHandler)
+		r.Method(stdhttp.MethodPost, "/files/rename", filesRenameHandler)
+		r.Method(stdhttp.MethodDelete, "/files", filesDeleteHandler)
+		r.Method(stdhttp.MethodGet, "/files/content", filesContentHandler)
+		r.Method(stdhttp.MethodPut, "/files/content", filesUpdateContentHandler)
+		r.Method(stdhttp.MethodPost, "/files/upload", filesUploadHandler)
+		r.Method(stdhttp.MethodGet, "/files/download", filesDownloadHandler)
+		r.Method(stdhttp.MethodPost, "/files/transfer", filesTransferHandler)
+
 		r.NotFound(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusNotFound, map[string]any{
 				"error": "api route not found",
@@ -500,4 +742,49 @@ func decodeJSON(r *stdhttp.Request, payload any) error {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(payload)
+}
+
+func writeFileError(w stdhttp.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, filesvc.ErrNotFound):
+		writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+			"error": "file or directory not found",
+		})
+	case errors.Is(err, filesvc.ErrInvalidPath):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "invalid file path",
+		})
+	case errors.Is(err, filesvc.ErrDirectoryExpected):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "directory expected",
+		})
+	case errors.Is(err, filesvc.ErrFileExpected):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "file expected",
+		})
+	case errors.Is(err, filesvc.ErrUnsupportedEntry):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "symlinks are not supported",
+		})
+	case errors.Is(err, filesvc.ErrBinaryFile):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "file is not editable as text",
+		})
+	case errors.Is(err, filesvc.ErrEditableFileTooBig):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "file is too large to edit in the panel",
+		})
+	case errors.Is(err, filesvc.ErrInvalidTransfer):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "invalid move or copy operation",
+		})
+	case errors.Is(err, fs.ErrExist):
+		writeJSON(w, stdhttp.StatusConflict, map[string]any{
+			"error": "file already exists",
+		})
+	default:
+		writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+			"error": "file operation failed",
+		})
+	}
 }

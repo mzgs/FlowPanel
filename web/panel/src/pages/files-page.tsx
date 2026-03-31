@@ -1,11 +1,1701 @@
-import { ShellPage } from "@/components/shell-page";
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowUp,
+  Check,
+  Copy,
+  Download,
+  File,
+  FileCode2,
+  FilePlus2,
+  FileSymlink,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Grid2X2,
+  HardDrive,
+  List,
+  Pencil,
+  RefreshCw,
+  Scissors,
+  Search,
+  Settings2,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import {
+  createDirectory,
+  createFile,
+  deleteEntry,
+  fetchFileContent,
+  fetchFiles,
+  getDownloadUrl,
+  renameEntry,
+  saveFileContent,
+  transferEntries,
+  uploadFiles,
+  type FileEntry,
+  type FileListing,
+} from "@/api/files";
+import { PageHeader } from "@/components/page-header";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { formatBytes, formatDateTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+type ViewMode = "list" | "grid";
+type DialogMode = "folder" | "file" | "rename" | null;
+type ClipboardMode = "copy" | "move" | null;
+type FlashTone = "success" | "error";
+
+type FlashMessage = {
+  tone: FlashTone;
+  text: string;
+};
+
+type ContextMenuState = {
+  x: number;
+  y: number;
+  scope: "item" | "background";
+  path: string | null;
+};
+
+type MarqueeState = {
+  active: boolean;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  hasMoved: boolean;
+  baseSelection: string[];
+};
+
+type SettingsState = {
+  startPath: string;
+  preferredView: ViewMode;
+};
+
+const VIEW_STORAGE_KEY = "flowpanel.files.view";
+const START_PATH_STORAGE_KEY = "flowpanel.files.start-path";
+
+const editableExtensions = new Set([
+  "bash",
+  "conf",
+  "css",
+  "env",
+  "go",
+  "htm",
+  "html",
+  "ini",
+  "js",
+  "json",
+  "jsx",
+  "log",
+  "md",
+  "php",
+  "py",
+  "rb",
+  "sh",
+  "sql",
+  "svg",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "xml",
+  "yaml",
+  "yml",
+  "zsh",
+]);
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallback;
+}
+
+function readStoredViewMode(): ViewMode {
+  if (typeof window === "undefined") {
+    return "list";
+  }
+
+  return window.localStorage.getItem(VIEW_STORAGE_KEY) === "grid" ? "grid" : "list";
+}
+
+function readStoredStartPath() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.localStorage.getItem(START_PATH_STORAGE_KEY) || "";
+}
+
+function isEditableFile(item: FileEntry) {
+  if (item.type !== "file") {
+    return false;
+  }
+
+  if (!item.extension) {
+    return true;
+  }
+
+  return editableExtensions.has(item.extension);
+}
+
+function getItemLabel(item: FileEntry) {
+  if (item.type === "directory") {
+    return "Folder";
+  }
+
+  if (item.type === "symlink") {
+    return "Symlink";
+  }
+
+  return item.extension ? `${item.extension.toUpperCase()} file` : "File";
+}
+
+function getItemIcon(item: FileEntry) {
+  if (item.type === "directory") {
+    return Folder;
+  }
+
+  if (item.type === "symlink") {
+    return FileSymlink;
+  }
+
+  if (isEditableFile(item)) {
+    return FileCode2;
+  }
+
+  return File;
+}
+
+function getGridPreviewTone(item: FileEntry) {
+  if (item.type === "directory") {
+    return {
+      frame: "border-[#2d3a25] bg-[radial-gradient(circle_at_24%_22%,rgba(172,210,120,0.18),rgba(19,28,18,0.94))] text-[#b9dc7f]",
+      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_24px_rgba(84,115,42,0.16)]",
+    };
+  }
+
+  if (item.type === "symlink") {
+    return {
+      frame: "border-[#2f3b4f] bg-[radial-gradient(circle_at_24%_22%,rgba(126,162,220,0.18),rgba(18,23,32,0.94))] text-[#8fb2e6]",
+      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_24px_rgba(63,90,139,0.16)]",
+    };
+  }
+
+  if (isEditableFile(item)) {
+    return {
+      frame: "border-[#3e3423] bg-[radial-gradient(circle_at_24%_22%,rgba(232,189,112,0.18),rgba(29,24,17,0.94))] text-[#e9be74]",
+      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_24px_rgba(136,101,41,0.16)]",
+    };
+  }
+
+  return {
+    frame: "border-[#303744] bg-[radial-gradient(circle_at_24%_22%,rgba(165,181,206,0.16),rgba(18,22,28,0.94))] text-[#b3c0d4]",
+    glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_24px_rgba(70,82,104,0.14)]",
+  };
+}
+
+function getBreadcrumbs(listing: FileListing | undefined) {
+  const rootName = listing?.root_name || "Sites";
+  const breadcrumbs = [{ label: rootName, path: "" }];
+
+  if (!listing?.path) {
+    return breadcrumbs;
+  }
+
+  const segments = listing.path.split("/").filter(Boolean);
+  let cursor = "";
+  for (const segment of segments) {
+    cursor = cursor ? `${cursor}/${segment}` : segment;
+    breadcrumbs.push({ label: segment, path: cursor });
+  }
+
+  return breadcrumbs;
+}
+
+function pathLabel(path: string) {
+  return path || "/";
+}
+
+function FlashBanner({ flash }: { flash: FlashMessage }) {
+  return (
+    <div
+      className={cn(
+        "rounded-[12px] border px-4 py-3 text-[13px]",
+        flash.tone === "success"
+          ? "border-[var(--app-ok)]/30 bg-[var(--app-ok-soft)] text-[var(--app-text)]"
+          : "border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] text-[var(--app-text)]",
+      )}
+    >
+      {flash.text}
+    </div>
+  );
+}
+
+function EmptyState({ searchActive }: { searchActive: boolean }) {
+  return (
+    <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 px-6 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
+        {searchActive ? <Search className="h-5 w-5" /> : <FolderOpen className="h-5 w-5" />}
+      </div>
+      <div>
+        <div className="text-[15px] font-medium text-[var(--app-text)]">
+          {searchActive ? "No items match this filter." : "This folder is empty."}
+        </div>
+        <p className="mt-1 max-w-sm text-[13px] leading-6 text-[var(--app-text-muted)]">
+          {searchActive
+            ? "Try a different search term or clear the filter."
+            : "Create a folder, add a file, or drop uploads here to populate this location."}
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export function FilesPage() {
+  const queryClient = useQueryClient();
+  const browserRef = useRef<HTMLDivElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const [currentPath, setCurrentPath] = useState(readStoredStartPath);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [anchorPath, setAnchorPath] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
+  const [dialogMode, setDialogMode] = useState<DialogMode>(null);
+  const [dialogValue, setDialogValue] = useState("");
+  const [flash, setFlash] = useState<FlashMessage | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [clipboardMode, setClipboardMode] = useState<ClipboardMode>(null);
+  const [clipboardPaths, setClipboardPaths] = useState<string[]>([]);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  const [rootDropActive, setRootDropActive] = useState(false);
+  const [marquee, setMarquee] = useState<MarqueeState>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0,
+    hasMoved: false,
+    baseSelection: [],
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<SettingsState>({
+    startPath: readStoredStartPath(),
+    preferredView: readStoredViewMode(),
+  });
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorPath, setEditorPath] = useState("");
+  const [editorName, setEditorName] = useState("");
+  const [editorContent, setEditorContent] = useState("");
+  const [editorOriginalContent, setEditorOriginalContent] = useState("");
+  const [editorMeta, setEditorMeta] = useState<{ size: number; modifiedAt: string } | null>(null);
+  const [editorBusy, setEditorBusy] = useState(false);
+
+  const listingQuery = useQuery({
+    queryKey: ["files", currentPath],
+    queryFn: () => fetchFiles(currentPath),
+  });
+
+  const listing = listingQuery.data;
+  const allItems = listing ? [...listing.directories, ...listing.files] : [];
+  const itemOrder = allItems.map((item) => item.path);
+  const itemMap = new Map(allItems.map((item) => [item.path, item] as const));
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredItems = allItems.filter((item) => {
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    return (
+      item.name.toLowerCase().includes(normalizedSearch) ||
+      item.path.toLowerCase().includes(normalizedSearch)
+    );
+  });
+  const selectedSet = new Set(selectedPaths);
+  const selectedItems = selectedPaths
+    .map((path) => itemMap.get(path) ?? null)
+    .filter((item): item is FileEntry => item !== null);
+  const selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
+  const breadcrumbs = getBreadcrumbs(listing);
+  const clipboardReady = clipboardPaths.length > 0 && clipboardMode !== null;
+  const summaryParts = [
+    `${listing?.directories.length ?? 0} folders`,
+    `${listing?.files.length ?? 0} files`,
+  ];
+
+  if (selectedPaths.length > 0) {
+    summaryParts.push(`${selectedPaths.length} selected`);
+  }
+  if (clipboardReady) {
+    summaryParts.push(`${clipboardMode === "copy" ? "Copy" : "Cut"} ready: ${clipboardPaths.length}`);
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(VIEW_STORAGE_KEY, viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (settings.startPath) {
+      window.localStorage.setItem(START_PATH_STORAGE_KEY, settings.startPath);
+    } else {
+      window.localStorage.removeItem(START_PATH_STORAGE_KEY);
+    }
+  }, [settings.startPath]);
+
+  useEffect(() => {
+    const available = new Set(itemOrder);
+    const nextSelection = selectedPaths.filter((path) => available.has(path));
+    if (nextSelection.length !== selectedPaths.length) {
+      setSelectedPaths(nextSelection);
+      if (anchorPath && !available.has(anchorPath)) {
+        setAnchorPath(nextSelection.at(-1) ?? null);
+      }
+    }
+  }, [anchorPath, itemOrder, selectedPaths]);
+
+  useEffect(() => {
+    if (!listingQuery.isError || !currentPath) {
+      return;
+    }
+
+    if (getErrorMessage(listingQuery.error, "").toLowerCase().includes("not found")) {
+      setCurrentPath("");
+      setSettings((current) => ({ ...current, startPath: "" }));
+      setFlash({
+        tone: "error",
+        text: "The saved start folder no longer exists. FlowPanel returned to the root.",
+      });
+    }
+  }, [currentPath, listingQuery.error, listingQuery.isError]);
+
+  useEffect(() => {
+    function handleDocumentClick(event: MouseEvent) {
+      if (!contextMenuRef.current || !contextMenu) {
+        return;
+      }
+
+      if (!contextMenuRef.current.contains(event.target as Node)) {
+        setContextMenu(null);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) {
+        if (event.key === "Escape") {
+          setContextMenu(null);
+        }
+        return;
+      }
+
+      const meta = event.metaKey || event.ctrlKey;
+
+      if (event.key === "Escape") {
+        if (marquee.active) {
+          setMarquee((current) => ({ ...current, active: false, hasMoved: false }));
+          return;
+        }
+        if (contextMenu) {
+          setContextMenu(null);
+          return;
+        }
+        setSelectedPaths([]);
+        setAnchorPath(null);
+        return;
+      }
+
+      if (meta && event.key.toLowerCase() === "a") {
+        if (itemOrder.length > 0) {
+          setSelectedPaths(itemOrder);
+          setAnchorPath(itemOrder[0] ?? null);
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (meta && event.key.toLowerCase() === "c" && selectedPaths.length > 0) {
+        setClipboardMode("copy");
+        setClipboardPaths(selectedPaths);
+        setFlash({ tone: "success", text: `Copied ${selectedPaths.length} item(s) to the panel clipboard.` });
+        event.preventDefault();
+        return;
+      }
+
+      if (meta && event.key.toLowerCase() === "x" && selectedPaths.length > 0) {
+        setClipboardMode("move");
+        setClipboardPaths(selectedPaths);
+        setFlash({ tone: "success", text: `Cut ${selectedPaths.length} item(s).` });
+        event.preventDefault();
+        return;
+      }
+
+      if (meta && event.key.toLowerCase() === "v" && clipboardReady) {
+        void pasteInto(currentPath);
+        event.preventDefault();
+        return;
+      }
+
+      if (event.key === "Delete" && selectedPaths.length > 0) {
+        handleDeleteSelection();
+        event.preventDefault();
+      }
+    }
+
+    document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("click", handleDocumentClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [clipboardReady, contextMenu, currentPath, itemOrder, marquee.active, selectedPaths]);
+
+  useEffect(() => {
+    if (!marquee.active) {
+      return;
+    }
+
+    function handleMouseMove(event: MouseEvent) {
+      setMarquee((current) => {
+        const width = Math.abs(event.clientX - current.startX);
+        const height = Math.abs(event.clientY - current.startY);
+        return {
+          ...current,
+          currentX: event.clientX,
+          currentY: event.clientY,
+          hasMoved: current.hasMoved || width > 4 || height > 4,
+        };
+      });
+    }
+
+    function handleMouseUp() {
+      setMarquee((current) => ({ ...current, active: false }));
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [marquee.active]);
+
+  useEffect(() => {
+    if (!marquee.active || !marquee.hasMoved || !browserRef.current) {
+      return;
+    }
+
+    const left = Math.min(marquee.startX, marquee.currentX);
+    const right = Math.max(marquee.startX, marquee.currentX);
+    const top = Math.min(marquee.startY, marquee.currentY);
+    const bottom = Math.max(marquee.startY, marquee.currentY);
+    const next = new Set(marquee.baseSelection);
+
+    const candidates = browserRef.current.querySelectorAll<HTMLElement>("[data-selectable='1']");
+    for (const element of candidates) {
+      const rect = element.getBoundingClientRect();
+      if (rect.right < left || rect.left > right || rect.bottom < top || rect.top > bottom) {
+        continue;
+      }
+      const path = element.dataset.path || "";
+      if (path) {
+        next.add(path);
+      }
+    }
+
+    const ordered = itemOrder.filter((path) => next.has(path));
+    setSelectedPaths(ordered);
+    if (ordered.length > 0) {
+      setAnchorPath(ordered.at(-1) ?? null);
+    }
+  }, [itemOrder, marquee]);
+
+  const createDirectoryMutation = useMutation({
+    mutationFn: createDirectory,
+    onSuccess: async () => {
+      await invalidateCurrentListing();
+      setDialogMode(null);
+      setDialogValue("");
+      setFlash({ tone: "success", text: "Folder created." });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to create folder.") });
+    },
+  });
+
+  const createFileMutation = useMutation({
+    mutationFn: createFile,
+    onSuccess: async () => {
+      await invalidateCurrentListing();
+      setDialogMode(null);
+      setDialogValue("");
+      setFlash({ tone: "success", text: "File created." });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to create file.") });
+    },
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: renameEntry,
+    onSuccess: async (nextPath) => {
+      await invalidateCurrentListing();
+      setSelectedPaths([nextPath]);
+      setAnchorPath(nextPath);
+      setDialogMode(null);
+      setDialogValue("");
+      setFlash({ tone: "success", text: "Entry renamed." });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to rename entry.") });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (paths: string[]) => {
+      for (const path of paths) {
+        await deleteEntry(path);
+      }
+    },
+    onSuccess: async () => {
+      await invalidateCurrentListing();
+      setSelectedPaths([]);
+      setAnchorPath(null);
+      setContextMenu(null);
+      setFlash({ tone: "success", text: "Selection deleted." });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to delete selection.") });
+    },
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: ({ path, files }: { path: string; files: File[] }) => uploadFiles(path, files),
+    onSuccess: async () => {
+      await invalidateCurrentListing();
+      setDropTargetPath(null);
+      setRootDropActive(false);
+      setFlash({ tone: "success", text: "Upload complete." });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to upload files.") });
+    },
+  });
+
+  const transferMutation = useMutation({
+    mutationFn: transferEntries,
+    onSuccess: async (_, variables) => {
+      await invalidateCurrentListing();
+      setDropTargetPath(null);
+      setRootDropActive(false);
+      setContextMenu(null);
+      setSelectedPaths([]);
+      setAnchorPath(null);
+      if (variables.mode === "move") {
+        setClipboardMode(null);
+        setClipboardPaths([]);
+      }
+      setFlash({
+        tone: "success",
+        text: variables.mode === "copy" ? "Selection copied." : "Selection moved.",
+      });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to transfer selection.") });
+    },
+  });
+
+  async function invalidateCurrentListing() {
+    await queryClient.invalidateQueries({ queryKey: ["files", currentPath] });
+  }
+
+  function setSelection(paths: string[], nextAnchor?: string | null) {
+    const deduped = itemOrder.filter((path, index) => {
+      return paths.includes(path) && itemOrder.indexOf(path) === index;
+    });
+    setSelectedPaths(deduped);
+    setAnchorPath(nextAnchor === undefined ? (deduped.at(-1) ?? null) : nextAnchor);
+  }
+
+  function clearSelection() {
+    setSelectedPaths([]);
+    setAnchorPath(null);
+  }
+
+  function handleNavigate(path: string) {
+    setCurrentPath(path);
+    setSearch("");
+    setContextMenu(null);
+    clearSelection();
+  }
+
+  function handleSelectionClick(item: FileEntry, event: ReactMouseEvent<HTMLElement>) {
+    const withMeta = event.metaKey || event.ctrlKey;
+    const withShift = event.shiftKey;
+
+    if (withShift && anchorPath) {
+      const start = itemOrder.indexOf(anchorPath);
+      const end = itemOrder.indexOf(item.path);
+      if (start >= 0 && end >= 0) {
+        const range = itemOrder.slice(Math.min(start, end), Math.max(start, end) + 1);
+        setSelection(range, anchorPath);
+        return;
+      }
+    }
+
+    if (withMeta) {
+      if (selectedSet.has(item.path)) {
+        const next = selectedPaths.filter((path) => path !== item.path);
+        setSelection(next, next.at(-1) ?? null);
+      } else {
+        setSelection([...selectedPaths, item.path], item.path);
+      }
+      return;
+    }
+
+    setSelection([item.path], item.path);
+  }
+
+  function handleActivateItem(item: FileEntry) {
+    if (item.type === "directory") {
+      handleNavigate(item.path);
+      return;
+    }
+
+    if (item.type === "symlink") {
+      setFlash({ tone: "error", text: "Symlinks are not supported in the panel." });
+      return;
+    }
+
+    void openEditor(item.path);
+  }
+
+  async function openEditor(path: string) {
+    setEditorOpen(true);
+    setEditorBusy(true);
+    setEditorPath(path);
+    setEditorName(path.split("/").pop() || path);
+    setEditorContent("");
+    setEditorOriginalContent("");
+    setEditorMeta(null);
+
+    try {
+      const file = await fetchFileContent(path);
+      setEditorName(file.name);
+      setEditorContent(file.content);
+      setEditorOriginalContent(file.content);
+      setEditorMeta({ size: file.size, modifiedAt: file.modified_at });
+    } catch (error) {
+      setEditorOpen(false);
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to open file.") });
+    } finally {
+      setEditorBusy(false);
+    }
+  }
+
+  async function saveEditor() {
+    if (!editorPath) {
+      return;
+    }
+
+    setEditorBusy(true);
+
+    try {
+      await saveFileContent({ path: editorPath, content: editorContent });
+      setEditorOriginalContent(editorContent);
+      await invalidateCurrentListing();
+      setFlash({ tone: "success", text: "File saved." });
+    } catch (error) {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to save file.") });
+    } finally {
+      setEditorBusy(false);
+    }
+  }
+
+  function openDialog(mode: Exclude<DialogMode, null>) {
+    setDialogMode(mode);
+    setDialogValue(mode === "rename" && selectedItem ? selectedItem.name : "");
+    setContextMenu(null);
+  }
+
+  async function submitDialog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const name = dialogValue.trim();
+    if (!name) {
+      return;
+    }
+
+    if (dialogMode === "folder") {
+      await createDirectoryMutation.mutateAsync({ path: currentPath, name });
+      return;
+    }
+
+    if (dialogMode === "file") {
+      await createFileMutation.mutateAsync({ path: currentPath, name });
+      return;
+    }
+
+    if (dialogMode === "rename" && selectedItem) {
+      await renameMutation.mutateAsync({ path: selectedItem.path, name });
+    }
+  }
+
+  function handleDeleteSelection() {
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      selectedPaths.length === 1
+        ? `Delete "${selectedItem?.name || selectedPaths[0]}"?`
+        : `Delete ${selectedPaths.length} selected items?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    deleteMutation.mutate(selectedPaths);
+  }
+
+  function copySelection(mode: Exclude<ClipboardMode, null>) {
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
+    setClipboardMode(mode);
+    setClipboardPaths(selectedPaths);
+    setContextMenu(null);
+    setFlash({
+      tone: "success",
+      text: mode === "copy" ? `Copied ${selectedPaths.length} item(s).` : `Cut ${selectedPaths.length} item(s).`,
+    });
+  }
+
+  async function pasteInto(targetPath: string) {
+    if (!clipboardReady) {
+      return;
+    }
+
+    await transferMutation.mutateAsync({
+      mode: clipboardMode === "copy" ? "copy" : "move",
+      paths: clipboardPaths,
+      target: targetPath,
+    });
+  }
+
+  function handleDownloadSelection() {
+    if (selectedItem?.type !== "file") {
+      return;
+    }
+
+    window.location.assign(getDownloadUrl(selectedItem.path));
+  }
+
+  function handleUploadSelection(files: FileList | null, targetPath = currentPath) {
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    uploadMutation.mutate({ path: targetPath, files: Array.from(files) });
+  }
+
+  function beginMarquee(event: ReactMouseEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-selectable='1']") || target.closest("[data-context-menu='1']")) {
+      return;
+    }
+
+    setContextMenu(null);
+    setMarquee({
+      active: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      currentX: event.clientX,
+      currentY: event.clientY,
+      hasMoved: false,
+      baseSelection: event.metaKey || event.ctrlKey ? selectedPaths : [],
+    });
+
+    if (!(event.metaKey || event.ctrlKey)) {
+      clearSelection();
+    }
+  }
+
+  function handleItemContextMenu(event: ReactMouseEvent<HTMLElement>, item: FileEntry) {
+    event.preventDefault();
+
+    if (!selectedSet.has(item.path)) {
+      setSelection([item.path], item.path);
+    }
+
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      scope: "item",
+      path: item.path,
+    });
+  }
+
+  function handleBackgroundContextMenu(event: ReactMouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-selectable='1']")) {
+      return;
+    }
+
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      scope: "background",
+      path: null,
+    });
+  }
+
+  function handleInternalDragStart(item: FileEntry, event: React.DragEvent<HTMLElement>) {
+    if (!selectedSet.has(item.path)) {
+      setSelection([item.path], item.path);
+    }
+
+    event.dataTransfer.setData("application/x-flowpanel-paths", JSON.stringify(selectedSet.has(item.path) ? selectedPaths : [item.path]));
+    event.dataTransfer.effectAllowed = "move";
+    setContextMenu(null);
+  }
+
+  function handleDirectoryDragOver(path: string, event: React.DragEvent<HTMLElement>) {
+    const isFileDrop = event.dataTransfer.types.includes("Files");
+    const hasInternalPaths = event.dataTransfer.types.includes("application/x-flowpanel-paths");
+
+    if (!isFileDrop && !hasInternalPaths) {
+      return;
+    }
+
+    event.preventDefault();
+    setDropTargetPath(path);
+    setRootDropActive(false);
+  }
+
+  function handleDirectoryDrop(path: string, event: React.DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setDropTargetPath(null);
+
+    if (event.dataTransfer.files.length > 0) {
+      handleUploadSelection(event.dataTransfer.files, path);
+      return;
+    }
+
+    const payload = event.dataTransfer.getData("application/x-flowpanel-paths");
+    if (!payload) {
+      return;
+    }
+
+    try {
+      const paths = JSON.parse(payload) as string[];
+      if (paths.length === 0) {
+        return;
+      }
+      transferMutation.mutate({ mode: "move", paths, target: path });
+    } catch {
+      setFlash({ tone: "error", text: "Invalid drag payload." });
+    }
+  }
+
+  function handleBrowserDragOver(event: React.DragEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-type='directory']")) {
+      return;
+    }
+
+    if (event.dataTransfer.types.includes("Files")) {
+      event.preventDefault();
+      setRootDropActive(true);
+      setDropTargetPath(null);
+    }
+  }
+
+  function handleBrowserDrop(event: React.DragEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-type='directory']")) {
+      return;
+    }
+
+    if (event.dataTransfer.files.length > 0) {
+      event.preventDefault();
+      setRootDropActive(false);
+      handleUploadSelection(event.dataTransfer.files, currentPath);
+    }
+  }
+
+  function buildContextMenuItems() {
+    const targetItem = contextMenu?.path ? itemMap.get(contextMenu.path) ?? null : null;
+    const items: Array<{
+      key: string;
+      label: string;
+      icon: React.ComponentType<{ className?: string }>;
+      disabled?: boolean;
+      handler: () => void;
+    }> = [];
+
+    if (contextMenu?.scope === "item" && targetItem && selectedPaths.length === 1) {
+      if (targetItem.type === "directory") {
+        items.push({
+          key: "open",
+          label: "Open",
+          icon: FolderOpen,
+          handler: () => handleNavigate(targetItem.path),
+        });
+      }
+
+      if (targetItem.type === "file") {
+        items.push({
+          key: "edit",
+          label: isEditableFile(targetItem) ? "Open in Editor" : "Try Open",
+          icon: Pencil,
+          handler: () => void openEditor(targetItem.path),
+        });
+        items.push({
+          key: "download",
+          label: "Download",
+          icon: Download,
+          handler: handleDownloadSelection,
+        });
+      }
+    }
+
+    if (selectedPaths.length > 0) {
+      items.push({
+        key: "copy",
+        label: selectedPaths.length === 1 ? "Copy" : `Copy ${selectedPaths.length} Items`,
+        icon: Copy,
+        handler: () => copySelection("copy"),
+      });
+      items.push({
+        key: "cut",
+        label: selectedPaths.length === 1 ? "Cut" : `Cut ${selectedPaths.length} Items`,
+        icon: Scissors,
+        handler: () => copySelection("move"),
+      });
+
+      if (selectedPaths.length === 1) {
+        items.push({
+          key: "rename",
+          label: "Rename",
+          icon: Pencil,
+          handler: () => openDialog("rename"),
+        });
+      }
+
+      items.push({
+        key: "delete",
+        label: selectedPaths.length === 1 ? "Delete" : `Delete ${selectedPaths.length} Items`,
+        icon: Trash2,
+        handler: handleDeleteSelection,
+      });
+    }
+
+    if (clipboardReady) {
+      const pasteTarget =
+        contextMenu?.scope === "item" && targetItem?.type === "directory" ? targetItem.path : currentPath;
+      items.push({
+        key: "paste",
+        label: clipboardMode === "copy" ? "Paste Copy" : "Paste Move",
+        icon: Check,
+        handler: () => {
+          void pasteInto(pasteTarget);
+        },
+      });
+    }
+
+    return items;
+  }
+
+  const contextMenuItems = buildContextMenuItems();
+  const isMutating =
+    createDirectoryMutation.isPending ||
+    createFileMutation.isPending ||
+    renameMutation.isPending ||
+    deleteMutation.isPending ||
+    uploadMutation.isPending ||
+    transferMutation.isPending;
+  const dialogTitle =
+    dialogMode === "folder" ? "New Folder" : dialogMode === "file" ? "New File" : "Rename Entry";
+  const editorDirty = editorContent !== editorOriginalContent;
+  const marqueeRect = marquee.hasMoved
+    ? {
+        left: Math.min(marquee.startX, marquee.currentX),
+        top: Math.min(marquee.startY, marquee.currentY),
+        width: Math.abs(marquee.currentX - marquee.startX),
+        height: Math.abs(marquee.currentY - marquee.startY),
+      }
+    : null;
+  const contextMenuStyle = contextMenu
+    ? {
+        left:
+          typeof window === "undefined"
+            ? contextMenu.x
+            : Math.max(12, Math.min(contextMenu.x, window.innerWidth - 252)),
+        top:
+          typeof window === "undefined"
+            ? contextMenu.y
+            : Math.max(12, Math.min(contextMenu.y, window.innerHeight - 260)),
+      }
+    : null;
+
   return (
-    <ShellPage
-      title="Files"
-      meta="File operations are not exposed in the current baseline."
-      message="Directory browsing, upload flows, permissions, and file edits can be surfaced here once the panel defines a safe filesystem access model."
-    />
+    <div className="min-h-screen">
+      <PageHeader
+        title="Files"
+        meta={
+          listing
+            ? `Root ${listing.root_path}`
+            : "Browse, multi-select, drag, copy, move, and edit files in the panel."
+        }
+      />
+
+      <div className="px-5 py-5 md:px-8">
+        <div className="space-y-4">
+          {flash ? <FlashBanner flash={flash} /> : null}
+
+          <section className="rounded-[18px] border border-[var(--app-border)] bg-[linear-gradient(180deg,rgba(22,28,36,0.98),rgba(12,16,21,0.98))] shadow-[var(--app-shadow)]">
+            <div className="flex flex-col gap-4 border-b border-[var(--app-border)] px-4 py-4 md:px-5">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.2em] text-[var(--app-text-muted)]">
+                    <HardDrive className="h-4 w-4" />
+                    File root
+                  </div>
+                  <div className="text-[15px] font-medium text-[var(--app-text)]">
+                    {listing?.absolute_path || listing?.root_path || "Loading..."}
+                  </div>
+                  <div className="text-[12px] text-[var(--app-text-muted)]">{summaryParts.join(" / ")}</div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => listingQuery.refetch()}
+                    disabled={listingQuery.isFetching}
+                  >
+                    <RefreshCw className={cn("h-4 w-4", listingQuery.isFetching && "animate-spin")} />
+                    Refresh
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleNavigate(listing?.parent_path || "")}
+                    disabled={!listing?.parent_path}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                    Up
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => openDialog("folder")}>
+                    <FolderPlus className="h-4 w-4" />
+                    New Folder
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => openDialog("file")}>
+                    <FilePlus2 className="h-4 w-4" />
+                    New File
+                  </Button>
+                  <Button size="sm" onClick={() => uploadInputRef.current?.click()}>
+                    <Upload className="h-4 w-4" />
+                    Upload
+                  </Button>
+                  {clipboardReady ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        void pasteInto(currentPath);
+                      }}
+                    >
+                      <Check className="h-4 w-4" />
+                      Paste
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSettings({
+                        startPath: currentPath,
+                        preferredView: viewMode,
+                      });
+                      setSettingsOpen(true);
+                    }}
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    Settings
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--app-text-muted)]">
+                  {breadcrumbs.map((crumb, index) => (
+                    <div key={crumb.path || "root"} className="flex items-center gap-2">
+                      {index > 0 ? <span className="text-[var(--app-border-strong)]">/</span> : null}
+                      <button
+                        type="button"
+                        className={cn(
+                          "rounded-[8px] px-2 py-1 transition-colors duration-150",
+                          crumb.path === currentPath
+                            ? "bg-[var(--app-accent-soft)] text-[var(--app-text)]"
+                            : "hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]",
+                        )}
+                        onClick={() => handleNavigate(crumb.path)}
+                      >
+                        {crumb.label}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="relative min-w-[220px]">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-text-muted)]" />
+                    <Input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Search current folder"
+                      className="pl-9"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1 rounded-[12px] border border-[var(--app-border)] bg-[var(--app-surface)] p-1">
+                    <button
+                      type="button"
+                      className={cn(
+                        "inline-flex h-8 w-8 items-center justify-center rounded-[8px] text-[var(--app-text-muted)] transition-colors duration-150",
+                        viewMode === "list" && "bg-[var(--app-accent)] text-[#f7fbff]",
+                      )}
+                      onClick={() => setViewMode("list")}
+                    >
+                      <List className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "inline-flex h-8 w-8 items-center justify-center rounded-[8px] text-[var(--app-text-muted)] transition-colors duration-150",
+                        viewMode === "grid" && "bg-[var(--app-accent)] text-[#f7fbff]",
+                      )}
+                      onClick={() => setViewMode("grid")}
+                    >
+                      <Grid2X2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_290px] md:p-5">
+              <div
+                ref={browserRef}
+                className={cn(
+                  "relative overflow-hidden rounded-[16px] border border-[var(--app-border)] bg-[rgba(7,9,12,0.7)]",
+                  rootDropActive && "ring-2 ring-[var(--app-accent)]/80",
+                )}
+                onMouseDown={beginMarquee}
+                onContextMenu={handleBackgroundContextMenu}
+                onDragOver={handleBrowserDragOver}
+                onDragLeave={(event) => {
+                  if (event.currentTarget.contains(event.relatedTarget as Node)) {
+                    return;
+                  }
+                  setRootDropActive(false);
+                }}
+                onDrop={handleBrowserDrop}
+              >
+                <div className="flex items-center justify-between border-b border-[var(--app-border)] px-4 py-3">
+                  <div>
+                    <div className="text-[15px] font-medium text-[var(--app-text)]">Directory</div>
+                    <div className="text-[12px] text-[var(--app-text-muted)]">
+                      {normalizedSearch
+                        ? `${filteredItems.length} matching item${filteredItems.length === 1 ? "" : "s"}`
+                        : `${allItems.length} item${allItems.length === 1 ? "" : "s"}`}
+                    </div>
+                  </div>
+
+                  {selectedPaths.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="secondary" size="sm" onClick={() => copySelection("copy")}>
+                        <Copy className="h-4 w-4" />
+                        Copy
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => copySelection("move")}>
+                        <Scissors className="h-4 w-4" />
+                        Cut
+                      </Button>
+                      {selectedItem?.type === "file" ? (
+                        <>
+                          <Button variant="secondary" size="sm" onClick={() => void openEditor(selectedItem.path)}>
+                            <Pencil className="h-4 w-4" />
+                            Edit
+                          </Button>
+                          <Button variant="secondary" size="sm" onClick={handleDownloadSelection}>
+                            <Download className="h-4 w-4" />
+                            Download
+                          </Button>
+                        </>
+                      ) : null}
+                      {selectedItem ? (
+                        <Button variant="secondary" size="sm" onClick={() => openDialog("rename")}>
+                          <Pencil className="h-4 w-4" />
+                          Rename
+                        </Button>
+                      ) : null}
+                      <Button variant="secondary" size="sm" onClick={handleDeleteSelection}>
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+
+                {listingQuery.isLoading ? (
+                  <div className="flex min-h-[260px] items-center justify-center text-[13px] text-[var(--app-text-muted)]">
+                    Loading directory...
+                  </div>
+                ) : listingQuery.isError ? (
+                  <div className="flex min-h-[260px] items-center justify-center px-6 text-center text-[13px] text-[var(--app-danger)]">
+                    {getErrorMessage(listingQuery.error, "Failed to load files.")}
+                  </div>
+                ) : filteredItems.length === 0 ? (
+                  <EmptyState searchActive={Boolean(normalizedSearch)} />
+                ) : viewMode === "list" ? (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full border-collapse text-left">
+                      <thead className="bg-[rgba(15,19,24,0.9)] text-[11px] uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
+                        <tr>
+                          <th className="px-4 py-3 font-medium">Name</th>
+                          <th className="px-4 py-3 font-medium">Type</th>
+                          <th className="px-4 py-3 font-medium text-right">Size</th>
+                          <th className="px-4 py-3 font-medium">Modified</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredItems.map((item) => {
+                          const Icon = getItemIcon(item);
+                          const isSelected = selectedSet.has(item.path);
+
+                          return (
+                            <tr
+                              key={item.path}
+                              data-selectable="1"
+                              data-path={item.path}
+                              data-type={item.type}
+                              draggable={item.type !== "symlink"}
+                              className={cn(
+                                "cursor-pointer border-t border-[var(--app-border)] text-[13px] transition-colors duration-150 hover:bg-[rgba(28,104,203,0.12)]",
+                                isSelected && "bg-[rgba(28,104,203,0.18)]",
+                                dropTargetPath === item.path && item.type === "directory" && "ring-2 ring-inset ring-[var(--app-accent)]",
+                              )}
+                              onClick={(event) => handleSelectionClick(item, event)}
+                              onDoubleClick={() => handleActivateItem(item)}
+                              onContextMenu={(event) => handleItemContextMenu(event, item)}
+                              onDragStart={(event) => handleInternalDragStart(item, event)}
+                              onDragOver={(event) =>
+                                item.type === "directory" ? handleDirectoryDragOver(item.path, event) : undefined
+                              }
+                              onDragLeave={() => {
+                                if (dropTargetPath === item.path) {
+                                  setDropTargetPath(null);
+                                }
+                              }}
+                              onDrop={(event) =>
+                                item.type === "directory" ? handleDirectoryDrop(item.path, event) : undefined
+                              }
+                            >
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-3">
+                                  <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
+                                    <Icon className="h-4 w-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium text-[var(--app-text)]">{item.name}</div>
+                                    <div className="truncate text-[12px] text-[var(--app-text-muted)]">
+                                      {item.path}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-[var(--app-text-muted)]">{getItemLabel(item)}</td>
+                              <td className="px-4 py-3 text-right text-[var(--app-text-muted)]">
+                                {item.type === "file" ? formatBytes(item.size) : "-"}
+                              </td>
+                              <td className="px-4 py-3 text-[var(--app-text-muted)]">
+                                {formatDateTime(item.modified_at)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-3 p-4">
+                    {filteredItems.map((item) => {
+                      const Icon = getItemIcon(item);
+                      const isSelected = selectedSet.has(item.path);
+                      const tone = getGridPreviewTone(item);
+
+                      return (
+                        <button
+                          key={item.path}
+                          type="button"
+                          data-selectable="1"
+                          data-path={item.path}
+                          data-type={item.type}
+                          draggable={item.type !== "symlink"}
+                          className={cn(
+                            "group flex w-[8.4rem] shrink-0 flex-col items-center rounded-[18px] border px-3 py-2.5 text-center transition-all duration-150",
+                            isSelected
+                              ? "border-[var(--app-accent)] bg-[linear-gradient(180deg,rgba(21,33,52,0.96),rgba(14,20,30,0.96))] shadow-[0_0_0_2px_rgba(28,104,203,0.32),0_18px_34px_rgba(18,53,102,0.18)]"
+                              : "border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,rgba(16,16,26,0.96),rgba(11,13,19,0.96))] shadow-[0_12px_28px_rgba(0,0,0,0.18)] hover:-translate-y-[2px] hover:border-[rgba(255,255,255,0.12)] hover:shadow-[0_18px_34px_rgba(0,0,0,0.28)]",
+                            dropTargetPath === item.path &&
+                              item.type === "directory" &&
+                              "border-[var(--app-accent)] bg-[linear-gradient(180deg,rgba(18,35,61,0.96),rgba(12,20,34,0.96))] shadow-[0_0_0_2px_rgba(28,104,203,0.3),0_18px_34px_rgba(18,53,102,0.18)]",
+                          )}
+                          style={{ minHeight: 152 }}
+                          onClick={(event) => handleSelectionClick(item, event)}
+                          onDoubleClick={() => handleActivateItem(item)}
+                          onContextMenu={(event) => handleItemContextMenu(event, item)}
+                          onDragStart={(event) => handleInternalDragStart(item, event)}
+                          onDragOver={(event) =>
+                            item.type === "directory" ? handleDirectoryDragOver(item.path, event) : undefined
+                          }
+                          onDragLeave={() => {
+                            if (dropTargetPath === item.path) {
+                              setDropTargetPath(null);
+                            }
+                          }}
+                          onDrop={(event) =>
+                            item.type === "directory" ? handleDirectoryDrop(item.path, event) : undefined
+                          }
+                        >
+                          <div
+                            className={cn(
+                              "relative mb-2.5 flex aspect-square w-full max-w-[3.8rem] items-center justify-center overflow-hidden rounded-[15px] border",
+                              tone.frame,
+                              tone.glow,
+                            )}
+                          >
+                            <Icon className="relative z-10 h-7 w-7 transition-transform duration-150 group-hover:scale-105" />
+                          </div>
+                          <div
+                            className="w-full overflow-hidden text-[13px] font-semibold leading-5 text-[var(--app-text)]"
+                            style={{
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                            }}
+                          >
+                            {item.name}
+                          </div>
+                          <div className="mt-1.5 text-[11px] text-[var(--app-text-muted)]">
+                            {item.type === "file" ? formatBytes(item.size) : "Directory"}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {marqueeRect ? (
+                  <div
+                    className="pointer-events-none fixed z-40 rounded-[8px] border border-[var(--app-accent)] bg-[rgba(28,104,203,0.18)]"
+                    style={marqueeRect}
+                  />
+                ) : null}
+
+                {contextMenu && contextMenuItems.length > 0 ? (
+                  <div
+                    ref={contextMenuRef}
+                    data-context-menu="1"
+                    className="fixed z-50 min-w-[220px] rounded-[14px] border border-[var(--app-border)] bg-[rgba(15,19,24,0.98)] p-2 shadow-[0_18px_35px_rgba(0,0,0,0.35)] backdrop-blur-sm"
+                    style={contextMenuStyle ?? undefined}
+                  >
+                    <div className="space-y-1">
+                      {contextMenuItems.map((item) => {
+                        const Icon = item.icon;
+
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-[13px] text-[var(--app-text)] transition-colors duration-150 hover:bg-[var(--app-accent-soft)]"
+                            onClick={() => {
+                              setContextMenu(null);
+                              item.handler();
+                            }}
+                          >
+                            <Icon className="h-4 w-4 text-[var(--app-text-muted)]" />
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <aside className="rounded-[16px] border border-[var(--app-border)] bg-[rgba(7,9,12,0.7)] p-4">
+                <div className="text-[12px] uppercase tracking-[0.18em] text-[var(--app-text-muted)]">
+                  Details
+                </div>
+
+                {selectedItem ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
+                        {(() => {
+                          const Icon = getItemIcon(selectedItem);
+                          return <Icon className="h-5 w-5" />;
+                        })()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-[16px] font-medium text-[var(--app-text)]">
+                          {selectedItem.name}
+                        </div>
+                        <div className="mt-1 text-[13px] text-[var(--app-text-muted)]">
+                          {getItemLabel(selectedItem)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <dl className="space-y-3 text-[13px]">
+                      <div>
+                        <dt className="text-[var(--app-text-muted)]">Path</dt>
+                        <dd className="mt-1 break-all text-[var(--app-text)]">{selectedItem.path}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-[var(--app-text-muted)]">Modified</dt>
+                        <dd className="mt-1 text-[var(--app-text)]">{formatDateTime(selectedItem.modified_at)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-[var(--app-text-muted)]">Size</dt>
+                        <dd className="mt-1 text-[var(--app-text)]">
+                          {selectedItem.type === "file" ? formatBytes(selectedItem.size) : "-"}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                ) : selectedPaths.length > 1 ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="text-[16px] font-medium text-[var(--app-text)]">
+                      {selectedPaths.length} items selected
+                    </div>
+                    <p className="text-[13px] leading-6 text-[var(--app-text-muted)]">
+                      Use right-click, keyboard shortcuts, drag and drop, or the toolbar actions to work on the selection.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-4 text-[13px] text-[var(--app-text-muted)]">
+                    <p>
+                      Right-click for actions, drag items into folders to move them, or drag files from your desktop here to upload.
+                    </p>
+                    <div className="rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface)] p-4">
+                      <div className="text-[12px] uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
+                        Current folder
+                      </div>
+                      <div className="mt-2 break-all text-[var(--app-text)]">
+                        {listing?.absolute_path || listing?.root_path || "Loading..."}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </aside>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <input
+        ref={uploadInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          handleUploadSelection(event.target.files);
+          event.target.value = "";
+        }}
+      />
+
+      <Dialog open={dialogMode !== null} onOpenChange={(open) => (!open ? setDialogMode(null) : null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{dialogTitle}</DialogTitle>
+            <DialogDescription>
+              {dialogMode === "rename"
+                ? "Update the selected name."
+                : `Create this inside ${pathLabel(listing?.path || currentPath)}.`}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={(event) => void submitDialog(event)}>
+            <div className="space-y-2">
+              <label className="text-[13px] font-medium text-[var(--app-text)]" htmlFor="files-dialog-name">
+                Name
+              </label>
+              <Input
+                id="files-dialog-name"
+                value={dialogValue}
+                onChange={(event) => setDialogValue(event.target.value)}
+                placeholder={dialogMode === "file" ? "new-file.txt" : "new-folder"}
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <div className="text-[12px] text-[var(--app-text-muted)]">
+                {listing?.absolute_path || listing?.root_path}
+              </div>
+              <Button type="submit" disabled={isMutating || !dialogValue.trim()}>
+                {dialogMode === "rename" ? "Rename" : "Create"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>File Manager Settings</DialogTitle>
+            <DialogDescription>
+              Persist the start folder and your preferred browsing mode for this browser.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-[13px] font-medium text-[var(--app-text)]" htmlFor="files-settings-path">
+                Start folder
+              </label>
+              <Input
+                id="files-settings-path"
+                value={settings.startPath}
+                onChange={(event) =>
+                  setSettings((current) => ({ ...current, startPath: event.target.value.trim() }))
+                }
+                placeholder="Leave blank for the root"
+              />
+              <p className="text-[12px] text-[var(--app-text-muted)]">
+                Current root: {listing?.root_path || "Loading..."}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-[13px] font-medium text-[var(--app-text)]">Preferred view</div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={settings.preferredView === "list" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setSettings((current) => ({ ...current, preferredView: "list" }))}
+                >
+                  <List className="h-4 w-4" />
+                  List
+                </Button>
+                <Button
+                  variant={settings.preferredView === "grid" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setSettings((current) => ({ ...current, preferredView: "grid" }))}
+                >
+                  <Grid2X2 className="h-4 w-4" />
+                  Grid
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <div className="text-[12px] text-[var(--app-text-muted)]">Saved locally in the browser.</div>
+            <Button
+              onClick={() => {
+                setViewMode(settings.preferredView);
+                setCurrentPath(settings.startPath);
+                setSettingsOpen(false);
+                setFlash({ tone: "success", text: "File manager settings updated." });
+              }}
+            >
+              Save Settings
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editorOpen}
+        onOpenChange={(open) => {
+          setEditorOpen(open);
+          if (!open) {
+            setEditorPath("");
+            setEditorName("");
+            setEditorContent("");
+            setEditorOriginalContent("");
+            setEditorMeta(null);
+          }
+        }}
+      >
+        <DialogContent className="w-[min(980px,calc(100vw-2rem))]">
+          <DialogHeader>
+            <DialogTitle>{editorName || "Editor"}</DialogTitle>
+            <DialogDescription>
+              {editorMeta
+                ? `${formatBytes(editorMeta.size)} / ${formatDateTime(editorMeta.modifiedAt)}`
+                : "Loading file contents..."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-[12px] text-[var(--app-text-muted)]">
+              {editorPath}
+            </div>
+            <textarea
+              value={editorContent}
+              onChange={(event) => setEditorContent(event.target.value)}
+              readOnly={editorBusy}
+              spellCheck={false}
+              className="min-h-[55vh] w-full rounded-[14px] border border-[var(--app-border)] bg-[#0b1016] px-4 py-4 font-mono text-[13px] leading-6 text-[var(--app-text)] outline-none transition-colors duration-150 focus:border-[var(--app-border-strong)] focus:ring-2 focus:ring-[var(--app-accent)]/20"
+            />
+          </div>
+
+          <DialogFooter>
+            <div className="text-[12px] text-[var(--app-text-muted)]">
+              {editorDirty ? "Unsaved changes" : "No pending changes"}
+            </div>
+            <Button onClick={() => void saveEditor()} disabled={editorBusy || !editorDirty}>
+              {editorBusy ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

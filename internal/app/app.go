@@ -6,6 +6,7 @@ import (
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/files"
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/phpenv"
 
@@ -22,6 +23,7 @@ type App struct {
 	Jobs     *jobs.Scheduler
 	Caddy    *caddy.Runtime
 	PHP      phpenv.Manager
+	Files    *files.Service
 }
 
 func New(
@@ -33,6 +35,7 @@ func New(
 	scheduler *jobs.Scheduler,
 	caddyRuntime *caddy.Runtime,
 	phpManager phpenv.Manager,
+	fileManager *files.Service,
 ) *App {
 	return &App{
 		Config:   cfg,
@@ -43,5 +46,6 @@ func New(
 		Jobs:     scheduler,
 		Caddy:    caddyRuntime,
 		PHP:      phpManager,
+		Files:    fileManager,
 	}
 }
