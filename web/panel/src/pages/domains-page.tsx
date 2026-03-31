@@ -165,6 +165,7 @@ export function DomainsPage() {
   const [form, setForm] = useState<FormState>(initialFormState);
   const [errors, setErrors] = useState<FormErrors>({});
   const [formOpen, setFormOpen] = useState(false);
+  const [resetOnClose, setResetOnClose] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>("create");
   const [editingDomainId, setEditingDomainId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -218,11 +219,13 @@ export function DomainsPage() {
   }
 
   function openCreateForm() {
+    setResetOnClose(false);
     resetForm();
     setFormOpen(true);
   }
 
   function openEditForm(domain: DomainRecord) {
+    setResetOnClose(false);
     setForm({
       hostname: domain.hostname,
       kind: domain.kind,
@@ -240,7 +243,7 @@ export function DomainsPage() {
       return;
     }
 
-    resetForm();
+    setResetOnClose(true);
     setFormOpen(false);
   }
 
@@ -250,6 +253,7 @@ export function DomainsPage() {
       return;
     }
 
+    setResetOnClose(false);
     setFormOpen(true);
   }
 
@@ -303,7 +307,7 @@ export function DomainsPage() {
       }
 
       setLoadError(null);
-      resetForm();
+      setResetOnClose(true);
       setFormOpen(false);
     } catch (error) {
       const domainError = error as DomainApiError;
@@ -346,7 +350,7 @@ export function DomainsPage() {
         current.filter((currentDomain) => currentDomain.id !== domain.id),
       );
       if (editingDomainId === domain.id) {
-        resetForm();
+        setResetOnClose(true);
         setFormOpen(false);
       }
     } catch (error) {
@@ -473,6 +477,14 @@ export function DomainsPage() {
       </div>
 
       <DialogContent
+        onAnimationEnd={(event) => {
+          if (event.target !== event.currentTarget || formOpen || !resetOnClose) {
+            return;
+          }
+
+          resetForm();
+          setResetOnClose(false);
+        }}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           hostnameInputRef.current?.focus();
