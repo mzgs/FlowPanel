@@ -103,6 +103,22 @@ function maskPassword(password: string) {
   return password ? "**********" : "";
 }
 
+function formatStatusSummary(product?: string, version?: string) {
+  const normalizedProduct = product?.trim() || "MySQL / MariaDB";
+  const normalizedVersion = version?.trim();
+
+  if (!normalizedVersion) {
+    return normalizedProduct;
+  }
+
+  const versionMatch = normalizedVersion.match(/\b\d+(?:\.\d+)+\b/);
+  if (versionMatch) {
+    return `${normalizedProduct} ${versionMatch[0]}`;
+  }
+
+  return `${normalizedProduct} ${normalizedVersion}`;
+}
+
 function ToolbarButton({
   children,
   disabled = false,
@@ -171,9 +187,7 @@ export function DatabasePage() {
         }
 
         if (statusResult.status === "fulfilled") {
-          const product = statusResult.value.product?.trim() || "MySQL / MariaDB";
-          const version = statusResult.value.version?.trim() || "";
-          setStatusSummary(version ? `${product} ${version}` : product);
+          setStatusSummary(formatStatusSummary(statusResult.value.product, statusResult.value.version));
         } else {
           setStatusSummary("MySQL / MariaDB");
         }
@@ -581,14 +595,8 @@ export function DatabasePage() {
                 </PopoverContent>
               </Popover>
               <ToolbarButton>phpMyAdmin</ToolbarButton>
-              <ToolbarButton>Remote DB</ToolbarButton>
-              <ToolbarButton>Advanced Setup</ToolbarButton>
-              <ToolbarButton>Sync all</ToolbarButton>
-              <ToolbarButton>Get DB from server</ToolbarButton>
 
-              <div className="min-w-[220px] rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-2 text-[13px] text-[var(--app-text-muted)]">
-                {statusSummary}
-              </div>
+              <div>{statusSummary}</div>
 
               <div className="ms-auto flex items-center gap-2">
                 <select className="h-10 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 text-[13px] text-[var(--app-text)] focus:outline-none">
