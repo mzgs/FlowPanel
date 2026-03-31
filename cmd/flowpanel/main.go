@@ -21,6 +21,7 @@ import (
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/logging"
 	"flowpanel/internal/phpenv"
+	"flowpanel/web"
 
 	"go.uber.org/zap"
 )
@@ -54,6 +55,15 @@ func run() error {
 		zap.String("database_path", cfg.Database.Path),
 		zap.Bool("cron_enabled", cfg.Cron.Enabled),
 	)
+
+	if cfg.Env == "development" {
+		panelCtx, cancelPanel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancelPanel()
+
+		if err := web.PrepareDevelopmentDist(panelCtx); err != nil {
+			return fmt.Errorf("prepare panel bundle: %w", err)
+		}
+	}
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelStartup()
