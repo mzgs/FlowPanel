@@ -38,7 +38,7 @@ import {
   type FileListing,
 } from "@/api/files";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/panel/button";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -46,8 +46,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/panel/dialog";
-import { Input } from "@/components/panel/input";
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 

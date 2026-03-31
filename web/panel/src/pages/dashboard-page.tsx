@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
 import { fetchPHPStatus, installPHP, startPHP, type PHPStatus } from "@/api/php";
 import { PageHeader } from "@/components/page-header";
-import { Badge } from "@/components/panel/badge";
-import { Button } from "@/components/panel/button";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 function getStatusBadge(status: PHPStatus) {
   switch (status.state) {

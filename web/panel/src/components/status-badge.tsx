@@ -1,4 +1,4 @@
-import { Badge } from "@/components/panel/badge";
+import { Badge } from "@/components/ui/badge";
 
 type StatusBadgeProps = {
   status: string;

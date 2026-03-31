@@ -20,7 +20,7 @@ import {
   TimerReset,
   X,
 } from "@/components/icons/tabler-icons";
-import { Button } from "@/components/panel/button";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
   Sidebar,

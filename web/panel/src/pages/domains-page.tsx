@@ -10,7 +10,7 @@ import {
   type DomainRecord,
 } from "@/api/domains";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/panel/button";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -18,8 +18,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/panel/dialog";
-import { Input } from "@/components/panel/input";
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -27,7 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/panel/table";
+} from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
 
 type FormState = {
