@@ -21,6 +21,21 @@ const (
 	dialTimeout          = 500 * time.Millisecond
 )
 
+var aptPHP84Packages = []string{
+	"php8.4-cgi",
+	"php8.4-fpm",
+	"php8.4-cli",
+	"php8.4-common",
+	"php8.4-mysql",
+	"php8.4-curl",
+	"php8.4-gd",
+	"php8.4-intl",
+	"php8.4-imagick",
+	"php8.4-mbstring",
+	"php8.4-xml",
+	"php8.4-zip",
+}
+
 type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
@@ -194,12 +209,13 @@ func detectActionPlan() actionPlan {
 	case "linux":
 		if os.Geteuid() == 0 {
 			if aptPath, ok := lookupCommand("apt-get"); ok {
+				installArgs := append([]string{aptPath, "install", "-y"}, aptPHP84Packages...)
 				return actionPlan{
 					packageManager: "apt",
 					installLabel:   "Install PHP",
 					installCmds: [][]string{
 						{aptPath, "update"},
-						{aptPath, "install", "-y", "php", "php-fpm"},
+						installArgs,
 					},
 				}
 			}
