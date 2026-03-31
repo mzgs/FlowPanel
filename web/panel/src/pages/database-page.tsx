@@ -596,13 +596,9 @@ export function DatabasePage() {
               </Popover>
               <ToolbarButton>phpMyAdmin</ToolbarButton>
 
-              <div>{statusSummary}</div>
+              <small>{statusSummary}</small>
 
               <div className="ms-auto flex items-center gap-2">
-                <select className="h-10 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 text-[13px] text-[var(--app-text)] focus:outline-none">
-                  <option value="all">All</option>
-                </select>
-
                 <label className="relative block min-w-[220px]">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-text-muted)]" />
                   <Input
