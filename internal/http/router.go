@@ -67,6 +67,43 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/system", systemStatusHandler)
 		r.Method(stdhttp.MethodHead, "/system", systemStatusHandler)
 
+		mariaDBStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"mariadb": app.MariaDB.Status(r.Context()),
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/mariadb", mariaDBStatusHandler)
+		r.Method(stdhttp.MethodHead, "/mariadb", mariaDBStatusHandler)
+
+		mariaDBInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.MariaDB.Install(r.Context()); err != nil {
+				app.Logger.Error("install mariadb failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"mariadb": app.MariaDB.Status(r.Context()),
+			})
+		})
+		r.Method(stdhttp.MethodPost, "/mariadb/install", mariaDBInstallHandler)
+
 		phpStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{

@@ -8,6 +8,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/files"
 	"flowpanel/internal/jobs"
+	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 
 	"github.com/alexedwards/scs/v2"
@@ -22,6 +23,7 @@ type App struct {
 	Sessions *scs.SessionManager
 	Jobs     *jobs.Scheduler
 	Caddy    *caddy.Runtime
+	MariaDB  mariadb.Manager
 	PHP      phpenv.Manager
 	Files    *files.Service
 }
@@ -34,6 +36,7 @@ func New(
 	sessions *scs.SessionManager,
 	scheduler *jobs.Scheduler,
 	caddyRuntime *caddy.Runtime,
+	mariadbManager mariadb.Manager,
 	phpManager phpenv.Manager,
 	fileManager *files.Service,
 ) *App {
@@ -45,6 +48,7 @@ func New(
 		Sessions: sessions,
 		Jobs:     scheduler,
 		Caddy:    caddyRuntime,
+		MariaDB:  mariadbManager,
 		PHP:      phpManager,
 		Files:    fileManager,
 	}

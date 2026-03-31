@@ -20,6 +20,7 @@ import (
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/logging"
+	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 
 	"go.uber.org/zap"
@@ -78,6 +79,7 @@ func run() error {
 
 	sessionManager := auth.NewSessionManager(cfg)
 	scheduler := jobs.NewScheduler(logger.Named("jobs"), cfg.Cron.Enabled)
+	mariadbManager := mariadb.NewService(logger.Named("mariadb"))
 	phpManager := phpenv.NewService(logger.Named("php"))
 	caddyRuntime := caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, phpManager)
 	fileManager, err := files.NewService(domainService.BasePath())
@@ -85,7 +87,7 @@ func run() error {
 		return fmt.Errorf("initialize file manager: %w", err)
 	}
 
-	appContainer := app.New(cfg, logger, dbConn, domainService, sessionManager, scheduler, caddyRuntime, phpManager, fileManager)
+	appContainer := app.New(cfg, logger, dbConn, domainService, sessionManager, scheduler, caddyRuntime, mariadbManager, phpManager, fileManager)
 
 	router, err := httpx.NewRouter(appContainer)
 	if err != nil {

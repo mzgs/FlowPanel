@@ -1,7 +1,8 @@
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { fetchMariaDBStatus, installMariaDB, type MariaDBStatus } from "@/api/mariadb";
 import { fetchPHPStatus, installPHP, type PHPStatus } from "@/api/php";
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
-import { LoaderCircle, TerminalSquare } from "@/components/icons/tabler-icons";
+import { Database, LayoutDashboard, LoaderCircle, TerminalSquare } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { SystemStatusCard } from "@/components/system-status-card";
 import { Button } from "@/components/ui/button";
@@ -15,15 +16,21 @@ function getActionError(error: unknown, fallback: string) {
 }
 
 type OverviewData = {
+  mariadbStatus: MariaDBStatus | null;
   phpError: string | null;
   phpStatus: PHPStatus | null;
   systemStatus: SystemStatus | null;
 };
 
 async function fetchOverviewData(): Promise<OverviewData> {
-  const [phpResult, systemResult] = await Promise.allSettled([fetchPHPStatus(), fetchSystemStatus()]);
+  const [mariadbResult, phpResult, systemResult] = await Promise.allSettled([
+    fetchMariaDBStatus(),
+    fetchPHPStatus(),
+    fetchSystemStatus(),
+  ]);
 
   return {
+    mariadbStatus: mariadbResult.status === "fulfilled" ? mariadbResult.value : null,
     phpStatus: phpResult.status === "fulfilled" ? phpResult.value : null,
     phpError:
       phpResult.status === "rejected"
@@ -34,14 +41,19 @@ async function fetchOverviewData(): Promise<OverviewData> {
 }
 
 function SoftwareCard({
+  mariadbStatus,
   phpStatus,
   runningAction,
-  onInstall,
+  onInstallMariaDB,
+  onInstallPHP,
 }: {
+  mariadbStatus: MariaDBStatus | null;
   phpStatus: PHPStatus | null;
-  runningAction: "install" | null;
-  onInstall: () => Promise<void>;
+  runningAction: "install-mariadb" | "install-php" | null;
+  onInstallMariaDB: () => Promise<void>;
+  onInstallPHP: () => Promise<void>;
 }) {
+  const mariaDBValue = formatMariaDBValue(mariadbStatus);
   const phpValue = phpStatus?.php_installed ? phpStatus.php_version?.trim() || "Installed" : null;
 
   return (
@@ -49,37 +61,105 @@ function SoftwareCard({
       <div className="space-y-4">
         <h2 className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Software</h2>
         <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-          <div className="flex items-center justify-between gap-3 px-4 py-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)]">
-                <TerminalSquare className="h-4 w-4" />
-              </div>
-              <div className="text-[14px] font-medium text-[var(--app-text)]">PHP</div>
-            </div>
-            {phpValue ? (
-              <div className="font-mono text-[12px] text-[var(--app-text-muted)]">{phpValue}</div>
-            ) : phpStatus?.install_available ? (
-              <Button type="button" size="sm" onClick={onInstall} disabled={runningAction !== null}>
-                {runningAction === "install" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-                {phpStatus.install_label ?? "Install"}
-              </Button>
-            ) : (
-              <div className="text-[12px] text-[var(--app-text-muted)]">Not installed</div>
-            )}
-          </div>
+          <SoftwareRow
+            icon={<TerminalSquare className="h-4 w-4" />}
+            label="PHP"
+            value={
+              phpValue ? (
+                <div className="font-mono text-[12px] text-[var(--app-text-muted)]">{phpValue}</div>
+              ) : phpStatus?.install_available ? (
+                <Button type="button" size="sm" onClick={onInstallPHP} disabled={runningAction !== null}>
+                  {runningAction === "install-php" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  {phpStatus.install_label ?? "Install"}
+                </Button>
+              ) : (
+                <div className="text-[12px] text-[var(--app-text-muted)]">Not installed</div>
+              )
+            }
+          />
+          <SoftwareRow
+            icon={<Database className="h-4 w-4" />}
+            label="MariaDB"
+            value={
+              mariadbStatus?.install_available ? (
+                <Button type="button" size="sm" onClick={onInstallMariaDB} disabled={runningAction !== null}>
+                  {runningAction === "install-mariadb" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  {mariadbStatus.install_label ?? "Install"}
+                </Button>
+              ) : (
+                <div
+                  className={mariadbStatus?.ready ? "font-mono text-[12px] text-[var(--app-text)]" : "text-[12px] text-[var(--app-text-muted)]"}
+                >
+                  {mariaDBValue}
+                </div>
+              )
+            }
+          />
+          <SoftwareRow
+            icon={<LayoutDashboard className="h-4 w-4" />}
+            label="phpMyAdmin"
+            value={<div className="text-[12px] text-[var(--app-text-muted)]">Status unavailable</div>}
+          />
         </div>
       </div>
     </section>
   );
 }
 
+function SoftwareRow({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-[var(--app-border)] px-4 py-3 last:border-b-0">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)]">
+          {icon}
+        </div>
+        <div className="text-[14px] font-medium text-[var(--app-text)]">{label}</div>
+      </div>
+      {value}
+    </div>
+  );
+}
+
+function formatMariaDBValue(status: MariaDBStatus | null) {
+  if (!status) {
+    return "Unavailable";
+  }
+
+  if (status.ready && status.version?.trim()) {
+    return status.version.trim();
+  }
+
+  if (status.service_running) {
+    return "Running";
+  }
+
+  if (status.server_installed || status.client_installed) {
+    return "Installed";
+  }
+
+  return "Not installed";
+}
+
 export function DashboardPage() {
+  const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [phpError, setPHPError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [runningAction, setRunningAction] = useState<"install" | null>(null);
+  const [runningAction, setRunningAction] = useState<"install-mariadb" | "install-php" | null>(null);
 
   const refreshSystemStatus = useEffectEvent(async () => {
     try {
@@ -100,6 +180,7 @@ export function DashboardPage() {
       }
 
       setPHPStatus(nextOverview.phpStatus);
+      setMariaDBStatus(nextOverview.mariadbStatus);
       setPHPError(nextOverview.phpError);
       setSystemStatus(nextOverview.systemStatus);
       setLoading(false);
@@ -122,8 +203,22 @@ export function DashboardPage() {
     };
   }, [refreshSystemStatus]);
 
-  async function handleInstall() {
-    setRunningAction("install");
+  async function handleMariaDBInstall() {
+    setRunningAction("install-mariadb");
+    setActionError(null);
+
+    try {
+      const nextStatus = await installMariaDB();
+      setMariaDBStatus(nextStatus);
+    } catch (error) {
+      setActionError(getActionError(error, "Failed to install MariaDB."));
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handlePHPInstall() {
+    setRunningAction("install-php");
     setActionError(null);
 
     try {
@@ -154,15 +249,17 @@ export function DashboardPage() {
               </section>
             ) : null}
 
-            {systemStatus || phpStatus ? (
+            {systemStatus || phpStatus || mariadbStatus ? (
               <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
                 {systemStatus ? (
                   <SystemStatusCard status={systemStatus} />
                 ) : null}
                 <SoftwareCard
+                  mariadbStatus={mariadbStatus}
                   phpStatus={phpStatus}
                   runningAction={runningAction}
-                  onInstall={handleInstall}
+                  onInstallMariaDB={handleMariaDBInstall}
+                  onInstallPHP={handlePHPInstall}
                 />
               </div>
             ) : null}

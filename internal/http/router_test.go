@@ -18,12 +18,15 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/files"
 	"flowpanel/internal/jobs"
+	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 
 	"go.uber.org/zap"
 )
 
 type fakePHPManager struct{}
+
+type fakeMariaDBManager struct{}
 
 func (fakePHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
@@ -37,6 +40,24 @@ func (fakePHPManager) Install(context.Context) error {
 }
 
 func (fakePHPManager) Start(context.Context) error {
+	return nil
+}
+
+func (fakeMariaDBManager) Status(context.Context) mariadb.Status {
+	return mariadb.Status{
+		Product:          "MariaDB",
+		ServerInstalled:  true,
+		ServiceRunning:   true,
+		Ready:            true,
+		State:            "ready",
+		Message:          "MariaDB is accepting local connections on 127.0.0.1:3306.",
+		ListenAddress:    "127.0.0.1:3306",
+		Version:          "mariadb  Ver 15.1 Distrib 11.4.5-MariaDB, for Linux (x86_64)",
+		InstallAvailable: false,
+	}
+}
+
+func (fakeMariaDBManager) Install(context.Context) error {
 	return nil
 }
 
@@ -225,6 +246,60 @@ func TestSystemStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestMariaDBStatusEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/mariadb", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		MariaDB struct {
+			Ready         bool   `json:"ready"`
+			ListenAddress string `json:"listen_address"`
+			Product       string `json:"product"`
+		} `json:"mariadb"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.MariaDB.Ready {
+		t.Fatal("ready = false, want true")
+	}
+	if payload.MariaDB.Product != "MariaDB" {
+		t.Fatalf("product = %q, want MariaDB", payload.MariaDB.Product)
+	}
+	if payload.MariaDB.ListenAddress != "127.0.0.1:3306" {
+		t.Fatalf("listen_address = %q, want 127.0.0.1:3306", payload.MariaDB.ListenAddress)
+	}
+}
+
+func TestMariaDBInstallEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/mariadb/install", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		MariaDB struct {
+			Product string `json:"product"`
+		} `json:"mariadb"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.MariaDB.Product != "MariaDB" {
+		t.Fatalf("product = %q, want MariaDB", payload.MariaDB.Product)
+	}
+}
+
 func TestNewPanelHandlerRejectsMissingReferencedAsset(t *testing.T) {
 	_, err := newPanelHandlerWithFS(fstest.MapFS{
 		"index.html": {
@@ -339,6 +414,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		auth.NewSessionManager(cfg),
 		jobs.NewScheduler(logger.Named("jobs"), false),
 		caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, fakePHPManager{}),
+		fakeMariaDBManager{},
 		fakePHPManager{},
 		fileManager,
 	))
