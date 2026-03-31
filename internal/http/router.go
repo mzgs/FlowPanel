@@ -14,6 +14,7 @@ import (
 	"flowpanel/internal/app"
 	"flowpanel/internal/domain"
 	filesvc "flowpanel/internal/files"
+	"flowpanel/internal/systemstatus"
 	"flowpanel/web"
 
 	"github.com/go-chi/chi/v5"
@@ -57,6 +58,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
+
+		systemStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"system": systemstatus.Inspect(r.Context()),
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/system", systemStatusHandler)
+		r.Method(stdhttp.MethodHead, "/system", systemStatusHandler)
 
 		phpStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {

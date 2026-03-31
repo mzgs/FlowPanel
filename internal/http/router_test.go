@@ -202,6 +202,29 @@ func TestDeleteDomainRollsBackWhenPublishFails(t *testing.T) {
 	assertDomainRecordEqual(t, persisted[0], record)
 }
 
+func TestSystemStatusEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/system", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		System struct {
+			Cores int `json:"cores"`
+		} `json:"system"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.System.Cores <= 0 {
+		t.Fatalf("cores = %d, want positive value", payload.System.Cores)
+	}
+}
+
 func TestNewPanelHandlerRejectsMissingReferencedAsset(t *testing.T) {
 	_, err := newPanelHandlerWithFS(fstest.MapFS{
 		"index.html": {
