@@ -492,7 +492,12 @@ export function FilesPage() {
     }
 
     function handleMouseUp() {
-      setMarquee((current) => ({ ...current, active: false }));
+      setMarquee((current) => ({
+        ...current,
+        active: false,
+        hasMoved: false,
+        baseSelection: [],
+      }));
     }
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -1220,7 +1225,7 @@ export function FilesPage() {
               <div
                 ref={browserRef}
                 className={cn(
-                  "relative overflow-hidden rounded-[16px] border border-[var(--app-border)] bg-[rgba(7,9,12,0.7)]",
+                  "relative overflow-hidden rounded-[16px] border border-[var(--app-border)] bg-[rgba(7,9,12,0.7)] select-none",
                   rootDropActive && "ring-2 ring-[var(--app-accent)]/80",
                 )}
                 onMouseDown={beginMarquee}
@@ -1376,10 +1381,10 @@ export function FilesPage() {
                           data-type={item.type}
                           draggable={item.type !== "symlink"}
                           className={cn(
-                            "group flex w-[8.4rem] shrink-0 flex-col items-center rounded-[18px] border px-3 py-2.5 text-center transition-all duration-150",
+                            "group flex w-[8.4rem] shrink-0 flex-col items-center rounded-[18px] border px-3 py-2.5 text-center transition-colors duration-150",
                             isSelected
                               ? "border-[var(--app-accent)] bg-[linear-gradient(180deg,rgba(21,33,52,0.96),rgba(14,20,30,0.96))] shadow-[0_0_0_2px_rgba(28,104,203,0.32),0_18px_34px_rgba(18,53,102,0.18)]"
-                              : "border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,rgba(16,16,26,0.96),rgba(11,13,19,0.96))] shadow-[0_12px_28px_rgba(0,0,0,0.18)] hover:-translate-y-[2px] hover:border-[rgba(255,255,255,0.12)] hover:shadow-[0_18px_34px_rgba(0,0,0,0.28)]",
+                              : "border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,rgba(16,16,26,0.96),rgba(11,13,19,0.96))] shadow-[0_12px_28px_rgba(0,0,0,0.18)] hover:border-[rgba(255,255,255,0.12)]",
                             dropTargetPath === item.path &&
                               item.type === "directory" &&
                               "border-[var(--app-accent)] bg-[linear-gradient(180deg,rgba(18,35,61,0.96),rgba(12,20,34,0.96))] shadow-[0_0_0_2px_rgba(28,104,203,0.3),0_18px_34px_rgba(18,53,102,0.18)]",
@@ -1408,7 +1413,7 @@ export function FilesPage() {
                               tone.glow,
                             )}
                           >
-                            <Icon className="relative z-10 h-7 w-7 transition-transform duration-150 group-hover:scale-105" />
+                            <Icon className="relative z-10 h-7 w-7" />
                           </div>
                           <div
                             className="w-full overflow-hidden text-[13px] font-semibold leading-5 text-[var(--app-text)]"
@@ -1440,7 +1445,7 @@ export function FilesPage() {
                   <div
                     ref={contextMenuRef}
                     data-context-menu="1"
-                    className="fixed z-50 min-w-[220px] rounded-[14px] border border-[var(--app-border)] bg-[rgba(15,19,24,0.98)] p-2 shadow-[0_18px_35px_rgba(0,0,0,0.35)] backdrop-blur-sm"
+                    className="fixed z-50 min-w-[220px] rounded-[14px] border border-[var(--app-border)] bg-[rgba(15,19,24,0.98)] p-2 shadow-[0_18px_35px_rgba(0,0,0,0.35)] backdrop-blur-sm select-none"
                     style={contextMenuStyle ?? undefined}
                   >
                     <div className="space-y-1">
