@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -58,6 +59,56 @@ func (fakeMariaDBManager) Status(context.Context) mariadb.Status {
 }
 
 func (fakeMariaDBManager) Install(context.Context) error {
+	return nil
+}
+
+func (fakeMariaDBManager) RootPassword(context.Context) (string, bool, error) {
+	password, configured := os.LookupEnv("FLOWPANEL_MARIADB_PASSWORD")
+	if !configured || strings.TrimSpace(password) == "" {
+		return "", false, nil
+	}
+
+	return strings.TrimSpace(password), true, nil
+}
+
+func (fakeMariaDBManager) SetRootPassword(_ context.Context, password string) error {
+	password = strings.TrimSpace(password)
+	if len(password) < 8 {
+		return mariadb.ValidationErrors{
+			"password": "Password must be at least 8 characters.",
+		}
+	}
+
+	return os.Setenv("FLOWPANEL_MARIADB_PASSWORD", password)
+}
+
+func (fakeMariaDBManager) ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error) {
+	return []mariadb.DatabaseRecord{
+		{
+			Name:     "flowpanel",
+			Username: "flowpanel_user",
+			Host:     "localhost",
+		},
+	}, nil
+}
+
+func (fakeMariaDBManager) CreateDatabase(context.Context, mariadb.CreateDatabaseInput) (mariadb.DatabaseRecord, error) {
+	return mariadb.DatabaseRecord{
+		Name:     "flowpanel",
+		Username: "flowpanel_user",
+		Host:     "localhost",
+	}, nil
+}
+
+func (fakeMariaDBManager) UpdateDatabase(context.Context, string, mariadb.UpdateDatabaseInput) (mariadb.DatabaseRecord, error) {
+	return mariadb.DatabaseRecord{
+		Name:     "flowpanel",
+		Username: "flowpanel_user",
+		Host:     "localhost",
+	}, nil
+}
+
+func (fakeMariaDBManager) DeleteDatabase(context.Context, string, mariadb.DeleteDatabaseInput) error {
 	return nil
 }
 
@@ -277,6 +328,59 @@ func TestMariaDBStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestMariaDBRootPasswordEndpoint(t *testing.T) {
+	t.Setenv("FLOWPANEL_MARIADB_PASSWORD", "super-secret-root")
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/mariadb/root-password", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		RootPassword string `json:"root_password"`
+		Configured   bool   `json:"configured"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.Configured {
+		t.Fatal("configured = false, want true")
+	}
+	if payload.RootPassword != "super-secret-root" {
+		t.Fatalf("root_password = %q, want super-secret-root", payload.RootPassword)
+	}
+}
+
+func TestMariaDBRootPasswordUpdateEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/mariadb/root-password", strings.NewReader(`{"password":"new-secret-root-01"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		RootPassword string `json:"root_password"`
+		Configured   bool   `json:"configured"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.Configured {
+		t.Fatal("configured = false, want true")
+	}
+	if payload.RootPassword != "new-secret-root-01" {
+		t.Fatalf("root_password = %q, want new-secret-root-01", payload.RootPassword)
+	}
+}
+
 func TestMariaDBInstallEndpoint(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 
@@ -297,6 +401,82 @@ func TestMariaDBInstallEndpoint(t *testing.T) {
 	}
 	if payload.MariaDB.Product != "MariaDB" {
 		t.Fatalf("product = %q, want MariaDB", payload.MariaDB.Product)
+	}
+}
+
+func TestMariaDBDatabasesListEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/mariadb/databases", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		Databases []struct {
+			Name     string `json:"name"`
+			Username string `json:"username"`
+		} `json:"databases"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Databases) != 1 {
+		t.Fatalf("database count = %d, want 1", len(payload.Databases))
+	}
+	if payload.Databases[0].Name != "flowpanel" {
+		t.Fatalf("name = %q, want flowpanel", payload.Databases[0].Name)
+	}
+}
+
+func TestMariaDBCreateDatabaseEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/mariadb/databases", strings.NewReader(`{"name":"flowpanel","username":"flowpanel_user","password":"secret123"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusCreated)
+	}
+
+	var payload struct {
+		Database struct {
+			Name string `json:"name"`
+		} `json:"database"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Database.Name != "flowpanel" {
+		t.Fatalf("name = %q, want flowpanel", payload.Database.Name)
+	}
+}
+
+func TestMariaDBUpdateDatabaseEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/mariadb/databases/flowpanel", strings.NewReader(`{"current_username":"flowpanel_user","username":"flowpanel_user","password":"secret123"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+}
+
+func TestMariaDBDeleteDatabaseEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/mariadb/databases/flowpanel?username=flowpanel_user", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 }
 

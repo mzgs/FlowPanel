@@ -14,6 +14,7 @@ import (
 	"flowpanel/internal/app"
 	"flowpanel/internal/domain"
 	filesvc "flowpanel/internal/files"
+	"flowpanel/internal/mariadb"
 	"flowpanel/internal/systemstatus"
 	"flowpanel/web"
 
@@ -82,6 +83,82 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/mariadb", mariaDBStatusHandler)
 		r.Method(stdhttp.MethodHead, "/mariadb", mariaDBStatusHandler)
 
+		mariaDBRootPasswordHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			password, configured, err := app.MariaDB.RootPassword(r.Context())
+			if err != nil {
+				app.Logger.Error("read mariadb root password failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to read mariadb root password",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"root_password": password,
+				"configured":    configured,
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/mariadb/root-password", mariaDBRootPasswordHandler)
+		r.Method(stdhttp.MethodHead, "/mariadb/root-password", mariaDBRootPasswordHandler)
+
+		mariaDBRootPasswordUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Password string `json:"password"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			if err := app.MariaDB.SetRootPassword(r.Context(), input.Password); err != nil {
+				var validation mariadb.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("update mariadb root password failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to update mariadb root password",
+				})
+				return
+			}
+
+			password, configured, err := app.MariaDB.RootPassword(r.Context())
+			if err != nil {
+				app.Logger.Error("read mariadb root password failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to read mariadb root password",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"root_password": password,
+				"configured":    configured,
+			})
+		})
+		r.Method(stdhttp.MethodPut, "/mariadb/root-password", mariaDBRootPasswordUpdateHandler)
+
 		mariaDBInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.MariaDB == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -103,6 +180,174 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 		r.Method(stdhttp.MethodPost, "/mariadb/install", mariaDBInstallHandler)
+
+		mariaDBDatabasesListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			records, err := app.MariaDB.ListDatabases(r.Context())
+			if err != nil {
+				app.Logger.Error("list mariadb databases failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to list databases",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"databases": records,
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/mariadb/databases", mariaDBDatabasesListHandler)
+		r.Method(stdhttp.MethodHead, "/mariadb/databases", mariaDBDatabasesListHandler)
+
+		mariaDBDatabaseCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			var input mariadb.CreateDatabaseInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			record, err := app.MariaDB.CreateDatabase(r.Context(), input)
+			if err != nil {
+				var validation mariadb.ValidationErrors
+				switch {
+				case errors.As(err, &validation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				case errors.Is(err, mariadb.ErrDatabaseAlreadyExists):
+					writeJSON(w, stdhttp.StatusConflict, map[string]any{
+						"error": "database already exists",
+						"field_errors": map[string]string{
+							"name": "This database already exists.",
+						},
+					})
+					return
+				default:
+					app.Logger.Error("create mariadb database failed", zap.Error(err))
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to create database",
+					})
+					return
+				}
+			}
+
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{
+				"database": record,
+			})
+		})
+		r.Method(stdhttp.MethodPost, "/mariadb/databases", mariaDBDatabaseCreateHandler)
+
+		mariaDBDatabaseUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			var input mariadb.UpdateDatabaseInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			databaseName := chi.URLParam(r, "databaseName")
+			record, err := app.MariaDB.UpdateDatabase(r.Context(), databaseName, input)
+			if err != nil {
+				var validation mariadb.ValidationErrors
+				switch {
+				case errors.As(err, &validation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				case errors.Is(err, mariadb.ErrDatabaseNotFound):
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "database not found",
+					})
+					return
+				default:
+					app.Logger.Error("update mariadb database failed",
+						zap.String("database_name", databaseName),
+						zap.Error(err),
+					)
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to update database",
+					})
+					return
+				}
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"database": record,
+			})
+		})
+		r.Method(stdhttp.MethodPut, "/mariadb/databases/{databaseName}", mariaDBDatabaseUpdateHandler)
+
+		mariaDBDatabaseDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			databaseName := chi.URLParam(r, "databaseName")
+			input := mariadb.DeleteDatabaseInput{
+				Username: strings.TrimSpace(r.URL.Query().Get("username")),
+			}
+
+			if err := app.MariaDB.DeleteDatabase(r.Context(), databaseName, input); err != nil {
+				var validation mariadb.ValidationErrors
+				switch {
+				case errors.As(err, &validation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				case errors.Is(err, mariadb.ErrDatabaseNotFound):
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "database not found",
+					})
+					return
+				default:
+					app.Logger.Error("delete mariadb database failed",
+						zap.String("database_name", databaseName),
+						zap.Error(err),
+					)
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to delete database",
+					})
+					return
+				}
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"ok": true,
+			})
+		})
+		r.Method(stdhttp.MethodDelete, "/mariadb/databases/{databaseName}", mariaDBDatabaseDeleteHandler)
 
 		phpStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {

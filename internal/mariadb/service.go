@@ -3,13 +3,18 @@ package mariadb
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +23,14 @@ import (
 
 const (
 	statusCommandTimeout = 3 * time.Second
+	sqlCommandTimeout    = 8 * time.Second
 	dialTimeout          = 500 * time.Millisecond
+	defaultTCPHost       = "127.0.0.1"
+	defaultTCPPort       = "3306"
+	defaultDBUser        = "root"
+	localhostHost        = "localhost"
+	defaultPasswordFile  = "mariadb-root-password"
+	passwordBytesLength  = 24
 )
 
 var (
@@ -40,11 +52,27 @@ var (
 		"/tmp/mysql.sock",
 		"/tmp/mysqld.sock",
 	}
+	systemDatabases = map[string]struct{}{
+		"information_schema": {},
+		"mysql":              {},
+		"performance_schema": {},
+		"sys":                {},
+	}
+	identifierPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+	ErrDatabaseNotFound      = errors.New("database not found")
+	ErrDatabaseAlreadyExists = errors.New("database already exists")
 )
 
 type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
+	RootPassword(context.Context) (string, bool, error)
+	SetRootPassword(context.Context, string) error
+	ListDatabases(context.Context) ([]DatabaseRecord, error)
+	CreateDatabase(context.Context, CreateDatabaseInput) (DatabaseRecord, error)
+	UpdateDatabase(context.Context, string, UpdateDatabaseInput) (DatabaseRecord, error)
+	DeleteDatabase(context.Context, string, DeleteDatabaseInput) error
 }
 
 type Status struct {
@@ -66,8 +94,37 @@ type Status struct {
 	InstallLabel     string   `json:"install_label,omitempty"`
 }
 
+type DatabaseRecord struct {
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Host     string `json:"host"`
+}
+
+type CreateDatabaseInput struct {
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type UpdateDatabaseInput struct {
+	CurrentUsername string `json:"current_username"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+}
+
+type DeleteDatabaseInput struct {
+	Username string `json:"username"`
+}
+
+type ValidationErrors map[string]string
+
+func (v ValidationErrors) Error() string {
+	return "validation failed"
+}
+
 type Service struct {
-	logger *zap.Logger
+	logger           *zap.Logger
+	rootPasswordPath string
 }
 
 type actionPlan struct {
@@ -82,7 +139,8 @@ func NewService(logger *zap.Logger) *Service {
 	}
 
 	return &Service{
-		logger: logger,
+		logger:           logger,
+		rootPasswordPath: resolvePasswordFilePath(),
 	}
 }
 
@@ -151,7 +209,661 @@ func (s *Service) Install(ctx context.Context) error {
 	s.logger.Info("installing mariadb runtime",
 		zap.String("package_manager", plan.packageManager),
 	)
-	return runCommands(ctx, plan.installCmds...)
+	if err := runCommands(ctx, plan.installCmds...); err != nil {
+		return err
+	}
+
+	if err := s.ensureRootPassword(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Service) RootPassword(context.Context) (string, bool, error) {
+	if password, configured := rootPasswordFromEnv(); configured {
+		return password, true, nil
+	}
+
+	password, configured, err := readPasswordFile(s.rootPasswordPath)
+	if err != nil {
+		return "", false, fmt.Errorf("read mariadb root password file: %w", err)
+	}
+
+	return password, configured, nil
+}
+
+func (s *Service) SetRootPassword(ctx context.Context, password string) error {
+	password = strings.TrimSpace(password)
+	if len(password) < 8 {
+		return ValidationErrors{
+			"password": "Password must be at least 8 characters.",
+		}
+	}
+
+	rootUserLiteral := quoteLiteral(defaultDBUser)
+	passwordLiteral := quoteLiteral(password)
+	statements := []string{
+		fmt.Sprintf("CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY %s", rootUserLiteral, passwordLiteral),
+		fmt.Sprintf("ALTER USER %s@'localhost' IDENTIFIED BY %s", rootUserLiteral, passwordLiteral),
+		"FLUSH PRIVILEGES",
+	}
+
+	if _, err := s.runSQL(ctx, strings.Join(statements, "; ")); err != nil {
+		return fmt.Errorf("configure mariadb root user: %w", err)
+	}
+
+	if err := writePasswordFile(s.rootPasswordPath, password); err != nil {
+		return fmt.Errorf("write mariadb root password file: %w", err)
+	}
+
+	_ = os.Setenv("FLOWPANEL_MARIADB_PASSWORD", password)
+	return nil
+}
+
+func (s *Service) ListDatabases(ctx context.Context) ([]DatabaseRecord, error) {
+	databaseRows, err := s.queryRows(ctx, "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME ASC")
+	if err != nil {
+		return nil, err
+	}
+
+	grantsRows, err := s.queryRows(ctx, "SELECT Db, User, Host FROM mysql.db ORDER BY Db ASC, User ASC, Host ASC")
+	if err != nil {
+		return nil, err
+	}
+
+	recordsByName := make(map[string]DatabaseRecord, len(databaseRows))
+	for _, row := range databaseRows {
+		if len(row) == 0 {
+			continue
+		}
+
+		name := strings.TrimSpace(row[0])
+		if name == "" || isSystemDatabase(name) {
+			continue
+		}
+
+		recordsByName[name] = DatabaseRecord{
+			Name: name,
+			Host: localhostHost,
+		}
+	}
+
+	for _, row := range grantsRows {
+		if len(row) < 3 {
+			continue
+		}
+
+		name := strings.TrimSpace(row[0])
+		if name == "" || isSystemDatabase(name) {
+			continue
+		}
+
+		record, exists := recordsByName[name]
+		if !exists {
+			record = DatabaseRecord{
+				Name: name,
+				Host: localhostHost,
+			}
+		}
+
+		if record.Username == "" {
+			record.Username = strings.TrimSpace(row[1])
+			host := strings.TrimSpace(row[2])
+			if host != "" {
+				record.Host = host
+			}
+			recordsByName[name] = record
+		}
+	}
+
+	records := make([]DatabaseRecord, 0, len(recordsByName))
+	for _, record := range recordsByName {
+		records = append(records, record)
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].Name < records[j].Name
+	})
+
+	return records, nil
+}
+
+func (s *Service) CreateDatabase(ctx context.Context, input CreateDatabaseInput) (DatabaseRecord, error) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Username = strings.TrimSpace(input.Username)
+	input.Password = strings.TrimSpace(input.Password)
+
+	if validation := validateCreateInput(input); len(validation) > 0 {
+		return DatabaseRecord{}, validation
+	}
+
+	exists, err := s.databaseExists(ctx, input.Name)
+	if err != nil {
+		return DatabaseRecord{}, err
+	}
+	if exists {
+		return DatabaseRecord{}, ErrDatabaseAlreadyExists
+	}
+
+	databaseIdentifier := quoteIdentifier(input.Name)
+	userLiteral := quoteLiteral(input.Username)
+	passwordLiteral := quoteLiteral(input.Password)
+	statements := []string{
+		fmt.Sprintf("CREATE DATABASE %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", databaseIdentifier),
+		fmt.Sprintf("CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY %s", userLiteral, passwordLiteral),
+		fmt.Sprintf("ALTER USER %s@'localhost' IDENTIFIED BY %s", userLiteral, passwordLiteral),
+		fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO %s@'localhost'", databaseIdentifier, userLiteral),
+		"FLUSH PRIVILEGES",
+	}
+
+	if _, err := s.runSQL(ctx, strings.Join(statements, "; ")); err != nil {
+		return DatabaseRecord{}, err
+	}
+
+	return DatabaseRecord{
+		Name:     input.Name,
+		Username: input.Username,
+		Host:     localhostHost,
+	}, nil
+}
+
+func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input UpdateDatabaseInput) (DatabaseRecord, error) {
+	databaseName = strings.TrimSpace(databaseName)
+	input.CurrentUsername = strings.TrimSpace(input.CurrentUsername)
+	input.Username = strings.TrimSpace(input.Username)
+	input.Password = strings.TrimSpace(input.Password)
+
+	if validation := validateUpdateInput(databaseName, input); len(validation) > 0 {
+		return DatabaseRecord{}, validation
+	}
+
+	exists, err := s.databaseExists(ctx, databaseName)
+	if err != nil {
+		return DatabaseRecord{}, err
+	}
+	if !exists {
+		return DatabaseRecord{}, ErrDatabaseNotFound
+	}
+
+	hasGrant, err := s.userHasGrant(ctx, databaseName, input.CurrentUsername, localhostHost)
+	if err != nil {
+		return DatabaseRecord{}, err
+	}
+	if !hasGrant {
+		return DatabaseRecord{}, ValidationErrors{
+			"current_username": "Current username does not have access to this database.",
+		}
+	}
+
+	databaseIdentifier := quoteIdentifier(databaseName)
+	currentUserLiteral := quoteLiteral(input.CurrentUsername)
+	nextUserLiteral := quoteLiteral(input.Username)
+	passwordLiteral := quoteLiteral(input.Password)
+	statements := []string{
+		fmt.Sprintf("CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY %s", nextUserLiteral, passwordLiteral),
+		fmt.Sprintf("ALTER USER %s@'localhost' IDENTIFIED BY %s", nextUserLiteral, passwordLiteral),
+		fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO %s@'localhost'", databaseIdentifier, nextUserLiteral),
+	}
+
+	if input.CurrentUsername != input.Username {
+		statements = append(statements, fmt.Sprintf(
+			"REVOKE ALL PRIVILEGES, GRANT OPTION ON %s.* FROM %s@'localhost'",
+			databaseIdentifier,
+			currentUserLiteral,
+		))
+	}
+
+	statements = append(statements, "FLUSH PRIVILEGES")
+	if _, err := s.runSQL(ctx, strings.Join(statements, "; ")); err != nil {
+		return DatabaseRecord{}, err
+	}
+
+	if input.CurrentUsername != input.Username {
+		if err := s.dropUserIfUnused(ctx, input.CurrentUsername, localhostHost); err != nil {
+			s.logger.Warn("failed to drop unused mariadb user",
+				zap.String("username", input.CurrentUsername),
+				zap.Error(err),
+			)
+		}
+	}
+
+	return DatabaseRecord{
+		Name:     databaseName,
+		Username: input.Username,
+		Host:     localhostHost,
+	}, nil
+}
+
+func (s *Service) DeleteDatabase(ctx context.Context, databaseName string, input DeleteDatabaseInput) error {
+	databaseName = strings.TrimSpace(databaseName)
+	input.Username = strings.TrimSpace(input.Username)
+
+	if validation := validateDeleteInput(databaseName, input); len(validation) > 0 {
+		return validation
+	}
+
+	exists, err := s.databaseExists(ctx, databaseName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrDatabaseNotFound
+	}
+
+	if _, err := s.runSQL(ctx, fmt.Sprintf("DROP DATABASE %s", quoteIdentifier(databaseName))); err != nil {
+		return err
+	}
+
+	if input.Username != "" {
+		if err := s.dropUserIfUnused(ctx, input.Username, localhostHost); err != nil {
+			s.logger.Warn("failed to drop unused mariadb user",
+				zap.String("username", input.Username),
+				zap.Error(err),
+			)
+		}
+	}
+
+	return nil
+}
+
+type sqlClientConfig struct {
+	user     string
+	password string
+	host     string
+	port     string
+	socket   string
+}
+
+func (s *Service) runSQL(ctx context.Context, query string) (string, error) {
+	clientPath, ok := lookupFirstCommand(clientBinaryCandidates...)
+	if !ok {
+		return "", errors.New("mariadb/mysql client is not installed")
+	}
+
+	runCtx := ctx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+
+	if _, hasDeadline := runCtx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(runCtx, sqlCommandTimeout)
+		defer cancel()
+	}
+
+	config, err := s.resolveSQLClientConfig()
+	if err != nil {
+		return "", err
+	}
+	args := []string{
+		"--batch",
+		"--raw",
+		"--skip-column-names",
+		fmt.Sprintf("--user=%s", config.user),
+	}
+
+	if config.socket != "" {
+		args = append(args, "--protocol=socket", fmt.Sprintf("--socket=%s", config.socket))
+	} else {
+		args = append(args,
+			"--protocol=tcp",
+			fmt.Sprintf("--host=%s", config.host),
+			fmt.Sprintf("--port=%s", config.port),
+		)
+	}
+
+	args = append(args, "--execute", query)
+
+	cmd := exec.CommandContext(runCtx, clientPath, args...)
+	if config.password != "" {
+		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.password)
+	}
+
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+
+	err = cmd.Run()
+	combinedOutput := strings.TrimSpace(output.String())
+	if err == nil {
+		return combinedOutput, nil
+	}
+
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return combinedOutput, fmt.Errorf("%s timed out", clientPath)
+	}
+	if errors.Is(runCtx.Err(), context.Canceled) {
+		return combinedOutput, fmt.Errorf("%s was canceled", clientPath)
+	}
+	if combinedOutput == "" {
+		return combinedOutput, fmt.Errorf("%s failed: %w", clientPath, err)
+	}
+
+	return combinedOutput, fmt.Errorf("%s failed: %s", clientPath, combinedOutput)
+}
+
+func (s *Service) resolveSQLClientConfig() (sqlClientConfig, error) {
+	config := sqlClientConfig{
+		user:   strings.TrimSpace(envWithDefault("FLOWPANEL_MARIADB_USER", defaultDBUser)),
+		host:   strings.TrimSpace(os.Getenv("FLOWPANEL_MARIADB_HOST")),
+		port:   strings.TrimSpace(os.Getenv("FLOWPANEL_MARIADB_PORT")),
+		socket: strings.TrimSpace(os.Getenv("FLOWPANEL_MARIADB_SOCKET")),
+	}
+
+	if config.user == "" {
+		config.user = defaultDBUser
+	}
+
+	if password, ok := rootPasswordFromEnv(); ok {
+		config.password = password
+	} else {
+		password, configured, err := readPasswordFile(s.rootPasswordPath)
+		if err != nil {
+			return sqlClientConfig{}, fmt.Errorf("read mariadb root password file: %w", err)
+		}
+		if configured {
+			config.password = password
+		}
+	}
+
+	if config.socket == "" && config.host == "" {
+		if address, reachable := detectReachableAddress(); reachable {
+			if strings.HasPrefix(address, "/") {
+				config.socket = address
+			} else {
+				if host, port, err := net.SplitHostPort(address); err == nil {
+					config.host = host
+					config.port = port
+				}
+			}
+		}
+	}
+
+	if config.socket == "" {
+		if config.host == "" {
+			config.host = defaultTCPHost
+		}
+		if config.port == "" {
+			config.port = defaultTCPPort
+		}
+	}
+
+	return config, nil
+}
+
+func (s *Service) ensureRootPassword(ctx context.Context) error {
+	password, configured, err := s.RootPassword(ctx)
+	if err != nil {
+		return err
+	}
+
+	if !configured {
+		password, err = generatePassword()
+		if err != nil {
+			return fmt.Errorf("generate mariadb root password: %w", err)
+		}
+	}
+
+	return s.SetRootPassword(ctx, password)
+}
+
+func resolvePasswordFilePath() string {
+	if value := strings.TrimSpace(os.Getenv("FLOWPANEL_MARIADB_PASSWORD_FILE")); value != "" {
+		return value
+	}
+
+	if dbPath := strings.TrimSpace(os.Getenv("FLOWPANEL_DB_PATH")); dbPath != "" && dbPath != ":memory:" {
+		return filepath.Join(filepath.Dir(dbPath), defaultPasswordFile)
+	}
+
+	return filepath.Join(".", "data", defaultPasswordFile)
+}
+
+func rootPasswordFromEnv() (string, bool) {
+	password, configured := os.LookupEnv("FLOWPANEL_MARIADB_PASSWORD")
+	if !configured {
+		return "", false
+	}
+
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return "", false
+	}
+
+	return password, true
+}
+
+func readPasswordFile(path string) (string, bool, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", false, nil
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+
+	password := strings.TrimSpace(string(content))
+	if password == "" {
+		return "", false, nil
+	}
+
+	return password, true, nil
+}
+
+func writePasswordFile(path, password string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("mariadb root password file path is empty")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, []byte(password+"\n"), 0o600)
+}
+
+func generatePassword() (string, error) {
+	randomBytes := make([]byte, passwordBytesLength)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+
+	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
+}
+
+func (s *Service) queryRows(ctx context.Context, query string) ([][]string, error) {
+	output, err := s.runSQL(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(output) == "" {
+		return make([][]string, 0), nil
+	}
+
+	lines := strings.Split(output, "\n")
+	rows := make([][]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		rows = append(rows, strings.Split(line, "\t"))
+	}
+
+	return rows, nil
+}
+
+func (s *Service) queryCount(ctx context.Context, query string) (int, error) {
+	output, err := s.runSQL(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+
+	firstLine := ""
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			firstLine = line
+			break
+		}
+	}
+
+	if firstLine == "" {
+		return 0, nil
+	}
+
+	value, err := strconv.Atoi(firstLine)
+	if err != nil {
+		return 0, fmt.Errorf("unexpected SQL count result: %q", firstLine)
+	}
+
+	return value, nil
+}
+
+func (s *Service) databaseExists(ctx context.Context, databaseName string) (bool, error) {
+	count, err := s.queryCount(ctx, fmt.Sprintf(
+		"SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = %s",
+		quoteLiteral(databaseName),
+	))
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+func (s *Service) userHasGrant(ctx context.Context, databaseName, username, host string) (bool, error) {
+	count, err := s.queryCount(ctx, fmt.Sprintf(
+		"SELECT COUNT(*) FROM mysql.db WHERE Db = %s AND User = %s AND Host = %s",
+		quoteLiteral(databaseName),
+		quoteLiteral(username),
+		quoteLiteral(host),
+	))
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+func (s *Service) dropUserIfUnused(ctx context.Context, username, host string) error {
+	grantCount, err := s.queryCount(ctx, fmt.Sprintf(
+		"SELECT COUNT(*) FROM mysql.db WHERE User = %s AND Host = %s",
+		quoteLiteral(username),
+		quoteLiteral(host),
+	))
+	if err != nil {
+		return err
+	}
+	if grantCount > 0 {
+		return nil
+	}
+
+	_, err = s.runSQL(ctx, fmt.Sprintf("DROP USER IF EXISTS %s@%s", quoteLiteral(username), quoteLiteral(host)))
+	return err
+}
+
+func validateCreateInput(input CreateDatabaseInput) ValidationErrors {
+	validation := ValidationErrors{}
+	if message := validateIdentifier(input.Name, "Database name"); message != "" {
+		validation["name"] = message
+	} else if isSystemDatabase(input.Name) {
+		validation["name"] = "Choose a different database name."
+	}
+
+	if message := validateIdentifier(input.Username, "Username"); message != "" {
+		validation["username"] = message
+	}
+
+	if len(input.Password) < 8 {
+		validation["password"] = "Password must be at least 8 characters."
+	}
+
+	return validation
+}
+
+func validateUpdateInput(databaseName string, input UpdateDatabaseInput) ValidationErrors {
+	validation := ValidationErrors{}
+	if message := validateIdentifier(databaseName, "Database name"); message != "" {
+		validation["name"] = message
+	} else if isSystemDatabase(databaseName) {
+		validation["name"] = "System databases cannot be modified."
+	}
+
+	if message := validateIdentifier(input.CurrentUsername, "Current username"); message != "" {
+		validation["current_username"] = message
+	}
+
+	if message := validateIdentifier(input.Username, "Username"); message != "" {
+		validation["username"] = message
+	}
+
+	if len(input.Password) < 8 {
+		validation["password"] = "Password must be at least 8 characters."
+	}
+
+	return validation
+}
+
+func validateDeleteInput(databaseName string, input DeleteDatabaseInput) ValidationErrors {
+	validation := ValidationErrors{}
+	if message := validateIdentifier(databaseName, "Database name"); message != "" {
+		validation["name"] = message
+	} else if isSystemDatabase(databaseName) {
+		validation["name"] = "System databases cannot be deleted."
+	}
+
+	if input.Username != "" {
+		if message := validateIdentifier(input.Username, "Username"); message != "" {
+			validation["username"] = message
+		}
+	}
+
+	return validation
+}
+
+func validateIdentifier(value, label string) string {
+	if value == "" {
+		return fmt.Sprintf("%s is required.", label)
+	}
+	if !identifierPattern.MatchString(value) {
+		return fmt.Sprintf("%s can contain only letters, numbers, and underscores.", label)
+	}
+
+	return ""
+}
+
+func isSystemDatabase(name string) bool {
+	_, ok := systemDatabases[strings.ToLower(strings.TrimSpace(name))]
+	return ok
+}
+
+func quoteIdentifier(value string) string {
+	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
+}
+
+func quoteLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func envWithDefault(key, fallback string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+
+	return trimmed
 }
 
 func detectActionPlan() actionPlan {
