@@ -1445,7 +1445,7 @@ export function FilesPage() {
                   <div
                     ref={contextMenuRef}
                     data-context-menu="1"
-                    className="fixed z-50 min-w-[220px] rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface)] p-2 shadow-[0_18px_35px_rgba(15,23,42,0.16)] backdrop-blur-sm select-none"
+                    className="fixed z-50 min-w-[240px] rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface)] p-2.5 shadow-[0_18px_35px_rgba(15,23,42,0.16)] backdrop-blur-sm select-none"
                     style={contextMenuStyle ?? undefined}
                   >
                     <div className="space-y-1">
@@ -1456,13 +1456,13 @@ export function FilesPage() {
                           <button
                             key={item.key}
                             type="button"
-                            className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-[13px] text-[var(--app-text)] transition-colors duration-150 hover:bg-[var(--app-accent-soft)]"
+                            className="flex w-full items-center gap-3 rounded-[10px] px-3.5 py-2.5 text-left text-[15px] text-[var(--app-text)] transition-colors duration-150 hover:bg-[var(--app-accent-soft)]"
                             onClick={() => {
                               setContextMenu(null);
                               item.handler();
                             }}
                           >
-                            <Icon className="h-4 w-4 text-[var(--app-text-muted)]" />
+                            <Icon className="h-[18px] w-[18px] text-[var(--app-text-muted)]" />
                             {item.label}
                           </button>
                         );
