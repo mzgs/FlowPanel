@@ -1,76 +1,48 @@
-@import "tailwindcss";
+@import "./styles/index.css";
 
-:root {
-  color-scheme: dark;
-  --app-bg: #111827;
-  --app-surface: #1f2937;
-  --app-surface-muted: #374151;
-  --app-surface-subtle: #172554;
-  --app-border: #374151;
-  --app-border-strong: #4b5563;
-  --app-text: #f9fafb;
-  --app-text-muted: #9ca3af;
-  --app-accent: #3b82f6;
-  --app-accent-soft: #1e3a8a;
-  --app-warning: #f59e0b;
-  --app-warning-soft: #451a03;
-  --app-danger: #f87171;
-  --app-danger-soft: #450a0a;
-  --app-ok: #4ade80;
-  --app-ok-soft: #052e16;
-  --app-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
-  --app-sidebar-width: 16rem;
-  --app-navbar-height: 4rem;
-  color: var(--app-text);
-  background: var(--app-bg);
-  font-family: "Inter", "Helvetica Neue", sans-serif;
-}
+@layer base {
+  :root {
+    color-scheme: dark;
+    --app-bg: var(--background);
+    --app-surface: var(--card);
+    --app-surface-muted: var(--muted);
+    --app-surface-subtle: var(--popover);
+    --app-border: var(--border);
+    --app-border-strong: var(--input);
+    --app-text: var(--foreground);
+    --app-text-muted: var(--muted-foreground);
+    --app-accent: var(--primary);
+    --app-accent-soft: var(--accent);
+    --app-warning: oklch(0.769 0.188 70.08);
+    --app-warning-soft: color-mix(in oklab, var(--background) 82%, oklch(0.769 0.188 70.08));
+    --app-danger: var(--destructive);
+    --app-danger-soft: color-mix(in oklab, var(--background) 78%, var(--destructive));
+    --app-ok: oklch(0.696 0.17 162.48);
+    --app-ok-soft: color-mix(in oklab, var(--background) 82%, oklch(0.696 0.17 162.48));
+    --app-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.18);
+    --app-sidebar-width: 16rem;
+    --app-navbar-height: 4rem;
+  }
 
-* {
-  box-sizing: border-box;
-}
+  body {
+    font-family: var(--font-inter);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
 
-html {
-  background: var(--app-bg);
-}
+  #root {
+    min-height: 100svh;
+  }
 
-body {
-  margin: 0;
-  min-height: 100vh;
-  background: var(--app-bg);
-  color: var(--app-text);
-}
+  code,
+  pre,
+  .font-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+  }
 
-#root {
-  min-height: 100vh;
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-
-code,
-pre,
-.font-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
-}
-
-::selection {
-  background: rgba(59, 130, 246, 0.3);
-}
-
-a {
-  color: inherit;
-}
-
-button {
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: default;
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
 }

@@ -22,7 +22,7 @@ import {
   Settings2,
   Trash2,
   Upload,
-} from "lucide-react";
+} from "@/components/icons/tabler-icons";
 import {
   createDirectory,
   createFile,

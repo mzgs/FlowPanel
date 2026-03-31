@@ -19,10 +19,25 @@ import {
   TerminalSquare,
   TimerReset,
   X,
-} from "lucide-react";
-import { useState } from "react";
+} from "@/components/icons/tabler-icons";
 import { Button } from "@/components/panel/button";
-import { cn } from "@/lib/utils";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
@@ -42,121 +57,112 @@ const navigationItems = [
 ] as const;
 
 function RootLayout() {
-  const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
   const isNavItemActive = (to: string) =>
     location.pathname === to || (to === "/files" && location.pathname === "/file-manager");
+  const activeItem =
+    navigationItems.find((item) => isNavItemActive(item.to)) ?? navigationItems[0];
 
   return (
-    <div className="min-h-screen bg-[var(--app-bg)] text-[var(--app-text)]">
-      <header className="fixed inset-x-0 top-0 z-30 border-b border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
-        <div className="flex h-16 items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <Button
-              variant="secondary"
-              size="sm"
-              className="lg:hidden"
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              {menuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-            </Button>
+    <SidebarProvider defaultOpen>
+      <Sidebar>
+        <SidebarHeader>
+          <div className="px-2 py-1">
             <Link to="/" className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--app-accent)] text-white shadow-sm">
-                <LayoutDashboard className="h-5 w-5" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                <LayoutDashboard className="h-4 w-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-[15px] font-semibold tracking-[-0.02em]">FlowPanel</div>
-                <div className="text-[12px] text-[var(--app-text-muted)]">Admin dashboard</div>
+                <div className="text-sm font-semibold tracking-tight">FlowPanel</div>
+                <div className="text-xs text-muted-foreground">Admin panel</div>
               </div>
             </Link>
           </div>
+        </SidebarHeader>
 
-          <div className="hidden flex-1 px-4 lg:flex lg:max-w-xl">
-            <label className="relative block w-full">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-text-muted)]" />
-              <input
-                readOnly
-                value=""
-                placeholder="Navigation, files, and runtime tools"
-                className="h-10 w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] pl-10 pr-4 text-[14px] text-[var(--app-text)] outline-none"
-              />
-            </label>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+              {navigationItems.map((item) => {
+                const Icon = item.icon;
+                const active = isNavItemActive(item.to);
+
+                return (
+                  <SidebarMenuItem key={item.to}>
+                    <SidebarMenuButton asChild isActive={active} tooltip={item.label}>
+                      <Link to={item.to}>
+                        <Icon />
+                        <span>{item.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+
+        <SidebarFooter>
+          <div className="rounded-md border bg-card px-3 py-2 text-sm text-muted-foreground">
+            Local node
           </div>
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
 
-          <div className="flex items-center gap-2">
-            <div className="hidden rounded-full border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-1 text-[12px] font-medium text-[var(--app-text-muted)] md:block">
-              Local node
-            </div>
-            <button
-              type="button"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)] transition-colors hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
-            >
-              <Bell className="h-4 w-4" />
-              <span className="sr-only">Notifications</span>
-            </button>
-          </div>
-        </div>
-      </header>
+      <SidebarInset className="@container/content">
+        <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="flex h-16 items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+            <div className="flex min-w-0 items-center gap-3">
+              <SidebarTrigger />
+              <Separator orientation="vertical" className="h-4" />
 
-      {menuOpen ? (
-        <button
-          type="button"
-          className="fixed inset-0 z-10 bg-slate-900/20 lg:hidden"
-          onClick={() => setMenuOpen(false)}
-          aria-label="Close navigation"
-        />
-      ) : null}
-
-      <aside
-        className={cn(
-          "fixed left-0 top-16 z-20 flex h-[calc(100vh-var(--app-navbar-height))] w-64 flex-col border-r border-[var(--app-border)] bg-[var(--app-surface)] transition-transform duration-200 lg:translate-x-0",
-          menuOpen ? "translate-x-0" : "-translate-x-full",
-        )}
-      >
-        <div className="flex-1 overflow-y-auto px-3 py-5">
-          <div className="mb-5 rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
-            <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--app-accent)]">
-              Workspace
-            </div>
-            <div className="mt-2 text-[15px] font-semibold text-[var(--app-text)]">Server controls</div>
-            <p className="mt-1 text-[13px] leading-6 text-[var(--app-text-muted)]">
-              Runtime status, domains, files, and operations in one panel.
-            </p>
-          </div>
-
-          <nav className="space-y-1">
-            {navigationItems.map((item) => {
-              const Icon = item.icon;
-              const active = isNavItemActive(item.to);
-
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  onClick={() => setMenuOpen(false)}
-                  className={cn(
-                    "flex items-center justify-between rounded-xl px-3 py-2.5 text-[14px] font-medium transition-colors duration-150",
-                    active
-                      ? "bg-[var(--app-accent-soft)] text-[var(--app-accent)]"
-                      : "text-[var(--app-text-muted)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]",
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <Icon className={cn("h-5 w-5", active ? "text-[var(--app-accent)]" : "")} />
-                    {item.label}
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Control center
+                </div>
+                <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+                  <span className="truncate">{activeItem.label}</span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-muted-foreground">
+                    {location.pathname === "/" ? "Dashboard" : location.pathname.slice(1).replace(/-/g, " ")}
                   </span>
-                  {active ? <ChevronRight className="h-4 w-4" /> : null}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
-      </aside>
+                </div>
+              </div>
+            </div>
 
-      <main className="min-w-0 pt-16 lg:pl-64">
-        <Outlet />
-      </main>
-    </div>
+            <div className="hidden flex-1 px-4 lg:flex lg:max-w-xl">
+              <label className="relative block w-full">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  readOnly
+                  value=""
+                  placeholder="Search panel actions, files, and services"
+                  className="h-9 w-full rounded-md border border-input bg-transparent pl-10 pr-4 text-sm text-foreground outline-none placeholder:text-muted-foreground dark:bg-input/30"
+                />
+              </label>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="hidden rounded-md border bg-card px-3 py-1.5 text-xs text-muted-foreground md:block">
+                Local workspace
+              </div>
+              <Button variant="ghost" size="icon">
+                <Bell className="h-4 w-4" />
+                <span className="sr-only">Notifications</span>
+              </Button>
+            </div>
+          </div>
+        </header>
+
+        <main className="min-w-0 pb-10">
+          <Outlet />
+        </main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
 

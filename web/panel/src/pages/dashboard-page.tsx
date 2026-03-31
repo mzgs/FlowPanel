@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
 import { fetchPHPStatus, installPHP, startPHP, type PHPStatus } from "@/api/php";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/panel/badge";
@@ -8,17 +8,17 @@ import { Button } from "@/components/panel/button";
 function getStatusBadge(status: PHPStatus) {
   switch (status.state) {
     case "ready":
-      return <Badge variant="success">Ready</Badge>;
+      return <Badge>Ready</Badge>;
     case "stopped":
-      return <Badge variant="warning">Needs start</Badge>;
+      return <Badge variant="secondary">Needs start</Badge>;
     case "missing":
-      return <Badge variant="danger">Missing</Badge>;
+      return <Badge variant="destructive">Missing</Badge>;
     case "missing-fpm":
-      return <Badge variant="danger">Missing FPM</Badge>;
+      return <Badge variant="destructive">Missing FPM</Badge>;
     case "misconfigured":
-      return <Badge variant="danger">Misconfigured</Badge>;
+      return <Badge variant="destructive">Misconfigured</Badge>;
     default:
-      return <Badge variant="neutral">Unknown</Badge>;
+      return <Badge variant="outline">Unknown</Badge>;
   }
 }
 

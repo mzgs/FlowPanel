@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "@/components/icons/tabler-icons";
 import {
   createDomain,
   deleteDomain,
@@ -428,7 +428,7 @@ export function DomainsPage() {
                         <div className="flex items-center justify-end gap-2">
                           <Button
                             type="button"
-                            variant="quiet"
+                            variant="ghost"
                             size="sm"
                             onClick={() => openEditForm(domain)}
                             disabled={deletingDomainId !== null}
@@ -438,7 +438,7 @@ export function DomainsPage() {
                           </Button>
                           <Button
                             type="button"
-                            variant="quiet"
+                            variant="ghost"
                             size="sm"
                             onClick={() => {
                               void handleDelete(domain);

@@ -1,0 +1,98 @@
+import * as TablerIcons from "@tabler/icons-react";
+import type { ComponentType } from "react";
+
+type IconProps = {
+  className?: string;
+  stroke?: number | string;
+  size?: number | string;
+};
+
+type IconComponent = ComponentType<IconProps>;
+
+const icons = TablerIcons as unknown as Record<string, IconComponent>;
+const fallback = icons.IconCircle;
+
+function pick(...names: string[]): IconComponent {
+  return names.map((name) => icons[name]).find(Boolean) ?? fallback;
+}
+
+export const ArrowLeft = pick("IconArrowLeft");
+export const ArrowRight = pick("IconArrowRight");
+export const ArrowUp = pick("IconArrowUp");
+export const AudioWaveform = pick("IconWaveSine", "IconChartSoundwave");
+export const BadgeCheck = pick("IconBadgeCheck");
+export const Bell = pick("IconBell");
+export const Bug = pick("IconBug");
+export const Calendar = pick("IconCalendar");
+export const Check = pick("IconCheck");
+export const CheckIcon = pick("IconCheck");
+export const ChevronDownIcon = pick("IconChevronDown");
+export const ChevronLeftIcon = pick("IconChevronLeft");
+export const ChevronRight = pick("IconChevronRight");
+export const ChevronRightIcon = pick("IconChevronRight");
+export const ChevronUpIcon = pick("IconChevronUp");
+export const ChevronsUpDown = pick("IconChevronsUpDown");
+export const CircleCheck = pick("IconCircleCheck");
+export const CircleIcon = pick("IconCircle");
+export const CircleQuestionMark = pick("IconHelpCircle", "IconCircleQuestionMark");
+export const Command = pick("IconCommand");
+export const Construction = pick("IconBarrierBlock", "IconTool");
+export const Copy = pick("IconCopy");
+export const CreditCard = pick("IconCreditCard");
+export const Database = pick("IconDatabase");
+export const Download = pick("IconDownload");
+export const Eye = pick("IconEye");
+export const EyeOff = pick("IconEyeOff");
+export const File = pick("IconFile");
+export const FileCode2 = pick("IconFileCode2", "IconFileCode");
+export const FilePlus2 = pick("IconFilePlus2", "IconFilePlus");
+export const FileSymlink = pick("IconFileSymlink");
+export const FileX = pick("IconFileX");
+export const Folder = pick("IconFolder");
+export const FolderOpen = pick("IconFolderOpen");
+export const FolderPlus = pick("IconFolderPlus");
+export const GalleryVerticalEnd = pick("IconLayoutSidebarRightCollapse", "IconLayoutColumns");
+export const Globe = pick("IconGlobe");
+export const Grid2X2 = pick("IconLayoutGrid", "IconGridDots");
+export const HardDrive = pick("IconHardDrive");
+export const HelpCircle = pick("IconHelpCircle");
+export const Laptop = pick("IconDeviceLaptop");
+export const LayoutDashboard = pick("IconLayoutDashboard");
+export const List = pick("IconList");
+export const ListTodo = pick("IconListCheck", "IconChecklist");
+export const Loader = pick("IconLoader2", "IconLoader");
+export const LoaderCircle = pick("IconLoader2", "IconLoader");
+export const Lock = pick("IconLock");
+export const LogOut = pick("IconLogout");
+export const Menu = pick("IconMenu2", "IconMenu");
+export const MessagesSquare = pick("IconMessages", "IconMessage2");
+export const MinusIcon = pick("IconMinus");
+export const Monitor = pick("IconDeviceDesktop", "IconMonitor");
+export const Moon = pick("IconMoon");
+export const Package = pick("IconPackage");
+export const Palette = pick("IconPalette");
+export const PanelLeftIcon = pick("IconLayoutSidebarLeftCollapse", "IconPanelLeft");
+export const Pencil = pick("IconPencil");
+export const Plus = pick("IconPlus");
+export const RefreshCw = pick("IconRefresh", "IconRefreshDot");
+export const RotateCcw = pick("IconRotateClockwise2", "IconRotate2");
+export const Scissors = pick("IconCut");
+export const Search = pick("IconSearch");
+export const SearchIcon = pick("IconSearch");
+export const ServerOff = pick("IconServerOff");
+export const Settings = pick("IconSettings");
+export const Settings2 = pick("IconSettings2");
+export const ShieldCheck = pick("IconShieldCheck");
+export const Sparkles = pick("IconSparkles");
+export const Sun = pick("IconSun");
+export const Telescope = pick("IconTelescope");
+export const TerminalSquare = pick("IconTerminal2");
+export const TimerReset = pick("IconClockRefresh", "IconRefresh");
+export const Trash2 = pick("IconTrash");
+export const Upload = pick("IconUpload");
+export const UserCog = pick("IconUserCog");
+export const UserX = pick("IconUserX");
+export const Users = pick("IconUsers");
+export const Wrench = pick("IconTool");
+export const X = pick("IconX");
+export const XIcon = pick("IconX");

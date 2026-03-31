@@ -2,6 +2,8 @@ import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
+import "@fontsource/manrope/600.css";
+import "@fontsource/manrope/700.css";
 import "./styles.css";
 
 import { StrictMode } from "react";
@@ -12,6 +14,10 @@ import {
 } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { router } from "@/router";
+
+if (typeof document !== "undefined") {
+  document.documentElement.classList.add("dark");
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
