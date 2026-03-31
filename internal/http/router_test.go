@@ -21,6 +21,7 @@ import (
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
+	"flowpanel/internal/phpmyadmin"
 
 	"go.uber.org/zap"
 )
@@ -28,6 +29,8 @@ import (
 type fakePHPManager struct{}
 
 type fakeMariaDBManager struct{}
+
+type fakePHPMyAdminManager struct{}
 
 func (fakePHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
@@ -112,6 +115,20 @@ func (fakeMariaDBManager) DeleteDatabase(context.Context, string, mariadb.Delete
 	return nil
 }
 
+func (fakePHPMyAdminManager) Status(context.Context) phpmyadmin.Status {
+	return phpmyadmin.Status{
+		Installed:        true,
+		InstallPath:      "/usr/share/phpmyadmin",
+		State:            "installed",
+		Message:          "phpMyAdmin is installed.",
+		InstallAvailable: false,
+	}
+}
+
+func (fakePHPMyAdminManager) Install(context.Context) error {
+	return nil
+}
+
 func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
 	router, domains, store := newTestDomainRouter(t)
 
@@ -143,6 +160,17 @@ func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
 	}
 	if len(persisted) != 0 {
 		t.Fatalf("persisted domain count after failed publish = %d, want 0", len(persisted))
+	}
+}
+
+func TestPHPMyAdminExternalURLUsesRequestHostForWildcardListenAddr(t *testing.T) {
+	target, err := phpMyAdminExternalURL(":32109", "panel.example.test:8080", "/index.php")
+	if err != nil {
+		t.Fatalf("phpMyAdminExternalURL(): %v", err)
+	}
+
+	if got := target.String(); got != "http://panel.example.test:32109/index.php" {
+		t.Fatalf("target = %q, want http://panel.example.test:32109/index.php", got)
 	}
 }
 
@@ -553,6 +581,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		AdminListenAddr: ":18080",
 		PublicHTTPAddr:  ":19080",
 		PublicHTTPSAddr: ":19443",
+		PHPMyAdminAddr:  ":32109",
 		Database: config.DatabaseConfig{
 			Path: ":memory:",
 		},
@@ -593,9 +622,17 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		domains,
 		auth.NewSessionManager(cfg),
 		jobs.NewScheduler(logger.Named("jobs"), false),
-		caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, fakePHPManager{}),
+		caddy.NewRuntime(
+			logger.Named("caddy"),
+			cfg.PublicHTTPAddr,
+			cfg.PublicHTTPSAddr,
+			fakePHPManager{},
+			fakePHPMyAdminManager{},
+			cfg.PHPMyAdminAddr,
+		),
 		fakeMariaDBManager{},
 		fakePHPManager{},
+		fakePHPMyAdminManager{},
 		fileManager,
 	))
 	if err != nil {

@@ -3,6 +3,7 @@ export type BootstrapPayload = {
   status: string;
   environment: string;
   admin_listen_addr: string;
+  phpmyadmin_addr: string;
   cron_enabled: boolean;
 };
 

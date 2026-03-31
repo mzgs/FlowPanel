@@ -19,6 +19,7 @@ import {
   type MariaDBDatabase,
 } from "@/api/mariadb";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
+import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import { Check, Copy, Eye, EyeOff, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -122,16 +123,44 @@ function formatStatusSummary(product?: string, version?: string) {
 function ToolbarButton({
   children,
   disabled = false,
+  href,
+  target,
+  rel,
+  title,
 }: {
   children: ReactNode;
   disabled?: boolean;
+  href?: string;
+  target?: string;
+  rel?: string;
+  title?: string;
 }) {
+  const className =
+    "h-10 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 text-[13px] font-medium text-[var(--app-text)] disabled:opacity-80";
+
+  if (href && !disabled) {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        asChild
+        className={className}
+        title={title}
+      >
+        <a href={href} target={target} rel={rel}>
+          {children}
+        </a>
+      </Button>
+    );
+  }
+
   return (
     <Button
       type="button"
       variant="ghost"
       disabled={disabled}
-      className="h-10 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 text-[13px] font-medium text-[var(--app-text)] disabled:opacity-80"
+      className={className}
+      title={title}
     >
       {children}
     </Button>
@@ -141,6 +170,7 @@ function ToolbarButton({
 export function DatabasePage() {
   const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
   const [domains, setDomains] = useState<DomainRecord[]>([]);
+  const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [statusSummary, setStatusSummary] = useState("MySQL / MariaDB");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -169,10 +199,11 @@ export function DatabasePage() {
 
     async function loadData() {
       try {
-        const [databasesResult, statusResult, domainsResult] = await Promise.allSettled([
+        const [databasesResult, statusResult, domainsResult, phpMyAdminResult] = await Promise.allSettled([
           fetchMariaDBDatabases(),
           fetchMariaDBStatus(),
           fetchDomains(),
+          fetchPHPMyAdminStatus(),
         ]);
 
         if (!active) {
@@ -198,6 +229,12 @@ export function DatabasePage() {
         } else {
           setDomains([]);
           setDomainsLoadError(getErrorMessage(domainsResult.reason, "Failed to load domains."));
+        }
+
+        if (phpMyAdminResult.status === "fulfilled") {
+          setPHPMyAdminStatus(phpMyAdminResult.value);
+        } else {
+          setPHPMyAdminStatus(null);
         }
       } finally {
         if (active) {
@@ -594,7 +631,21 @@ export function DatabasePage() {
                   </div>
                 </PopoverContent>
               </Popover>
-              <ToolbarButton>phpMyAdmin</ToolbarButton>
+              <ToolbarButton
+                href={phpMyAdminStatus?.installed ? "/phpmyadmin/" : undefined}
+                target="_blank"
+                rel="noreferrer"
+                disabled={!phpMyAdminStatus?.installed}
+                title={
+                  phpMyAdminStatus?.installed
+                    ? phpMyAdminStatus.version
+                      ? `Open phpMyAdmin ${phpMyAdminStatus.version}`
+                      : "Open phpMyAdmin"
+                    : phpMyAdminStatus?.message ?? "phpMyAdmin is not installed."
+                }
+              >
+                phpMyAdmin
+              </ToolbarButton>
 
               <small>{statusSummary}</small>
 

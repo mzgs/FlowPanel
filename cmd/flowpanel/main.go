@@ -22,6 +22,7 @@ import (
 	"flowpanel/internal/logging"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
+	"flowpanel/internal/phpmyadmin"
 
 	"go.uber.org/zap"
 )
@@ -85,13 +86,33 @@ func run() error {
 	scheduler := jobs.NewScheduler(logger.Named("jobs"), cfg.Cron.Enabled)
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
 	phpManager := phpenv.NewService(logger.Named("php"))
-	caddyRuntime := caddy.NewRuntime(logger.Named("caddy"), cfg.PublicHTTPAddr, cfg.PublicHTTPSAddr, phpManager)
+	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
+	caddyRuntime := caddy.NewRuntime(
+		logger.Named("caddy"),
+		cfg.PublicHTTPAddr,
+		cfg.PublicHTTPSAddr,
+		phpManager,
+		phpMyAdminManager,
+		cfg.PHPMyAdminAddr,
+	)
 	fileManager, err := files.NewService(domainService.BasePath())
 	if err != nil {
 		return fmt.Errorf("initialize file manager: %w", err)
 	}
 
-	appContainer := app.New(cfg, logger, dbConn, domainService, sessionManager, scheduler, caddyRuntime, mariadbManager, phpManager, fileManager)
+	appContainer := app.New(
+		cfg,
+		logger,
+		dbConn,
+		domainService,
+		sessionManager,
+		scheduler,
+		caddyRuntime,
+		mariadbManager,
+		phpManager,
+		phpMyAdminManager,
+		fileManager,
+	)
 
 	router, err := httpx.NewRouter(appContainer)
 	if err != nil {

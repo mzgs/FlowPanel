@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import { fetchMariaDBStatus, installMariaDB, type MariaDBStatus } from "@/api/mariadb";
 import { fetchPHPStatus, installPHP, type PHPStatus } from "@/api/php";
+import { fetchPHPMyAdminStatus, installPHPMyAdmin, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { Database, LayoutDashboard, LoaderCircle, TerminalSquare } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
@@ -18,19 +19,22 @@ function getActionError(error: unknown, fallback: string) {
 type OverviewData = {
   mariadbStatus: MariaDBStatus | null;
   phpError: string | null;
+  phpMyAdminStatus: PHPMyAdminStatus | null;
   phpStatus: PHPStatus | null;
   systemStatus: SystemStatus | null;
 };
 
 async function fetchOverviewData(): Promise<OverviewData> {
-  const [mariadbResult, phpResult, systemResult] = await Promise.allSettled([
+  const [mariadbResult, phpResult, phpMyAdminResult, systemResult] = await Promise.allSettled([
     fetchMariaDBStatus(),
     fetchPHPStatus(),
+    fetchPHPMyAdminStatus(),
     fetchSystemStatus(),
   ]);
 
   return {
     mariadbStatus: mariadbResult.status === "fulfilled" ? mariadbResult.value : null,
+    phpMyAdminStatus: phpMyAdminResult.status === "fulfilled" ? phpMyAdminResult.value : null,
     phpStatus: phpResult.status === "fulfilled" ? phpResult.value : null,
     phpError:
       phpResult.status === "rejected"
@@ -42,16 +46,20 @@ async function fetchOverviewData(): Promise<OverviewData> {
 
 function SoftwareCard({
   mariadbStatus,
+  phpMyAdminStatus,
   phpStatus,
   runningAction,
   onInstallMariaDB,
   onInstallPHP,
+  onInstallPHPMyAdmin,
 }: {
   mariadbStatus: MariaDBStatus | null;
+  phpMyAdminStatus: PHPMyAdminStatus | null;
   phpStatus: PHPStatus | null;
-  runningAction: "install-mariadb" | "install-php" | null;
+  runningAction: "install-mariadb" | "install-php" | "install-phpmyadmin" | null;
   onInstallMariaDB: () => Promise<void>;
   onInstallPHP: () => Promise<void>;
+  onInstallPHPMyAdmin: () => Promise<void>;
 }) {
   const mariaDBValue = formatMariaDBValue(mariadbStatus);
   const phpVersion = formatPHPVersion(phpStatus);
@@ -112,7 +120,27 @@ function SoftwareCard({
           <SoftwareRow
             icon={<LayoutDashboard className="h-4 w-4" />}
             label="phpMyAdmin"
-            value={<div className="text-[12px] text-[var(--app-text-muted)]">Status unavailable</div>}
+            value={
+              phpMyAdminStatus?.install_available ? (
+                <Button type="button" size="sm" onClick={onInstallPHPMyAdmin} disabled={runningAction !== null}>
+                  {runningAction === "install-phpmyadmin" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  {phpMyAdminStatus.install_label ?? "Install"}
+                </Button>
+              ) : (
+                <div
+                  className={
+                    phpMyAdminStatus?.installed
+                      ? "max-w-[13rem] truncate text-right font-mono text-[12px] text-[var(--app-text)] sm:max-w-[18rem]"
+                      : "text-[12px] text-[var(--app-text-muted)]"
+                  }
+                  title={[phpMyAdminStatus?.version, phpMyAdminStatus?.install_path].filter(Boolean).join(" • ")}
+                >
+                  {formatPHPMyAdminValue(phpMyAdminStatus)}
+                </div>
+              )
+            }
           />
         </div>
       </div>
@@ -162,6 +190,22 @@ function formatMariaDBValue(status: MariaDBStatus | null) {
   return "Not installed";
 }
 
+function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
+  if (!status) {
+    return "Unavailable";
+  }
+
+  if (status.installed && status.version?.trim()) {
+    return status.version.trim();
+  }
+
+  if (status.installed) {
+    return "Installed";
+  }
+
+  return "Not installed";
+}
+
 function formatPHPVersion(status: PHPStatus | null) {
   if (!status?.php_installed) {
     return null;
@@ -197,12 +241,15 @@ function extractVersionNumber(value: string, pattern: RegExp) {
 
 export function DashboardPage() {
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
+  const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [phpError, setPHPError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [runningAction, setRunningAction] = useState<"install-mariadb" | "install-php" | null>(null);
+  const [runningAction, setRunningAction] = useState<
+    "install-mariadb" | "install-php" | "install-phpmyadmin" | null
+  >(null);
 
   const refreshSystemStatus = useEffectEvent(async () => {
     try {
@@ -223,6 +270,7 @@ export function DashboardPage() {
       }
 
       setPHPStatus(nextOverview.phpStatus);
+      setPHPMyAdminStatus(nextOverview.phpMyAdminStatus);
       setMariaDBStatus(nextOverview.mariadbStatus);
       setPHPError(nextOverview.phpError);
       setSystemStatus(nextOverview.systemStatus);
@@ -275,6 +323,20 @@ export function DashboardPage() {
     }
   }
 
+  async function handlePHPMyAdminInstall() {
+    setRunningAction("install-phpmyadmin");
+    setActionError(null);
+
+    try {
+      const nextStatus = await installPHPMyAdmin();
+      setPHPMyAdminStatus(nextStatus);
+    } catch (error) {
+      setActionError(getActionError(error, "Failed to install phpMyAdmin."));
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
   return (
     <>
       <PageHeader title="Overview" />
@@ -299,10 +361,12 @@ export function DashboardPage() {
                 ) : null}
                 <SoftwareCard
                   mariadbStatus={mariadbStatus}
+                  phpMyAdminStatus={phpMyAdminStatus}
                   phpStatus={phpStatus}
                   runningAction={runningAction}
                   onInstallMariaDB={handleMariaDBInstall}
                   onInstallPHP={handlePHPInstall}
+                  onInstallPHPMyAdmin={handlePHPMyAdminInstall}
                 />
               </div>
             ) : null}

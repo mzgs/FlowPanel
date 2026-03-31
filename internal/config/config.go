@@ -16,6 +16,7 @@ type Config struct {
 	AdminListenAddr string
 	PublicHTTPAddr  string
 	PublicHTTPSAddr string
+	PHPMyAdminAddr  string
 	ShutdownTimeout time.Duration
 	Database        DatabaseConfig
 	Session         SessionConfig
@@ -57,6 +58,7 @@ func Load() (Config, error) {
 		AdminListenAddr: getEnv("FLOWPANEL_ADMIN_LISTEN_ADDR", ":8080"),
 		PublicHTTPAddr:  getEnv("FLOWPANEL_PUBLIC_HTTP_ADDR", ":80"),
 		PublicHTTPSAddr: getEnv("FLOWPANEL_PUBLIC_HTTPS_ADDR", ":443"),
+		PHPMyAdminAddr:  getEnv("FLOWPANEL_PHPMYADMIN_ADDR", ":32109"),
 		ShutdownTimeout: shutdownTimeout,
 		Database: DatabaseConfig{
 			Path: getEnv("FLOWPANEL_DB_PATH", "./data/flowpanel.db"),
@@ -99,6 +101,9 @@ func (c Config) validate() error {
 	}
 	if strings.TrimSpace(c.PublicHTTPSAddr) == "" {
 		problems = append(problems, "FLOWPANEL_PUBLIC_HTTPS_ADDR must not be empty")
+	}
+	if strings.TrimSpace(c.PHPMyAdminAddr) == "" {
+		problems = append(problems, "FLOWPANEL_PHPMYADMIN_ADDR must not be empty")
 	}
 	if strings.TrimSpace(c.Database.Path) == "" {
 		problems = append(problems, "FLOWPANEL_DB_PATH must not be empty")
@@ -169,11 +174,12 @@ func getDuration(key string, fallback time.Duration) (time.Duration, error) {
 }
 
 func (c Config) String() string {
-	return fmt.Sprintf("env=%s admin=%s public_http=%s public_https=%s db=%s cron_enabled=%t",
+	return fmt.Sprintf("env=%s admin=%s public_http=%s public_https=%s phpmyadmin=%s db=%s cron_enabled=%t",
 		c.Env,
 		c.AdminListenAddr,
 		c.PublicHTTPAddr,
 		c.PublicHTTPSAddr,
+		c.PHPMyAdminAddr,
 		c.Database.Path,
 		c.Cron.Enabled,
 	)

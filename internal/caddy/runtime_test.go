@@ -10,6 +10,7 @@ import (
 
 	"flowpanel/internal/domain"
 	"flowpanel/internal/phpenv"
+	"flowpanel/internal/phpmyadmin"
 
 	caddyv2 "github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -20,7 +21,7 @@ import (
 func TestBuildConfigValidatesStaticAndAppDomains(t *testing.T) {
 	staticRoot := t.TempDir()
 
-	cfg, summary, err := buildConfig(":9080", ":9443", []domain.Record{
+	cfg, summary, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{
 			Hostname: "static.example.com",
 			Kind:     domain.KindStaticSite,
@@ -31,7 +32,7 @@ func TestBuildConfigValidatesStaticAndAppDomains(t *testing.T) {
 			Kind:     domain.KindApp,
 			Target:   "3000",
 		},
-	}, nil, runtimeSyncModeStandard)
+	}, nil, nil, runtimeSyncModeStandard)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -75,13 +76,13 @@ func TestBuildConfigValidatesStaticAndAppDomains(t *testing.T) {
 }
 
 func TestBuildConfigUsesLocalhostForAppDomains(t *testing.T) {
-	cfg, _, err := buildConfig(":9080", ":9443", []domain.Record{
+	cfg, _, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{
 			Hostname: "app.example.com",
 			Kind:     domain.KindApp,
 			Target:   "3000",
 		},
-	}, nil, runtimeSyncModeStandard)
+	}, nil, nil, runtimeSyncModeStandard)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -97,13 +98,13 @@ func TestBuildConfigUsesLocalhostForAppDomains(t *testing.T) {
 }
 
 func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
-	cfg, summary, err := buildConfig(":9080", ":9443", []domain.Record{
+	cfg, summary, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{
 			Hostname: "php.example.com",
 			Kind:     domain.KindPHP,
 			Target:   "/var/www/php.example.com",
 		},
-	}, &phpRouteConfig{fastCGIAddress: "127.0.0.1:9000"}, runtimeSyncModeStandard)
+	}, &phpRouteConfig{fastCGIAddress: "127.0.0.1:9000"}, nil, runtimeSyncModeStandard)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -140,13 +141,13 @@ func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
 }
 
 func TestBuildConfigNormalizesUnixSocketFastCGIAddress(t *testing.T) {
-	cfg, _, err := buildConfig(":9080", ":9443", []domain.Record{
+	cfg, _, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{
 			Hostname: "php.example.com",
 			Kind:     domain.KindPHP,
 			Target:   "/var/www/php.example.com",
 		},
-	}, &phpRouteConfig{fastCGIAddress: "/run/php/php8.3-fpm.sock"}, runtimeSyncModeStandard)
+	}, &phpRouteConfig{fastCGIAddress: "/run/php/php8.3-fpm.sock"}, nil, runtimeSyncModeStandard)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -161,27 +162,72 @@ func TestBuildConfigNormalizesUnixSocketFastCGIAddress(t *testing.T) {
 	}
 }
 
+func TestBuildConfigIncludesPHPMyAdminRoute(t *testing.T) {
+	cfg, summary, err := buildConfig(
+		":9080",
+		":9443",
+		":32109",
+		nil,
+		nil,
+		&phpMyAdminRouteConfig{
+			fastCGIAddress: "127.0.0.1:9000",
+			root:           "/opt/homebrew/share/phpmyadmin",
+		},
+		runtimeSyncModeStandard,
+	)
+	if err != nil {
+		t.Fatalf("build config: %v", err)
+	}
+
+	if summary.activeRoutes != 1 {
+		t.Fatalf("active routes = %d, want 1", summary.activeRoutes)
+	}
+
+	rawConfig, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+
+	if !bytes.Contains(rawConfig, []byte(`"phpmyadmin"`)) {
+		t.Fatalf("raw config = %s, want phpmyadmin server", string(rawConfig))
+	}
+	if !bytes.Contains(rawConfig, []byte(`"listen":[":32109"]`)) {
+		t.Fatalf("raw config = %s, want phpmyadmin listen port", string(rawConfig))
+	}
+	if !bytes.Contains(rawConfig, []byte(`"/opt/homebrew/share/phpmyadmin"`)) {
+		t.Fatalf("raw config = %s, want phpmyadmin root", string(rawConfig))
+	}
+
+	var httpApp caddyhttp.App
+	if err := json.Unmarshal(cfg.AppsRaw["http"], &httpApp); err != nil {
+		t.Fatalf("unmarshal http app: %v", err)
+	}
+	if httpApp.Servers["public"] != nil {
+		t.Fatalf("unexpected public server for phpmyadmin-only config: %#v", httpApp.Servers["public"])
+	}
+}
+
 func TestBuildConfigRejectsReverseProxyTargetsWithPaths(t *testing.T) {
-	_, _, err := buildConfig(":9080", ":9443", []domain.Record{
+	_, _, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{
 			Hostname: "proxy.example.com",
 			Kind:     domain.KindReverseProxy,
 			Target:   "https://backend.example.com/base",
 		},
-	}, nil, runtimeSyncModeStandard)
+	}, nil, nil, runtimeSyncModeStandard)
 	if err == nil {
 		t.Fatal("expected build config to fail")
 	}
 }
 
 func TestConfigMarshalRemainsLoadableAfterValidationClone(t *testing.T) {
-	cfg, _, err := buildConfig(":9080", ":9443", []domain.Record{
+	cfg, _, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{
 			Hostname: "static.example.com",
 			Kind:     domain.KindStaticSite,
 			Target:   t.TempDir(),
 		},
-	}, nil, runtimeSyncModeStandard)
+	}, nil, nil, runtimeSyncModeStandard)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -206,13 +252,13 @@ func TestConfigMarshalRemainsLoadableAfterValidationClone(t *testing.T) {
 }
 
 func TestBuildConfigHTTPSOnlyModeDisablesRedirectsAndHTTPChallenge(t *testing.T) {
-	cfg, summary, err := buildConfig(":9080", ":9443", []domain.Record{
+	cfg, summary, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{
 			Hostname: "static.example.com",
 			Kind:     domain.KindStaticSite,
 			Target:   t.TempDir(),
 		},
-	}, nil, runtimeSyncModeHTTPSOnly)
+	}, nil, nil, runtimeSyncModeHTTPSOnly)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -280,7 +326,7 @@ func TestRuntimeSyncCanReloadMultipleDomainSets(t *testing.T) {
 	httpAddr := freeTCPAddress(t)
 	httpsAddr := freeTCPAddress(t)
 
-	runtime := NewRuntime(zap.NewNop(), httpAddr, httpsAddr, fakePHPManager{})
+	runtime := NewRuntime(zap.NewNop(), httpAddr, httpsAddr, fakePHPManager{}, fakePHPMyAdminManager{}, ":32109")
 	ctx := context.Background()
 
 	if err := runtime.Start(ctx); err != nil {
@@ -330,7 +376,7 @@ func TestRuntimeSyncFallsBackToHTTPSOnlyWhenPublicHTTPPortIsBusy(t *testing.T) {
 	httpAddr := httpListener.Addr().String()
 	httpsAddr := freeTCPAddress(t)
 
-	runtime := NewRuntime(zap.NewNop(), httpAddr, httpsAddr, fakePHPManager{})
+	runtime := NewRuntime(zap.NewNop(), httpAddr, httpsAddr, fakePHPManager{}, fakePHPMyAdminManager{}, ":32109")
 	ctx := context.Background()
 
 	if err := runtime.Start(ctx); err != nil {
@@ -389,6 +435,16 @@ func (fakePHPManager) Install(context.Context) error {
 }
 
 func (fakePHPManager) Start(context.Context) error {
+	return nil
+}
+
+type fakePHPMyAdminManager struct{}
+
+func (fakePHPMyAdminManager) Status(context.Context) phpmyadmin.Status {
+	return phpmyadmin.Status{}
+}
+
+func (fakePHPMyAdminManager) Install(context.Context) error {
 	return nil
 }
 

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	stdhttp "net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -54,6 +56,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				"status":            "ok",
 				"environment":       app.Config.Env,
 				"admin_listen_addr": app.Config.AdminListenAddr,
+				"phpmyadmin_addr":   app.Config.PHPMyAdminAddr,
 				"cron_enabled":      app.Config.Cron.Enabled,
 			})
 		})
@@ -430,6 +433,44 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodHead, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodPost, "/php/install", phpInstallHandler)
 		r.Method(stdhttp.MethodPost, "/php/start", phpStartHandler)
+
+		phpMyAdminStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHPMyAdmin == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "phpmyadmin runtime is not configured",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"phpmyadmin": app.PHPMyAdmin.Status(r.Context()),
+			})
+		})
+
+		phpMyAdminInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHPMyAdmin == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "phpmyadmin runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.PHPMyAdmin.Install(r.Context()); err != nil {
+				app.Logger.Error("install phpmyadmin failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"phpmyadmin": app.PHPMyAdmin.Status(r.Context()),
+			})
+		})
+
+		r.Method(stdhttp.MethodGet, "/phpmyadmin", phpMyAdminStatusHandler)
+		r.Method(stdhttp.MethodHead, "/phpmyadmin", phpMyAdminStatusHandler)
+		r.Method(stdhttp.MethodPost, "/phpmyadmin/install", phpMyAdminInstallHandler)
 
 		domainsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
@@ -905,12 +946,96 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 	})
 
+	router.Handle("/phpmyadmin", newPHPMyAdminRedirectHandler(app))
+	router.Handle("/phpmyadmin/*", newPHPMyAdminRedirectHandler(app))
 	router.Method(stdhttp.MethodGet, "/", panelHandler)
 	router.Method(stdhttp.MethodHead, "/", panelHandler)
 	router.Method(stdhttp.MethodGet, "/*", panelHandler)
 	router.Method(stdhttp.MethodHead, "/*", panelHandler)
 
 	return router, nil
+}
+
+func newPHPMyAdminRedirectHandler(app *app.App) stdhttp.Handler {
+	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if app.PHPMyAdmin == nil {
+			stdhttp.Error(w, "phpMyAdmin is not configured.", stdhttp.StatusServiceUnavailable)
+			return
+		}
+
+		status := app.PHPMyAdmin.Status(r.Context())
+		if !status.Installed {
+			stdhttp.NotFound(w, r)
+			return
+		}
+
+		if app.PHP == nil {
+			stdhttp.Error(w, "PHP is not configured for phpMyAdmin.", stdhttp.StatusServiceUnavailable)
+			return
+		}
+
+		phpStatus := app.PHP.Status(r.Context())
+		if !phpStatus.Ready {
+			stdhttp.Error(w, phpStatus.Message, stdhttp.StatusServiceUnavailable)
+			return
+		}
+
+		target, err := phpMyAdminExternalURL(app.Config.PHPMyAdminAddr, r.Host, strings.TrimPrefix(r.URL.Path, "/phpmyadmin"))
+		if err != nil {
+			stdhttp.Error(w, "phpMyAdmin URL is not configured.", stdhttp.StatusInternalServerError)
+			return
+		}
+		target.RawQuery = r.URL.RawQuery
+		stdhttp.Redirect(w, r, target.String(), stdhttp.StatusTemporaryRedirect)
+	})
+}
+
+func phpMyAdminExternalURL(listenAddr, requestHost, requestPath string) (*url.URL, error) {
+	listenHost, listenPort, err := splitHostPortDefault(listenAddr)
+	if err != nil {
+		return nil, err
+	}
+	requestHostOnly, _, err := splitHostPortDefault(requestHost)
+	if err != nil {
+		requestHostOnly = strings.TrimSpace(requestHost)
+	}
+
+	host := listenHost
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = requestHostOnly
+	}
+	if host == "" {
+		host = "localhost"
+	}
+
+	pathValue := "/" + strings.TrimPrefix(strings.TrimSpace(requestPath), "/")
+	if pathValue == "/" {
+		pathValue = "/"
+	}
+
+	return &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(host, listenPort),
+		Path:   pathValue,
+	}, nil
+}
+
+func splitHostPortDefault(address string) (string, string, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "", "", fmt.Errorf("address is empty")
+	}
+	if strings.HasPrefix(address, ":") {
+		return "", strings.TrimPrefix(address, ":"), nil
+	}
+
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", "", err
+	}
+
+	return strings.Trim(strings.TrimSpace(host), "[]"), strings.TrimSpace(port), nil
 }
 
 type panelHandler struct {

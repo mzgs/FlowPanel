@@ -10,22 +10,24 @@ import (
 	"flowpanel/internal/jobs"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
+	"flowpanel/internal/phpmyadmin"
 
 	"github.com/alexedwards/scs/v2"
 	"go.uber.org/zap"
 )
 
 type App struct {
-	Config   config.Config
-	Logger   *zap.Logger
-	DB       *sql.DB
-	Domains  *domain.Service
-	Sessions *scs.SessionManager
-	Jobs     *jobs.Scheduler
-	Caddy    *caddy.Runtime
-	MariaDB  mariadb.Manager
-	PHP      phpenv.Manager
-	Files    *files.Service
+	Config     config.Config
+	Logger     *zap.Logger
+	DB         *sql.DB
+	Domains    *domain.Service
+	Sessions   *scs.SessionManager
+	Jobs       *jobs.Scheduler
+	Caddy      *caddy.Runtime
+	MariaDB    mariadb.Manager
+	PHP        phpenv.Manager
+	PHPMyAdmin phpmyadmin.Manager
+	Files      *files.Service
 }
 
 func New(
@@ -38,18 +40,20 @@ func New(
 	caddyRuntime *caddy.Runtime,
 	mariadbManager mariadb.Manager,
 	phpManager phpenv.Manager,
+	phpMyAdminManager phpmyadmin.Manager,
 	fileManager *files.Service,
 ) *App {
 	return &App{
-		Config:   cfg,
-		Logger:   logger,
-		DB:       db,
-		Domains:  domains,
-		Sessions: sessions,
-		Jobs:     scheduler,
-		Caddy:    caddyRuntime,
-		MariaDB:  mariadbManager,
-		PHP:      phpManager,
-		Files:    fileManager,
+		Config:     cfg,
+		Logger:     logger,
+		DB:         db,
+		Domains:    domains,
+		Sessions:   sessions,
+		Jobs:       scheduler,
+		Caddy:      caddyRuntime,
+		MariaDB:    mariadbManager,
+		PHP:        phpManager,
+		PHPMyAdmin: phpMyAdminManager,
+		Files:      fileManager,
 	}
 }
