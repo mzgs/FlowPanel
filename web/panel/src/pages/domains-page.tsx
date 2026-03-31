@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 type FormState = {
   hostname: string;
@@ -38,6 +39,7 @@ type FormState = {
 
 type FormErrors = {
   hostname?: string;
+  kind?: string;
   target?: string;
 };
 
@@ -314,6 +316,7 @@ export function DomainsPage() {
       if (domainError.fieldErrors) {
         setErrors({
           hostname: domainError.fieldErrors.hostname,
+          kind: domainError.fieldErrors.kind,
           target: domainError.fieldErrors.target,
         });
       }
@@ -477,6 +480,7 @@ export function DomainsPage() {
       </div>
 
       <DialogContent
+        className="sm:max-w-xl"
         onAnimationEnd={(event) => {
           if (event.target !== event.currentTarget || formOpen || !resetOnClose) {
             return;
@@ -516,87 +520,100 @@ export function DomainsPage() {
         ) : null}
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="grid gap-4 md:grid-cols-[200px_minmax(0,1fr)]">
-            <div className="space-y-2">
-              <label
-                htmlFor="domain-kind"
-                className="text-[13px] font-medium text-[var(--app-text)]"
-              >
-                Domain type
-              </label>
-              <select
-                id="domain-kind"
-                value={form.kind}
-                onChange={(event) => {
-                  const kind = event.target.value as DomainKind;
-                  setForm((current) => ({
-                    ...current,
-                    kind,
-                    target: "",
-                  }));
+          <div className="space-y-2">
+            <label
+              htmlFor="domain-hostname"
+              className="text-[13px] font-medium text-[var(--app-text)]"
+            >
+              Domain
+            </label>
+            <Input
+              id="domain-hostname"
+              ref={hostnameInputRef}
+              value={form.hostname}
+              readOnly={isEditing}
+              onChange={(event) => {
+                setForm((current) => ({
+                  ...current,
+                  hostname: event.target.value,
+                }));
+                if (errors.hostname) {
                   setErrors((current) => ({
                     ...current,
-                    target: undefined,
+                    hostname: undefined,
                   }));
-                }}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm text-foreground shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
-              >
-                {domainKinds.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {kind}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <label
-                htmlFor="domain-hostname"
-                className="text-[13px] font-medium text-[var(--app-text)]"
-              >
-                Domain
-              </label>
-              <Input
-                id="domain-hostname"
-                ref={hostnameInputRef}
-                value={form.hostname}
-                readOnly={isEditing}
-                onChange={(event) => {
-                  setForm((current) => ({
-                    ...current,
-                    hostname: event.target.value,
-                  }));
-                  if (errors.hostname) {
-                    setErrors((current) => ({
-                      ...current,
-                      hostname: undefined,
-                    }));
-                  }
-                }}
-                placeholder="example.com"
-                autoComplete="off"
-                aria-invalid={errors.hostname ? "true" : "false"}
-                className={
-                  errors.hostname
-                    ? "border-[var(--app-danger)]"
-                    : isEditing
-                      ? "bg-[var(--app-surface-muted)]"
-                      : ""
                 }
-              />
-              {errors.hostname ? (
-                <p className="text-[12px] text-[var(--app-danger)]">{errors.hostname}</p>
-              ) : isEditing ? (
-                <p className="text-[12px] text-[var(--app-text-muted)]">
-                  Domain cannot be changed after creation.
-                </p>
-              ) : null}
-            </div>
+              }}
+              placeholder="example.com"
+              autoComplete="off"
+              aria-invalid={errors.hostname ? "true" : "false"}
+              className={
+                errors.hostname
+                  ? "border-[var(--app-danger)]"
+                  : isEditing
+                    ? "bg-[var(--app-surface-muted)]"
+                    : ""
+              }
+            />
+            {errors.hostname ? (
+              <p className="text-[12px] text-[var(--app-danger)]">{errors.hostname}</p>
+            ) : isEditing ? (
+              <p className="text-[12px] text-[var(--app-text-muted)]">
+                Domain cannot be changed after creation.
+              </p>
+            ) : null}
           </div>
 
-          {isSiteBackedKind(form.kind) ? (
-            <p className="text-[12px] text-[var(--app-text-muted)]">{config.helpText}</p>
-          ) : (
+          <div className="space-y-2">
+            <label className="text-[13px] font-medium text-[var(--app-text)]">
+              Domain type
+            </label>
+            <div
+              role="group"
+              aria-label="Domain type"
+              className={cn(
+                "flex flex-nowrap gap-2 overflow-x-auto rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-2",
+                errors.kind ? "border-[var(--app-danger)]" : "",
+              )}
+            >
+              {domainKinds.map((kind) => {
+                const isActive = form.kind === kind;
+
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => {
+                      setForm((current) => ({
+                        ...current,
+                        kind,
+                        target: "",
+                      }));
+                      setErrors((current) => ({
+                        ...current,
+                        kind: undefined,
+                        target: undefined,
+                      }));
+                    }}
+                    aria-pressed={isActive}
+                    className={cn(
+                      "min-w-fit shrink-0 rounded-lg border px-3 py-2 text-[13px] font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-text)]/20",
+                      isActive
+                        ? "border-[var(--app-text)]/10 bg-[var(--app-surface)] text-[var(--app-text)] shadow-sm"
+                        : "border-transparent bg-transparent text-[var(--app-text-muted)] hover:border-[var(--app-border)] hover:bg-[var(--app-surface)] hover:text-[var(--app-text)]",
+                    )}
+                  >
+                    {kind}
+                  </button>
+                );
+              })}
+            </div>
+            {errors.kind ? (
+              <p className="text-[12px] text-[var(--app-danger)]">{errors.kind}</p>
+            ) : null}
+          </div>
+
+          {isSiteBackedKind(form.kind) ? null : (
             <div className="space-y-2">
               <label
                 htmlFor="domain-target"
