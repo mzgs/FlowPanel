@@ -539,7 +539,7 @@ export function DomainsPage() {
                     target: undefined,
                   }));
                 }}
-                className="flex h-9 w-full rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[14px] text-[var(--app-text)] outline-none transition-colors duration-150 focus:border-[var(--app-border-strong)] focus:ring-2 focus:ring-[var(--app-accent)]/20"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm text-foreground shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
               >
                 {domainKinds.map((kind) => (
                   <option key={kind} value={kind}>
