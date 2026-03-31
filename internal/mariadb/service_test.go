@@ -76,3 +76,27 @@ func TestRootPasswordPrefersEnvOverFile(t *testing.T) {
 		t.Fatalf("password = %q, want from-env", password)
 	}
 }
+
+func TestValidateUpdateInputAllowsBlankPasswordWhenUsernameUnchanged(t *testing.T) {
+	validation := validateUpdateInput("flowpanel", UpdateDatabaseInput{
+		CurrentUsername: "flowpanel_user",
+		Username:        "flowpanel_user",
+		Password:        "",
+	})
+
+	if validation["password"] != "" {
+		t.Fatalf("password validation = %q, want empty", validation["password"])
+	}
+}
+
+func TestValidateUpdateInputRequiresPasswordWhenUsernameChanges(t *testing.T) {
+	validation := validateUpdateInput("flowpanel", UpdateDatabaseInput{
+		CurrentUsername: "flowpanel_user",
+		Username:        "new_user",
+		Password:        "",
+	})
+
+	if validation["password"] != "Password is required when changing username." {
+		t.Fatalf("password validation = %q, want username change message", validation["password"])
+	}
+}

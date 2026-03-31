@@ -98,6 +98,7 @@ type DatabaseRecord struct {
 	Name     string `json:"name"`
 	Username string `json:"username"`
 	Host     string `json:"host"`
+	Domain   string `json:"domain,omitempty"`
 	Password string `json:"password,omitempty"`
 }
 
@@ -105,12 +106,14 @@ type CreateDatabaseInput struct {
 	Name     string `json:"name"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Domain   string `json:"domain,omitempty"`
 }
 
 type UpdateDatabaseInput struct {
 	CurrentUsername string `json:"current_username"`
 	Username        string `json:"username"`
 	Password        string `json:"password"`
+	Domain          string `json:"domain,omitempty"`
 }
 
 type DeleteDatabaseInput struct {
@@ -311,6 +314,9 @@ func (s *Service) ListDatabases(ctx context.Context) ([]DatabaseRecord, error) {
 		if credential.Password != "" && (credential.Username == "" || credential.Username == record.Username) {
 			record.Password = credential.Password
 		}
+		if credential.Domain != "" {
+			record.Domain = credential.Domain
+		}
 		if record.Host == "" {
 			record.Host = localhostHost
 		}
@@ -334,6 +340,7 @@ func (s *Service) CreateDatabase(ctx context.Context, input CreateDatabaseInput)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Username = strings.TrimSpace(input.Username)
 	input.Password = strings.TrimSpace(input.Password)
+	input.Domain = strings.TrimSpace(input.Domain)
 
 	if validation := validateCreateInput(input); len(validation) > 0 {
 		return DatabaseRecord{}, validation
@@ -366,6 +373,7 @@ func (s *Service) CreateDatabase(ctx context.Context, input CreateDatabaseInput)
 		Name:     input.Name,
 		Username: input.Username,
 		Host:     localhostHost,
+		Domain:   input.Domain,
 		Password: input.Password,
 	}
 	if err := s.store.Upsert(ctx, record); err != nil {
@@ -380,6 +388,7 @@ func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input
 	input.CurrentUsername = strings.TrimSpace(input.CurrentUsername)
 	input.Username = strings.TrimSpace(input.Username)
 	input.Password = strings.TrimSpace(input.Password)
+	input.Domain = strings.TrimSpace(input.Domain)
 	if input.CurrentUsername == "" {
 		input.CurrentUsername = input.Username
 	}
@@ -406,14 +415,27 @@ func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input
 		}
 	}
 
+	metadata, err := s.store.List(ctx)
+	if err != nil {
+		return DatabaseRecord{}, err
+	}
+	storedRecord := metadata[databaseName]
+
 	databaseIdentifier := quoteIdentifier(databaseName)
 	currentUserLiteral := quoteLiteral(input.CurrentUsername)
 	nextUserLiteral := quoteLiteral(input.Username)
-	passwordLiteral := quoteLiteral(input.Password)
 	statements := []string{
-		fmt.Sprintf("CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY %s", nextUserLiteral, passwordLiteral),
-		fmt.Sprintf("ALTER USER %s@'localhost' IDENTIFIED BY %s", nextUserLiteral, passwordLiteral),
 		fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO %s@'localhost'", databaseIdentifier, nextUserLiteral),
+	}
+	effectivePassword := storedRecord.Password
+
+	if input.Password != "" {
+		passwordLiteral := quoteLiteral(input.Password)
+		effectivePassword = input.Password
+		statements = append([]string{
+			fmt.Sprintf("CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY %s", nextUserLiteral, passwordLiteral),
+			fmt.Sprintf("ALTER USER %s@'localhost' IDENTIFIED BY %s", nextUserLiteral, passwordLiteral),
+		}, statements...)
 	}
 
 	if input.CurrentUsername != input.Username {
@@ -442,7 +464,8 @@ func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input
 		Name:     databaseName,
 		Username: input.Username,
 		Host:     localhostHost,
-		Password: input.Password,
+		Domain:   input.Domain,
+		Password: effectivePassword,
 	}
 	if err := s.store.Upsert(ctx, record); err != nil {
 		return DatabaseRecord{}, err
@@ -824,7 +847,11 @@ func validateUpdateInput(databaseName string, input UpdateDatabaseInput) Validat
 		validation["username"] = message
 	}
 
-	if len(input.Password) < 8 {
+	if input.Password == "" {
+		if input.CurrentUsername != "" && input.Username != "" && input.CurrentUsername != input.Username {
+			validation["password"] = "Password is required when changing username."
+		}
+	} else if len(input.Password) < 8 {
 		validation["password"] = "Password must be at least 8 characters."
 	}
 

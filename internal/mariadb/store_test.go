@@ -27,6 +27,7 @@ func TestStoreRoundTrip(t *testing.T) {
 		Username: "flowpanel_user",
 		Password: "secret123",
 		Host:     localhostHost,
+		Domain:   "app.example.com",
 	}
 	if err := store.Upsert(ctx, initial); err != nil {
 		t.Fatalf("insert record: %v", err)
@@ -37,6 +38,7 @@ func TestStoreRoundTrip(t *testing.T) {
 		Username: "flowpanel_owner",
 		Password: "secret456",
 		Host:     localhostHost,
+		Domain:   "db.example.com",
 	}
 	if err := store.Upsert(ctx, updated); err != nil {
 		t.Fatalf("update record: %v", err)

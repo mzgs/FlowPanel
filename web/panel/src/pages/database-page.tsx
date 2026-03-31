@@ -18,6 +18,7 @@ import {
   type MariaDBApiError,
   type MariaDBDatabase,
 } from "@/api/mariadb";
+import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { Check, Copy, Eye, EyeOff, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +41,7 @@ type FormState = {
   currentUsername: string;
   username: string;
   password: string;
+  domain: string;
 };
 
 type FormErrors = {
@@ -47,6 +49,7 @@ type FormErrors = {
   username?: string;
   current_username?: string;
   password?: string;
+  domain?: string;
 };
 
 const initialForm: FormState = {
@@ -54,6 +57,7 @@ const initialForm: FormState = {
   currentUsername: "",
   username: "",
   password: "",
+  domain: "",
 };
 
 function normalizeIdentifier(value: string) {
@@ -120,9 +124,11 @@ function ToolbarButton({
 
 export function DatabasePage() {
   const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
+  const [domains, setDomains] = useState<DomainRecord[]>([]);
   const [statusSummary, setStatusSummary] = useState("MySQL / MariaDB");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [domainsLoadError, setDomainsLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [form, setForm] = useState<FormState>(initialForm);
@@ -147,9 +153,10 @@ export function DatabasePage() {
 
     async function loadData() {
       try {
-        const [databasesResult, statusResult] = await Promise.allSettled([
+        const [databasesResult, statusResult, domainsResult] = await Promise.allSettled([
           fetchMariaDBDatabases(),
           fetchMariaDBStatus(),
+          fetchDomains(),
         ]);
 
         if (!active) {
@@ -169,6 +176,14 @@ export function DatabasePage() {
           setStatusSummary(version ? `${product} ${version}` : product);
         } else {
           setStatusSummary("MySQL / MariaDB");
+        }
+
+        if (domainsResult.status === "fulfilled") {
+          setDomains(domainsResult.value.domains);
+          setDomainsLoadError(null);
+        } else {
+          setDomains([]);
+          setDomainsLoadError(getErrorMessage(domainsResult.reason, "Failed to load domains."));
         }
       } finally {
         if (active) {
@@ -271,7 +286,7 @@ export function DatabasePage() {
       return true;
     }
 
-    return `${database.name} ${database.username} ${database.host} ${database.password ?? ""}`
+    return `${database.name} ${database.username} ${database.host} ${database.password ?? ""} ${database.domain ?? ""}`
       .toLowerCase()
       .includes(normalizedSearch);
   });
@@ -279,8 +294,10 @@ export function DatabasePage() {
   const formTitle = dialogMode === "create" ? "Create database" : "Edit database";
   const formDescription =
     dialogMode === "create"
-      ? "Create a database and grant a local user full access."
-      : "Update the linked username and password for this database.";
+      ? "Create a database, assign credentials, and optionally link a domain."
+      : "Update the linked username, domain, or password. Leave password blank to keep it unchanged.";
+  const selectedDomainMissing =
+    form.domain !== "" && !domains.some((domain) => domain.hostname === form.domain);
 
   function resetForm() {
     setForm(initialForm);
@@ -301,6 +318,7 @@ export function DatabasePage() {
       currentUsername: database.username,
       username: database.username,
       password: "",
+      domain: database.domain ?? "",
     });
     setDialogMode("edit");
   }
@@ -331,6 +349,7 @@ export function DatabasePage() {
       currentUsername: normalizeIdentifier(form.currentUsername),
       username: normalizeIdentifier(form.username),
       password: form.password.trim(),
+      domain: form.domain.trim(),
     };
     const nextErrors: FormErrors = {};
 
@@ -344,8 +363,18 @@ export function DatabasePage() {
       nextErrors.username = validateIdentifier(nextForm.username, "Username");
     }
 
-    if (nextForm.password.length < 8) {
+    if (dialogMode === "create" && nextForm.password.length < 8) {
       nextErrors.password = "Password must be at least 8 characters.";
+    }
+    if (dialogMode === "edit" && nextForm.password.length > 0 && nextForm.password.length < 8) {
+      nextErrors.password = "Password must be at least 8 characters.";
+    }
+    if (
+      dialogMode === "edit" &&
+      nextForm.password.length === 0 &&
+      nextForm.currentUsername !== nextForm.username
+    ) {
+      nextErrors.password = "Password is required when changing username.";
     }
 
     setErrors(nextErrors);
@@ -362,6 +391,7 @@ export function DatabasePage() {
           name: nextForm.name,
           username: nextForm.username,
           password: nextForm.password,
+          domain: nextForm.domain || undefined,
         };
         await createMariaDBDatabase(payload);
       } else {
@@ -369,6 +399,7 @@ export function DatabasePage() {
           current_username: nextForm.currentUsername,
           username: nextForm.username,
           password: nextForm.password,
+          domain: nextForm.domain || undefined,
         });
       }
 
@@ -577,7 +608,7 @@ export function DatabasePage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="min-w-[1120px] w-full text-left">
+              <table className="min-w-[1040px] w-full text-left">
                 <thead className="border-b border-[var(--app-border)] bg-[var(--app-surface)]">
                   <tr className="text-[13px] text-[var(--app-text-muted)]">
                     <th className="w-[46px] px-3 py-3">
@@ -586,23 +617,22 @@ export function DatabasePage() {
                     <th className="px-3 py-3 font-medium">Database name</th>
                     <th className="px-3 py-3 font-medium">Username</th>
                     <th className="px-3 py-3 font-medium">Password</th>
-                    <th className="px-3 py-3 font-medium">Quota</th>
                     <th className="px-3 py-3 font-medium">Backup</th>
                     <th className="px-3 py-3 font-medium">Location</th>
-                    <th className="px-3 py-3 font-medium">Note</th>
+                    <th className="px-3 py-3 font-medium">Domain</th>
                     <th className="px-3 py-3 text-right font-medium">Operate</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={8} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
                         Loading databases...
                       </td>
                     </tr>
                   ) : filteredDatabases.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={8} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
                         No databases found.
                       </td>
                     </tr>
@@ -662,16 +692,11 @@ export function DatabasePage() {
                                 )}
                               </button>
                             </div>
-                          ) : (
-                            <span className="font-mono text-[13px] text-[var(--app-text-muted)]">Not available</span>
-                          )}
+                          ) : null}
                         </td>
-                        <td className="px-3 py-3 align-middle text-emerald-500">Not set</td>
                         <td className="px-3 py-3 align-middle text-[var(--app-text-muted)]">Not set</td>
                         <td className="px-3 py-3 align-middle">{database.host || "localhost"}</td>
-                        <td className="px-3 py-3 align-middle text-[var(--app-text-muted)]">
-                          {database.username ? `${database.username}@${database.host || "localhost"}` : "-"}
-                        </td>
+                        <td className="px-3 py-3 align-middle text-[var(--app-text-muted)]">{database.domain || ""}</td>
                         <td className="px-3 py-3 align-middle text-right">
                           <div className="flex items-center justify-end gap-2 text-[13px]">
                             <button
@@ -840,7 +865,7 @@ export function DatabasePage() {
                       setErrors((current) => ({ ...current, password: undefined }));
                     }
                   }}
-                  placeholder="At least 8 characters"
+                  placeholder={dialogMode === "create" ? "At least 8 characters" : "Leave blank to keep current password"}
                   autoComplete="new-password"
                   className={cn("pr-10", errors.password ? "border-[var(--app-danger)]" : "")}
                 />
@@ -857,6 +882,38 @@ export function DatabasePage() {
               {errors.password ? (
                 <p className="text-[12px] text-[var(--app-danger)]">{errors.password}</p>
               ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="database-domain" className="text-[13px] font-medium text-[var(--app-text)]">
+                Domain
+              </label>
+              <select
+                id="database-domain"
+                value={form.domain}
+                onChange={(event) => {
+                  setForm((current) => ({ ...current, domain: event.target.value }));
+                  if (errors.domain) {
+                    setErrors((current) => ({ ...current, domain: undefined }));
+                  }
+                }}
+                className={cn(
+                  "h-10 w-full rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[14px] text-[var(--app-text)] focus:outline-none",
+                  errors.domain ? "border-[var(--app-danger)]" : "",
+                )}
+              >
+                <option value="">No domain</option>
+                {selectedDomainMissing ? <option value={form.domain}>{form.domain}</option> : null}
+                {domains.map((domain) => (
+                  <option key={domain.id} value={domain.hostname}>
+                    {domain.hostname}
+                  </option>
+                ))}
+              </select>
+              {domainsLoadError ? (
+                <p className="text-[12px] text-[var(--app-text-muted)]">{domainsLoadError}</p>
+              ) : null}
+              {errors.domain ? <p className="text-[12px] text-[var(--app-danger)]">{errors.domain}</p> : null}
             </div>
 
             <DialogFooter className="border-t border-[var(--app-border)] pt-4">

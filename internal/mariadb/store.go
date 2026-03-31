@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS databases (
     username TEXT NOT NULL,
     password TEXT NOT NULL,
     host TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -37,6 +39,11 @@ CREATE TABLE IF NOT EXISTS databases (
 
 	if _, err := s.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("ensure mariadb databases table: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE databases ADD COLUMN domain TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("ensure mariadb databases.domain column: %w", err)
+		}
 	}
 
 	return nil
@@ -48,7 +55,7 @@ func (s *Store) List(ctx context.Context) (map[string]DatabaseRecord, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT name, username, password, host
+SELECT name, username, password, host, domain
 FROM databases
 ORDER BY name ASC
 `)
@@ -60,7 +67,7 @@ ORDER BY name ASC
 	records := make(map[string]DatabaseRecord)
 	for rows.Next() {
 		var record DatabaseRecord
-		if err := rows.Scan(&record.Name, &record.Username, &record.Password, &record.Host); err != nil {
+		if err := rows.Scan(&record.Name, &record.Username, &record.Password, &record.Host, &record.Domain); err != nil {
 			return nil, fmt.Errorf("scan mariadb database row: %w", err)
 		}
 		records[record.Name] = record
@@ -80,14 +87,15 @@ func (s *Store) Upsert(ctx context.Context, record DatabaseRecord) error {
 
 	now := time.Now().UTC().UnixNano()
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO databases (name, username, password, host, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO databases (name, username, password, host, domain, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(name) DO UPDATE SET
     username = excluded.username,
     password = excluded.password,
     host = excluded.host,
+    domain = excluded.domain,
     updated_at = excluded.updated_at
-`, record.Name, record.Username, record.Password, record.Host, now, now)
+`, record.Name, record.Username, record.Password, record.Host, record.Domain, now, now)
 	if err != nil {
 		return fmt.Errorf("upsert mariadb database %q: %w", record.Name, err)
 	}

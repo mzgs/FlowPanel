@@ -21,6 +21,7 @@ export type MariaDBDatabase = {
   name: string;
   username: string;
   host: string;
+  domain?: string;
   password?: string;
 };
 
@@ -28,12 +29,14 @@ export type CreateMariaDBDatabaseInput = {
   name: string;
   username: string;
   password: string;
+  domain?: string;
 };
 
 export type UpdateMariaDBDatabaseInput = {
   current_username: string;
   username: string;
   password: string;
+  domain?: string;
 };
 
 export type MariaDBApiError = Error & {
