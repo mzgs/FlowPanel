@@ -54,7 +54,7 @@ function SoftwareCard({
   onInstallPHP: () => Promise<void>;
 }) {
   const mariaDBValue = formatMariaDBValue(mariadbStatus);
-  const phpValue = phpStatus?.php_installed ? phpStatus.php_version?.trim() || "Installed" : null;
+  const phpVersion = formatPHPVersion(phpStatus);
 
   return (
     <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-[var(--app-shadow)]">
@@ -65,8 +65,13 @@ function SoftwareCard({
             icon={<TerminalSquare className="h-4 w-4" />}
             label="PHP"
             value={
-              phpValue ? (
-                <div className="font-mono text-[12px] text-[var(--app-text-muted)]">{phpValue}</div>
+              phpVersion ? (
+                <div
+                  className="max-w-[13rem] truncate text-right font-mono text-[12px] text-[var(--app-text-muted)] sm:max-w-[18rem]"
+                  title={phpVersion.full}
+                >
+                  {phpVersion.short}
+                </div>
               ) : phpStatus?.install_available ? (
                 <Button type="button" size="sm" onClick={onInstallPHP} disabled={runningAction !== null}>
                   {runningAction === "install-php" ? (
@@ -92,7 +97,12 @@ function SoftwareCard({
                 </Button>
               ) : (
                 <div
-                  className={mariadbStatus?.ready ? "font-mono text-[12px] text-[var(--app-text)]" : "text-[12px] text-[var(--app-text-muted)]"}
+                  className={
+                    mariadbStatus?.ready
+                      ? "max-w-[13rem] truncate text-right font-mono text-[12px] text-[var(--app-text)] sm:max-w-[18rem]"
+                      : "text-[12px] text-[var(--app-text-muted)]"
+                  }
+                  title={mariadbStatus?.ready && mariadbStatus.version?.trim() ? mariadbStatus.version.trim() : undefined}
                 >
                   {mariaDBValue}
                 </div>
@@ -138,7 +148,7 @@ function formatMariaDBValue(status: MariaDBStatus | null) {
   }
 
   if (status.ready && status.version?.trim()) {
-    return status.version.trim();
+    return formatMariaDBVersion(status.version.trim());
   }
 
   if (status.service_running) {
@@ -150,6 +160,39 @@ function formatMariaDBValue(status: MariaDBStatus | null) {
   }
 
   return "Not installed";
+}
+
+function formatPHPVersion(status: PHPStatus | null) {
+  if (!status?.php_installed) {
+    return null;
+  }
+
+  const version = status.php_version?.trim();
+  if (!version) {
+    return {
+      full: "Installed",
+      short: "Installed",
+    };
+  }
+
+  return {
+    full: version,
+    short: extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version,
+  };
+}
+
+function formatMariaDBVersion(version: string) {
+  return (
+    extractVersionNumber(version, /\bDistrib\s+(\d+(?:\.\d+)+)(?:-[A-Za-z0-9._-]+)?/i) ??
+    extractVersionNumber(version, /\bVer\s+(\d+(?:\.\d+)+)\b/i) ??
+    extractVersionNumber(version, /\b(\d+(?:\.\d+)+)\b/) ??
+    version
+  );
+}
+
+function extractVersionNumber(value: string, pattern: RegExp) {
+  const match = value.match(pattern);
+  return match?.[1] ?? null;
 }
 
 export function DashboardPage() {
