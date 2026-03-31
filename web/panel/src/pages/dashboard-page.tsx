@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import { fetchPHPStatus, installPHP, startPHP, type PHPStatus } from "@/api/php";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@/components/panel/badge";
+import { Button } from "@/components/panel/button";
 
 function getStatusBadge(status: PHPStatus) {
   switch (status.state) {
@@ -143,15 +143,15 @@ export function DashboardPage() {
           </Button>
         }
       />
-      <div className="px-5 py-5 md:px-8">
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
         {loadingError ? (
-          <section className="rounded-[10px] border border-[var(--app-danger)]/40 bg-[var(--app-danger-soft)] px-4 py-3 text-[13px] text-[var(--app-danger)]">
+          <section className="rounded-xl border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-[13px] text-[var(--app-danger)]">
             {loadingError}
           </section>
         ) : null}
 
         {!loadingError && loading ? (
-          <section className="rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-8 text-[13px] text-[var(--app-text-muted)]">
+          <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-8 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
             Inspecting the PHP runtime...
           </section>
         ) : null}
@@ -159,12 +159,12 @@ export function DashboardPage() {
         {!loadingError && !loading && phpStatus ? (
           <section className="space-y-5">
             {actionError ? (
-              <section className="rounded-[10px] border border-[var(--app-danger)]/40 bg-[var(--app-danger-soft)] px-4 py-3 text-[13px] text-[var(--app-danger)]">
+              <section className="rounded-xl border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-[13px] text-[var(--app-danger)]">
                 {actionError}
               </section>
             ) : null}
 
-            <section className="rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)]">
+            <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
               <div className="flex flex-col gap-4 border-b border-[var(--app-border)] px-5 py-4 md:flex-row md:items-start md:justify-between">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
@@ -206,7 +206,7 @@ export function DashboardPage() {
               </div>
 
               <div className="grid gap-4 px-5 py-5 md:grid-cols-2">
-                <div className="space-y-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+                <div className="space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
                   <div className="text-[12px] font-medium uppercase tracking-[0.08em] text-[var(--app-text-muted)]">
                     PHP CLI
                   </div>
@@ -221,7 +221,7 @@ export function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="space-y-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+                <div className="space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
                   <div className="text-[12px] font-medium uppercase tracking-[0.08em] text-[var(--app-text-muted)]">
                     PHP-FPM
                   </div>
@@ -236,7 +236,7 @@ export function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="space-y-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+                <div className="space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
                   <div className="text-[12px] font-medium uppercase tracking-[0.08em] text-[var(--app-text-muted)]">
                     FastCGI
                   </div>
@@ -248,7 +248,7 @@ export function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="space-y-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+                <div className="space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
                   <div className="text-[12px] font-medium uppercase tracking-[0.08em] text-[var(--app-text-muted)]">
                     Package Manager
                   </div>
@@ -263,7 +263,7 @@ export function DashboardPage() {
             </section>
 
             {phpStatus.issues && phpStatus.issues.length > 0 ? (
-              <section className="rounded-[10px] border border-[var(--app-warning)]/40 bg-[var(--app-warning-soft)] px-4 py-3 text-[13px] text-[var(--app-warning)]">
+              <section className="rounded-xl border border-[var(--app-warning)]/30 bg-[var(--app-warning-soft)] px-4 py-3 text-[13px] text-[var(--app-warning)]">
                 {phpStatus.issues.map((issue) => (
                   <p key={issue}>{issue}</p>
                 ))}

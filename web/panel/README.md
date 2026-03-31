@@ -7,7 +7,7 @@ This directory contains the admin panel source.
 - `Vite`
 - `React`
 - `TypeScript`
-- `shadcn/ui`-style primitives
+- Flowbite-inspired panel primitives
 - `TanStack Router`
 - `TanStack Query`
 - `TanStack Table`

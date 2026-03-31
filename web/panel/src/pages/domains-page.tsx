@@ -10,7 +10,7 @@ import {
   type DomainRecord,
 } from "@/api/domains";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/panel/button";
 import {
   Dialog,
   DialogContent,
@@ -18,8 +18,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+} from "@/components/panel/dialog";
+import { Input } from "@/components/panel/input";
 import {
   Table,
   TableBody,
@@ -27,7 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/panel/table";
 import { formatDateTime } from "@/lib/format";
 
 type FormState = {
@@ -381,15 +381,15 @@ export function DomainsPage() {
         }
       />
 
-      <div className="px-5 py-5 md:px-8">
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
         <div className="space-y-5">
           {loadError ? (
-            <section className="rounded-[10px] border border-[var(--app-danger)]/40 bg-[var(--app-danger-soft)] px-4 py-3 text-[13px] text-[var(--app-danger)]">
+            <section className="rounded-xl border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-[13px] text-[var(--app-danger)]">
               {loadError}
             </section>
           ) : null}
 
-          <section className="overflow-hidden rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)]">
+          <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
             <div className="border-b border-[var(--app-border)] px-5 py-4">
               <div className="text-[14px] font-medium text-[var(--app-text)]">
                 Domain list

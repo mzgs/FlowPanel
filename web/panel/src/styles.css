@@ -2,26 +2,28 @@
 
 :root {
   color-scheme: dark;
-  --app-bg: #07090c;
-  --app-surface: #0f1318;
-  --app-surface-muted: #161c24;
-  --app-border: #222b37;
-  --app-border-strong: #314055;
-  --app-text: #edf3ff;
-  --app-text-muted: #9aa6bb;
-  --app-accent: #1c68cb;
-  --app-accent-soft: #10233f;
-  --app-warning: #f0b35e;
-  --app-warning-soft: #342714;
-  --app-danger: #f08f7f;
-  --app-danger-soft: #351c1a;
-  --app-ok: #8cc99c;
-  --app-ok-soft: #1b2c20;
-  --app-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
-  --app-sidebar-width: 200px;
+  --app-bg: #111827;
+  --app-surface: #1f2937;
+  --app-surface-muted: #374151;
+  --app-surface-subtle: #172554;
+  --app-border: #374151;
+  --app-border-strong: #4b5563;
+  --app-text: #f9fafb;
+  --app-text-muted: #9ca3af;
+  --app-accent: #3b82f6;
+  --app-accent-soft: #1e3a8a;
+  --app-warning: #f59e0b;
+  --app-warning-soft: #451a03;
+  --app-danger: #f87171;
+  --app-danger-soft: #450a0a;
+  --app-ok: #4ade80;
+  --app-ok-soft: #052e16;
+  --app-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  --app-sidebar-width: 16rem;
+  --app-navbar-height: 4rem;
   color: var(--app-text);
   background: var(--app-bg);
-  font-family: "IBM Plex Sans", "Helvetica Neue", sans-serif;
+  font-family: "Inter", "Helvetica Neue", sans-serif;
 }
 
 * {
@@ -53,9 +55,22 @@ textarea {
 code,
 pre,
 .font-mono {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
 }
 
 ::selection {
-  background: rgba(28, 104, 203, 0.28);
+  background: rgba(59, 130, 246, 0.3);
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
 }

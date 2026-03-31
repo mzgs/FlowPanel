@@ -11,7 +11,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/panel/table";
 
 type DataTableProps<TData> = {
   columns: ColumnDef<TData>[];

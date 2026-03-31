@@ -38,7 +38,7 @@ import {
   type FileListing,
 } from "@/api/files";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/panel/button";
 import {
   Dialog,
   DialogContent,
@@ -46,8 +46,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+} from "@/components/panel/dialog";
+import { Input } from "@/components/panel/input";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -183,28 +183,28 @@ function getItemIcon(item: FileEntry) {
 function getGridPreviewTone(item: FileEntry) {
   if (item.type === "directory") {
     return {
-      frame: "border-[#2d3a25] bg-[radial-gradient(circle_at_24%_22%,rgba(172,210,120,0.18),rgba(19,28,18,0.94))] text-[#b9dc7f]",
-      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_24px_rgba(84,115,42,0.16)]",
+      frame: "border-emerald-900/70 bg-emerald-950/80 text-emerald-300",
+      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_rgba(16,185,129,0.18)]",
     };
   }
 
   if (item.type === "symlink") {
     return {
-      frame: "border-[#2f3b4f] bg-[radial-gradient(circle_at_24%_22%,rgba(126,162,220,0.18),rgba(18,23,32,0.94))] text-[#8fb2e6]",
-      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_24px_rgba(63,90,139,0.16)]",
+      frame: "border-sky-900/70 bg-sky-950/80 text-sky-300",
+      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_rgba(14,165,233,0.18)]",
     };
   }
 
   if (isEditableFile(item)) {
     return {
-      frame: "border-[#3e3423] bg-[radial-gradient(circle_at_24%_22%,rgba(232,189,112,0.18),rgba(29,24,17,0.94))] text-[#e9be74]",
-      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_24px_rgba(136,101,41,0.16)]",
+      frame: "border-amber-900/70 bg-amber-950/80 text-amber-300",
+      glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_rgba(245,158,11,0.18)]",
     };
   }
 
   return {
-    frame: "border-[#303744] bg-[radial-gradient(circle_at_24%_22%,rgba(165,181,206,0.16),rgba(18,22,28,0.94))] text-[#b3c0d4]",
-    glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_24px_rgba(70,82,104,0.14)]",
+    frame: "border-slate-700 bg-slate-900/80 text-slate-300",
+    glow: "shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_rgba(148,163,184,0.16)]",
   };
 }
 
@@ -1075,7 +1075,7 @@ export function FilesPage() {
     : null;
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-[calc(100vh-var(--app-navbar-height))]">
       <PageHeader
         title="Files"
         meta={
@@ -1085,11 +1085,11 @@ export function FilesPage() {
         }
       />
 
-      <div className="px-5 py-5 md:px-8">
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
         <div className="space-y-4">
           {flash ? <FlashBanner flash={flash} /> : null}
 
-          <section className="rounded-[18px] border border-[var(--app-border)] bg-[linear-gradient(180deg,rgba(22,28,36,0.98),rgba(12,16,21,0.98))] shadow-[var(--app-shadow)]">
+          <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
             <div className="flex flex-col gap-4 border-b border-[var(--app-border)] px-4 py-4 md:px-5">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div className="space-y-2">
@@ -1225,7 +1225,7 @@ export function FilesPage() {
               <div
                 ref={browserRef}
                 className={cn(
-                  "relative overflow-hidden rounded-[16px] border border-[var(--app-border)] bg-[rgba(7,9,12,0.7)] select-none",
+                  "relative overflow-hidden rounded-[16px] border border-[var(--app-border)] bg-[var(--app-surface)] select-none shadow-[var(--app-shadow)]",
                   rootDropActive && "ring-2 ring-[var(--app-accent)]/80",
                 )}
                 onMouseDown={beginMarquee}
@@ -1298,7 +1298,7 @@ export function FilesPage() {
                 ) : viewMode === "list" ? (
                   <div className="overflow-x-auto">
                     <table className="min-w-full border-collapse text-left">
-                      <thead className="bg-[rgba(15,19,24,0.9)] text-[11px] uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
+                      <thead className="bg-[var(--app-surface-muted)] text-[11px] uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
                         <tr>
                           <th className="px-4 py-3 font-medium">Name</th>
                           <th className="px-4 py-3 font-medium">Type</th>
@@ -1319,8 +1319,8 @@ export function FilesPage() {
                               data-type={item.type}
                               draggable={item.type !== "symlink"}
                               className={cn(
-                                "cursor-pointer border-t border-[var(--app-border)] text-[13px] transition-colors duration-150 hover:bg-[rgba(28,104,203,0.12)]",
-                                isSelected && "bg-[rgba(28,104,203,0.18)]",
+                                "cursor-pointer border-t border-[var(--app-border)] text-[13px] transition-colors duration-150 hover:bg-[var(--app-accent-soft)]/40",
+                                isSelected && "bg-[var(--app-accent-soft)]/50",
                                 dropTargetPath === item.path && item.type === "directory" && "ring-2 ring-inset ring-[var(--app-accent)]",
                               )}
                               onClick={(event) => handleSelectionClick(item, event)}
@@ -1383,11 +1383,11 @@ export function FilesPage() {
                           className={cn(
                             "group flex w-[8.4rem] shrink-0 flex-col items-center rounded-[18px] border px-3 py-2.5 text-center transition-colors duration-150",
                             isSelected
-                              ? "border-[var(--app-accent)] bg-[linear-gradient(180deg,rgba(21,33,52,0.96),rgba(14,20,30,0.96))] shadow-[0_0_0_2px_rgba(28,104,203,0.32),0_18px_34px_rgba(18,53,102,0.18)]"
-                              : "border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,rgba(16,16,26,0.96),rgba(11,13,19,0.96))] shadow-[0_12px_28px_rgba(0,0,0,0.18)] hover:border-[rgba(255,255,255,0.12)]",
+                              ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)] shadow-[0_0_0_1px_rgba(29,78,216,0.18),0_18px_34px_rgba(37,99,235,0.12)]"
+                              : "border-[var(--app-border)] bg-[var(--app-surface-muted)] shadow-[0_10px_24px_rgba(15,23,42,0.06)] hover:border-[var(--app-border-strong)]",
                             dropTargetPath === item.path &&
                               item.type === "directory" &&
-                              "border-[var(--app-accent)] bg-[linear-gradient(180deg,rgba(18,35,61,0.96),rgba(12,20,34,0.96))] shadow-[0_0_0_2px_rgba(28,104,203,0.3),0_18px_34px_rgba(18,53,102,0.18)]",
+                              "border-[var(--app-accent)] bg-[var(--app-accent-soft)] shadow-[0_0_0_1px_rgba(29,78,216,0.18),0_18px_34px_rgba(37,99,235,0.12)]",
                           )}
                           style={{ minHeight: 152 }}
                           onClick={(event) => handleSelectionClick(item, event)}
@@ -1436,7 +1436,7 @@ export function FilesPage() {
 
                 {marqueeRect ? (
                   <div
-                    className="pointer-events-none fixed z-40 rounded-[8px] border border-[var(--app-accent)] bg-[rgba(28,104,203,0.18)]"
+                    className="pointer-events-none fixed z-40 rounded-[8px] border border-[var(--app-accent)] bg-blue-100/60"
                     style={marqueeRect}
                   />
                 ) : null}
@@ -1445,7 +1445,7 @@ export function FilesPage() {
                   <div
                     ref={contextMenuRef}
                     data-context-menu="1"
-                    className="fixed z-50 min-w-[220px] rounded-[14px] border border-[var(--app-border)] bg-[rgba(15,19,24,0.98)] p-2 shadow-[0_18px_35px_rgba(0,0,0,0.35)] backdrop-blur-sm select-none"
+                    className="fixed z-50 min-w-[220px] rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface)] p-2 shadow-[0_18px_35px_rgba(15,23,42,0.16)] backdrop-blur-sm select-none"
                     style={contextMenuStyle ?? undefined}
                   >
                     <div className="space-y-1">
@@ -1472,7 +1472,7 @@ export function FilesPage() {
                 ) : null}
               </div>
 
-              <aside className="rounded-[16px] border border-[var(--app-border)] bg-[rgba(7,9,12,0.7)] p-4">
+              <aside className="rounded-[16px] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow)]">
                 <div className="text-[12px] uppercase tracking-[0.18em] text-[var(--app-text-muted)]">
                   Details
                 </div>
@@ -1687,7 +1687,7 @@ export function FilesPage() {
               onChange={(event) => setEditorContent(event.target.value)}
               readOnly={editorBusy}
               spellCheck={false}
-              className="min-h-[55vh] w-full rounded-[14px] border border-[var(--app-border)] bg-[#0b1016] px-4 py-4 font-mono text-[13px] leading-6 text-[var(--app-text)] outline-none transition-colors duration-150 focus:border-[var(--app-border-strong)] focus:ring-2 focus:ring-[var(--app-accent)]/20"
+              className="min-h-[55vh] w-full rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 font-mono text-[13px] leading-6 text-[var(--app-text)] outline-none transition-colors duration-150 focus:border-[var(--app-border-strong)] focus:ring-2 focus:ring-[var(--app-accent)]/20"
             />
           </div>
 
