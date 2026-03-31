@@ -21,19 +21,19 @@ const (
 	dialTimeout          = 500 * time.Millisecond
 )
 
-var aptPHP84Packages = []string{
-	"php8.4-cgi",
-	"php8.4-fpm",
-	"php8.4-cli",
-	"php8.4-common",
-	"php8.4-mysql",
-	"php8.4-curl",
-	"php8.4-gd",
-	"php8.4-intl",
-	"php8.4-imagick",
-	"php8.4-mbstring",
-	"php8.4-xml",
-	"php8.4-zip",
+var aptPHPPackages = []string{
+	"php-cgi",
+	"php-fpm",
+	"php-cli",
+	"php-common",
+	"php-mysql",
+	"php-curl",
+	"php-gd",
+	"php-intl",
+	"php-imagick",
+	"php-mbstring",
+	"php-xml",
+	"php-zip",
 }
 
 type Manager interface {
@@ -209,7 +209,7 @@ func detectActionPlan() actionPlan {
 	case "linux":
 		if os.Geteuid() == 0 {
 			if aptPath, ok := lookupCommand("apt-get"); ok {
-				installArgs := append([]string{aptPath, "install", "-y"}, aptPHP84Packages...)
+				installArgs := append([]string{aptPath, "install", "-y"}, aptPHPPackages...)
 				return actionPlan{
 					packageManager: "apt",
 					installLabel:   "Install PHP",
