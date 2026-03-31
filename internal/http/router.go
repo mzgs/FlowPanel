@@ -463,8 +463,22 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
+			status := app.PHPMyAdmin.Status(r.Context())
+			if status.Installed && app.PHP != nil {
+				phpStatus := app.PHP.Status(r.Context())
+				if phpStatus.Ready {
+					if err := syncDomainsWithCaddy(r.Context()); err != nil {
+						app.Logger.Error("sync domains after phpmyadmin install failed", zap.Error(err))
+						writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+							"error": "phpmyadmin installed but failed to republish routes",
+						})
+						return
+					}
+				}
+			}
+
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"phpmyadmin": app.PHPMyAdmin.Status(r.Context()),
+				"phpmyadmin": status,
 			})
 		})
 

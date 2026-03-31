@@ -3,9 +3,11 @@ package httpx
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -31,6 +33,10 @@ type fakePHPManager struct{}
 type fakeMariaDBManager struct{}
 
 type fakePHPMyAdminManager struct{}
+
+type installablePHPMyAdminManager struct {
+	status phpmyadmin.Status
+}
 
 func (fakePHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
@@ -127,6 +133,106 @@ func (fakePHPMyAdminManager) Status(context.Context) phpmyadmin.Status {
 
 func (fakePHPMyAdminManager) Install(context.Context) error {
 	return nil
+}
+
+func (m *installablePHPMyAdminManager) Status(context.Context) phpmyadmin.Status {
+	return m.status
+}
+
+func (m *installablePHPMyAdminManager) Install(context.Context) error {
+	m.status.Installed = true
+	m.status.State = "installed"
+	m.status.Message = "phpMyAdmin is installed."
+	return nil
+}
+
+func TestPHPMyAdminInstallSyncsCaddy(t *testing.T) {
+	t.Helper()
+
+	installPath := t.TempDir()
+	themesDir := filepath.Join(installPath, "themes")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatalf("mkdir themes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(themesDir, "test.css"), []byte("body{}"), 0o644); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	phpMyAdminAddr := reserveTCPAddress(t)
+	manager := &installablePHPMyAdminManager{
+		status: phpmyadmin.Status{
+			InstallPath: installPath,
+		},
+	}
+	runtime := caddy.NewRuntime(zap.NewNop(), ":0", ":0", fakePHPManager{}, manager, phpMyAdminAddr)
+	if err := runtime.Start(context.Background()); err != nil {
+		t.Fatalf("start caddy runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = runtime.Stop(context.Background())
+	})
+	cfg := config.Config{
+		Env:             "test",
+		AdminListenAddr: ":18080",
+		PublicHTTPAddr:  ":0",
+		PublicHTTPSAddr: ":0",
+		PHPMyAdminAddr:  phpMyAdminAddr,
+		Session: config.SessionConfig{
+			Secret:     strings.Repeat("s", 32),
+			CookieName: "flowpanel_test",
+			Lifetime:   time.Hour,
+		},
+		Cron: config.CronConfig{
+			Enabled: false,
+		},
+	}
+
+	dbConn, err := db.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = dbConn.Close()
+	})
+
+	store := domain.NewStore(dbConn)
+	if err := store.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure domain store: %v", err)
+	}
+	domains := domain.NewService(store)
+
+	router, err := NewRouter(&app.App{
+		Config:     cfg,
+		Logger:     zap.NewNop(),
+		DB:         dbConn,
+		Domains:    domains,
+		Sessions:   auth.NewSessionManager(cfg),
+		Caddy:      runtime,
+		PHP:        fakePHPManager{},
+		PHPMyAdmin: manager,
+	})
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/phpmyadmin/install", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://" + phpMyAdminAddr + "/themes/test.css")
+	if err != nil {
+		t.Fatalf("request phpmyadmin asset: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("asset status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
 }
 
 func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
@@ -652,4 +758,16 @@ func assertDomainRecordEqual(t *testing.T, got domain.Record, want domain.Record
 		!got.CreatedAt.Equal(want.CreatedAt) {
 		t.Fatalf("record = %#v, want %#v", got, want)
 	}
+}
+
+func reserveTCPAddress(t *testing.T) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve tcp address: %v", err)
+	}
+	defer listener.Close()
+
+	return listener.Addr().String()
 }
