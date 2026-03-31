@@ -18,7 +18,7 @@ import {
   type MariaDBApiError,
   type MariaDBDatabase,
 } from "@/api/mariadb";
-import { Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { Check, Copy, Eye, EyeOff, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 type DialogMode = "create" | "edit" | null;
 
@@ -90,6 +91,14 @@ function generateRootPassword() {
   return window.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+function getDatabasePasswordKey(database: Pick<MariaDBDatabase, "name" | "username">) {
+  return `${database.name}:${database.username}`;
+}
+
+function maskPassword(password: string) {
+  return password ? "**********" : "";
+}
+
 function ToolbarButton({
   children,
   disabled = false,
@@ -128,6 +137,8 @@ export function DatabasePage() {
   const [rootPasswordLoading, setRootPasswordLoading] = useState(false);
   const [rootPasswordSaving, setRootPasswordSaving] = useState(false);
   const [rootPasswordError, setRootPasswordError] = useState<string | null>(null);
+  const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
+  const [copiedPasswordKey, setCopiedPasswordKey] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(search);
 
@@ -408,6 +419,33 @@ export function DatabasePage() {
     }
   }
 
+  function handleTogglePasswordVisibility(database: MariaDBDatabase) {
+    const key = getDatabasePasswordKey(database);
+    setVisiblePasswords((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  }
+
+  async function handleCopyPassword(database: MariaDBDatabase) {
+    if (!database.password) {
+      return;
+    }
+
+    const key = getDatabasePasswordKey(database);
+
+    try {
+      await navigator.clipboard.writeText(database.password);
+      setCopiedPasswordKey(key);
+      window.setTimeout(() => {
+        setCopiedPasswordKey((current) => (current === key ? null : current));
+      }, 1500);
+      toast.success(`Password copied for ${database.name}.`);
+    } catch {
+      toast.error(`Failed to copy password for ${database.name}.`);
+    }
+  }
+
   return (
     <>
       <div className="px-4 py-6 sm:px-6 lg:px-8">
@@ -579,8 +617,54 @@ export function DatabasePage() {
                         </td>
                         <td className="px-3 py-3 align-middle">{database.name}</td>
                         <td className="px-3 py-3 align-middle">{database.username || "Not set"}</td>
-                        <td className="px-3 py-3 align-middle font-mono text-[13px] text-[var(--app-text-muted)]">
-                          {database.password || "Not available"}
+                        <td className="px-3 py-3 align-middle">
+                          {database.password ? (
+                            <div className="flex items-center gap-1.5 whitespace-nowrap">
+                              <span className="font-mono text-[13px] text-[var(--app-text-muted)]">
+                                {visiblePasswords[getDatabasePasswordKey(database)]
+                                  ? database.password
+                                  : maskPassword(database.password)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePasswordVisibility(database)}
+                                className="rounded-md p-1 text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
+                                aria-label={
+                                  visiblePasswords[getDatabasePasswordKey(database)] ? "Hide password" : "Show password"
+                                }
+                                title={
+                                  visiblePasswords[getDatabasePasswordKey(database)] ? "Hide password" : "Show password"
+                                }
+                              >
+                                {visiblePasswords[getDatabasePasswordKey(database)] ? (
+                                  <EyeOff className="h-4 w-4" />
+                                ) : (
+                                  <Eye className="h-4 w-4" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleCopyPassword(database);
+                                }}
+                                className="rounded-md p-1 text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
+                                aria-label={`Copy password for ${database.name}`}
+                                title={
+                                  copiedPasswordKey === getDatabasePasswordKey(database)
+                                    ? "Copied"
+                                    : "Copy password"
+                                }
+                              >
+                                {copiedPasswordKey === getDatabasePasswordKey(database) ? (
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                ) : (
+                                  <Copy className="h-4 w-4" />
+                                )}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="font-mono text-[13px] text-[var(--app-text-muted)]">Not available</span>
+                          )}
                         </td>
                         <td className="px-3 py-3 align-middle text-emerald-500">Not set</td>
                         <td className="px-3 py-3 align-middle text-[var(--app-text-muted)]">Not set</td>
