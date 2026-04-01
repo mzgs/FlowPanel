@@ -380,7 +380,7 @@ func writeRuntimeConfig(installPath string) error {
 		return fmt.Errorf("generate phpmyadmin blowfish secret: %w", err)
 	}
 
-	updated := blowfishSecretPattern.ReplaceAllString(string(content), fmt.Sprintf("$cfg['blowfish_secret'] = '%s';", secret))
+	updated := blowfishSecretPattern.ReplaceAllLiteralString(string(content), fmt.Sprintf("$cfg['blowfish_secret'] = '%s';", secret))
 	if updated == string(content) {
 		return errors.New("phpmyadmin sample config did not contain an empty blowfish secret")
 	}

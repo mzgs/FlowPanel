@@ -235,6 +235,94 @@ func TestPHPMyAdminInstallSyncsCaddy(t *testing.T) {
 	}
 }
 
+func TestPHPMyAdminRedirectSyncsCaddyForManualInstall(t *testing.T) {
+	t.Helper()
+
+	installPath := t.TempDir()
+	themesDir := filepath.Join(installPath, "themes")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatalf("mkdir themes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(themesDir, "test.css"), []byte("body{}"), 0o644); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	phpMyAdminAddr := reserveTCPAddress(t)
+	manager := &installablePHPMyAdminManager{
+		status: phpmyadmin.Status{
+			Installed:   true,
+			InstallPath: installPath,
+			State:       "installed",
+			Message:     "phpMyAdmin is installed.",
+		},
+	}
+	runtime := caddy.NewRuntime(zap.NewNop(), ":0", ":0", fakePHPManager{}, manager, phpMyAdminAddr)
+	if err := runtime.Start(context.Background()); err != nil {
+		t.Fatalf("start caddy runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = runtime.Stop(context.Background())
+	})
+
+	cfg := config.Config{
+		Env:             "test",
+		AdminListenAddr: ":18080",
+		PublicHTTPAddr:  ":0",
+		PublicHTTPSAddr: ":0",
+		PHPMyAdminAddr:  phpMyAdminAddr,
+		Session: config.SessionConfig{
+			Secret:     strings.Repeat("s", 32),
+			CookieName: "flowpanel_test",
+			Lifetime:   time.Hour,
+		},
+		Cron: config.CronConfig{
+			Enabled: false,
+		},
+	}
+
+	dbConn, err := db.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = dbConn.Close()
+	})
+
+	store := domain.NewStore(dbConn)
+	if err := store.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure domain store: %v", err)
+	}
+	domains := domain.NewService(store)
+
+	router, err := NewRouter(&app.App{
+		Config:     cfg,
+		Logger:     zap.NewNop(),
+		DB:         dbConn,
+		Domains:    domains,
+		Sessions:   auth.NewSessionManager(cfg),
+		Caddy:      runtime,
+		PHP:        fakePHPManager{},
+		PHPMyAdmin: manager,
+	})
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(server.URL + "/phpmyadmin/themes/test.css")
+	if err != nil {
+		t.Fatalf("request phpmyadmin asset through redirect: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("asset status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
 func TestCreateDomainRollsBackWhenPublishFails(t *testing.T) {
 	router, domains, store := newTestDomainRouter(t)
 

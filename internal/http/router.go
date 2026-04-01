@@ -993,6 +993,11 @@ func newPHPMyAdminRedirectHandler(app *app.App) stdhttp.Handler {
 			stdhttp.Error(w, phpStatus.Message, stdhttp.StatusServiceUnavailable)
 			return
 		}
+		if err := syncPHPMyAdminRoute(r.Context(), app); err != nil {
+			app.Logger.Error("sync phpmyadmin route failed", zap.Error(err))
+			stdhttp.Error(w, "phpMyAdmin route could not be published.", stdhttp.StatusInternalServerError)
+			return
+		}
 
 		target, err := phpMyAdminExternalURL(app.Config.PHPMyAdminAddr, r.Host, strings.TrimPrefix(r.URL.Path, "/phpmyadmin"))
 		if err != nil {
@@ -1002,6 +1007,14 @@ func newPHPMyAdminRedirectHandler(app *app.App) stdhttp.Handler {
 		target.RawQuery = r.URL.RawQuery
 		stdhttp.Redirect(w, r, target.String(), stdhttp.StatusTemporaryRedirect)
 	})
+}
+
+func syncPHPMyAdminRoute(ctx context.Context, app *app.App) error {
+	if app == nil || app.Caddy == nil || app.Domains == nil {
+		return nil
+	}
+
+	return app.Caddy.Sync(ctx, app.Domains.List())
 }
 
 func phpMyAdminExternalURL(listenAddr, requestHost, requestPath string) (*url.URL, error) {
