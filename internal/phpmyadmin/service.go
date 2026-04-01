@@ -124,16 +124,14 @@ func detectActionPlan() actionPlan {
 	case "linux":
 		if os.Geteuid() == 0 {
 			if aptPath, ok := lookupCommand("apt-get"); ok {
+				debconfPath, _ := lookupCommand("debconf-set-selections")
 				return actionPlan{
 					packageManager: "apt",
 					installLabel:   "Install phpMyAdmin",
 					installEnv: map[string]string{
 						"DEBIAN_FRONTEND": "noninteractive",
 					},
-					installCmds: [][]string{
-						{aptPath, "update"},
-						{aptPath, "install", "-y", "phpmyadmin"},
-					},
+					installCmds: aptInstallCommands(aptPath, debconfPath),
 				}
 			}
 			if dnfPath, ok := lookupCommand("dnf"); ok {
@@ -167,6 +165,37 @@ func detectActionPlan() actionPlan {
 	}
 
 	return actionPlan{}
+}
+
+func aptInstallCommands(aptPath, debconfPath string) [][]string {
+	commands := [][]string{
+		{aptPath, "update"},
+	}
+
+	debconfPath = strings.TrimSpace(debconfPath)
+	if debconfPath == "" {
+		commands = append(commands, []string{aptPath, "install", "-y", "debconf-utils"})
+		debconfPath = "debconf-set-selections"
+	}
+
+	commands = append(commands,
+		[]string{"/bin/sh", "-c", aptDebconfSelectionsCommand(debconfPath)},
+		[]string{aptPath, "install", "-y", "phpmyadmin"},
+	)
+
+	return commands
+}
+
+func aptDebconfSelectionsCommand(debconfPath string) string {
+	debconfPath = strings.TrimSpace(debconfPath)
+	if debconfPath == "" {
+		debconfPath = "debconf-set-selections"
+	}
+
+	return fmt.Sprintf(
+		"printf 'phpmyadmin phpmyadmin/dbconfig-install boolean false\\nphpmyadmin phpmyadmin/reconfigure-webserver multiselect none\\n' | %s",
+		debconfPath,
+	)
 }
 
 func detectInstallPath() (string, bool) {

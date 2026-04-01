@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -58,5 +60,51 @@ func TestDetectVersionReadsComposerJSON(t *testing.T) {
 	got := detectVersion(installPath)
 	if got != "5.2.3" {
 		t.Fatalf("detectVersion() = %q, want 5.2.3", got)
+	}
+}
+
+func TestAptDebconfSelectionsCommand(t *testing.T) {
+	command := aptDebconfSelectionsCommand("/usr/bin/debconf-set-selections")
+
+	for _, expected := range []string{
+		"phpmyadmin phpmyadmin/dbconfig-install boolean false",
+		"phpmyadmin phpmyadmin/reconfigure-webserver multiselect none",
+		"| /usr/bin/debconf-set-selections",
+	} {
+		if !strings.Contains(command, expected) {
+			t.Fatalf("aptDebconfSelectionsCommand() = %q, missing %q", command, expected)
+		}
+	}
+}
+
+func TestAptInstallCommandsWithoutDebconfBinaryInstallsDebconfUtils(t *testing.T) {
+	aptPath := "/usr/bin/apt-get"
+	got := aptInstallCommands(aptPath, "")
+
+	want := [][]string{
+		{aptPath, "update"},
+		{aptPath, "install", "-y", "debconf-utils"},
+		{"/bin/sh", "-c", aptDebconfSelectionsCommand("debconf-set-selections")},
+		{aptPath, "install", "-y", "phpmyadmin"},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("aptInstallCommands() = %#v, want %#v", got, want)
+	}
+}
+
+func TestAptInstallCommandsWithDebconfBinarySkipsDebconfUtilsInstall(t *testing.T) {
+	aptPath := "/usr/bin/apt-get"
+	debconfPath := "/usr/bin/debconf-set-selections"
+	got := aptInstallCommands(aptPath, debconfPath)
+
+	want := [][]string{
+		{aptPath, "update"},
+		{"/bin/sh", "-c", aptDebconfSelectionsCommand(debconfPath)},
+		{aptPath, "install", "-y", "phpmyadmin"},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("aptInstallCommands() = %#v, want %#v", got, want)
 	}
 }

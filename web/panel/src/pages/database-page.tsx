@@ -105,6 +105,32 @@ function maskPassword(password: string) {
   return password ? "**********" : "";
 }
 
+type CopyWithFeedbackInput = {
+  text: string;
+  onCopied: () => void;
+  onCopyFailed: () => void;
+  clearCopiedState: () => void;
+  copiedStateDurationMs?: number;
+};
+
+async function copyWithFeedback({
+  text,
+  onCopied,
+  onCopyFailed,
+  clearCopiedState,
+  copiedStateDurationMs = 1500,
+}: CopyWithFeedbackInput) {
+  try {
+    await navigator.clipboard.writeText(text);
+    onCopied();
+    window.setTimeout(() => {
+      clearCopiedState();
+    }, copiedStateDurationMs);
+  } catch {
+    onCopyFailed();
+  }
+}
+
 function formatStatusSummary(product?: string, version?: string) {
   const normalizedProduct = product?.trim() || "MySQL / MariaDB";
   const normalizedVersion = version?.trim();
@@ -168,6 +194,41 @@ function ToolbarButton({
   );
 }
 
+function CopyIconButton({
+  copied,
+  onClick,
+  ariaLabel,
+  copyTitle = "Copy password",
+  copiedTitle = "Copied",
+  className,
+}: {
+  copied: boolean;
+  onClick: () => void;
+  ariaLabel: string;
+  copyTitle?: string;
+  copiedTitle?: string;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-md p-1 text-[var(--app-text-muted)] transition hover:text-[var(--app-text)]",
+        className,
+      )}
+      aria-label={ariaLabel}
+      title={copied ? copiedTitle : copyTitle}
+    >
+      {copied ? (
+        <Check className="h-4 w-4 text-emerald-500" />
+      ) : (
+        <Copy className="h-4 w-4" />
+      )}
+    </button>
+  );
+}
+
 export function DatabasePage() {
   const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
   const [domains, setDomains] = useState<DomainRecord[]>([]);
@@ -191,6 +252,7 @@ export function DatabasePage() {
   const [rootPasswordLoading, setRootPasswordLoading] = useState(false);
   const [rootPasswordSaving, setRootPasswordSaving] = useState(false);
   const [rootPasswordError, setRootPasswordError] = useState<string | null>(null);
+  const [rootPasswordCopied, setRootPasswordCopied] = useState(false);
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [copiedPasswordKey, setCopiedPasswordKey] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
@@ -278,6 +340,7 @@ export function DatabasePage() {
         setRootPassword(payload.root_password);
         setRootPasswordDraft(payload.root_password);
         setRootPasswordConfigured(payload.configured);
+        setRootPasswordCopied(false);
       } catch (error) {
         if (!active) {
           return;
@@ -304,6 +367,7 @@ export function DatabasePage() {
 
   function handleGenerateRootPassword() {
     setRootPasswordDraft(generateRootPassword());
+    setRootPasswordCopied(false);
     setRootPasswordError(null);
   }
 
@@ -314,8 +378,29 @@ export function DatabasePage() {
 
   function handleCancelRootPasswordEdit() {
     setRootPasswordDraft(rootPassword);
+    setRootPasswordCopied(false);
     setRootPasswordError(null);
     setRootPasswordOpen(false);
+  }
+
+  async function handleCopyRootPassword() {
+    if (!rootPasswordDraft) {
+      return;
+    }
+
+    await copyWithFeedback({
+      text: rootPasswordDraft,
+      onCopied: () => {
+        setRootPasswordCopied(true);
+        toast.success("Root password copied.");
+      },
+      onCopyFailed: () => {
+        toast.error("Failed to copy root password.");
+      },
+      clearCopiedState: () => {
+        setRootPasswordCopied(false);
+      },
+    });
   }
 
   async function handleSaveRootPassword() {
@@ -333,6 +418,7 @@ export function DatabasePage() {
       setRootPassword(payload.root_password);
       setRootPasswordDraft(payload.root_password);
       setRootPasswordConfigured(payload.configured);
+      setRootPasswordCopied(false);
     } catch (error) {
       setRootPasswordError(getErrorMessage(error, "Failed to update MariaDB root password."));
     } finally {
@@ -525,16 +611,19 @@ export function DatabasePage() {
 
     const key = getDatabasePasswordKey(database);
 
-    try {
-      await navigator.clipboard.writeText(database.password);
-      setCopiedPasswordKey(key);
-      window.setTimeout(() => {
+    await copyWithFeedback({
+      text: database.password,
+      onCopied: () => {
+        setCopiedPasswordKey(key);
+        toast.success(`Password copied for ${database.name}.`);
+      },
+      onCopyFailed: () => {
+        toast.error(`Failed to copy password for ${database.name}.`);
+      },
+      clearCopiedState: () => {
         setCopiedPasswordKey((current) => (current === key ? null : current));
-      }, 1500);
-      toast.success(`Password copied for ${database.name}.`);
-    } catch {
-      toast.error(`Failed to copy password for ${database.name}.`);
-    }
+      },
+    });
   }
 
   return (
@@ -593,11 +682,24 @@ export function DatabasePage() {
                           <Input
                             type="text"
                             value={rootPasswordDraft}
-                            onChange={(event) => setRootPasswordDraft(event.target.value)}
+                            onChange={(event) => {
+                              setRootPasswordDraft(event.target.value);
+                              setRootPasswordCopied(false);
+                            }}
                             placeholder="Set MariaDB root password"
                             autoComplete="off"
-                            className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-muted)] pr-10 font-mono text-[13px]"
+                            className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-muted)] pr-20 font-mono text-[13px]"
                           />
+                          {rootPasswordDraft ? (
+                            <CopyIconButton
+                              copied={rootPasswordCopied}
+                              onClick={() => {
+                                void handleCopyRootPassword();
+                              }}
+                              ariaLabel="Copy root password"
+                              className="absolute right-9 top-1/2 -translate-y-1/2 hover:bg-[var(--app-surface)]"
+                            />
+                          ) : null}
                           <button
                             type="button"
                             onClick={handleGenerateRootPassword}
@@ -738,25 +840,14 @@ export function DatabasePage() {
                                   <Eye className="h-4 w-4" />
                                 )}
                               </button>
-                              <button
-                                type="button"
+                              <CopyIconButton
+                                copied={copiedPasswordKey === getDatabasePasswordKey(database)}
                                 onClick={() => {
                                   void handleCopyPassword(database);
                                 }}
-                                className="rounded-md p-1 text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
-                                aria-label={`Copy password for ${database.name}`}
-                                title={
-                                  copiedPasswordKey === getDatabasePasswordKey(database)
-                                    ? "Copied"
-                                    : "Copy password"
-                                }
-                              >
-                                {copiedPasswordKey === getDatabasePasswordKey(database) ? (
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                ) : (
-                                  <Copy className="h-4 w-4" />
-                                )}
-                              </button>
+                                ariaLabel={`Copy password for ${database.name}`}
+                                className="hover:bg-[var(--app-surface-muted)]"
+                              />
                             </div>
                           ) : null}
                         </td>
