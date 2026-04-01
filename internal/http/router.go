@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"flowpanel/internal/app"
+	flowcron "flowpanel/internal/cron"
 	"flowpanel/internal/domain"
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
@@ -62,6 +63,97 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
+
+		cronListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Cron == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "cron scheduler is not configured",
+				})
+				return
+			}
+
+			snapshot := app.Cron.Snapshot()
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"enabled": snapshot.Enabled,
+				"started": snapshot.Started,
+				"jobs":    snapshot.Jobs,
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/cron", cronListHandler)
+		r.Method(stdhttp.MethodHead, "/cron", cronListHandler)
+
+		cronCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Cron == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "cron scheduler is not configured",
+				})
+				return
+			}
+
+			var input flowcron.CreateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			record, err := app.Cron.Create(r.Context(), input)
+			if err != nil {
+				var validation flowcron.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("create cron job failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to create cron job",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{
+				"job": record,
+			})
+		})
+		r.Method(stdhttp.MethodPost, "/cron", cronCreateHandler)
+
+		cronDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Cron == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "cron scheduler is not configured",
+				})
+				return
+			}
+
+			jobID := chi.URLParam(r, "jobID")
+			_, deleted, err := app.Cron.Delete(r.Context(), jobID)
+			if err != nil {
+				app.Logger.Error("delete cron job failed",
+					zap.String("job_id", jobID),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to delete cron job",
+				})
+				return
+			}
+			if !deleted {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "cron job not found",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"ok": true,
+			})
+		})
+		r.Method(stdhttp.MethodDelete, "/cron/{jobID}", cronDeleteHandler)
 
 		systemStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusOK, map[string]any{

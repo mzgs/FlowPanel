@@ -199,6 +199,10 @@ func TestPHPMyAdminInstallSyncsCaddy(t *testing.T) {
 	if err := store.Ensure(context.Background()); err != nil {
 		t.Fatalf("ensure domain store: %v", err)
 	}
+	cronStore := flowcron.NewStore(dbConn)
+	if err := cronStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure cron store: %v", err)
+	}
 	domains := domain.NewService(store)
 
 	router, err := NewRouter(&app.App{
@@ -207,6 +211,7 @@ func TestPHPMyAdminInstallSyncsCaddy(t *testing.T) {
 		DB:         dbConn,
 		Domains:    domains,
 		Sessions:   auth.NewSessionManager(cfg),
+		Cron:       flowcron.NewScheduler(zap.NewNop(), false, cronStore),
 		Caddy:      runtime,
 		PHP:        fakePHPManager{},
 		PHPMyAdmin: manager,
@@ -292,6 +297,10 @@ func TestPHPMyAdminRedirectSyncsCaddyForManualInstall(t *testing.T) {
 	if err := store.Ensure(context.Background()); err != nil {
 		t.Fatalf("ensure domain store: %v", err)
 	}
+	cronStore := flowcron.NewStore(dbConn)
+	if err := cronStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure cron store: %v", err)
+	}
 	domains := domain.NewService(store)
 
 	router, err := NewRouter(&app.App{
@@ -300,6 +309,7 @@ func TestPHPMyAdminRedirectSyncsCaddyForManualInstall(t *testing.T) {
 		DB:         dbConn,
 		Domains:    domains,
 		Sessions:   auth.NewSessionManager(cfg),
+		Cron:       flowcron.NewScheduler(zap.NewNop(), false, cronStore),
 		Caddy:      runtime,
 		PHP:        fakePHPManager{},
 		PHPMyAdmin: manager,
@@ -494,6 +504,136 @@ func TestDeleteDomainRollsBackWhenPublishFails(t *testing.T) {
 		t.Fatalf("persisted domain count after failed delete = %d, want 1", len(persisted))
 	}
 	assertDomainRecordEqual(t, persisted[0], record)
+}
+
+func TestCronListCreateAndDeleteEndpoints(t *testing.T) {
+	router, _, store := newTestCronRouter(t, false)
+
+	initialRecorder := httptest.NewRecorder()
+	router.ServeHTTP(initialRecorder, httptest.NewRequest(http.MethodGet, "/api/cron", nil))
+
+	if initialRecorder.Code != http.StatusOK {
+		t.Fatalf("initial status = %d, want %d", initialRecorder.Code, http.StatusOK)
+	}
+
+	var initialPayload struct {
+		Enabled bool              `json:"enabled"`
+		Started bool              `json:"started"`
+		Jobs    []flowcron.Record `json:"jobs"`
+	}
+	if err := json.Unmarshal(initialRecorder.Body.Bytes(), &initialPayload); err != nil {
+		t.Fatalf("decode initial response: %v", err)
+	}
+	if initialPayload.Enabled {
+		t.Fatal("enabled = true, want false")
+	}
+	if initialPayload.Started {
+		t.Fatal("started = true, want false")
+	}
+	if len(initialPayload.Jobs) != 0 {
+		t.Fatalf("job count = %d, want 0", len(initialPayload.Jobs))
+	}
+	if !strings.Contains(initialRecorder.Body.String(), `"jobs":[]`) {
+		t.Fatalf("body = %s, want jobs to serialize as []", initialRecorder.Body.String())
+	}
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(`{"name":"Warm cache","schedule":"*/15 * * * *","command":"echo cache"}`))
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, createRequest)
+
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body = %s", createRecorder.Code, http.StatusCreated, createRecorder.Body.String())
+	}
+
+	var createPayload struct {
+		Job flowcron.Record `json:"job"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if createPayload.Job.Name != "Warm cache" {
+		t.Fatalf("name = %q, want Warm cache", createPayload.Job.Name)
+	}
+	if createPayload.Job.Schedule != "*/15 * * * *" {
+		t.Fatalf("schedule = %q, want */15 * * * *", createPayload.Job.Schedule)
+	}
+
+	listRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/cron", nil))
+
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", listRecorder.Code, http.StatusOK)
+	}
+
+	var listPayload struct {
+		Jobs []flowcron.Record `json:"jobs"`
+	}
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listPayload.Jobs) != 1 {
+		t.Fatalf("job count = %d, want 1", len(listPayload.Jobs))
+	}
+	if listPayload.Jobs[0].ID != createPayload.Job.ID {
+		t.Fatalf("job id = %q, want %q", listPayload.Jobs[0].ID, createPayload.Job.ID)
+	}
+
+	persisted, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("list persisted cron jobs: %v", err)
+	}
+	if len(persisted) != 1 {
+		t.Fatalf("persisted job count = %d, want 1", len(persisted))
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, httptest.NewRequest(http.MethodDelete, "/api/cron/"+createPayload.Job.ID, nil))
+
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d", deleteRecorder.Code, http.StatusOK)
+	}
+
+	persisted, err = store.List(context.Background())
+	if err != nil {
+		t.Fatalf("list persisted cron jobs after delete: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted job count after delete = %d, want 0", len(persisted))
+	}
+}
+
+func TestCronCreateEndpointValidatesInput(t *testing.T) {
+	router, _, _ := newTestCronRouter(t, false)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(`{"name":"","schedule":"bad cron","command":""}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+
+	var payload struct {
+		Error       string            `json:"error"`
+		FieldErrors map[string]string `json:"field_errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error != "validation failed" {
+		t.Fatalf("error = %q, want validation failed", payload.Error)
+	}
+	if payload.FieldErrors["name"] != "Name is required." {
+		t.Fatalf("name error = %q, want required message", payload.FieldErrors["name"])
+	}
+	if payload.FieldErrors["schedule"] == "" {
+		t.Fatal("schedule validation is empty")
+	}
+	if payload.FieldErrors["command"] != "Command is required." {
+		t.Fatalf("command error = %q, want required message", payload.FieldErrors["command"])
+	}
 }
 
 func TestSystemStatusEndpoint(t *testing.T) {
@@ -802,6 +942,10 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	if err := store.Ensure(context.Background()); err != nil {
 		t.Fatalf("ensure store: %v", err)
 	}
+	cronStore := flowcron.NewStore(dbConn)
+	if err := cronStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure cron store: %v", err)
+	}
 
 	domains := domain.NewService(store)
 	fileManager, err := files.NewService(t.TempDir())
@@ -815,7 +959,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		dbConn,
 		domains,
 		auth.NewSessionManager(cfg),
-		flowcron.NewScheduler(logger.Named("cron"), false),
+		flowcron.NewScheduler(logger.Named("cron"), false, cronStore),
 		caddy.NewRuntime(
 			logger.Named("caddy"),
 			cfg.PublicHTTPAddr,
@@ -834,6 +978,84 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	}
 
 	return router, domains, store
+}
+
+func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Scheduler, *flowcron.Store) {
+	t.Helper()
+
+	cfg := config.Config{
+		Env:             "test",
+		AdminListenAddr: ":18080",
+		PublicHTTPAddr:  ":19080",
+		PublicHTTPSAddr: ":19443",
+		PHPMyAdminAddr:  ":32109",
+		Database: config.DatabaseConfig{
+			Path: ":memory:",
+		},
+		Session: config.SessionConfig{
+			Secret:     strings.Repeat("s", 32),
+			CookieName: "flowpanel_test",
+			Lifetime:   time.Hour,
+		},
+		Cron: config.CronConfig{
+			Enabled: enabled,
+		},
+	}
+
+	logger := zap.NewNop()
+	dbConn, err := db.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = dbConn.Close()
+	})
+
+	domainStore := domain.NewStore(dbConn)
+	if err := domainStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure domain store: %v", err)
+	}
+	cronStore := flowcron.NewStore(dbConn)
+	if err := cronStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure cron store: %v", err)
+	}
+
+	domains := domain.NewService(domainStore)
+	fileManager, err := files.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file manager: %v", err)
+	}
+
+	scheduler := flowcron.NewScheduler(logger.Named("cron"), enabled, cronStore)
+	if err := scheduler.Load(context.Background()); err != nil {
+		t.Fatalf("load cron scheduler: %v", err)
+	}
+
+	router, err := NewRouter(app.New(
+		cfg,
+		logger,
+		dbConn,
+		domains,
+		auth.NewSessionManager(cfg),
+		scheduler,
+		caddy.NewRuntime(
+			logger.Named("caddy"),
+			cfg.PublicHTTPAddr,
+			cfg.PublicHTTPSAddr,
+			fakePHPManager{},
+			fakePHPMyAdminManager{},
+			cfg.PHPMyAdminAddr,
+		),
+		fakeMariaDBManager{},
+		fakePHPManager{},
+		fakePHPMyAdminManager{},
+		fileManager,
+	))
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	return router, scheduler, cronStore
 }
 
 func assertDomainRecordEqual(t *testing.T, got domain.Record, want domain.Record) {

@@ -80,6 +80,10 @@ func run() error {
 	if err := mariaDBStore.Ensure(startupCtx); err != nil {
 		return fmt.Errorf("ensure mariadb storage: %w", err)
 	}
+	cronStore := flowcron.NewStore(dbConn)
+	if err := cronStore.Ensure(startupCtx); err != nil {
+		return fmt.Errorf("ensure cron storage: %w", err)
+	}
 
 	domainService := domain.NewService(domainStore)
 	if err := domainService.Load(startupCtx); err != nil {
@@ -87,7 +91,10 @@ func run() error {
 	}
 
 	sessionManager := auth.NewSessionManager(cfg)
-	scheduler := flowcron.NewScheduler(logger.Named("cron"), cfg.Cron.Enabled)
+	scheduler := flowcron.NewScheduler(logger.Named("cron"), cfg.Cron.Enabled, cronStore)
+	if err := scheduler.Load(startupCtx); err != nil {
+		return fmt.Errorf("load persisted cron jobs: %w", err)
+	}
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
