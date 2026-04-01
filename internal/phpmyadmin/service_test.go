@@ -100,9 +100,14 @@ func TestInstallDownloadsLatestArchiveAndWritesVersionMetadata(t *testing.T) {
 	if !strings.Contains(string(configData), "$cfg['blowfish_secret'] = '") {
 		t.Fatalf("config.inc.php = %q, want valid blowfish assignment", string(configData))
 	}
+	if !strings.Contains(string(configData), "$cfg['TempDir'] = '"+filepath.ToSlash(filepath.Join(installPath, "tmp"))+"/';") {
+		t.Fatalf("config.inc.php = %q, want TempDir pointing at tmp", string(configData))
+	}
 
 	if info, err := os.Stat(filepath.Join(installPath, "tmp")); err != nil || !info.IsDir() {
 		t.Fatalf("tmp dir err = %v, info = %#v", err, info)
+	} else if info.Mode().Perm() != 0o777 {
+		t.Fatalf("tmp dir perms = %#o, want %#o", info.Mode().Perm(), os.FileMode(0o777))
 	}
 
 	status := service.Status(context.Background())

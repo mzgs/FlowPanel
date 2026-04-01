@@ -90,6 +90,13 @@ replace_blowfish_secret() {
   mv "$tmp_file" "$file"
 }
 
+php_config_path() {
+  local path="$1"
+  path="${path//\\/\/}"
+  path="${path%/}"
+  printf "%s/\n" "$path"
+}
+
 echo "[1/8] Detecting platform..."
 echo "Platform: $OS"
 echo "FlowPanel path: $FLOWPANEL_PATH"
@@ -136,6 +143,7 @@ SECRET="$(generate_secret)"
 TMP_CONFIG="$(mktemp)"
 cp "$CONFIG_SAMPLE" "$TMP_CONFIG"
 replace_blowfish_secret "$TMP_CONFIG" "$SECRET"
+printf "\n\$cfg['TempDir'] = '%s';\n" "$(php_config_path "${PHPMYADMIN_DIR}/tmp")" >> "$TMP_CONFIG"
 
 run_maybe_sudo cp "$TMP_CONFIG" "$CONFIG_FILE"
 rm -f "$TMP_CONFIG"
@@ -147,7 +155,7 @@ run_maybe_sudo mkdir -p "${PHPMYADMIN_DIR}/tmp"
 if command -v chmod >/dev/null 2>&1; then
   run_maybe_sudo find "$PHPMYADMIN_DIR" -type d -exec chmod 755 {} +
   run_maybe_sudo find "$PHPMYADMIN_DIR" -type f -exec chmod 644 {} +
-  run_maybe_sudo chmod 777 "${PHPMYADMIN_DIR}/tmp" 2>/dev/null || true
+  run_maybe_sudo chmod 1777 "${PHPMYADMIN_DIR}/tmp" 2>/dev/null || true
 fi
 
 echo

@@ -27,6 +27,7 @@ const (
 	installDirName      = "phpmyadmin"
 	versionMetadataFile = ".flowpanel-version"
 	passwordBytesLength = 24
+	runtimeDirPerm      = 0o1777
 )
 
 var (
@@ -152,8 +153,8 @@ func (s *Service) Install(ctx context.Context) error {
 	if err := writeRuntimeConfig(installPath()); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(installPath(), "tmp"), 0o770); err != nil {
-		return fmt.Errorf("create phpmyadmin tmp directory: %w", err)
+	if err := ensureRuntimeDirectories(installPath()); err != nil {
+		return err
 	}
 	if err := writeVersionMetadata(installPath(), version); err != nil {
 		return err
@@ -385,11 +386,32 @@ func writeRuntimeConfig(installPath string) error {
 		return errors.New("phpmyadmin sample config did not contain an empty blowfish secret")
 	}
 
+	updated = strings.TrimRight(updated, "\n") + "\n\n" +
+		fmt.Sprintf("$cfg['TempDir'] = '%s';\n", phpConfigPath(filepath.Join(installPath, "tmp")))
+
 	if err := os.WriteFile(filepath.Join(installPath, "config.inc.php"), []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write phpmyadmin config: %w", err)
 	}
 
 	return nil
+}
+
+func ensureRuntimeDirectories(installPath string) error {
+	tmpDir := filepath.Join(installPath, "tmp")
+	if err := os.MkdirAll(tmpDir, runtimeDirPerm); err != nil {
+		return fmt.Errorf("create phpmyadmin tmp directory: %w", err)
+	}
+	if err := os.Chmod(tmpDir, runtimeDirPerm); err != nil {
+		return fmt.Errorf("set phpmyadmin tmp directory permissions: %w", err)
+	}
+
+	return nil
+}
+
+func phpConfigPath(path string) string {
+	normalized := filepath.ToSlash(path)
+	normalized = strings.ReplaceAll(normalized, `'`, `\'`)
+	return strings.TrimRight(normalized, "/") + "/"
 }
 
 func generatePassword() (string, error) {
