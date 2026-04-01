@@ -7,7 +7,7 @@ This directory contains the admin panel source.
 - `Vite`
 - `React`
 - `TypeScript`
-- Flowbite-inspired panel primitives
+
 - `TanStack Router`
 - `TanStack Query`
 - `TanStack Table`
@@ -24,4 +24,4 @@ The panel is an operator console:
 - table-first screens
 - strong status handling
 - minimal decoration
-- fast navigation between domains, jobs, and settings
+- fast navigation between domains, cron, and settings

@@ -65,7 +65,7 @@ These assumptions keep the first version focused. We can adjust them later if ne
 - `internal/auth`: login, password hashing, session lifecycle with scs
 - `internal/domain`: domains, upstream routing, validation, business logic
 - `internal/caddy`: embedded Caddy runtime manager and config reconciliation
-- `internal/jobs`: cron registration, periodic reconciliation, health checks
+- `internal/cron`: cron registration, periodic reconciliation, health checks
 - `internal/logging`: zap logger setup
 - `web/panel`: React source code for the admin UI
 - `web/dist`: compiled frontend assets embedded into the binary

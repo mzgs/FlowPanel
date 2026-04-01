@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-router";
 import {
   Bell,
+  Clock,
   Database,
   ChevronRight,
   FolderOpen,
@@ -16,7 +17,6 @@ import {
   Search,
   Settings,
   TerminalSquare,
-  TimerReset,
   World,
   X,
 } from "@/components/icons/tabler-icons";
@@ -38,11 +38,11 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { CronPage } from "@/pages/cron-page";
 import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
 import { FilesPage } from "@/pages/files-page";
-import { JobsPage } from "@/pages/jobs-page";
 import { SettingsPage } from "@/pages/settings-page";
 import { SshPage } from "@/pages/ssh-page";
 
@@ -51,15 +51,29 @@ const navigationItems = [
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
   { to: "/files", label: "Files", icon: FolderOpen },
-  { to: "/jobs", label: "Jobs", icon: TimerReset },
+  { to: "/cron", label: "Cron", icon: Clock },
   { to: "/ssh", label: "SSH", icon: TerminalSquare },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
+function getPathLabel(pathname: string) {
+  if (pathname === "/") {
+    return "Dashboard";
+  }
+
+  if (pathname === "/jobs" || pathname === "/cron") {
+    return "cron";
+  }
+
+  return pathname.slice(1).replace(/-/g, " ");
+}
+
 function RootLayout() {
   const location = useLocation();
   const isNavItemActive = (to: string) =>
-    location.pathname === to || (to === "/files" && location.pathname === "/file-manager");
+    location.pathname === to ||
+    (to === "/files" && location.pathname === "/file-manager") ||
+    (to === "/cron" && location.pathname === "/jobs");
   const activeItem =
     navigationItems.find((item) => isNavItemActive(item.to)) ?? navigationItems[0];
 
@@ -128,7 +142,7 @@ function RootLayout() {
                   <span className="truncate">{activeItem.label}</span>
                   <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="truncate text-muted-foreground">
-                    {location.pathname === "/" ? "Dashboard" : location.pathname.slice(1).replace(/-/g, " ")}
+                    {getPathLabel(location.pathname)}
                   </span>
                 </div>
               </div>
@@ -214,10 +228,16 @@ const legacyFileManagerRoute = createRoute({
   component: FilesPage,
 });
 
-const jobsRoute = createRoute({
+const cronRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/cron",
+  component: CronPage,
+});
+
+const legacyJobsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/jobs",
-  component: JobsPage,
+  component: CronPage,
 });
 
 const settingsRoute = createRoute({
@@ -238,7 +258,8 @@ const routeTree = rootRoute.addChildren([
   databaseRoute,
   filesRoute,
   legacyFileManagerRoute,
-  jobsRoute,
+  cronRoute,
+  legacyJobsRoute,
   sshRoute,
   settingsRoute,
 ]);

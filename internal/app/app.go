@@ -5,9 +5,9 @@ import (
 
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
+	"flowpanel/internal/cron"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/files"
-	"flowpanel/internal/jobs"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
@@ -22,7 +22,7 @@ type App struct {
 	DB         *sql.DB
 	Domains    *domain.Service
 	Sessions   *scs.SessionManager
-	Jobs       *jobs.Scheduler
+	Cron       *cron.Scheduler
 	Caddy      *caddy.Runtime
 	MariaDB    mariadb.Manager
 	PHP        phpenv.Manager
@@ -36,7 +36,7 @@ func New(
 	db *sql.DB,
 	domains *domain.Service,
 	sessions *scs.SessionManager,
-	scheduler *jobs.Scheduler,
+	scheduler *cron.Scheduler,
 	caddyRuntime *caddy.Runtime,
 	mariadbManager mariadb.Manager,
 	phpManager phpenv.Manager,
@@ -49,7 +49,7 @@ func New(
 		DB:         db,
 		Domains:    domains,
 		Sessions:   sessions,
-		Jobs:       scheduler,
+		Cron:       scheduler,
 		Caddy:      caddyRuntime,
 		MariaDB:    mariadbManager,
 		PHP:        phpManager,

@@ -17,10 +17,10 @@ import (
 	"flowpanel/internal/auth"
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
+	flowcron "flowpanel/internal/cron"
 	"flowpanel/internal/db"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/files"
-	"flowpanel/internal/jobs"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
@@ -815,7 +815,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		dbConn,
 		domains,
 		auth.NewSessionManager(cfg),
-		jobs.NewScheduler(logger.Named("jobs"), false),
+		flowcron.NewScheduler(logger.Named("cron"), false),
 		caddy.NewRuntime(
 			logger.Named("caddy"),
 			cfg.PublicHTTPAddr,

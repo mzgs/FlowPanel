@@ -14,11 +14,11 @@ import (
 	"flowpanel/internal/auth"
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
+	flowcron "flowpanel/internal/cron"
 	"flowpanel/internal/db"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/files"
 	httpx "flowpanel/internal/http"
-	"flowpanel/internal/jobs"
 	"flowpanel/internal/logging"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
@@ -87,7 +87,7 @@ func run() error {
 	}
 
 	sessionManager := auth.NewSessionManager(cfg)
-	scheduler := jobs.NewScheduler(logger.Named("jobs"), cfg.Cron.Enabled)
+	scheduler := flowcron.NewScheduler(logger.Named("cron"), cfg.Cron.Enabled)
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
