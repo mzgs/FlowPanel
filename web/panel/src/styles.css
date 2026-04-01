@@ -22,7 +22,7 @@
     --app-ok: oklch(0.696 0.17 162.48);
     --app-ok-soft: color-mix(in oklab, var(--background) 82%, oklch(0.696 0.17 162.48));
     --app-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.18);
-    --app-sidebar-width: 16rem;
+    --app-sidebar-width: 14rem;
     --app-navbar-height: 4rem;
   }
 
