@@ -1,32 +1,19 @@
 package phpmyadmin
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"go.uber.org/zap"
 )
-
-func TestDetectInstallPathUsesOverride(t *testing.T) {
-	installPath := filepath.Join(t.TempDir(), "phpmyadmin")
-	if err := os.MkdirAll(installPath, 0o755); err != nil {
-		t.Fatalf("mkdir install path: %v", err)
-	}
-
-	t.Setenv("FLOWPANEL_PHPMYADMIN_PATH", installPath)
-
-	got, ok := detectInstallPath()
-	if !ok {
-		t.Fatal("detectInstallPath() ok = false, want true")
-	}
-	if got != installPath {
-		t.Fatalf("detectInstallPath() = %q, want %q", got, installPath)
-	}
-}
 
 func TestStatusReportsInstalledWhenPathExists(t *testing.T) {
 	installPath := filepath.Join(t.TempDir(), "phpmyadmin")
@@ -34,7 +21,8 @@ func TestStatusReportsInstalledWhenPathExists(t *testing.T) {
 		t.Fatalf("mkdir install path: %v", err)
 	}
 
-	t.Setenv("FLOWPANEL_PHPMYADMIN_PATH", installPath)
+	restore := overrideInstallPath(t, installPath)
+	defer restore()
 
 	status := NewService(zap.NewNop()).Status(context.Background())
 	if !status.Installed {
@@ -48,13 +36,13 @@ func TestStatusReportsInstalledWhenPathExists(t *testing.T) {
 	}
 }
 
-func TestDetectVersionReadsComposerJSON(t *testing.T) {
+func TestDetectVersionReadsMetadataFile(t *testing.T) {
 	installPath := filepath.Join(t.TempDir(), "phpmyadmin")
 	if err := os.MkdirAll(installPath, 0o755); err != nil {
 		t.Fatalf("mkdir install path: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(installPath, "composer.json"), []byte(`{"version":"5.2.3"}`), 0o644); err != nil {
-		t.Fatalf("write composer.json: %v", err)
+	if err := os.WriteFile(filepath.Join(installPath, versionMetadataFile), []byte("5.2.3\n"), 0o644); err != nil {
+		t.Fatalf("write version metadata: %v", err)
 	}
 
 	got := detectVersion(installPath)
@@ -63,150 +51,120 @@ func TestDetectVersionReadsComposerJSON(t *testing.T) {
 	}
 }
 
-func TestAptDebconfSelectionsCommand(t *testing.T) {
-	command := aptDebconfSelectionsCommand("/usr/bin/debconf-set-selections", "root-secret", "app-secret")
+func TestVersionFromArchiveRoot(t *testing.T) {
+	got := versionFromArchiveRoot("phpMyAdmin-5.2.3-all-languages")
+	if got != "5.2.3" {
+		t.Fatalf("versionFromArchiveRoot() = %q, want 5.2.3", got)
+	}
+}
 
-	for _, expected := range []string{
-		"phpmyadmin phpmyadmin/dbconfig-install boolean true",
-		"phpmyadmin phpmyadmin/reconfigure-webserver multiselect none",
-		"phpmyadmin phpmyadmin/mysql/admin-user string root",
-		"phpmyadmin phpmyadmin/mysql/admin-pass password root-secret",
-		"phpmyadmin phpmyadmin/mysql/app-pass password app-secret",
-		"phpmyadmin phpmyadmin/app-password-confirm password app-secret",
-		"| /usr/bin/debconf-set-selections",
-	} {
-		if !strings.Contains(command, expected) {
-			t.Fatalf("aptDebconfSelectionsCommand() = %q, missing %q", command, expected)
+func TestInstallDownloadsLatestArchiveAndWritesVersionMetadata(t *testing.T) {
+	archiveBytes := buildPHPMyAdminArchive(t, "5.2.3")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(archiveBytes); err != nil {
+			t.Fatalf("write archive response: %v", err)
 		}
-	}
-}
+	}))
+	defer server.Close()
 
-func TestAptInstallCommandsWithoutDebconfBinaryInstallsDebconfUtils(t *testing.T) {
-	aptPath := "/usr/bin/apt-get"
-	got := aptInstallCommands(aptPath, "", "root-secret", "app-secret")
+	baseDir := t.TempDir()
+	installPath := filepath.Join(baseDir, "phpmyadmin")
 
-	want := [][]string{
-		{aptPath, "update"},
-		{aptPath, "install", "-y", "debconf-utils"},
-		{"/bin/sh", "-c", aptDebconfSelectionsCommand("debconf-set-selections", "root-secret", "app-secret")},
-		{aptPath, "install", "-y", "phpmyadmin"},
-	}
+	restorePath := overrideInstallPath(t, installPath)
+	defer restorePath()
 
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("aptInstallCommands() = %#v, want %#v", got, want)
-	}
-}
-
-func TestAptInstallCommandsWithDebconfBinarySkipsDebconfUtilsInstall(t *testing.T) {
-	aptPath := "/usr/bin/apt-get"
-	debconfPath := "/usr/bin/debconf-set-selections"
-	got := aptInstallCommands(aptPath, debconfPath, "root-secret", "app-secret")
-
-	want := [][]string{
-		{aptPath, "update"},
-		{"/bin/sh", "-c", aptDebconfSelectionsCommand(debconfPath, "root-secret", "app-secret")},
-		{aptPath, "install", "-y", "phpmyadmin"},
-	}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("aptInstallCommands() = %#v, want %#v", got, want)
-	}
-}
-
-func TestResolveMariaDBRootPasswordUsesEnv(t *testing.T) {
-	t.Setenv("FLOWPANEL_MARIADB_PASSWORD", "env-root-secret")
-
-	got, err := resolveMariaDBRootPassword()
-	if err != nil {
-		t.Fatalf("resolveMariaDBRootPassword() error = %v", err)
-	}
-	if got != "env-root-secret" {
-		t.Fatalf("resolveMariaDBRootPassword() = %q, want env-root-secret", got)
-	}
-}
-
-func TestResolveMariaDBRootPasswordUsesPasswordFile(t *testing.T) {
-	passwordFile := filepath.Join(t.TempDir(), "mariadb-root-password")
-	if err := os.WriteFile(passwordFile, []byte("file-root-secret\n"), 0o600); err != nil {
-		t.Fatalf("write password file: %v", err)
-	}
-
-	t.Setenv("FLOWPANEL_MARIADB_PASSWORD", "")
-	t.Setenv("FLOWPANEL_MARIADB_PASSWORD_FILE", passwordFile)
-
-	got, err := resolveMariaDBRootPassword()
-	if err != nil {
-		t.Fatalf("resolveMariaDBRootPassword() error = %v", err)
-	}
-	if got != "file-root-secret" {
-		t.Fatalf("resolveMariaDBRootPassword() = %q, want file-root-secret", got)
-	}
-}
-
-func TestInstallWithAptPlanRunsPreseededInstall(t *testing.T) {
-	tempDir := t.TempDir()
-	binDir := filepath.Join(tempDir, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatalf("mkdir bin dir: %v", err)
-	}
-
-	aptLogPath := filepath.Join(tempDir, "apt.log")
-	debconfLogPath := filepath.Join(tempDir, "debconf.log")
-
-	t.Setenv("APT_LOG", aptLogPath)
-	t.Setenv("DEBCONF_LOG", debconfLogPath)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	aptPath := filepath.Join(binDir, "apt-get")
-	debconfPath := filepath.Join(binDir, "debconf-set-selections")
-
-	writeExecutable(t, aptPath, `#!/bin/sh
-printf '%s\n' "$*" >> "$APT_LOG"
-`)
-	writeExecutable(t, debconfPath, `#!/bin/sh
-cat >> "$DEBCONF_LOG"
-`)
+	restoreURL := overrideDownloadURL(t, server.URL+"/phpMyAdmin-latest-all-languages.tar.gz")
+	defer restoreURL()
 
 	service := NewService(zap.NewNop())
-	plan := actionPlan{
-		packageManager: "apt",
-		installEnv: map[string]string{
-			"DEBIAN_FRONTEND": "noninteractive",
-		},
-		installCmds: aptInstallCommands(aptPath, debconfPath, "root-secret", "app-secret"),
+	if err := service.Install(context.Background()); err != nil {
+		t.Fatalf("Install() error = %v", err)
 	}
 
-	if err := service.installWithPlan(context.Background(), plan); err != nil {
-		t.Fatalf("installWithPlan() error = %v", err)
-	}
-
-	aptLog, err := os.ReadFile(aptLogPath)
+	versionData, err := os.ReadFile(filepath.Join(installPath, versionMetadataFile))
 	if err != nil {
-		t.Fatalf("read apt log: %v", err)
+		t.Fatalf("read version metadata: %v", err)
 	}
-	if !strings.Contains(string(aptLog), "install -y phpmyadmin") {
-		t.Fatalf("apt log = %q, want phpmyadmin install command", string(aptLog))
+	if strings.TrimSpace(string(versionData)) != "5.2.3" {
+		t.Fatalf("version metadata = %q, want 5.2.3", string(versionData))
 	}
 
-	debconfLog, err := os.ReadFile(debconfLogPath)
+	configData, err := os.ReadFile(filepath.Join(installPath, "config.inc.php"))
 	if err != nil {
-		t.Fatalf("read debconf log: %v", err)
+		t.Fatalf("read config.inc.php: %v", err)
 	}
-	for _, expected := range []string{
-		"phpmyadmin phpmyadmin/dbconfig-install boolean true",
-		"phpmyadmin phpmyadmin/mysql/admin-pass password root-secret",
-		"phpmyadmin phpmyadmin/mysql/app-pass password app-secret",
-	} {
-		if !strings.Contains(string(debconfLog), expected) {
-			t.Fatalf("debconf log = %q, missing %q", string(debconfLog), expected)
-		}
+	if strings.Contains(string(configData), "$cfg['blowfish_secret'] = '';") {
+		t.Fatalf("config.inc.php = %q, want populated blowfish secret", string(configData))
+	}
+
+	if info, err := os.Stat(filepath.Join(installPath, "tmp")); err != nil || !info.IsDir() {
+		t.Fatalf("tmp dir err = %v, info = %#v", err, info)
+	}
+
+	status := service.Status(context.Background())
+	if !status.Installed {
+		t.Fatal("Installed = false, want true")
+	}
+	if status.Version != "5.2.3" {
+		t.Fatalf("Version = %q, want 5.2.3", status.Version)
 	}
 }
 
-func writeExecutable(t *testing.T, path, content string) {
+func overrideInstallPath(t *testing.T, path string) func() {
 	t.Helper()
 
-	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
-		t.Fatalf("write executable %s: %v", path, err)
+	previous := phpMyAdminInstallPath
+	phpMyAdminInstallPath = path
+	return func() {
+		phpMyAdminInstallPath = previous
 	}
+}
+
+func overrideDownloadURL(t *testing.T, url string) func() {
+	t.Helper()
+
+	previous := phpMyAdminDownloadURL
+	phpMyAdminDownloadURL = url
+	return func() {
+		phpMyAdminDownloadURL = previous
+	}
+}
+
+func buildPHPMyAdminArchive(t *testing.T, version string) []byte {
+	t.Helper()
+
+	root := "phpMyAdmin-" + version + "-all-languages"
+
+	var archive bytes.Buffer
+	gzipWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzipWriter)
+
+	files := map[string]string{
+		filepath.ToSlash(filepath.Join(root, "config.sample.inc.php")): "<?php\n$cfg['blowfish_secret'] = '';\n",
+		filepath.ToSlash(filepath.Join(root, "composer.json")):         "{\"version\":\"" + version + "\"}\n",
+	}
+
+	for name, content := range files {
+		header := &tar.Header{
+			Name: name,
+			Mode: 0o644,
+			Size: int64(len(content)),
+		}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			t.Fatalf("write tar header %s: %v", name, err)
+		}
+		if _, err := tarWriter.Write([]byte(content)); err != nil {
+			t.Fatalf("write tar content %s: %v", name, err)
+		}
+	}
+
+	if err := tarWriter.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+
+	return archive.Bytes()
 }

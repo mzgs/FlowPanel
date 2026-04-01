@@ -1,15 +1,17 @@
 package phpmyadmin
 
 import (
-	"bytes"
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -21,11 +23,19 @@ import (
 )
 
 const (
-	defaultPasswordFile = "mariadb-root-password"
+	downloadURL         = "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.tar.gz"
+	installDirName      = "phpmyadmin"
+	versionMetadataFile = ".flowpanel-version"
 	passwordBytesLength = 24
 )
 
-var cellarVersionPattern = regexp.MustCompile(`/phpmyadmin/([^/]+)/`)
+var (
+	archiveVersionPattern = regexp.MustCompile(`^phpMyAdmin-(.+)-all-languages$`)
+	blowfishSecretPattern = regexp.MustCompile(`\$cfg\['blowfish_secret'\]\s*=\s*'';?`)
+
+	phpMyAdminInstallPath = filepath.Join(config.FLOWPANEL_PATH, installDirName)
+	phpMyAdminDownloadURL = downloadURL
+)
 
 type Manager interface {
 	Status(context.Context) Status
@@ -49,13 +59,6 @@ type Service struct {
 	logger *zap.Logger
 }
 
-type actionPlan struct {
-	packageManager string
-	installLabel   string
-	installEnv     map[string]string
-	installCmds    [][]string
-}
-
 func NewService(logger *zap.Logger) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -67,267 +70,100 @@ func NewService(logger *zap.Logger) *Service {
 }
 
 func (s *Service) Status(context.Context) Status {
+	installPath := installPath()
 	status := Status{
-		Platform: runtime.GOOS,
+		Platform:         runtime.GOOS,
+		PackageManager:   "manual",
+		InstallLabel:     "Install phpMyAdmin",
+		InstallAvailable: true,
 	}
 
-	plan := detectActionPlan()
-	status.PackageManager = plan.packageManager
-	status.InstallLabel = plan.installLabel
-
-	installPath, installed := detectInstallPath()
-	status.Installed = installed
-	status.InstallPath = installPath
-	status.Version = detectVersion(installPath)
-	status.InstallAvailable = plan.packageManager != "" && !status.Installed
-
+	info, err := os.Stat(installPath)
 	switch {
-	case status.Installed:
+	case err == nil && info.IsDir():
+		status.Installed = true
+		status.InstallPath = installPath
+		status.Version = detectVersion(installPath)
+		status.InstallAvailable = false
 		status.State = "installed"
 		switch {
 		case status.Version != "" && status.InstallPath != "":
 			status.Message = fmt.Sprintf("phpMyAdmin %s is installed at %s.", status.Version, status.InstallPath)
 		case status.Version != "":
 			status.Message = fmt.Sprintf("phpMyAdmin %s is installed.", status.Version)
-		case status.InstallPath != "":
-			status.Message = fmt.Sprintf("phpMyAdmin is installed at %s.", status.InstallPath)
 		default:
-			status.Message = "phpMyAdmin is installed."
+			status.Message = fmt.Sprintf("phpMyAdmin is installed at %s.", status.InstallPath)
 		}
-	case status.InstallAvailable:
+	case err == nil:
+		status.State = "missing"
+		status.Message = fmt.Sprintf("%s exists but is not a directory.", installPath)
+	case errors.Is(err, os.ErrNotExist):
 		status.State = "missing"
 		status.Message = "phpMyAdmin is not installed. Install it here to add a browser-based MariaDB client."
 	default:
 		status.State = "missing"
-		status.Message = "phpMyAdmin is not installed on this server."
+		status.Message = "FlowPanel could not inspect the phpMyAdmin installation path."
+		status.Issues = append(status.Issues, err.Error())
 	}
 
 	return status
 }
 
 func (s *Service) Install(ctx context.Context) error {
-	plan := detectActionPlan()
-	if plan.packageManager == "apt" {
-		aptPath, ok := lookupCommand("apt-get")
-		if !ok {
-			return errors.New("apt-get is not installed")
-		}
-
-		rootPassword, err := resolveMariaDBRootPassword()
-		if err != nil {
-			return fmt.Errorf("resolve mariadb root password: %w", err)
-		}
-
-		appPassword, err := generatePassword()
-		if err != nil {
-			return fmt.Errorf("generate phpMyAdmin application password: %w", err)
-		}
-
-		debconfPath, _ := lookupCommand("debconf-set-selections")
-		plan.installEnv = map[string]string{
-			"DEBIAN_FRONTEND": "noninteractive",
-		}
-		plan.installCmds = aptInstallCommands(aptPath, debconfPath, rootPassword, appPassword)
+	if status := s.Status(ctx); status.Installed {
+		return nil
 	}
 
-	return s.installWithPlan(ctx, plan)
-}
-
-func (s *Service) installWithPlan(ctx context.Context, plan actionPlan) error {
-	if len(plan.installCmds) == 0 {
-		return fmt.Errorf("automatic phpMyAdmin installation is not supported on %s", runtime.GOOS)
+	basePath := filepath.Dir(installPath())
+	if err := os.MkdirAll(basePath, 0o755); err != nil {
+		return fmt.Errorf("create flowpanel path: %w", err)
 	}
+
+	workDir, err := os.MkdirTemp(basePath, "phpmyadmin-install-")
+	if err != nil {
+		return fmt.Errorf("create phpmyadmin workdir: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+
+	archivePath := filepath.Join(workDir, "phpmyadmin.tar.gz")
+	extractDir := filepath.Join(workDir, "extract")
 
 	s.logger.Info("installing phpmyadmin",
-		zap.String("package_manager", plan.packageManager),
+		zap.String("download_url", phpMyAdminDownloadURL),
+		zap.String("install_path", installPath()),
 	)
 
-	return runCommands(ctx, plan.installEnv, plan.installCmds...)
-}
-
-func detectActionPlan() actionPlan {
-	switch runtime.GOOS {
-	case "darwin":
-		if brewPath, ok := lookupCommand("brew"); ok {
-			return actionPlan{
-				packageManager: "homebrew",
-				installLabel:   "Install phpMyAdmin",
-				installCmds: [][]string{
-					{brewPath, "install", "phpmyadmin"},
-				},
-			}
-		}
-	case "linux":
-		if os.Geteuid() == 0 {
-			if _, ok := lookupCommand("apt-get"); ok {
-				return actionPlan{
-					packageManager: "apt",
-					installLabel:   "Install phpMyAdmin",
-				}
-			}
-			if dnfPath, ok := lookupCommand("dnf"); ok {
-				return actionPlan{
-					packageManager: "dnf",
-					installLabel:   "Install phpMyAdmin",
-					installCmds: [][]string{
-						{dnfPath, "install", "-y", "phpMyAdmin"},
-					},
-				}
-			}
-			if yumPath, ok := lookupCommand("yum"); ok {
-				return actionPlan{
-					packageManager: "yum",
-					installLabel:   "Install phpMyAdmin",
-					installCmds: [][]string{
-						{yumPath, "install", "-y", "phpMyAdmin"},
-					},
-				}
-			}
-			if pacmanPath, ok := lookupCommand("pacman"); ok {
-				return actionPlan{
-					packageManager: "pacman",
-					installLabel:   "Install phpMyAdmin",
-					installCmds: [][]string{
-						{pacmanPath, "-Sy", "--noconfirm", "phpmyadmin"},
-					},
-				}
-			}
-		}
+	if err := downloadArchive(ctx, phpMyAdminDownloadURL, archivePath); err != nil {
+		return err
 	}
 
-	return actionPlan{}
-}
-
-func aptInstallCommands(aptPath, debconfPath, adminPassword, appPassword string) [][]string {
-	commands := [][]string{
-		{aptPath, "update"},
-	}
-
-	debconfPath = strings.TrimSpace(debconfPath)
-	if debconfPath == "" {
-		commands = append(commands, []string{aptPath, "install", "-y", "debconf-utils"})
-		debconfPath = "debconf-set-selections"
-	}
-
-	commands = append(commands,
-		[]string{"/bin/sh", "-c", aptDebconfSelectionsCommand(debconfPath, adminPassword, appPassword)},
-		[]string{aptPath, "install", "-y", "phpmyadmin"},
-	)
-
-	return commands
-}
-
-func aptDebconfSelectionsCommand(debconfPath, adminPassword, appPassword string) string {
-	debconfPath = strings.TrimSpace(debconfPath)
-	if debconfPath == "" {
-		debconfPath = "debconf-set-selections"
-	}
-
-	lines := []string{
-		"phpmyadmin phpmyadmin/dbconfig-install boolean true",
-		"phpmyadmin phpmyadmin/reconfigure-webserver multiselect none",
-		"phpmyadmin phpmyadmin/mysql/admin-user string root",
-		fmt.Sprintf("phpmyadmin phpmyadmin/mysql/admin-pass password %s", adminPassword),
-		fmt.Sprintf("phpmyadmin phpmyadmin/mysql/app-pass password %s", appPassword),
-		fmt.Sprintf("phpmyadmin phpmyadmin/app-password-confirm password %s", appPassword),
-	}
-
-	args := make([]string, 0, len(lines)+2)
-	args = append(args, "printf", "%s\\n")
-	for _, line := range lines {
-		args = append(args, shellQuote(line))
-	}
-
-	return strings.Join(args, " ") + " | " + debconfPath
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
-}
-
-func resolveMariaDBRootPassword() (string, error) {
-	if password, ok := rootPasswordFromEnv(); ok {
-		return password, nil
-	}
-
-	password, configured, err := readPasswordFile(resolvePasswordFilePath())
+	extractedPath, version, err := extractArchive(archivePath, extractDir)
 	if err != nil {
-		return "", fmt.Errorf("read mariadb root password file: %w", err)
-	}
-	if !configured {
-		return "", errors.New("mariadb root password is not configured")
+		return err
 	}
 
-	return password, nil
+	if err := os.RemoveAll(installPath()); err != nil {
+		return fmt.Errorf("remove existing phpmyadmin path: %w", err)
+	}
+	if err := os.Rename(extractedPath, installPath()); err != nil {
+		return fmt.Errorf("move phpmyadmin into place: %w", err)
+	}
+
+	if err := writeRuntimeConfig(installPath()); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(installPath(), "tmp"), 0o770); err != nil {
+		return fmt.Errorf("create phpmyadmin tmp directory: %w", err)
+	}
+	if err := writeVersionMetadata(installPath(), version); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func resolvePasswordFilePath() string {
-	if value := strings.TrimSpace(os.Getenv("FLOWPANEL_MARIADB_PASSWORD_FILE")); value != "" {
-		return value
-	}
-
-	if dbPath := strings.TrimSpace(os.Getenv("FLOWPANEL_DB_PATH")); dbPath != "" && dbPath != ":memory:" {
-		return filepath.Join(filepath.Dir(dbPath), defaultPasswordFile)
-	}
-
-	return filepath.Join(config.FlowPanelDataPath(), defaultPasswordFile)
-}
-
-func rootPasswordFromEnv() (string, bool) {
-	password, configured := os.LookupEnv("FLOWPANEL_MARIADB_PASSWORD")
-	if !configured {
-		return "", false
-	}
-
-	password = strings.TrimSpace(password)
-	if password == "" {
-		return "", false
-	}
-
-	return password, true
-}
-
-func readPasswordFile(path string) (string, bool, error) {
-	if strings.TrimSpace(path) == "" {
-		return "", false, nil
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", false, nil
-		}
-		return "", false, err
-	}
-
-	password := strings.TrimSpace(string(content))
-	if password == "" {
-		return "", false, nil
-	}
-
-	return password, true, nil
-}
-
-func generatePassword() (string, error) {
-	randomBytes := make([]byte, passwordBytesLength)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return "", err
-	}
-
-	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
-}
-
-func detectInstallPath() (string, bool) {
-	for _, candidate := range installPathCandidates() {
-		info, err := os.Stat(candidate)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-
-		return candidate, true
-	}
-
-	return "", false
+func installPath() string {
+	return phpMyAdminInstallPath
 }
 
 func detectVersion(installPath string) string {
@@ -336,13 +172,7 @@ func detectVersion(installPath string) string {
 		return ""
 	}
 
-	if resolvedPath, err := filepath.EvalSymlinks(installPath); err == nil {
-		if version := extractVersionFromPath(resolvedPath); version != "" {
-			return version
-		}
-	}
-
-	if version := extractVersionFromPath(installPath); version != "" {
+	if version, err := readVersionMetadata(installPath); err == nil && version != "" {
 		return version
 	}
 
@@ -354,6 +184,28 @@ func detectVersion(installPath string) string {
 	}
 
 	return ""
+}
+
+func readVersionMetadata(installPath string) (string, error) {
+	content, err := os.ReadFile(filepath.Join(installPath, versionMetadataFile))
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(content)), nil
+}
+
+func writeVersionMetadata(installPath, version string) error {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return nil
+	}
+
+	if err := os.WriteFile(filepath.Join(installPath, versionMetadataFile), []byte(version+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write phpmyadmin version metadata: %w", err)
+	}
+
+	return nil
 }
 
 func readVersionFromJSON(path string) (string, error) {
@@ -372,108 +224,179 @@ func readVersionFromJSON(path string) (string, error) {
 	return strings.TrimSpace(payload.Version), nil
 }
 
-func extractVersionFromPath(path string) string {
-	match := cellarVersionPattern.FindStringSubmatch(filepath.ToSlash(path))
-	if len(match) == 2 {
-		return strings.TrimSpace(match[1])
+func downloadArchive(ctx context.Context, url, destination string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build phpmyadmin download request: %w", err)
 	}
 
-	return ""
-}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download phpmyadmin archive: %w", err)
+	}
+	defer resp.Body.Close()
 
-func installPathCandidates() []string {
-	if override := strings.TrimSpace(os.Getenv("FLOWPANEL_PHPMYADMIN_PATH")); override != "" {
-		return []string{override}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download phpmyadmin archive: unexpected status %s", resp.Status)
 	}
 
-	switch runtime.GOOS {
-	case "darwin":
-		return []string{
-			"/opt/homebrew/share/phpmyadmin",
-			"/usr/local/share/phpmyadmin",
-		}
-	default:
-		return []string{
-			"/usr/share/phpmyadmin",
-			"/usr/share/phpMyAdmin",
-			"/usr/share/webapps/phpmyadmin",
-			"/usr/share/webapps/phpMyAdmin",
-		}
+	file, err := os.Create(destination)
+	if err != nil {
+		return fmt.Errorf("create phpmyadmin archive file: %w", err)
 	}
-}
+	defer file.Close()
 
-func lookupCommand(name string) (string, bool) {
-	if path, err := exec.LookPath(name); err == nil {
-		return path, true
-	}
-
-	for _, dir := range []string{
-		"/opt/homebrew/bin",
-		"/opt/homebrew/sbin",
-		"/usr/local/bin",
-		"/usr/local/sbin",
-		"/usr/bin",
-		"/usr/sbin",
-	} {
-		path := filepath.Join(dir, name)
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
-			continue
-		}
-
-		return path, true
-	}
-
-	return "", false
-}
-
-func runCommands(ctx context.Context, env map[string]string, commands ...[]string) error {
-	for _, command := range commands {
-		if len(command) == 0 {
-			continue
-		}
-
-		if _, err := runCommand(ctx, env, command[0], command[1:]...); err != nil {
-			return err
-		}
+	if _, err := io.Copy(file, resp.Body); err != nil {
+		return fmt.Errorf("write phpmyadmin archive: %w", err)
 	}
 
 	return nil
 }
 
-func runCommand(ctx context.Context, env map[string]string, name string, args ...string) (string, error) {
-	runCtx := ctx
-	if runCtx == nil {
-		runCtx = context.Background()
+func extractArchive(archivePath, destination string) (string, string, error) {
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		return "", "", fmt.Errorf("create phpmyadmin extraction directory: %w", err)
 	}
 
-	cmd := exec.CommandContext(runCtx, name, args...)
-	if len(env) > 0 {
-		cmd.Env = os.Environ()
-		for key, value := range env {
-			cmd.Env = append(cmd.Env, key+"="+value)
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return "", "", fmt.Errorf("open phpmyadmin archive: %w", err)
+	}
+	defer file.Close()
+
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		return "", "", fmt.Errorf("open phpmyadmin archive gzip stream: %w", err)
+	}
+	defer gzipReader.Close()
+
+	tarReader := tar.NewReader(gzipReader)
+
+	var rootDir string
+	for {
+		header, err := tarReader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("read phpmyadmin archive: %w", err)
+		}
+
+		if header == nil || header.Name == "" {
+			continue
+		}
+
+		if header.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
+
+		cleanName := filepath.Clean(header.Name)
+		if filepath.IsAbs(cleanName) || cleanName == "." || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+			return "", "", fmt.Errorf("phpmyadmin archive contains invalid path %q", header.Name)
+		}
+
+		parts := strings.Split(cleanName, string(filepath.Separator))
+		if len(parts) > 0 && rootDir == "" {
+			rootDir = parts[0]
+		}
+
+		targetPath := filepath.Join(destination, cleanName)
+		if err := ensureWithinBase(destination, targetPath); err != nil {
+			return "", "", err
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(targetPath, os.FileMode(header.Mode)); err != nil {
+				return "", "", fmt.Errorf("create phpmyadmin directory: %w", err)
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return "", "", fmt.Errorf("create phpmyadmin file parent: %w", err)
+			}
+
+			file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+			if err != nil {
+				return "", "", fmt.Errorf("create phpmyadmin file: %w", err)
+			}
+
+			if _, err := io.Copy(file, tarReader); err != nil {
+				file.Close()
+				return "", "", fmt.Errorf("extract phpmyadmin file: %w", err)
+			}
+			if err := file.Close(); err != nil {
+				return "", "", fmt.Errorf("close phpmyadmin file: %w", err)
+			}
+		default:
+			continue
 		}
 	}
 
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-
-	err := cmd.Run()
-	combinedOutput := strings.TrimSpace(output.String())
-	if err == nil {
-		return combinedOutput, nil
+	if strings.TrimSpace(rootDir) == "" {
+		return "", "", errors.New("phpmyadmin archive did not contain a root directory")
 	}
 
-	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-		return combinedOutput, fmt.Errorf("%s timed out", name)
+	rootPath := filepath.Join(destination, rootDir)
+	version := versionFromArchiveRoot(rootDir)
+	return rootPath, version, nil
+}
+
+func ensureWithinBase(basePath, targetPath string) error {
+	basePath, err := filepath.Abs(basePath)
+	if err != nil {
+		return fmt.Errorf("resolve archive base path: %w", err)
 	}
-	if errors.Is(runCtx.Err(), context.Canceled) {
-		return combinedOutput, fmt.Errorf("%s was canceled", name)
-	}
-	if combinedOutput == "" {
-		return combinedOutput, fmt.Errorf("%s failed: %w", name, err)
+	targetPath, err = filepath.Abs(targetPath)
+	if err != nil {
+		return fmt.Errorf("resolve archive target path: %w", err)
 	}
 
-	return combinedOutput, fmt.Errorf("%s failed: %s", name, combinedOutput)
+	prefix := basePath + string(filepath.Separator)
+	if targetPath != basePath && !strings.HasPrefix(targetPath, prefix) {
+		return fmt.Errorf("phpmyadmin archive path escapes extraction directory: %s", targetPath)
+	}
+
+	return nil
+}
+
+func versionFromArchiveRoot(rootDir string) string {
+	match := archiveVersionPattern.FindStringSubmatch(strings.TrimSpace(rootDir))
+	if len(match) != 2 {
+		return ""
+	}
+
+	return strings.TrimSpace(match[1])
+}
+
+func writeRuntimeConfig(installPath string) error {
+	samplePath := filepath.Join(installPath, "config.sample.inc.php")
+	content, err := os.ReadFile(samplePath)
+	if err != nil {
+		return fmt.Errorf("read phpmyadmin sample config: %w", err)
+	}
+
+	secret, err := generatePassword()
+	if err != nil {
+		return fmt.Errorf("generate phpmyadmin blowfish secret: %w", err)
+	}
+
+	updated := blowfishSecretPattern.ReplaceAllString(string(content), fmt.Sprintf("$cfg['blowfish_secret'] = '%s';", secret))
+	if updated == string(content) {
+		return errors.New("phpmyadmin sample config did not contain an empty blowfish secret")
+	}
+
+	if err := os.WriteFile(filepath.Join(installPath, "config.inc.php"), []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write phpmyadmin config: %w", err)
+	}
+
+	return nil
+}
+
+func generatePassword() (string, error) {
+	randomBytes := make([]byte, passwordBytesLength)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+
+	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
 }
