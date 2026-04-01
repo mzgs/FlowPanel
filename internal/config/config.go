@@ -61,7 +61,7 @@ func Load() (Config, error) {
 		PHPMyAdminAddr:  getEnv("FLOWPANEL_PHPMYADMIN_ADDR", ":32109"),
 		ShutdownTimeout: shutdownTimeout,
 		Database: DatabaseConfig{
-			Path: getEnv("FLOWPANEL_DB_PATH", "./data/flowpanel.db"),
+			Path: getEnv("FLOWPANEL_DB_PATH", DefaultDatabasePath()),
 		},
 		Session: SessionConfig{
 			Secret:     getEnv("FLOWPANEL_SESSION_SECRET", defaultDevelopmentSessionSecret),

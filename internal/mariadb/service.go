@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"flowpanel/internal/config"
+
 	"go.uber.org/zap"
 )
 
@@ -660,7 +662,7 @@ func resolvePasswordFilePath() string {
 		return filepath.Join(filepath.Dir(dbPath), defaultPasswordFile)
 	}
 
-	return filepath.Join(".", "data", defaultPasswordFile)
+	return filepath.Join(config.FlowPanelDataPath(), defaultPasswordFile)
 }
 
 func rootPasswordFromEnv() (string, bool) {
