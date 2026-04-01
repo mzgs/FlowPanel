@@ -838,7 +838,7 @@ export function DatabasePage() {
                             <button
                               type="button"
                               onClick={() => openEditDialog(database)}
-                              className="inline-flex items-center gap-1 text-emerald-500 hover:text-emerald-400"
+                              className="inline-flex items-center gap-1"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                               Edit
