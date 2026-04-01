@@ -38,10 +38,11 @@ func TestParseFPMListenAddressUnixSocket(t *testing.T) {
 
 func TestAPTInstallPackages(t *testing.T) {
 	want := []string{
-		"php-cgi",
 		"php-fpm",
 		"php-cli",
 		"php-common",
+		"php-opcache",
+		"php-bcmath",
 		"php-mysql",
 		"php-curl",
 		"php-gd",

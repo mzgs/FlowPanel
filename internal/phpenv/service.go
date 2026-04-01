@@ -22,10 +22,11 @@ const (
 )
 
 var aptPHPPackages = []string{
-	"php-cgi",
 	"php-fpm",
 	"php-cli",
 	"php-common",
+	"php-opcache",
+	"php-bcmath",
 	"php-mysql",
 	"php-curl",
 	"php-gd",
