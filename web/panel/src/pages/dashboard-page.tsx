@@ -66,7 +66,7 @@ function SoftwareCard({
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
 
   return (
-    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-[var(--app-shadow)]">
+    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
       <div className="space-y-4">
         <h2 className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Software</h2>
         <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
@@ -350,7 +350,7 @@ export function DashboardPage() {
 
       <div className="px-4 py-6 sm:px-6 lg:px-8">
         {loading ? (
-          <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-8 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
+          <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-8 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
             Inspecting local services...
           </section>
         ) : (

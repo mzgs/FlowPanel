@@ -1089,7 +1089,7 @@ export function FilesPage() {
         <div className="space-y-4">
           {flash ? <FlashBanner flash={flash} /> : null}
 
-          <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
+          <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
             <div className="flex flex-col gap-4 border-b border-[var(--app-border)] px-4 py-4 md:px-5">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div className="space-y-2">
@@ -1225,7 +1225,7 @@ export function FilesPage() {
               <div
                 ref={browserRef}
                 className={cn(
-                  "relative overflow-hidden rounded-[16px] border border-[var(--app-border)] bg-[var(--app-surface)] select-none shadow-[var(--app-shadow)]",
+                  "relative overflow-hidden rounded-[16px] border border-[var(--app-border)] bg-[var(--app-bg-2)] select-none shadow-[var(--app-shadow)]",
                   rootDropActive && "ring-2 ring-[var(--app-accent)]/80",
                 )}
                 onMouseDown={beginMarquee}
@@ -1445,7 +1445,7 @@ export function FilesPage() {
                   <div
                     ref={contextMenuRef}
                     data-context-menu="1"
-                    className="fixed z-50 min-w-[240px] rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface)] p-2.5 shadow-[0_18px_35px_rgba(15,23,42,0.16)] backdrop-blur-sm select-none"
+                    className="fixed z-50 min-w-[240px] rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface-elev)] p-2.5 shadow-[0_18px_35px_rgba(15,23,42,0.16)] backdrop-blur-sm select-none"
                     style={contextMenuStyle ?? undefined}
                   >
                     <div className="space-y-1">
@@ -1472,7 +1472,7 @@ export function FilesPage() {
                 ) : null}
               </div>
 
-              <aside className="rounded-[16px] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow)]">
+              <aside className="rounded-[16px] border border-[var(--app-border)] bg-[var(--app-bg-2)] p-4 shadow-[var(--app-shadow)]">
                 <div className="text-[12px] uppercase tracking-[0.18em] text-[var(--app-text-muted)]">
                   Details
                 </div>

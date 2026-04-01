@@ -2,11 +2,13 @@
 
 @layer base {
   :root {
-    color-scheme: dark;
-    --app-bg: var(--background);
-    --app-surface: var(--card);
-    --app-surface-muted: var(--muted);
-    --app-surface-subtle: var(--popover);
+    color-scheme: light;
+    --app-bg: var(--bg);
+    --app-bg-2: var(--bg-2);
+    --app-surface: var(--surface);
+    --app-surface-muted: color-mix(in oklab, var(--surface) 84%, var(--bg-2));
+    --app-surface-subtle: var(--surface-elev);
+    --app-surface-elev: var(--surface-elev);
     --app-border: var(--border);
     --app-border-strong: var(--input);
     --app-text: var(--foreground);
@@ -22,6 +24,10 @@
     --app-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.18);
     --app-sidebar-width: 16rem;
     --app-navbar-height: 4rem;
+  }
+
+  .dark {
+    color-scheme: dark;
   }
 
   body {

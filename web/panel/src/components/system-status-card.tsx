@@ -181,7 +181,7 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
   const cpuPercent = clampPercent(status.cpu_usage_percent ?? null);
 
   return (
-    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-[var(--app-shadow)]">
+    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
       <div className="space-y-4">
         <h2 className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">System status</h2>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

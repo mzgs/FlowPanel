@@ -617,7 +617,7 @@ export function DatabasePage() {
             </section>
           ) : null}
 
-          <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)]">
+          <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
             <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] px-3 py-3">
               <Button
                 type="button"
@@ -643,7 +643,7 @@ export function DatabasePage() {
                 <PopoverContent
                   align="start"
                   sideOffset={8}
-                  className="w-[320px] rounded-lg border-[var(--app-border)] bg-[var(--app-surface)] p-3"
+                  className="w-[320px] rounded-lg border-[var(--app-border)] bg-[var(--app-surface-elev)] p-3"
                 >
                   <div className="space-y-3">
                     <div className="text-[12px] font-medium text-[var(--app-text-muted)]">

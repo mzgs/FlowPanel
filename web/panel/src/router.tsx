@@ -106,7 +106,7 @@ function RootLayout() {
         </SidebarContent>
 
         <SidebarFooter>
-          <div className="rounded-md border bg-card px-3 py-2 text-sm text-muted-foreground">
+          <div className="rounded-md border bg-[var(--app-surface)] px-3 py-2 text-sm text-muted-foreground">
             Local node
           </div>
         </SidebarFooter>
@@ -147,7 +147,7 @@ function RootLayout() {
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="hidden rounded-md border bg-card px-3 py-1.5 text-xs text-muted-foreground md:block">
+              <div className="hidden rounded-md border bg-[var(--app-surface)] px-3 py-1.5 text-xs text-muted-foreground md:block">
                 Local workspace
               </div>
               <Button variant="ghost" size="icon">
@@ -169,7 +169,7 @@ function RootLayout() {
 function RouteError() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] px-4">
-      <div className="w-full max-w-md rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-[var(--app-shadow)]">
+      <div className="w-full max-w-md rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-6 shadow-[var(--app-shadow)]">
         <div className="mb-2 text-[18px] font-semibold">Route error</div>
         <p className="text-[14px] leading-6 text-[var(--app-text-muted)]">
           The requested panel view could not be rendered.

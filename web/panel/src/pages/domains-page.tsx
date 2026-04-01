@@ -396,7 +396,7 @@ export function DomainsPage() {
             </section>
           ) : null}
 
-          <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
+          <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
             <div className="border-b border-[var(--app-border)] px-5 py-4">
               <div className="text-[14px] font-medium text-[var(--app-text)]">
                 Domain list
