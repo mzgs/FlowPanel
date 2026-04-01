@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
@@ -48,6 +56,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -115,6 +131,10 @@ const editableExtensions = new Set([
   "yml",
   "zsh",
 ]);
+
+const FileAceEditor = lazy(() =>
+  import("@/components/file-ace-editor").then((module) => ({ default: module.FileAceEditor })),
+);
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {
@@ -1655,7 +1675,7 @@ export function FilesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
+      <Sheet
         open={editorOpen}
         onOpenChange={(open) => {
           setEditorOpen(open);
@@ -1668,39 +1688,46 @@ export function FilesPage() {
           }
         }}
       >
-        <DialogContent className="w-[min(980px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>{editorName || "Editor"}</DialogTitle>
-            <DialogDescription>
+        <SheetContent side="left" className="!w-[50vw] !max-w-none sm:!max-w-none gap-0 p-0">
+          <SheetHeader className="gap-1 border-b border-[var(--app-border)] px-5 py-4">
+            <SheetTitle>{editorName || "Editor"}</SheetTitle>
+            <SheetDescription>
               {editorMeta
                 ? `${formatBytes(editorMeta.size)} / ${formatDateTime(editorMeta.modifiedAt)}`
                 : "Loading file contents..."}
-            </DialogDescription>
-          </DialogHeader>
+            </SheetDescription>
+          </SheetHeader>
 
-          <div className="space-y-3">
-            <div className="rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-[12px] text-[var(--app-text-muted)]">
+          <div className="flex min-h-0 flex-1 flex-col px-5 py-4">
+            <div className="mb-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-[12px] text-[var(--app-text-muted)]">
               {editorPath}
             </div>
-            <textarea
-              value={editorContent}
-              onChange={(event) => setEditorContent(event.target.value)}
-              readOnly={editorBusy}
-              spellCheck={false}
-              className="min-h-[55vh] w-full rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 font-mono text-[13px] leading-6 text-[var(--app-text)] outline-none transition-colors duration-150 focus:border-[var(--app-border-strong)] focus:ring-2 focus:ring-[var(--app-accent)]/20"
-            />
+            <Suspense
+              fallback={
+                <div className="flex min-h-0 flex-1 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[13px] text-[var(--app-text-muted)]">
+                  Loading editor...
+                </div>
+              }
+            >
+              <FileAceEditor
+                path={editorPath || editorName}
+                value={editorContent}
+                onChange={setEditorContent}
+                readOnly={editorBusy}
+              />
+            </Suspense>
           </div>
 
-          <DialogFooter>
+          <SheetFooter className="mt-0 flex-row items-center justify-between border-t border-[var(--app-border)] px-5 py-4">
             <div className="text-[12px] text-[var(--app-text-muted)]">
               {editorDirty ? "Unsaved changes" : "No pending changes"}
             </div>
             <Button onClick={() => void saveEditor()} disabled={editorBusy || !editorDirty}>
               {editorBusy ? "Saving..." : "Save"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
