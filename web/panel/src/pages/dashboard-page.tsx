@@ -76,7 +76,7 @@ function SoftwareCard({
             value={
               phpVersion ? (
                 <div
-                  className="max-w-[13rem] truncate text-right font-mono text-[12px] text-[var(--app-text-muted)] sm:max-w-[18rem]"
+                  className="max-w-[13rem] truncate text-right font-mono text-[12px] text-[var(--app-text)] sm:max-w-[18rem]"
                   title={phpVersion.full}
                 >
                   {phpVersion.short}
