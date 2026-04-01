@@ -131,22 +131,6 @@ async function copyWithFeedback({
   }
 }
 
-function formatStatusSummary(product?: string, version?: string) {
-  const normalizedProduct = product?.trim() || "MySQL / MariaDB";
-  const normalizedVersion = version?.trim();
-
-  if (!normalizedVersion) {
-    return normalizedProduct;
-  }
-
-  const versionMatch = normalizedVersion.match(/\b\d+(?:\.\d+)+\b/);
-  if (versionMatch) {
-    return `${normalizedProduct} ${versionMatch[0]}`;
-  }
-
-  return `${normalizedProduct} ${normalizedVersion}`;
-}
-
 function ToolbarButton({
   children,
   disabled = false,
@@ -234,7 +218,6 @@ export function DatabasePage() {
   const [domains, setDomains] = useState<DomainRecord[]>([]);
   const [mariaDBStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
-  const [statusSummary, setStatusSummary] = useState("MySQL / MariaDB");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [domainsLoadError, setDomainsLoadError] = useState<string | null>(null);
@@ -287,10 +270,8 @@ export function DatabasePage() {
 
         if (statusResult.status === "fulfilled") {
           setMariaDBStatus(statusResult.value);
-          setStatusSummary(formatStatusSummary(statusResult.value.product, statusResult.value.version));
         } else {
           setMariaDBStatus(null);
-          setStatusSummary("MySQL / MariaDB");
         }
 
         if (domainsResult.status === "fulfilled") {
@@ -759,8 +740,6 @@ export function DatabasePage() {
               >
                 phpMyAdmin
               </ToolbarButton>
-
-              <small>{statusSummary}</small>
 
               <div className="ms-auto flex items-center gap-2">
                 <label className="relative block min-w-[220px]">

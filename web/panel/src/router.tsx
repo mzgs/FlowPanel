@@ -11,13 +11,13 @@ import {
   Database,
   ChevronRight,
   FolderOpen,
-  Globe,
   LayoutDashboard,
   Menu,
   Search,
   Settings,
   TerminalSquare,
   TimerReset,
+  World,
   X,
 } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
@@ -48,8 +48,8 @@ import { SshPage } from "@/pages/ssh-page";
 
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
+  { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
-  { to: "/domains", label: "Domains", icon: Globe },
   { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/jobs", label: "Jobs", icon: TimerReset },
   { to: "/ssh", label: "SSH", icon: TerminalSquare },
@@ -234,8 +234,8 @@ const sshRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  databaseRoute,
   domainsRoute,
+  databaseRoute,
   filesRoute,
   legacyFileManagerRoute,
   jobsRoute,

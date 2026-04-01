@@ -99,5 +99,6 @@ export const UserCog = pick("IconUserCog");
 export const UserX = pick("IconUserX");
 export const Users = pick("IconUsers");
 export const Wrench = pick("IconTool");
+export const World = pick("IconWorld", "IconGlobe");
 export const X = pick("IconX");
 export const XIcon = pick("IconX");
