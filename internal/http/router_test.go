@@ -559,6 +559,34 @@ func TestCronListCreateAndDeleteEndpoints(t *testing.T) {
 		t.Fatalf("schedule = %q, want */15 * * * *", createPayload.Job.Schedule)
 	}
 
+	updateRequest := httptest.NewRequest(http.MethodPut, "/api/cron/"+createPayload.Job.ID, strings.NewReader(`{"name":"Warm cache now","schedule":"0 * * * *","command":"echo cache-refresh"}`))
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, updateRequest)
+
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want %d, body = %s", updateRecorder.Code, http.StatusOK, updateRecorder.Body.String())
+	}
+
+	var updatePayload struct {
+		Job flowcron.Record `json:"job"`
+	}
+	if err := json.Unmarshal(updateRecorder.Body.Bytes(), &updatePayload); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updatePayload.Job.ID != createPayload.Job.ID {
+		t.Fatalf("updated job id = %q, want %q", updatePayload.Job.ID, createPayload.Job.ID)
+	}
+	if updatePayload.Job.Name != "Warm cache now" {
+		t.Fatalf("updated name = %q, want Warm cache now", updatePayload.Job.Name)
+	}
+	if updatePayload.Job.Schedule != "0 * * * *" {
+		t.Fatalf("updated schedule = %q, want 0 * * * *", updatePayload.Job.Schedule)
+	}
+	if updatePayload.Job.Command != "echo cache-refresh" {
+		t.Fatalf("updated command = %q, want echo cache-refresh", updatePayload.Job.Command)
+	}
+
 	listRecorder := httptest.NewRecorder()
 	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/cron", nil))
 
@@ -578,6 +606,9 @@ func TestCronListCreateAndDeleteEndpoints(t *testing.T) {
 	if listPayload.Jobs[0].ID != createPayload.Job.ID {
 		t.Fatalf("job id = %q, want %q", listPayload.Jobs[0].ID, createPayload.Job.ID)
 	}
+	if listPayload.Jobs[0].Name != "Warm cache now" {
+		t.Fatalf("listed name = %q, want Warm cache now", listPayload.Jobs[0].Name)
+	}
 
 	persisted, err := store.List(context.Background())
 	if err != nil {
@@ -585,6 +616,12 @@ func TestCronListCreateAndDeleteEndpoints(t *testing.T) {
 	}
 	if len(persisted) != 1 {
 		t.Fatalf("persisted job count = %d, want 1", len(persisted))
+	}
+	if persisted[0].Name != "Warm cache now" {
+		t.Fatalf("persisted name = %q, want Warm cache now", persisted[0].Name)
+	}
+	if persisted[0].Schedule != "0 * * * *" {
+		t.Fatalf("persisted schedule = %q, want 0 * * * *", persisted[0].Schedule)
 	}
 
 	deleteRecorder := httptest.NewRecorder()
@@ -600,6 +637,56 @@ func TestCronListCreateAndDeleteEndpoints(t *testing.T) {
 	}
 	if len(persisted) != 0 {
 		t.Fatalf("persisted job count after delete = %d, want 0", len(persisted))
+	}
+}
+
+func TestCronRunEndpointExecutesSavedCommand(t *testing.T) {
+	router, _, _ := newTestCronRouter(t, false)
+
+	outputPath := filepath.Join(t.TempDir(), "cron-run.txt")
+	command := "printf manual-run > " + outputPath
+	requestBody := `{"name":"Manual trigger","schedule":"@daily","command":"` + command + `"}`
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(requestBody))
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, createRequest)
+
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body = %s", createRecorder.Code, http.StatusCreated, createRecorder.Body.String())
+	}
+
+	var createPayload struct {
+		Job flowcron.Record `json:"job"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	runRecorder := httptest.NewRecorder()
+	router.ServeHTTP(runRecorder, httptest.NewRequest(http.MethodPost, "/api/cron/"+createPayload.Job.ID+"/run", nil))
+
+	if runRecorder.Code != http.StatusAccepted {
+		t.Fatalf("run status = %d, want %d, body = %s", runRecorder.Code, http.StatusAccepted, runRecorder.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		content, err := os.ReadFile(outputPath)
+		if err == nil {
+			if string(content) != "manual-run" {
+				t.Fatalf("manual run output = %q, want manual-run", string(content))
+			}
+			break
+		}
+		if !os.IsNotExist(err) {
+			t.Fatalf("read manual run output: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("manual run did not produce output at %s", outputPath)
+		}
+
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 

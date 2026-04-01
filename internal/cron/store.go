@@ -94,6 +94,31 @@ VALUES (?, ?, ?, ?, ?)
 	return nil
 }
 
+func (s *Store) Update(ctx context.Context, record Record) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+UPDATE cron_jobs
+SET name = ?, schedule_spec = ?, command_text = ?
+WHERE id = ?
+`, record.Name, record.Schedule, record.Command, record.ID)
+	if err != nil {
+		return fmt.Errorf("update cron job %q: %w", record.ID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read updated cron job rows %q: %w", record.ID, err)
+	}
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
 func (s *Store) Delete(ctx context.Context, id string) error {
 	if s == nil || s.db == nil {
 		return nil

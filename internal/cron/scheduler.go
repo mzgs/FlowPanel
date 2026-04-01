@@ -41,6 +41,8 @@ type CreateInput struct {
 	Command  string `json:"command"`
 }
 
+type UpdateInput = CreateInput
+
 type ValidationErrors map[string]string
 
 func (v ValidationErrors) Error() string {
@@ -192,7 +194,7 @@ func (s *Scheduler) Create(ctx context.Context, input CreateInput) (Record, erro
 		return Record{}, fmt.Errorf("cron scheduler is not configured")
 	}
 
-	name, schedule, command, err := s.validateCreateInput(input)
+	name, schedule, command, err := s.validateInput(input.Name, input.Schedule, input.Command)
 	if err != nil {
 		return Record{}, err
 	}
@@ -241,6 +243,69 @@ func (s *Scheduler) Create(ctx context.Context, input CreateInput) (Record, erro
 	return record, nil
 }
 
+func (s *Scheduler) Update(ctx context.Context, id string, input UpdateInput) (Record, error) {
+	if s == nil {
+		return Record{}, fmt.Errorf("cron scheduler is not configured")
+	}
+
+	name, schedule, command, err := s.validateInput(input.Name, input.Schedule, input.Command)
+	if err != nil {
+		return Record{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, current, ok := s.findJobLocked(id)
+	if !ok {
+		return Record{}, ErrNotFound
+	}
+
+	updated := current
+	updated.Name = name
+	updated.Schedule = schedule
+	updated.Command = command
+
+	if s.store != nil {
+		if err := s.store.Update(ctx, updated); err != nil {
+			return Record{}, err
+		}
+	}
+
+	var (
+		newEntryID robfigcron.EntryID
+		oldEntryID robfigcron.EntryID
+		hadEntry   bool
+	)
+	if s.started && s.cron != nil {
+		newEntryID, err = s.addEntryLocked(updated)
+		if err != nil {
+			if s.store != nil {
+				if rollbackErr := s.store.Update(ctx, current); rollbackErr != nil {
+					s.logger.Error("rollback cron job update failed",
+						zap.String("job_id", id),
+						zap.Error(rollbackErr),
+					)
+				}
+			}
+
+			return Record{}, fmt.Errorf("register cron job: %w", err)
+		}
+
+		oldEntryID, hadEntry = s.entries[id]
+	}
+
+	s.jobs[index] = updated
+	if s.started && s.cron != nil {
+		if hadEntry {
+			s.cron.Remove(oldEntryID)
+		}
+		s.entries[id] = newEntryID
+	}
+
+	return updated, nil
+}
+
 func (s *Scheduler) Delete(ctx context.Context, id string) (Record, bool, error) {
 	if s == nil {
 		return Record{}, false, fmt.Errorf("cron scheduler is not configured")
@@ -270,10 +335,27 @@ func (s *Scheduler) Delete(ctx context.Context, id string) (Record, bool, error)
 	return record, true, nil
 }
 
-func (s *Scheduler) validateCreateInput(input CreateInput) (string, string, string, error) {
-	name := strings.TrimSpace(input.Name)
-	schedule := strings.TrimSpace(input.Schedule)
-	command := strings.TrimSpace(input.Command)
+func (s *Scheduler) RunNow(id string) (Record, error) {
+	if s == nil {
+		return Record{}, fmt.Errorf("cron scheduler is not configured")
+	}
+
+	s.mu.RLock()
+	_, record, ok := s.findJobLocked(id)
+	s.mu.RUnlock()
+	if !ok {
+		return Record{}, ErrNotFound
+	}
+
+	go s.executeJob(record)
+
+	return record, nil
+}
+
+func (s *Scheduler) validateInput(nameValue string, scheduleValue string, commandValue string) (string, string, string, error) {
+	name := strings.TrimSpace(nameValue)
+	schedule := strings.TrimSpace(scheduleValue)
+	command := strings.TrimSpace(commandValue)
 
 	validation := ValidationErrors{}
 	if name == "" {
@@ -300,19 +382,31 @@ func (s *Scheduler) validateCreateInput(input CreateInput) (string, string, stri
 }
 
 func (s *Scheduler) registerJobLocked(job Record) error {
+	entryID, err := s.addEntryLocked(job)
+	if err != nil {
+		return err
+	}
+
+	if s.cron != nil {
+		s.entries[job.ID] = entryID
+	}
+
+	return nil
+}
+
+func (s *Scheduler) addEntryLocked(job Record) (robfigcron.EntryID, error) {
 	if s.cron == nil {
-		return nil
+		return 0, nil
 	}
 
 	entryID, err := s.cron.AddFunc(job.Schedule, func() {
 		s.executeJob(job)
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	s.entries[job.ID] = entryID
-	return nil
+	return entryID, nil
 }
 
 func (s *Scheduler) executeJob(job Record) {

@@ -122,6 +122,91 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodPost, "/cron", cronCreateHandler)
 
+		cronUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Cron == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "cron scheduler is not configured",
+				})
+				return
+			}
+
+			jobID := chi.URLParam(r, "jobID")
+
+			var input flowcron.UpdateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			record, err := app.Cron.Update(r.Context(), jobID, input)
+			if err != nil {
+				var validation flowcron.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+				if errors.Is(err, flowcron.ErrNotFound) {
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "cron job not found",
+					})
+					return
+				}
+
+				app.Logger.Error("update cron job failed",
+					zap.String("job_id", jobID),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to update cron job",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"job": record,
+			})
+		})
+		r.Method(stdhttp.MethodPut, "/cron/{jobID}", cronUpdateHandler)
+
+		cronRunHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Cron == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "cron scheduler is not configured",
+				})
+				return
+			}
+
+			jobID := chi.URLParam(r, "jobID")
+			record, err := app.Cron.RunNow(jobID)
+			if err != nil {
+				if errors.Is(err, flowcron.ErrNotFound) {
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "cron job not found",
+					})
+					return
+				}
+
+				app.Logger.Error("run cron job failed",
+					zap.String("job_id", jobID),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to run cron job",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{
+				"job": record,
+			})
+		})
+		r.Method(stdhttp.MethodPost, "/cron/{jobID}/run", cronRunHandler)
+
 		cronDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Cron == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{

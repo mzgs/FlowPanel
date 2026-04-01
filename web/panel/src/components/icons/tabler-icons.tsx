@@ -78,6 +78,7 @@ export const Package = pick("IconPackage");
 export const Palette = pick("IconPalette");
 export const PanelLeftIcon = pick("IconLayoutSidebarLeftCollapse", "IconPanelLeft");
 export const Pencil = pick("IconPencil");
+export const PlayerPlay = pick("IconPlayerPlay", "IconPlay");
 export const Plus = pick("IconPlus");
 export const RefreshCw = pick("IconRefresh", "IconRefreshDot");
 export const RotateCcw = pick("IconRotateClockwise2", "IconRotate2");

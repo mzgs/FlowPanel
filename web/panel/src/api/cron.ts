@@ -18,6 +18,12 @@ export type CreateCronJobInput = {
   command: string;
 };
 
+export type UpdateCronJobInput = {
+  name: string;
+  schedule: string;
+  command: string;
+};
+
 export type CronApiError = Error & {
   fieldErrors?: Record<string, string>;
 };
@@ -46,6 +52,38 @@ export async function createCronJob(input: CreateCronJobInput): Promise<CronJob>
 
   if (!response.ok) {
     throw await readCronApiError(response, "create cron job");
+  }
+
+  const payload = (await response.json()) as { job: CronJob };
+  return payload.job;
+}
+
+export async function updateCronJob(id: string, input: UpdateCronJobInput): Promise<CronJob> {
+  const response = await fetch(`/api/cron/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw await readCronApiError(response, "update cron job");
+  }
+
+  const payload = (await response.json()) as { job: CronJob };
+  return payload.job;
+}
+
+export async function runCronJob(id: string): Promise<CronJob> {
+  const response = await fetch(`/api/cron/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await readCronApiError(response, "run cron job");
   }
 
   const payload = (await response.json()) as { job: CronJob };

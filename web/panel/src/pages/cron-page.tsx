@@ -3,10 +3,12 @@ import {
   createCronJob,
   deleteCronJob,
   fetchCronJobs,
+  runCronJob,
   type CronApiError,
   type CronJob,
+  updateCronJob,
 } from "@/api/cron";
-import { Clock, LoaderCircle, RefreshCw, TerminalSquare, Trash2 } from "@/components/icons/tabler-icons";
+import { Clock, LoaderCircle, Pencil, PlayerPlay, RefreshCw, TerminalSquare, Trash2 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
+import { toast } from "sonner";
 
 type FormState = {
   name: string;
@@ -84,8 +87,18 @@ export function CronPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
+  const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const schedulerBadge = getSchedulerBadge(enabled, started);
+  const isEditing = editingJobId !== null;
+
+  function resetForm() {
+    setForm(initialForm);
+    setErrors({});
+    setFormError(null);
+    setEditingJobId(null);
+  }
 
   useEffect(() => {
     let active = true;
@@ -160,21 +173,57 @@ export function CronPage() {
     setSubmitting(true);
 
     try {
-      const createdJob = await createCronJob({
+      const input = {
         name: form.name.trim(),
         schedule: form.schedule.trim(),
         command: form.command.trim(),
-      });
+      };
 
-      setJobs((currentJobs) => [createdJob, ...currentJobs]);
-      setForm(initialForm);
-      setErrors({});
+      if (isEditing && editingJobId) {
+        const updatedJob = await updateCronJob(editingJobId, input);
+        setJobs((currentJobs) =>
+          currentJobs.map((currentJob) => (currentJob.id === updatedJob.id ? updatedJob : currentJob)),
+        );
+      } else {
+        const createdJob = await createCronJob(input);
+        setJobs((currentJobs) => [createdJob, ...currentJobs]);
+      }
+
+      setLoadError(null);
+      resetForm();
     } catch (error) {
       const apiError = error as CronApiError;
       setErrors(apiError.fieldErrors ?? {});
-      setFormError(getErrorMessage(error, "Failed to create cron job."));
+      setFormError(getErrorMessage(error, isEditing ? "Failed to update cron job." : "Failed to create cron job."));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function handleEdit(job: CronJob) {
+    setForm({
+      name: job.name,
+      schedule: job.schedule,
+      command: job.command,
+    });
+    setErrors({});
+    setFormError(null);
+    setLoadError(null);
+    setEditingJobId(job.id);
+  }
+
+  async function handleRun(job: CronJob) {
+    setRunningJobId(job.id);
+    setLoadError(null);
+
+    try {
+      await runCronJob(job.id);
+      toast.success(`Started "${job.name}".`);
+    } catch (error) {
+      setLoadError(getErrorMessage(error, `Failed to run ${job.name}.`));
+      toast.error(`Failed to start "${job.name}".`);
+    } finally {
+      setRunningJobId(null);
     }
   }
 
@@ -189,6 +238,9 @@ export function CronPage() {
     try {
       await deleteCronJob(job.id);
       setJobs((currentJobs) => currentJobs.filter((currentJob) => currentJob.id !== job.id));
+      if (editingJobId === job.id) {
+        resetForm();
+      }
     } catch (error) {
       setLoadError(getErrorMessage(error, "Failed to delete cron job."));
     } finally {
@@ -246,9 +298,11 @@ export function CronPage() {
         <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
           <section className="rounded-lg border bg-card">
             <div className="border-b px-4 py-4">
-              <h2 className="text-base font-semibold tracking-tight">New job</h2>
+              <h2 className="text-base font-semibold tracking-tight">{isEditing ? "Edit job" : "New job"}</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Save a schedule, label it clearly, and run any shell command available on this server.
+                {isEditing
+                  ? "Update the saved schedule or command, then save it back to the server."
+                  : "Save a schedule, label it clearly, and run any shell command available on this server."}
               </p>
             </div>
 
@@ -301,10 +355,17 @@ export function CronPage() {
 
               {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
 
-              <Button type="submit" className="w-full" disabled={submitting}>
-                {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-                Add job
-              </Button>
+              <div className="flex gap-3">
+                <Button type="submit" className="flex-1" disabled={submitting}>
+                  {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                  {isEditing ? "Save changes" : "Add job"}
+                </Button>
+                {isEditing ? (
+                  <Button type="button" variant="outline" onClick={resetForm} disabled={submitting}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
             </form>
           </section>
 
@@ -332,7 +393,7 @@ export function CronPage() {
                     <TableHead>Schedule</TableHead>
                     <TableHead>Command</TableHead>
                     <TableHead>Added</TableHead>
-                    <TableHead className="w-[96px] text-right">Actions</TableHead>
+                    <TableHead className="w-[152px] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -345,20 +406,48 @@ export function CronPage() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{formatDateTime(job.created_at)}</TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => void handleDelete(job)}
-                          disabled={deletingJobId === job.id}
-                          aria-label={`Delete ${job.name}`}
-                        >
-                          {deletingJobId === job.id ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void handleRun(job)}
+                            disabled={runningJobId === job.id}
+                            aria-label={`Run ${job.name} now`}
+                            title="Run now"
+                          >
+                            {runningJobId === job.id ? (
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <PlayerPlay className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEdit(job)}
+                            aria-label={`Edit ${job.name}`}
+                            title="Edit"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void handleDelete(job)}
+                            disabled={deletingJobId === job.id}
+                            aria-label={`Delete ${job.name}`}
+                            title="Delete"
+                          >
+                            {deletingJobId === job.id ? (
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
