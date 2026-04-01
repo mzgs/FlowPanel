@@ -3,6 +3,8 @@ package phpmyadmin
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,11 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+)
+
+const (
+	defaultPasswordFile = "mariadb-root-password"
+	passwordBytesLength = 24
 )
 
 var cellarVersionPattern = regexp.MustCompile(`/phpmyadmin/([^/]+)/`)
@@ -70,7 +77,7 @@ func (s *Service) Status(context.Context) Status {
 	status.Installed = installed
 	status.InstallPath = installPath
 	status.Version = detectVersion(installPath)
-	status.InstallAvailable = len(plan.installCmds) > 0 && !status.Installed
+	status.InstallAvailable = plan.packageManager != "" && !status.Installed
 
 	switch {
 	case status.Installed:
@@ -98,6 +105,33 @@ func (s *Service) Status(context.Context) Status {
 
 func (s *Service) Install(ctx context.Context) error {
 	plan := detectActionPlan()
+	if plan.packageManager == "apt" {
+		aptPath, ok := lookupCommand("apt-get")
+		if !ok {
+			return errors.New("apt-get is not installed")
+		}
+
+		rootPassword, err := resolveMariaDBRootPassword()
+		if err != nil {
+			return fmt.Errorf("resolve mariadb root password: %w", err)
+		}
+
+		appPassword, err := generatePassword()
+		if err != nil {
+			return fmt.Errorf("generate phpMyAdmin application password: %w", err)
+		}
+
+		debconfPath, _ := lookupCommand("debconf-set-selections")
+		plan.installEnv = map[string]string{
+			"DEBIAN_FRONTEND": "noninteractive",
+		}
+		plan.installCmds = aptInstallCommands(aptPath, debconfPath, rootPassword, appPassword)
+	}
+
+	return s.installWithPlan(ctx, plan)
+}
+
+func (s *Service) installWithPlan(ctx context.Context, plan actionPlan) error {
 	if len(plan.installCmds) == 0 {
 		return fmt.Errorf("automatic phpMyAdmin installation is not supported on %s", runtime.GOOS)
 	}
@@ -123,15 +157,10 @@ func detectActionPlan() actionPlan {
 		}
 	case "linux":
 		if os.Geteuid() == 0 {
-			if aptPath, ok := lookupCommand("apt-get"); ok {
-				debconfPath, _ := lookupCommand("debconf-set-selections")
+			if _, ok := lookupCommand("apt-get"); ok {
 				return actionPlan{
 					packageManager: "apt",
 					installLabel:   "Install phpMyAdmin",
-					installEnv: map[string]string{
-						"DEBIAN_FRONTEND": "noninteractive",
-					},
-					installCmds: aptInstallCommands(aptPath, debconfPath),
 				}
 			}
 			if dnfPath, ok := lookupCommand("dnf"); ok {
@@ -167,7 +196,7 @@ func detectActionPlan() actionPlan {
 	return actionPlan{}
 }
 
-func aptInstallCommands(aptPath, debconfPath string) [][]string {
+func aptInstallCommands(aptPath, debconfPath, adminPassword, appPassword string) [][]string {
 	commands := [][]string{
 		{aptPath, "update"},
 	}
@@ -179,23 +208,111 @@ func aptInstallCommands(aptPath, debconfPath string) [][]string {
 	}
 
 	commands = append(commands,
-		[]string{"/bin/sh", "-c", aptDebconfSelectionsCommand(debconfPath)},
+		[]string{"/bin/sh", "-c", aptDebconfSelectionsCommand(debconfPath, adminPassword, appPassword)},
 		[]string{aptPath, "install", "-y", "phpmyadmin"},
 	)
 
 	return commands
 }
 
-func aptDebconfSelectionsCommand(debconfPath string) string {
+func aptDebconfSelectionsCommand(debconfPath, adminPassword, appPassword string) string {
 	debconfPath = strings.TrimSpace(debconfPath)
 	if debconfPath == "" {
 		debconfPath = "debconf-set-selections"
 	}
 
-	return fmt.Sprintf(
-		"printf 'phpmyadmin phpmyadmin/dbconfig-install boolean false\\nphpmyadmin phpmyadmin/reconfigure-webserver multiselect none\\n' | %s",
-		debconfPath,
-	)
+	lines := []string{
+		"phpmyadmin phpmyadmin/dbconfig-install boolean true",
+		"phpmyadmin phpmyadmin/reconfigure-webserver multiselect none",
+		"phpmyadmin phpmyadmin/mysql/admin-user string root",
+		fmt.Sprintf("phpmyadmin phpmyadmin/mysql/admin-pass password %s", adminPassword),
+		fmt.Sprintf("phpmyadmin phpmyadmin/mysql/app-pass password %s", appPassword),
+		fmt.Sprintf("phpmyadmin phpmyadmin/app-password-confirm password %s", appPassword),
+	}
+
+	args := make([]string, 0, len(lines)+2)
+	args = append(args, "printf", "%s\\n")
+	for _, line := range lines {
+		args = append(args, shellQuote(line))
+	}
+
+	return strings.Join(args, " ") + " | " + debconfPath
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func resolveMariaDBRootPassword() (string, error) {
+	if password, ok := rootPasswordFromEnv(); ok {
+		return password, nil
+	}
+
+	password, configured, err := readPasswordFile(resolvePasswordFilePath())
+	if err != nil {
+		return "", fmt.Errorf("read mariadb root password file: %w", err)
+	}
+	if !configured {
+		return "", errors.New("mariadb root password is not configured")
+	}
+
+	return password, nil
+}
+
+func resolvePasswordFilePath() string {
+	if value := strings.TrimSpace(os.Getenv("FLOWPANEL_MARIADB_PASSWORD_FILE")); value != "" {
+		return value
+	}
+
+	if dbPath := strings.TrimSpace(os.Getenv("FLOWPANEL_DB_PATH")); dbPath != "" && dbPath != ":memory:" {
+		return filepath.Join(filepath.Dir(dbPath), defaultPasswordFile)
+	}
+
+	return filepath.Join(".", "data", defaultPasswordFile)
+}
+
+func rootPasswordFromEnv() (string, bool) {
+	password, configured := os.LookupEnv("FLOWPANEL_MARIADB_PASSWORD")
+	if !configured {
+		return "", false
+	}
+
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return "", false
+	}
+
+	return password, true
+}
+
+func readPasswordFile(path string) (string, bool, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", false, nil
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+
+	password := strings.TrimSpace(string(content))
+	if password == "" {
+		return "", false, nil
+	}
+
+	return password, true, nil
+}
+
+func generatePassword() (string, error) {
+	randomBytes := make([]byte, passwordBytesLength)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+
+	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
 }
 
 func detectInstallPath() (string, bool) {

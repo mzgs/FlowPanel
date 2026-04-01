@@ -63,6 +63,7 @@ function SoftwareCard({
 }) {
   const mariaDBValue = formatMariaDBValue(mariadbStatus);
   const phpVersion = formatPHPVersion(phpStatus);
+  const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
 
   return (
     <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-[var(--app-shadow)]">
@@ -122,7 +123,13 @@ function SoftwareCard({
             label="phpMyAdmin"
             value={
               phpMyAdminStatus?.install_available ? (
-                <Button type="button" size="sm" onClick={onInstallPHPMyAdmin} disabled={runningAction !== null}>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onInstallPHPMyAdmin}
+                  disabled={runningAction !== null || phpMyAdminInstallBlocked}
+                  title={phpMyAdminInstallBlocked ? "Install MariaDB first." : undefined}
+                >
                   {runningAction === "install-phpmyadmin" ? (
                     <LoaderCircle className="h-4 w-4 animate-spin" />
                   ) : null}
