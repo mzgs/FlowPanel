@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+import { cn, copyTextToClipboard } from "@/lib/utils";
 import { toast } from "sonner";
 
 type DialogMode = "create" | "edit" | null;
@@ -121,7 +121,7 @@ async function copyWithFeedback({
   copiedStateDurationMs = 1500,
 }: CopyWithFeedbackInput) {
   try {
-    await navigator.clipboard.writeText(text);
+    await copyTextToClipboard(text);
     onCopied();
     window.setTimeout(() => {
       clearCopiedState();
