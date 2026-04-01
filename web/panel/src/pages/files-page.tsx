@@ -1688,7 +1688,7 @@ export function FilesPage() {
           }
         }}
       >
-        <SheetContent side="left" className="!w-[50vw] !max-w-none sm:!max-w-none gap-0 p-0">
+        <SheetContent side="left" className="!w-[60vw] !max-w-none sm:!max-w-none gap-0 p-0">
           <SheetHeader className="gap-1 border-b border-[var(--app-border)] px-5 py-4">
             <SheetTitle>{editorName || "Editor"}</SheetTitle>
             <SheetDescription>

@@ -67,7 +67,7 @@ type FileAceEditorProps = {
 
 export function FileAceEditor({ path, value, readOnly, onChange }: FileAceEditorProps) {
   return (
-    <div className="min-h-0 flex-1 overflow-hidden rounded-[10px] border border-[var(--app-border)] bg-[#1f2329]">
+    <div className="min-h-0 flex-1 overflow-hidden rounded-[10px] border border-[var(--app-border)] bg-[#1b1f27] [&_.ace_gutter]:bg-[#1b1f27] [&_.ace_gutter]:text-[#6f7682] [&_.ace_gutter-active-line]:bg-[#222733] [&_.ace_gutter-cell]:bg-transparent [&_.ace_print-margin]:bg-[#1b1f27] [&_.ace_scroller]:bg-[#1b1f27]">
       <AceEditor
         mode={getAceMode(path)}
         theme="one_dark"
@@ -77,6 +77,7 @@ export function FileAceEditor({ path, value, readOnly, onChange }: FileAceEditor
         value={value}
         onChange={onChange}
         readOnly={readOnly}
+        style={{ backgroundColor: "#1b1f27" }}
         fontSize={13}
         showPrintMargin={false}
         showGutter
