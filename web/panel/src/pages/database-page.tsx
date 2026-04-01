@@ -17,6 +17,7 @@ import {
   type CreateMariaDBDatabaseInput,
   type MariaDBApiError,
   type MariaDBDatabase,
+  type MariaDBStatus,
 } from "@/api/mariadb";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
@@ -170,6 +171,7 @@ function ToolbarButton({
 export function DatabasePage() {
   const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
   const [domains, setDomains] = useState<DomainRecord[]>([]);
+  const [mariaDBStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [statusSummary, setStatusSummary] = useState("MySQL / MariaDB");
   const [loading, setLoading] = useState(true);
@@ -214,12 +216,18 @@ export function DatabasePage() {
           setDatabases(databasesResult.value.databases);
           setLoadError(null);
         } else {
-          setLoadError(getErrorMessage(databasesResult.reason, "Failed to load databases."));
+          setLoadError(
+            statusResult.status === "fulfilled" && !statusResult.value.server_installed
+              ? "MariaDB not installed."
+              : getErrorMessage(databasesResult.reason, "Failed to load databases."),
+          );
         }
 
         if (statusResult.status === "fulfilled") {
+          setMariaDBStatus(statusResult.value);
           setStatusSummary(formatStatusSummary(statusResult.value.product, statusResult.value.version));
         } else {
+          setMariaDBStatus(null);
           setStatusSummary("MySQL / MariaDB");
         }
 
@@ -292,6 +300,7 @@ export function DatabasePage() {
   const rootPasswordDirty = rootPasswordDraft !== rootPassword;
   const rootPasswordCandidate = rootPasswordDraft.trim();
   const rootPasswordTooShort = rootPasswordCandidate.length > 0 && rootPasswordCandidate.length < 8;
+  const mariaDBNotInstalled = mariaDBStatus !== null && !mariaDBStatus.server_installed;
 
   function handleGenerateRootPassword() {
     setRootPasswordDraft(generateRootPassword());
@@ -543,7 +552,9 @@ export function DatabasePage() {
               <Button
                 type="button"
                 onClick={openCreateDialog}
+                disabled={mariaDBNotInstalled}
                 className="h-10 rounded-lg border border-emerald-700/50 bg-emerald-600 px-4 text-[13px] font-medium text-white hover:bg-emerald-500"
+                title={mariaDBNotInstalled ? "MariaDB not installed." : undefined}
               >
                 <Plus className="h-4 w-4" />
                 Add DB
