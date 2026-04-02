@@ -10,7 +10,16 @@ import {
   type CronJob,
   updateCronJob,
 } from "@/api/cron";
-import { Clock, LoaderCircle, Pencil, PlayerPlay, RefreshCw, TerminalSquare, Trash2 } from "@/components/icons/tabler-icons";
+import {
+  Clock,
+  Copy,
+  LoaderCircle,
+  Pencil,
+  PlayerPlay,
+  RefreshCw,
+  TerminalSquare,
+  Trash2,
+} from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +37,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
-import { sleep } from "@/lib/utils";
+import { cn, copyTextToClipboard, sleep } from "@/lib/utils";
 import { toast } from "sonner";
 
 type FormState = {
@@ -122,6 +131,22 @@ function getExecutionBadge(execution: CronExecutionLog) {
   };
 }
 
+function sortExecutions(executions: CronExecutionLog[]) {
+  return [...executions].sort(
+    (left, right) => new Date(right.started_at).getTime() - new Date(left.started_at).getTime(),
+  );
+}
+
+function getExecutionPreview(execution: CronExecutionLog) {
+  const previewSource = execution.error.trim() || execution.output.trim();
+  if (!previewSource) {
+    return "No output captured.";
+  }
+
+  const [firstLine] = previewSource.split(/\r?\n/, 1);
+  return firstLine;
+}
+
 export function CronPage() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [enabled, setEnabled] = useState(false);
@@ -136,9 +161,15 @@ export function CronPage() {
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [logsJobId, setLogsJobId] = useState<string | null>(null);
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
   const schedulerBadge = getSchedulerBadge(enabled, started);
   const isEditing = editingJobId !== null;
   const logsJob = jobs.find((job) => job.id === logsJobId) ?? null;
+  const sortedExecutions = logsJob ? sortExecutions(logsJob.executions) : [];
+  const executionsSignature = logsJob ? logsJob.executions.map((execution) => execution.id).join(":") : "";
+  const selectedExecution = sortedExecutions.find((execution) => execution.id === selectedExecutionId) ?? sortedExecutions[0] ?? null;
+  const selectedExecutionBadge = selectedExecution ? getExecutionBadge(selectedExecution) : null;
+  const selectedExecutionOutputLineCount = selectedExecution?.output ? selectedExecution.output.split(/\r?\n/).length : 0;
 
   function resetForm() {
     setForm(initialForm);
@@ -214,6 +245,21 @@ export function CronPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!logsJob) {
+      setSelectedExecutionId(null);
+      return;
+    }
+
+    setSelectedExecutionId((currentExecutionId) => {
+      if (currentExecutionId && sortedExecutions.some((execution) => execution.id === currentExecutionId)) {
+        return currentExecutionId;
+      }
+
+      return sortedExecutions[0]?.id ?? null;
+    });
+  }, [logsJobId, executionsSignature]);
 
   async function handleRefresh() {
     setLoading(true);
@@ -329,6 +375,19 @@ export function CronPage() {
       setLoadError(getErrorMessage(error, "Failed to delete cron job."));
     } finally {
       setDeletingJobId(null);
+    }
+  }
+
+  async function handleCopyExecutionOutput(execution: CronExecutionLog) {
+    if (!execution.output) {
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(execution.output);
+      toast.success("Execution output copied.");
+    } catch {
+      toast.error("Failed to copy execution output.");
     }
   }
 
@@ -560,68 +619,154 @@ export function CronPage() {
       </div>
 
       <Dialog open={logsJob !== null} onOpenChange={(open) => (!open ? setLogsJobId(null) : null)}>
-        <DialogContent className="max-w-4xl p-0 sm:max-w-4xl">
-          <DialogHeader className="border-b px-6 py-5">
+        <DialogContent className="max-w-5xl overflow-hidden p-0 sm:max-w-5xl">
+          <DialogHeader className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-5">
             <DialogTitle>{logsJob ? `${logsJob.name} logs` : "Execution logs"}</DialogTitle>
             <DialogDescription>
               {logsJob
-                ? `${logsJob.schedule} - ${logsJob.command}`
+                ? `${sortedExecutions.length} ${sortedExecutions.length === 1 ? "execution" : "executions"} recorded`
                 : "Recent cron job execution output."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="px-6 pb-6 pt-5">
+          <div className="bg-[var(--app-surface)] text-[var(--app-text)]">
             {logsJob ? (
-              logsJob.executions.length === 0 ? (
-                <div className="rounded-md border border-dashed px-4 py-10 text-sm text-muted-foreground">
-                  No executions recorded for this job yet.
+              sortedExecutions.length === 0 ? (
+                <div className="px-6 py-6">
+                  <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-10 text-sm text-[var(--app-text-muted)]">
+                    No executions recorded for this job yet.
+                  </div>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {logsJob.executions.map((execution) => {
-                    const badge = getExecutionBadge(execution);
+                <div className="grid min-h-[28rem] bg-[var(--app-surface)] lg:grid-cols-[300px_minmax(0,1fr)]">
+                  <aside className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] lg:border-b-0 lg:border-r">
+                    <div className="border-b border-[var(--app-border)] px-4 py-3">
+                      <div className="font-mono text-xs text-[var(--app-text)]">{logsJob.schedule}</div>
+                      <p className="mt-1 line-clamp-2 break-all font-mono text-xs text-[var(--app-text-muted)]">
+                        {logsJob.command}
+                      </p>
+                    </div>
 
-                    return (
-                      <article key={execution.id} className="rounded-md border">
-                        <div className="flex flex-col gap-3 px-4 py-4">
-                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant={badge.variant}>{badge.label}</Badge>
-                              <span className="text-sm text-muted-foreground">
+                    <div className="flex items-center justify-between border-b border-[var(--app-border)] px-4 py-3 text-xs text-[var(--app-text-muted)]">
+                      <span>{sortedExecutions.length} runs</span>
+                      <span>Latest first</span>
+                    </div>
+
+                    <ScrollArea className="h-[18rem] lg:h-[calc(28rem-85px)]">
+                      <div className="space-y-2 p-2">
+                        {sortedExecutions.map((execution) => {
+                          const badge = getExecutionBadge(execution);
+                          const isSelected = execution.id === selectedExecution?.id;
+
+                          return (
+                            <button
+                              key={execution.id}
+                              type="button"
+                              onClick={() => setSelectedExecutionId(execution.id)}
+                              className={cn(
+                                "w-full rounded-md border px-3 py-3 text-left text-[var(--app-text)] transition-colors",
+                                isSelected
+                                  ? "border-[var(--app-border)] bg-[var(--app-surface-elev)] shadow-[var(--app-shadow)]"
+                                  : "border-transparent bg-transparent hover:border-[var(--app-border)] hover:bg-[var(--app-surface)]",
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <Badge variant={badge.variant}>{badge.label}</Badge>
+                                <span className="text-xs text-[var(--app-text-muted)]">{formatDuration(execution.duration_ms)}</span>
+                              </div>
+                              <div className="mt-2 text-sm font-medium text-[var(--app-text)]">
                                 {formatDateTime(execution.started_at)}
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-xs text-[var(--app-text-muted)]">
+                                {getExecutionPreview(execution)}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </ScrollArea>
+                  </aside>
+
+                  <div className="flex min-h-[18rem] flex-col bg-[var(--app-surface)]">
+                    {selectedExecution ? (
+                      <>
+                        <div className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {selectedExecutionBadge ? (
+                                <Badge variant={selectedExecutionBadge.variant}>{selectedExecutionBadge.label}</Badge>
+                              ) : null}
+                              <span className="text-sm text-[var(--app-text-muted)]">
+                                {formatDateTime(selectedExecution.started_at)}
                               </span>
                             </div>
-                            <span className="text-sm text-muted-foreground">
-                              Duration {formatDuration(execution.duration_ms)}
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              {selectedExecution.output ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                                  onClick={() => void handleCopyExecutionOutput(selectedExecution)}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                  Copy output
+                                </Button>
+                              ) : null}
+                              <span className="text-sm text-[var(--app-text-muted)]">
+                                Duration {formatDuration(selectedExecution.duration_ms)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                            <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3">
+                              <div className="text-xs text-[var(--app-text-muted)]">Started</div>
+                              <div className="mt-1 font-medium text-[var(--app-text)]">
+                                {formatDateTime(selectedExecution.started_at)}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3">
+                              <div className="text-xs text-[var(--app-text-muted)]">Finished</div>
+                              <div className="mt-1 font-medium text-[var(--app-text)]">
+                                {formatDateTime(selectedExecution.finished_at)}
+                              </div>
+                            </div>
+                          </div>
+
+                          {selectedExecution.error ? (
+                            <p className="mt-4 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-3 text-sm text-destructive">
+                              {selectedExecution.error}
+                            </p>
+                          ) : null}
+                        </div>
+
+                        <div className="flex min-h-0 flex-1 flex-col bg-[var(--app-surface)] px-5 py-4">
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <h3 className="text-sm font-medium text-[var(--app-text)]">Output</h3>
+                            <span className="text-xs text-[var(--app-text-muted)]">
+                              {selectedExecution.output
+                                ? `${selectedExecutionOutputLineCount} ${selectedExecutionOutputLineCount === 1 ? "line" : "lines"}`
+                                : "No output"}
                             </span>
                           </div>
 
-                          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                            <div>
-                              <span className="font-medium text-foreground">Started</span>
-                              <div>{formatDateTime(execution.started_at)}</div>
-                            </div>
-                            <div>
-                              <span className="font-medium text-foreground">Finished</span>
-                              <div>{formatDateTime(execution.finished_at)}</div>
-                            </div>
-                          </div>
-
-                          {execution.error ? <p className="text-sm text-destructive">{execution.error}</p> : null}
-
-                          {execution.output ? (
-                            <ScrollArea className="max-h-64 rounded-md border bg-muted/30">
-                              <pre className="p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words">
-                                {execution.output}
+                          {selectedExecution.output ? (
+                            <ScrollArea className="min-h-0 flex-1 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+                              <pre className="p-4 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)]">
+                                {selectedExecution.output}
                               </pre>
                             </ScrollArea>
                           ) : (
-                            <p className="text-sm text-muted-foreground">No output captured.</p>
+                            <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 text-sm text-[var(--app-text-muted)]">
+                              No output captured.
+                            </div>
                           )}
                         </div>
-                      </article>
-                    );
-                  })}
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               )
             ) : null}
