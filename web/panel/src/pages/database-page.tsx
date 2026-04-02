@@ -29,7 +29,7 @@ import {
 } from "@/api/backups";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
-import { Check, Copy, Download, Eye, EyeOff, HardDrive, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { Copy, Download, Eye, EyeOff, HardDrive, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { Button } from "@/components/ui/button";
 import {
@@ -226,11 +226,11 @@ function CopyIconButton({
       aria-label={ariaLabel}
       title={copied ? copiedTitle : copyTitle}
     >
-      {copied ? (
-        <Check className="h-4 w-4 text-emerald-500" />
-      ) : (
-        <Copy className="h-4 w-4" />
-      )}
+      <ActionFeedbackIcon
+        done={copied}
+        icon={Copy}
+        className="h-4 w-4"
+      />
     </button>
   );
 }
