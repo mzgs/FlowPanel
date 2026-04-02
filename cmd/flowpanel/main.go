@@ -12,6 +12,7 @@ import (
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/auth"
+	"flowpanel/internal/backup"
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
 	flowcron "flowpanel/internal/cron"
@@ -104,6 +105,14 @@ func run() error {
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
+	backupService := backup.NewService(
+		logger.Named("backup"),
+		config.FlowPanelDataPath(),
+		cfg.Database.Path,
+		dbConn,
+		domainService,
+		mariadbManager,
+	)
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
 		cfg.PublicHTTPAddr,
@@ -130,6 +139,7 @@ func run() error {
 		phpMyAdminManager,
 		fileManager,
 		eventService,
+		backupService,
 	)
 
 	router, err := httpx.NewRouter(appContainer)

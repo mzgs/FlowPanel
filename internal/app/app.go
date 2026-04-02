@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 
+	"flowpanel/internal/backup"
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
 	"flowpanel/internal/cron"
@@ -30,6 +31,7 @@ type App struct {
 	PHPMyAdmin phpmyadmin.Manager
 	Files      *files.Service
 	Events     *events.Service
+	Backups    backup.Manager
 }
 
 func New(
@@ -45,6 +47,7 @@ func New(
 	phpMyAdminManager phpmyadmin.Manager,
 	fileManager *files.Service,
 	eventService *events.Service,
+	backupManager backup.Manager,
 ) *App {
 	return &App{
 		Config:     cfg,
@@ -59,5 +62,6 @@ func New(
 		PHPMyAdmin: phpMyAdminManager,
 		Files:      fileManager,
 		Events:     eventService,
+		Backups:    backupManager,
 	}
 }

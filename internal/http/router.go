@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	stdhttp "net/http"
@@ -15,6 +16,7 @@ import (
 	"strings"
 
 	"flowpanel/internal/app"
+	"flowpanel/internal/backup"
 	flowcron "flowpanel/internal/cron"
 	"flowpanel/internal/domain"
 	eventlog "flowpanel/internal/events"
@@ -121,6 +123,153 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/events", eventsListHandler)
 		r.Method(stdhttp.MethodHead, "/events", eventsListHandler)
+
+		backupsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Backups == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "backup service is not configured",
+				})
+				return
+			}
+
+			records, err := app.Backups.List(r.Context())
+			if err != nil {
+				app.Logger.Error("list backups failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to list backups",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"backups": records,
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/backups", backupsListHandler)
+		r.Method(stdhttp.MethodHead, "/backups", backupsListHandler)
+
+		backupsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Backups == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "backup service is not configured",
+				})
+				return
+			}
+
+			input := backup.CreateInput{
+				IncludePanelData: true,
+				IncludeSites:     true,
+				IncludeDatabases: true,
+			}
+			var payload struct {
+				IncludePanelData *bool `json:"include_panel_data"`
+				IncludeSites     *bool `json:"include_sites"`
+				IncludeDatabases *bool `json:"include_databases"`
+			}
+			if r.Body != nil {
+				if err := decodeJSON(r, &payload); err != nil && !errors.Is(err, io.EOF) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "invalid request body",
+					})
+					return
+				}
+			}
+			if payload.IncludePanelData != nil {
+				input.IncludePanelData = *payload.IncludePanelData
+			}
+			if payload.IncludeSites != nil {
+				input.IncludeSites = *payload.IncludeSites
+			}
+			if payload.IncludeDatabases != nil {
+				input.IncludeDatabases = *payload.IncludeDatabases
+			}
+
+			record, err := app.Backups.Create(r.Context(), input)
+			if err != nil {
+				var validation backup.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+				app.Logger.Error("create backup failed", zap.Error(err))
+				mutationEvent(r.Context(), "backups", "create", "backup", "backup", "FlowPanel backup", "failed", "Failed to create a backup archive.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to create backup",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "backups", "create", "backup", record.Name, record.Name, "succeeded", fmt.Sprintf("Created backup %q.", record.Name))
+
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{
+				"backup": record,
+			})
+		})
+		r.Method(stdhttp.MethodPost, "/backups", backupsCreateHandler)
+
+		backupsDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Backups == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "backup service is not configured",
+				})
+				return
+			}
+
+			name := chi.URLParam(r, "backupName")
+			if err := app.Backups.Delete(r.Context(), name); err != nil {
+				switch {
+				case errors.Is(err, backup.ErrInvalidName):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "invalid backup name",
+					})
+					return
+				case errors.Is(err, backup.ErrNotFound):
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "backup not found",
+					})
+					return
+				default:
+					app.Logger.Error("delete backup failed",
+						zap.String("backup_name", name),
+						zap.Error(err),
+					)
+					mutationEvent(r.Context(), "backups", "delete", "backup", name, name, "failed", "Failed to delete a backup archive.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to delete backup",
+					})
+					return
+				}
+			}
+
+			mutationEvent(r.Context(), "backups", "delete", "backup", name, name, "succeeded", fmt.Sprintf("Deleted backup %q.", name))
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"ok": true,
+			})
+		})
+		r.Method(stdhttp.MethodDelete, "/backups/{backupName}", backupsDeleteHandler)
+
+		backupsDownloadHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Backups == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "backup service is not configured",
+				})
+				return
+			}
+
+			absolutePath, name, err := app.Backups.DownloadPath(chi.URLParam(r, "backupName"))
+			if err != nil {
+				writeBackupError(w, err)
+				return
+			}
+
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+			stdhttp.ServeFile(w, r, absolutePath)
+		})
+		r.Method(stdhttp.MethodGet, "/backups/{backupName}/download", backupsDownloadHandler)
 
 		cronListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Cron == nil {
@@ -1515,6 +1664,23 @@ func writeFileError(w stdhttp.ResponseWriter, err error) {
 	default:
 		writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 			"error": "file operation failed",
+		})
+	}
+}
+
+func writeBackupError(w stdhttp.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, backup.ErrNotFound):
+		writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+			"error": "backup not found",
+		})
+	case errors.Is(err, backup.ErrInvalidName):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "invalid backup name",
+		})
+	default:
+		writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+			"error": "backup operation failed",
 		})
 	}
 }

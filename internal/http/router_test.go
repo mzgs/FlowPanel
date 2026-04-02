@@ -15,6 +15,7 @@ import (
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/auth"
+	"flowpanel/internal/backup"
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
 	flowcron "flowpanel/internal/cron"
@@ -108,6 +109,10 @@ func (fakeMariaDBManager) CreateDatabase(context.Context, mariadb.CreateDatabase
 		Username: "flowpanel_user",
 		Host:     "localhost",
 	}, nil
+}
+
+func (fakeMariaDBManager) DumpDatabase(_ context.Context, name string) ([]byte, error) {
+	return []byte("CREATE DATABASE `" + strings.TrimSpace(name) + "`;\n"), nil
 }
 
 func (fakeMariaDBManager) UpdateDatabase(context.Context, string, mariadb.UpdateDatabaseInput) (mariadb.DatabaseRecord, error) {
@@ -841,6 +846,105 @@ func TestCronCreateEndpointValidatesInput(t *testing.T) {
 	}
 }
 
+func TestBackupsCreateListDownloadAndDeleteEndpoints(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, httptest.NewRequest(http.MethodPost, "/api/backups", nil))
+
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body = %s", createRecorder.Code, http.StatusCreated, createRecorder.Body.String())
+	}
+
+	var createPayload struct {
+		Backup backup.Record `json:"backup"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create backup response: %v", err)
+	}
+	if createPayload.Backup.Name == "" {
+		t.Fatal("backup name is empty")
+	}
+	if createPayload.Backup.Size <= 0 {
+		t.Fatalf("backup size = %d, want positive value", createPayload.Backup.Size)
+	}
+
+	listRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/backups", nil))
+
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d, body = %s", listRecorder.Code, http.StatusOK, listRecorder.Body.String())
+	}
+
+	var listPayload struct {
+		Backups []backup.Record `json:"backups"`
+	}
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode list backups response: %v", err)
+	}
+	if len(listPayload.Backups) != 1 {
+		t.Fatalf("backup count = %d, want 1", len(listPayload.Backups))
+	}
+	if listPayload.Backups[0].Name != createPayload.Backup.Name {
+		t.Fatalf("listed backup name = %q, want %q", listPayload.Backups[0].Name, createPayload.Backup.Name)
+	}
+
+	downloadRecorder := httptest.NewRecorder()
+	downloadRequest := httptest.NewRequest(http.MethodGet, "/api/backups/"+createPayload.Backup.Name+"/download", nil)
+	router.ServeHTTP(downloadRecorder, downloadRequest)
+
+	if downloadRecorder.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want %d, body = %s", downloadRecorder.Code, http.StatusOK, downloadRecorder.Body.String())
+	}
+	if disposition := downloadRecorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, createPayload.Backup.Name) {
+		t.Fatalf("content-disposition = %q, want filename %q", disposition, createPayload.Backup.Name)
+	}
+	if downloadRecorder.Body.Len() == 0 {
+		t.Fatal("download body is empty")
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, httptest.NewRequest(http.MethodDelete, "/api/backups/"+createPayload.Backup.Name, nil))
+
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d, body = %s", deleteRecorder.Code, http.StatusOK, deleteRecorder.Body.String())
+	}
+
+	missingRecorder := httptest.NewRecorder()
+	router.ServeHTTP(missingRecorder, httptest.NewRequest(http.MethodGet, "/api/backups/"+createPayload.Backup.Name+"/download", nil))
+
+	if missingRecorder.Code != http.StatusNotFound {
+		t.Fatalf("missing status = %d, want %d, body = %s", missingRecorder.Code, http.StatusNotFound, missingRecorder.Body.String())
+	}
+}
+
+func TestBackupsCreateEndpointValidatesScope(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/backups", strings.NewReader(`{"include_panel_data":false,"include_sites":false,"include_databases":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+
+	var payload struct {
+		Error       string            `json:"error"`
+		FieldErrors map[string]string `json:"field_errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error != "validation failed" {
+		t.Fatalf("error = %q, want validation failed", payload.Error)
+	}
+	if payload.FieldErrors["scope"] != "Select at least one backup source." {
+		t.Fatalf("scope error = %q, want selection message", payload.FieldErrors["scope"])
+	}
+}
+
 func TestSystemStatusEndpoint(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 
@@ -1161,6 +1265,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	if err != nil {
 		t.Fatalf("new file manager: %v", err)
 	}
+	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), cfg.Database.Path, dbConn, domains, fakeMariaDBManager{})
 
 	router, err := NewRouter(app.New(
 		cfg,
@@ -1182,6 +1287,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		fakePHPMyAdminManager{},
 		fileManager,
 		events.NewService(logger.Named("events"), eventStore),
+		backupManager,
 	))
 	if err != nil {
 		t.Fatalf("new router: %v", err)
@@ -1239,6 +1345,7 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 	if err != nil {
 		t.Fatalf("new file manager: %v", err)
 	}
+	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), cfg.Database.Path, dbConn, domains, fakeMariaDBManager{})
 
 	scheduler := flowcron.NewScheduler(logger.Named("cron"), enabled, cronStore)
 	if err := scheduler.Load(context.Background()); err != nil {
@@ -1265,6 +1372,7 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 		fakePHPMyAdminManager{},
 		fileManager,
 		events.NewService(logger.Named("events"), eventStore),
+		backupManager,
 	))
 	if err != nil {
 		t.Fatalf("new router: %v", err)

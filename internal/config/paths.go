@@ -16,6 +16,10 @@ func DefaultDatabasePath() string {
 	return filepath.Join(FlowPanelDataPath(), "flowpanel.db")
 }
 
+func BackupsPath() string {
+	return filepath.Join(FlowPanelDataPath(), "backups")
+}
+
 func EnsureFlowPanelDataPath() error {
 	path := FlowPanelDataPath()
 	if err := os.MkdirAll(path, 0o755); err != nil {

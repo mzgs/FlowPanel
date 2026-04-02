@@ -12,6 +12,7 @@ import {
   Database,
   ChevronRight,
   FolderOpen,
+  HardDrive,
   LayoutDashboard,
   List,
   Menu,
@@ -42,6 +43,7 @@ import {
 import { CronPage } from "@/pages/cron-page";
 import { DomainDetailPage } from "@/pages/domain-detail-page";
 import { ActivityPage } from "@/pages/activity-page";
+import { BackupsPage } from "@/pages/backups-page";
 import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
@@ -54,6 +56,7 @@ const navigationItems = [
   { to: "/activity", label: "Activity", icon: List },
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
+  { to: "/backups", label: "Backups", icon: HardDrive },
   { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/cron", label: "Cron", icon: Clock },
   { to: "/ssh", label: "SSH", icon: TerminalSquare },
@@ -248,6 +251,12 @@ const databaseRoute = createRoute({
   component: DatabasePage,
 });
 
+const backupsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/backups",
+  component: BackupsPage,
+});
+
 const filesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/files",
@@ -290,6 +299,7 @@ const routeTree = rootRoute.addChildren([
   domainsRoute,
   domainDetailRoute,
   databaseRoute,
+  backupsRoute,
   filesRoute,
   legacyFileManagerRoute,
   cronRoute,
