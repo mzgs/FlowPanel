@@ -1211,6 +1211,7 @@ func assertDomainRecordEqual(t *testing.T, got domain.Record, want domain.Record
 		got.Hostname != want.Hostname ||
 		got.Kind != want.Kind ||
 		got.Target != want.Target ||
+		got.CacheEnabled != want.CacheEnabled ||
 		!got.CreatedAt.Equal(want.CreatedAt) {
 		t.Fatalf("record = %#v, want %#v", got, want)
 	}

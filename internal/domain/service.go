@@ -33,23 +33,26 @@ const (
 )
 
 type Record struct {
-	ID        string    `json:"id"`
-	Hostname  string    `json:"hostname"`
-	Kind      Kind      `json:"kind"`
-	Target    string    `json:"target"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	Hostname     string    `json:"hostname"`
+	Kind         Kind      `json:"kind"`
+	Target       string    `json:"target"`
+	CacheEnabled bool      `json:"cache_enabled"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type CreateInput struct {
-	Hostname string `json:"hostname"`
-	Kind     Kind   `json:"kind"`
-	Target   string `json:"target"`
+	Hostname     string `json:"hostname"`
+	Kind         Kind   `json:"kind"`
+	Target       string `json:"target"`
+	CacheEnabled bool   `json:"cache_enabled"`
 }
 
 type UpdateInput struct {
-	Hostname string `json:"hostname"`
-	Kind     Kind   `json:"kind"`
-	Target   string `json:"target"`
+	Hostname     string `json:"hostname"`
+	Kind         Kind   `json:"kind"`
+	Target       string `json:"target"`
+	CacheEnabled bool   `json:"cache_enabled"`
 }
 
 type ValidationErrors map[string]string
@@ -163,11 +166,12 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 	}
 
 	record := Record{
-		ID:        fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano()),
-		Hostname:  hostname,
-		Kind:      input.Kind,
-		Target:    resolvedTarget,
-		CreatedAt: time.Now().UTC(),
+		ID:           fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano()),
+		Hostname:     hostname,
+		Kind:         input.Kind,
+		Target:       resolvedTarget,
+		CacheEnabled: input.CacheEnabled,
+		CreatedAt:    time.Now().UTC(),
 	}
 
 	if s.store != nil {
@@ -209,6 +213,7 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 	updated := current
 	updated.Kind = input.Kind
 	updated.Target = resolvedTarget
+	updated.CacheEnabled = input.CacheEnabled
 
 	if s.store != nil {
 		if err := s.store.Update(ctx, updated); err != nil {

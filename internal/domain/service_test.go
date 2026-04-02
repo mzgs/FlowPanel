@@ -228,9 +228,10 @@ func TestUpdatePersistsDomain(t *testing.T) {
 	}
 
 	updated, previous, err := service.Update(ctx, record.ID, UpdateInput{
-		Hostname: "app.example.com",
-		Kind:     KindReverseProxy,
-		Target:   "https://backend.example.com",
+		Hostname:     "app.example.com",
+		Kind:         KindReverseProxy,
+		Target:       "https://backend.example.com",
+		CacheEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("update domain: %v", err)
@@ -240,6 +241,7 @@ func TestUpdatePersistsDomain(t *testing.T) {
 		previous.Hostname != record.Hostname ||
 		previous.Kind != record.Kind ||
 		previous.Target != record.Target ||
+		previous.CacheEnabled != record.CacheEnabled ||
 		!previous.CreatedAt.Equal(record.CreatedAt) {
 		t.Fatalf("previous record = %#v, want %#v", previous, record)
 	}
@@ -256,6 +258,9 @@ func TestUpdatePersistsDomain(t *testing.T) {
 	if updated.Target != "https://backend.example.com" {
 		t.Fatalf("updated target = %q, want https://backend.example.com", updated.Target)
 	}
+	if !updated.CacheEnabled {
+		t.Fatal("updated cache_enabled = false, want true")
+	}
 	if !updated.CreatedAt.Equal(record.CreatedAt) {
 		t.Fatalf("updated created_at changed: got %v want %v", updated.CreatedAt, record.CreatedAt)
 	}
@@ -271,6 +276,7 @@ func TestUpdatePersistsDomain(t *testing.T) {
 		records[0].Hostname != updated.Hostname ||
 		records[0].Kind != updated.Kind ||
 		records[0].Target != updated.Target ||
+		records[0].CacheEnabled != updated.CacheEnabled ||
 		!records[0].CreatedAt.Equal(updated.CreatedAt) {
 		t.Fatalf("persisted record = %#v, want %#v", records[0], updated)
 	}
@@ -351,6 +357,7 @@ func TestRestoreReinsertsDeletedDomain(t *testing.T) {
 		records[0].Hostname != record.Hostname ||
 		records[0].Kind != record.Kind ||
 		records[0].Target != record.Target ||
+		records[0].CacheEnabled != record.CacheEnabled ||
 		!records[0].CreatedAt.Equal(record.CreatedAt) {
 		t.Fatalf("restored record = %#v, want %#v", records[0], record)
 	}
@@ -381,9 +388,10 @@ func TestCreatePersistsDomain(t *testing.T) {
 
 	service := newService(t.TempDir(), store)
 	record, err := service.Create(ctx, CreateInput{
-		Hostname: "app.example.com",
-		Kind:     KindApp,
-		Target:   "3000",
+		Hostname:     "app.example.com",
+		Kind:         KindApp,
+		Target:       "3000",
+		CacheEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create domain: %v", err)
@@ -402,6 +410,7 @@ func TestCreatePersistsDomain(t *testing.T) {
 		records[0].Hostname != record.Hostname ||
 		records[0].Kind != record.Kind ||
 		records[0].Target != record.Target ||
+		records[0].CacheEnabled != record.CacheEnabled ||
 		!records[0].CreatedAt.Equal(record.CreatedAt) {
 		t.Fatalf("persisted record = %#v, want %#v", records[0], record)
 	}
@@ -423,11 +432,12 @@ func TestLoadRestoresPersistedDomains(t *testing.T) {
 	}
 
 	expected := Record{
-		ID:        "domain-1",
-		Hostname:  "restored.example.com",
-		Kind:      KindReverseProxy,
-		Target:    "https://backend.example.com",
-		CreatedAt: time.Unix(1711972800, 123456789).UTC(),
+		ID:           "domain-1",
+		Hostname:     "restored.example.com",
+		Kind:         KindReverseProxy,
+		Target:       "https://backend.example.com",
+		CacheEnabled: true,
+		CreatedAt:    time.Unix(1711972800, 123456789).UTC(),
 	}
 
 	if err := store.Insert(ctx, expected); err != nil {
@@ -448,7 +458,42 @@ func TestLoadRestoresPersistedDomains(t *testing.T) {
 		records[0].Hostname != expected.Hostname ||
 		records[0].Kind != expected.Kind ||
 		records[0].Target != expected.Target ||
+		records[0].CacheEnabled != expected.CacheEnabled ||
 		!records[0].CreatedAt.Equal(expected.CreatedAt) {
 		t.Fatalf("loaded record = %#v, want %#v", records[0], expected)
+	}
+}
+
+func TestEnsureAddsCacheEnabledColumnForExistingDomainsTable(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	if _, err := conn.ExecContext(ctx, `
+CREATE TABLE domains (
+	id TEXT PRIMARY KEY,
+	hostname TEXT NOT NULL UNIQUE,
+	kind TEXT NOT NULL,
+	target TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+)`); err != nil {
+		t.Fatalf("create legacy domains table: %v", err)
+	}
+
+	store := NewStore(conn)
+	if err := store.Ensure(ctx); err != nil {
+		t.Fatalf("ensure store: %v", err)
+	}
+
+	if _, err := conn.ExecContext(ctx, `
+INSERT INTO domains (id, hostname, kind, target, cache_enabled, created_at)
+VALUES ('domain-1', 'legacy.example.com', 'App', '3000', 1, ?)
+`, time.Now().UTC().UnixNano()); err != nil {
+		t.Fatalf("insert upgraded domain row: %v", err)
 	}
 }

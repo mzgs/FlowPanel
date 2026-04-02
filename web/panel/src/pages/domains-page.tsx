@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Switch } from "@/components/ui/switch";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +36,7 @@ type FormState = {
   hostname: string;
   kind: DomainKind;
   target: string;
+  cacheEnabled: boolean;
 };
 
 type FormErrors = {
@@ -56,6 +58,7 @@ const initialFormState: FormState = {
   hostname: "",
   kind: "Static site",
   target: "",
+  cacheEnabled: false,
 };
 
 const kindConfig: Record<
@@ -232,6 +235,7 @@ export function DomainsPage() {
       hostname: domain.hostname,
       kind: domain.kind,
       target: isSiteBackedKind(domain.kind) ? "" : domain.target,
+      cacheEnabled: domain.cache_enabled,
     });
     setErrors({});
     setFormError(null);
@@ -294,6 +298,7 @@ export function DomainsPage() {
         hostname,
         kind: form.kind,
         target: isSiteBackedKind(form.kind) ? "" : target,
+        cache_enabled: form.cacheEnabled,
       };
 
       if (isEditing && editingDomainId) {
@@ -413,6 +418,7 @@ export function DomainsPage() {
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Domain</TableHead>
                     <TableHead>Type</TableHead>
+                    <TableHead>Cache</TableHead>
                     <TableHead>Target</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="w-[168px] text-right">Actions</TableHead>
@@ -425,6 +431,18 @@ export function DomainsPage() {
                         {domain.hostname}
                       </TableCell>
                       <TableCell>{domain.kind}</TableCell>
+                      <TableCell>
+                        <span
+                          className={cn(
+                            "inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium",
+                            domain.cache_enabled
+                              ? "bg-emerald-500/12 text-emerald-700"
+                              : "bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]",
+                          )}
+                        >
+                          {domain.cache_enabled ? "Enabled" : "Off"}
+                        </span>
+                      </TableCell>
                       <TableCell className="font-mono text-[12px] text-[var(--app-text-muted)]">
                         {domain.target}
                       </TableCell>
@@ -650,6 +668,33 @@ export function DomainsPage() {
               )}
             </div>
           )}
+
+          <div className="space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <label
+                  htmlFor="domain-cache-enabled"
+                  className="text-[13px] font-medium text-[var(--app-text)]"
+                >
+                  Caddy cache
+                </label>
+                <p className="text-[12px] text-[var(--app-text-muted)]">
+                  Cache eligible responses for this domain with Caddy&apos;s cache module.
+                </p>
+              </div>
+              <Switch
+                id="domain-cache-enabled"
+                checked={form.cacheEnabled}
+                disabled={submitting}
+                onCheckedChange={(checked) => {
+                  setForm((current) => ({
+                    ...current,
+                    cacheEnabled: checked,
+                  }));
+                }}
+              />
+            </div>
+          </div>
 
           <DialogFooter className="border-t border-[var(--app-border)] pt-4">
             <div className="text-[12px] text-[var(--app-text-muted)]">

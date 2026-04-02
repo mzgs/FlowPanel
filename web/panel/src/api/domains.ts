@@ -5,6 +5,7 @@ export type DomainRecord = {
   hostname: string;
   kind: DomainKind;
   target: string;
+  cache_enabled: boolean;
   created_at: string;
 };
 
@@ -17,12 +18,14 @@ export type CreateDomainInput = {
   hostname: string;
   kind: DomainKind;
   target?: string;
+  cache_enabled: boolean;
 };
 
 export type UpdateDomainInput = {
   hostname: string;
   kind: DomainKind;
   target?: string;
+  cache_enabled: boolean;
 };
 
 export type DomainApiError = Error & {

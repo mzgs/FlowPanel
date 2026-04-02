@@ -97,6 +97,40 @@ func TestBuildConfigUsesLocalhostForAppDomains(t *testing.T) {
 	}
 }
 
+func TestBuildConfigAddsCacheAppAndHandlerForCachedDomains(t *testing.T) {
+	cfg, _, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
+		{
+			Hostname:     "app.example.com",
+			Kind:         domain.KindApp,
+			Target:       "3000",
+			CacheEnabled: true,
+		},
+	}, nil, nil, runtimeSyncModeStandard)
+	if err != nil {
+		t.Fatalf("build config: %v", err)
+	}
+
+	if len(cfg.AppsRaw["cache"]) == 0 {
+		t.Fatal("expected cache app to be configured")
+	}
+
+	rawConfig, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+
+	if !bytes.Contains(rawConfig, []byte(`"handler":"cache"`)) {
+		t.Fatalf("raw config = %s, want cache handler", string(rawConfig))
+	}
+	if !bytes.Contains(rawConfig, []byte(`"ttl":"2m0s"`)) {
+		t.Fatalf("raw config = %s, want cache ttl", string(rawConfig))
+	}
+
+	if err := caddyv2.Validate(cfg); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+}
+
 func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
 	cfg, summary, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{

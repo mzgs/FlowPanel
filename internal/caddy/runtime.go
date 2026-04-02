@@ -15,6 +15,7 @@ import (
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
 
+	httpcache "github.com/caddyserver/cache-handler"
 	caddyv2 "github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -24,6 +25,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/rewrite"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
+	"github.com/darkweak/souin/configurationtypes"
 	"go.uber.org/zap"
 )
 
@@ -61,6 +63,8 @@ const (
 	runtimeSyncModeStandard runtimeSyncMode = iota
 	runtimeSyncModeHTTPSOnly
 )
+
+const defaultCacheTTL = 120 * time.Second
 
 func NewRuntime(
 	logger *zap.Logger,
@@ -361,6 +365,9 @@ func buildConfig(
 	cfg.AppsRaw = caddyv2.ModuleMap{
 		"http": caddyconfig.JSON(httpApp, nil),
 	}
+	if hasCacheEnabledRecords(records) {
+		cfg.AppsRaw["cache"] = caddyconfig.JSON(cacheAppConfig(), nil)
+	}
 	if _, ok := httpApp.Servers["public"]; ok && mode == runtimeSyncModeHTTPSOnly {
 		cfg.AppsRaw["tls"] = caddyconfig.JSON(httpsOnlyTLSApp(httpApp.HTTPSPort), nil)
 	}
@@ -405,25 +412,27 @@ func routeForRecord(record domain.Record, phpConfig *phpRouteConfig) (caddyhttp.
 }
 
 func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.RawMessage, bool, error) {
+	originHandlers := make([]json.RawMessage, 0, 2)
+
 	switch record.Kind {
 	case domain.KindStaticSite:
-		return []json.RawMessage{
+		originHandlers = append(originHandlers,
 			caddyconfig.JSONModuleObject(fileserver.FileServer{
 				Root: record.Target,
 			}, "handler", "file_server", nil),
-		}, false, nil
+		)
 	case domain.KindPHP:
 		if phpConfig == nil || strings.TrimSpace(phpConfig.fastCGIAddress) == "" {
 			return nil, false, fmt.Errorf("php-fpm is not configured for %q", record.Hostname)
 		}
 
-		return []json.RawMessage{
+		originHandlers = append(originHandlers,
 			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
 				Routes: phpSubrouteRoutes(record.Target, phpConfig.fastCGIAddress),
 			}, "handler", "subroute", nil),
-		}, false, nil
+		)
 	case domain.KindApp:
-		return []json.RawMessage{
+		originHandlers = append(originHandlers,
 			caddyconfig.JSONModuleObject(reverseproxy.Handler{
 				Upstreams: reverseproxy.UpstreamPool{
 					&reverseproxy.Upstream{
@@ -431,7 +440,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 					},
 				},
 			}, "handler", "reverse_proxy", nil),
-		}, false, nil
+		)
 	case domain.KindReverseProxy:
 		targetURL, err := parseUpstreamURL(record)
 		if err != nil {
@@ -453,12 +462,22 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 			}, "protocol", "http", nil)
 		}
 
-		return []json.RawMessage{
+		originHandlers = append(originHandlers,
 			caddyconfig.JSONModuleObject(handler, "handler", "reverse_proxy", nil),
-		}, false, nil
+		)
 	default:
 		return nil, false, fmt.Errorf("unsupported domain kind %q", record.Kind)
 	}
+
+	if !record.CacheEnabled {
+		return originHandlers, false, nil
+	}
+
+	handlers := make([]json.RawMessage, 0, len(originHandlers)+1)
+	handlers = append(handlers, caddyconfig.JSONModuleObject(cacheHandlerConfig(), "handler", "cache", nil))
+	handlers = append(handlers, originHandlers...)
+
+	return handlers, false, nil
 }
 
 func routeForPHPMyAdmin(config phpMyAdminRouteConfig) caddyhttp.Route {
@@ -687,4 +706,34 @@ func isPublicHTTPListenerConflict(err error, address string) bool {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+func hasCacheEnabledRecords(records []domain.Record) bool {
+	for _, record := range records {
+		if record.CacheEnabled {
+			return true
+		}
+	}
+
+	return false
+}
+
+func cacheAppConfig() httpcache.SouinApp {
+	return httpcache.SouinApp{
+		DefaultCache: httpcache.DefaultCache{
+			TTL:       configurationtypes.Duration{Duration: defaultCacheTTL},
+			CacheName: "FlowPanel",
+		},
+	}
+}
+
+func cacheHandlerConfig() httpcache.SouinCaddyMiddleware {
+	return httpcache.SouinCaddyMiddleware{
+		Configuration: httpcache.Configuration{
+			DefaultCache: httpcache.DefaultCache{
+				TTL:       configurationtypes.Duration{Duration: defaultCacheTTL},
+				CacheName: "FlowPanel",
+			},
+		},
+	}
 }
