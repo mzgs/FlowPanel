@@ -20,6 +20,7 @@ import (
 	flowcron "flowpanel/internal/cron"
 	"flowpanel/internal/db"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/events"
 	"flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
@@ -749,6 +750,64 @@ func TestCronRunEndpointExecutesSavedCommand(t *testing.T) {
 	}
 }
 
+func TestEventsEndpointReturnsRecordedMutations(t *testing.T) {
+	router, _, _ := newTestCronRouter(t, false)
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(`{"name":"Nightly backup","schedule":"0 3 * * *","command":"echo backup"}`))
+	createRequest.Header.Set("Content-Type", "application/json")
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, createRequest)
+
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body = %s", createRecorder.Code, http.StatusCreated, createRecorder.Body.String())
+	}
+
+	eventsRecorder := httptest.NewRecorder()
+	router.ServeHTTP(eventsRecorder, httptest.NewRequest(http.MethodGet, "/api/events?limit=10", nil))
+
+	if eventsRecorder.Code != http.StatusOK {
+		t.Fatalf("events status = %d, want %d, body = %s", eventsRecorder.Code, http.StatusOK, eventsRecorder.Body.String())
+	}
+
+	var payload struct {
+		Events []struct {
+			Category      string `json:"category"`
+			Action        string `json:"action"`
+			ResourceType  string `json:"resource_type"`
+			ResourceLabel string `json:"resource_label"`
+			Status        string `json:"status"`
+			Message       string `json:"message"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(eventsRecorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode events response: %v", err)
+	}
+	if len(payload.Events) == 0 {
+		t.Fatal("event count = 0, want at least 1")
+	}
+
+	event := payload.Events[0]
+	if event.Category != "cron" {
+		t.Fatalf("category = %q, want cron", event.Category)
+	}
+	if event.Action != "create" {
+		t.Fatalf("action = %q, want create", event.Action)
+	}
+	if event.ResourceType != "cron_job" {
+		t.Fatalf("resource_type = %q, want cron_job", event.ResourceType)
+	}
+	if event.ResourceLabel != "Nightly backup" {
+		t.Fatalf("resource_label = %q, want Nightly backup", event.ResourceLabel)
+	}
+	if event.Status != "succeeded" {
+		t.Fatalf("status = %q, want succeeded", event.Status)
+	}
+	if !strings.Contains(event.Message, "Created cron job") {
+		t.Fatalf("message = %q, want create message", event.Message)
+	}
+}
+
 func TestCronCreateEndpointValidatesInput(t *testing.T) {
 	router, _, _ := newTestCronRouter(t, false)
 
@@ -1092,6 +1151,10 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	if err := cronStore.Ensure(context.Background()); err != nil {
 		t.Fatalf("ensure cron store: %v", err)
 	}
+	eventStore := events.NewStore(dbConn)
+	if err := eventStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure event store: %v", err)
+	}
 
 	domains := domain.NewService(store)
 	fileManager, err := files.NewService(t.TempDir())
@@ -1118,6 +1181,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		fakePHPManager{},
 		fakePHPMyAdminManager{},
 		fileManager,
+		events.NewService(logger.Named("events"), eventStore),
 	))
 	if err != nil {
 		t.Fatalf("new router: %v", err)
@@ -1165,6 +1229,10 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 	if err := cronStore.Ensure(context.Background()); err != nil {
 		t.Fatalf("ensure cron store: %v", err)
 	}
+	eventStore := events.NewStore(dbConn)
+	if err := eventStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure event store: %v", err)
+	}
 
 	domains := domain.NewService(domainStore)
 	fileManager, err := files.NewService(t.TempDir())
@@ -1196,6 +1264,7 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 		fakePHPManager{},
 		fakePHPMyAdminManager{},
 		fileManager,
+		events.NewService(logger.Named("events"), eventStore),
 	))
 	if err != nil {
 		t.Fatalf("new router: %v", err)

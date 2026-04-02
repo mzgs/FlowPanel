@@ -11,11 +11,13 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"flowpanel/internal/app"
 	flowcron "flowpanel/internal/cron"
 	"flowpanel/internal/domain"
+	eventlog "flowpanel/internal/events"
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/systemstatus"
@@ -50,6 +52,26 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		syncDomainsWithCaddy := func(ctx context.Context) error {
 			return app.Caddy.Sync(ctx, app.Domains.List())
 		}
+		recordEvent := func(ctx context.Context, input eventlog.CreateInput) {
+			if app == nil || app.Events == nil {
+				return
+			}
+			if _, err := app.Events.Record(ctx, input); err != nil {
+				app.Logger.Error("record event failed", zap.Error(err))
+			}
+		}
+		mutationEvent := func(ctx context.Context, category, action, resourceType, resourceID, resourceLabel, status, message string) {
+			recordEvent(ctx, eventlog.CreateInput{
+				Actor:         "panel",
+				Category:      category,
+				Action:        action,
+				ResourceType:  resourceType,
+				ResourceID:    resourceID,
+				ResourceLabel: resourceLabel,
+				Status:        status,
+				Message:       message,
+			})
+		}
 
 		bootstrapHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
@@ -63,6 +85,42 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
+
+		eventsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Events == nil {
+				writeJSON(w, stdhttp.StatusOK, map[string]any{
+					"events": []eventlog.Record{},
+				})
+				return
+			}
+
+			limit := 100
+			if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+				parsedLimit, err := strconv.Atoi(rawLimit)
+				if err != nil {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "limit must be a valid integer",
+					})
+					return
+				}
+				limit = parsedLimit
+			}
+
+			records, err := app.Events.List(r.Context(), limit)
+			if err != nil {
+				app.Logger.Error("list events failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to list events",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"events": records,
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/events", eventsListHandler)
+		r.Method(stdhttp.MethodHead, "/events", eventsListHandler)
 
 		cronListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Cron == nil {
@@ -110,11 +168,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 
 				app.Logger.Error("create cron job failed", zap.Error(err))
+				mutationEvent(r.Context(), "cron", "create", "cron_job", strings.TrimSpace(input.Name), strings.TrimSpace(input.Name), "failed", "Failed to create cron job.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to create cron job",
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "cron", "create", "cron_job", record.ID, record.Name, "succeeded", fmt.Sprintf("Created cron job %q.", record.Name))
 
 			writeJSON(w, stdhttp.StatusCreated, map[string]any{
 				"job": record,
@@ -161,11 +222,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("job_id", jobID),
 					zap.Error(err),
 				)
+				mutationEvent(r.Context(), "cron", "update", "cron_job", jobID, jobID, "failed", "Failed to update cron job.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to update cron job",
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "cron", "update", "cron_job", record.ID, record.Name, "succeeded", fmt.Sprintf("Updated cron job %q.", record.Name))
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"job": record,
@@ -195,11 +259,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("job_id", jobID),
 					zap.Error(err),
 				)
+				mutationEvent(r.Context(), "cron", "run", "cron_job", jobID, jobID, "failed", "Failed to run cron job.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to run cron job",
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "cron", "run", "cron_job", record.ID, record.Name, "succeeded", fmt.Sprintf("Triggered cron job %q.", record.Name))
 
 			writeJSON(w, stdhttp.StatusAccepted, map[string]any{
 				"job": record,
@@ -222,6 +289,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("job_id", jobID),
 					zap.Error(err),
 				)
+				mutationEvent(r.Context(), "cron", "delete", "cron_job", jobID, jobID, "failed", "Failed to delete cron job.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to delete cron job",
 				})
@@ -233,6 +301,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "cron", "delete", "cron_job", jobID, jobID, "succeeded", fmt.Sprintf("Deleted cron job %q.", jobID))
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"ok": true,
@@ -317,6 +387,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 
 				app.Logger.Error("update mariadb root password failed", zap.Error(err))
+				mutationEvent(r.Context(), "database", "update", "mariadb", "root-password", "MariaDB root password", "failed", "Failed to update the MariaDB root password.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to update mariadb root password",
 				})
@@ -331,6 +402,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "database", "update", "mariadb", "root-password", "MariaDB root password", "succeeded", "Updated the MariaDB root password.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"root_password": password,
@@ -349,11 +422,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 			if err := app.MariaDB.Install(r.Context()); err != nil {
 				app.Logger.Error("install mariadb failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "install", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "runtime", "install", "mariadb", "mariadb", "MariaDB", "succeeded", "Installed MariaDB.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"mariadb": app.MariaDB.Status(r.Context()),
@@ -421,12 +497,15 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					return
 				default:
 					app.Logger.Error("create mariadb database failed", zap.Error(err))
+					mutationEvent(r.Context(), "database", "create", "database", strings.TrimSpace(input.Name), strings.TrimSpace(input.Name), "failed", "Failed to create database.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "failed to create database",
 					})
 					return
 				}
 			}
+
+			mutationEvent(r.Context(), "database", "create", "database", record.Name, record.Name, "succeeded", fmt.Sprintf("Created database %q for %q.", record.Name, record.Username))
 
 			writeJSON(w, stdhttp.StatusCreated, map[string]any{
 				"database": record,
@@ -471,12 +550,15 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 						zap.String("database_name", databaseName),
 						zap.Error(err),
 					)
+					mutationEvent(r.Context(), "database", "update", "database", databaseName, databaseName, "failed", "Failed to update database.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "failed to update database",
 					})
 					return
 				}
 			}
+
+			mutationEvent(r.Context(), "database", "update", "database", record.Name, record.Name, "succeeded", fmt.Sprintf("Updated database %q.", record.Name))
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"database": record,
@@ -516,12 +598,15 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 						zap.String("database_name", databaseName),
 						zap.Error(err),
 					)
+					mutationEvent(r.Context(), "database", "delete", "database", databaseName, databaseName, "failed", "Failed to delete database.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "failed to delete database",
 					})
 					return
 				}
 			}
+
+			mutationEvent(r.Context(), "database", "delete", "database", databaseName, databaseName, "succeeded", fmt.Sprintf("Deleted database %q.", databaseName))
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"ok": true,
@@ -552,6 +637,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 			if err := app.PHP.Install(r.Context()); err != nil {
 				app.Logger.Error("install php failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "install", "php", "php", "PHP", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
@@ -562,12 +648,15 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			if status.Ready {
 				if err := syncDomainsWithCaddy(r.Context()); err != nil {
 					app.Logger.Error("sync domains after php install failed", zap.Error(err))
+					mutationEvent(r.Context(), "runtime", "install", "php", "php", "PHP", "failed", "PHP installed but failed to republish domains.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "php installed but failed to republish domains",
 					})
 					return
 				}
 			}
+
+			mutationEvent(r.Context(), "runtime", "install", "php", "php", "PHP", "succeeded", "Installed PHP.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"php": status,
@@ -584,6 +673,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 			if err := app.PHP.Start(r.Context()); err != nil {
 				app.Logger.Error("start php failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "start", "php", "php", "PHP", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
@@ -594,12 +684,15 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			if status.Ready {
 				if err := syncDomainsWithCaddy(r.Context()); err != nil {
 					app.Logger.Error("sync domains after php start failed", zap.Error(err))
+					mutationEvent(r.Context(), "runtime", "start", "php", "php", "PHP", "failed", "PHP started but failed to republish domains.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "php started but failed to republish domains",
 					})
 					return
 				}
 			}
+
+			mutationEvent(r.Context(), "runtime", "start", "php", "php", "PHP", "succeeded", "Started PHP.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"php": status,
@@ -634,6 +727,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 			if err := app.PHPMyAdmin.Install(r.Context()); err != nil {
 				app.Logger.Error("install phpmyadmin failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
@@ -646,6 +740,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				if phpStatus.Ready {
 					if err := syncDomainsWithCaddy(r.Context()); err != nil {
 						app.Logger.Error("sync domains after phpmyadmin install failed", zap.Error(err))
+						mutationEvent(r.Context(), "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "failed", "phpMyAdmin installed but failed to republish routes.")
 						writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 							"error": "phpmyadmin installed but failed to republish routes",
 						})
@@ -653,6 +748,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					}
 				}
 			}
+
+			mutationEvent(r.Context(), "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "succeeded", "Installed phpMyAdmin.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"phpmyadmin": status,
@@ -719,6 +816,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					return
 				default:
 					app.Logger.Error("create domain failed", zap.Error(err))
+					mutationEvent(r.Context(), "domains", "create", "domain", strings.TrimSpace(input.Hostname), strings.TrimSpace(input.Hostname), "failed", "Failed to create domain.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "failed to create domain",
 					})
@@ -741,11 +839,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("hostname", record.Hostname),
 					zap.Error(err),
 				)
+				mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "failed", "Created domain record but failed to publish it.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to publish domain",
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Created domain %q.", record.Hostname))
 
 			writeJSON(w, stdhttp.StatusCreated, map[string]any{
 				"domain": record,
@@ -810,6 +911,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 						zap.String("domain_id", domainID),
 						zap.Error(err),
 					)
+					mutationEvent(r.Context(), "domains", "update", "domain", domainID, domainID, "failed", "Failed to update domain.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "failed to update domain",
 					})
@@ -829,11 +931,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("hostname", record.Hostname),
 					zap.Error(err),
 				)
+				mutationEvent(r.Context(), "domains", "update", "domain", record.ID, record.Hostname, "failed", "Updated domain record but failed to publish it.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to update domain",
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "domains", "update", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Updated domain %q.", record.Hostname))
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"domain": record,
@@ -848,6 +953,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("domain_id", domainID),
 					zap.Error(err),
 				)
+				mutationEvent(r.Context(), "domains", "delete", "domain", domainID, domainID, "failed", "Failed to delete domain.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to delete domain",
 				})
@@ -872,11 +978,14 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("hostname", record.Hostname),
 					zap.Error(err),
 				)
+				mutationEvent(r.Context(), "domains", "delete", "domain", record.ID, record.Hostname, "failed", "Deleted domain record but failed to republish routes.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to delete domain",
 				})
 				return
 			}
+
+			mutationEvent(r.Context(), "domains", "delete", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Deleted domain %q.", record.Hostname))
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"domain": record,
@@ -998,7 +1107,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.Files.Delete(r.URL.Query().Get("path")); err != nil {
+			targetPath := strings.TrimSpace(r.URL.Query().Get("path"))
+			if err := app.Files.Delete(targetPath); err != nil {
 				writeFileError(w, err)
 				return
 			}

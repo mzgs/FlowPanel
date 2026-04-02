@@ -17,6 +17,7 @@ import (
 	flowcron "flowpanel/internal/cron"
 	"flowpanel/internal/db"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/events"
 	"flowpanel/internal/files"
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/logging"
@@ -84,6 +85,10 @@ func run() error {
 	if err := cronStore.Ensure(startupCtx); err != nil {
 		return fmt.Errorf("ensure cron storage: %w", err)
 	}
+	eventsStore := events.NewStore(dbConn)
+	if err := eventsStore.Ensure(startupCtx); err != nil {
+		return fmt.Errorf("ensure event storage: %w", err)
+	}
 
 	domainService := domain.NewService(domainStore)
 	if err := domainService.Load(startupCtx); err != nil {
@@ -98,6 +103,7 @@ func run() error {
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
+	eventService := events.NewService(logger.Named("events"), eventsStore)
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
 		cfg.PublicHTTPAddr,
@@ -123,6 +129,7 @@ func run() error {
 		phpManager,
 		phpMyAdminManager,
 		fileManager,
+		eventService,
 	)
 
 	router, err := httpx.NewRouter(appContainer)

@@ -13,6 +13,7 @@ import {
   ChevronRight,
   FolderOpen,
   LayoutDashboard,
+  List,
   Menu,
   Search,
   Settings,
@@ -40,6 +41,7 @@ import {
 } from "@/components/ui/sidebar";
 import { CronPage } from "@/pages/cron-page";
 import { DomainDetailPage } from "@/pages/domain-detail-page";
+import { ActivityPage } from "@/pages/activity-page";
 import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
@@ -49,6 +51,7 @@ import { SshPage } from "@/pages/ssh-page";
 
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
+  { to: "/activity", label: "Activity", icon: List },
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
   { to: "/files", label: "Files", icon: FolderOpen },
@@ -227,6 +230,12 @@ const domainsRoute = createRoute({
   component: DomainsPage,
 });
 
+const activityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/activity",
+  component: ActivityPage,
+});
+
 const domainDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/domains/$domainId",
@@ -277,6 +286,7 @@ const sshRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  activityRoute,
   domainsRoute,
   domainDetailRoute,
   databaseRoute,

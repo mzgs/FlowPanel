@@ -7,6 +7,7 @@ import (
 	"flowpanel/internal/config"
 	"flowpanel/internal/cron"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/events"
 	"flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
@@ -28,6 +29,7 @@ type App struct {
 	PHP        phpenv.Manager
 	PHPMyAdmin phpmyadmin.Manager
 	Files      *files.Service
+	Events     *events.Service
 }
 
 func New(
@@ -42,6 +44,7 @@ func New(
 	phpManager phpenv.Manager,
 	phpMyAdminManager phpmyadmin.Manager,
 	fileManager *files.Service,
+	eventService *events.Service,
 ) *App {
 	return &App{
 		Config:     cfg,
@@ -55,5 +58,6 @@ func New(
 		PHP:        phpManager,
 		PHPMyAdmin: phpMyAdminManager,
 		Files:      fileManager,
+		Events:     eventService,
 	}
 }
