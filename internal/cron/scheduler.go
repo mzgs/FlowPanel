@@ -27,12 +27,29 @@ var (
 	)
 )
 
+const (
+	maxExecutionLogsPerJob = 10
+	maxExecutionOutputSize = 8000
+)
+
 type Record struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Schedule  string    `json:"schedule"`
-	Command   string    `json:"command"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Schedule   string         `json:"schedule"`
+	Command    string         `json:"command"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Executions []ExecutionLog `json:"executions"`
+}
+
+type ExecutionLog struct {
+	ID         string    `json:"id"`
+	JobID      string    `json:"job_id"`
+	Status     string    `json:"status"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+	DurationMS int64     `json:"duration_ms"`
+	Output     string    `json:"output"`
+	Error      string    `json:"error"`
 }
 
 type CreateInput struct {
@@ -93,10 +110,19 @@ func (s *Scheduler) Load(ctx context.Context) error {
 		return err
 	}
 
+	executionLogs, err := s.store.ListExecutionLogs(ctx, maxExecutionLogsPerJob)
+	if err != nil {
+		return err
+	}
+
+	for index := range records {
+		records[index].Executions = cloneExecutionLogs(executionLogs[records[index].ID])
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.jobs = append([]Record(nil), records...)
+	s.jobs = cloneRecords(records)
 	if s.jobs == nil {
 		s.jobs = make([]Record, 0)
 	}
@@ -113,7 +139,7 @@ func (s *Scheduler) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	jobs := append([]Record(nil), s.jobs...)
+	jobs := cloneRecords(s.jobs)
 	if jobs == nil {
 		jobs = make([]Record, 0)
 	}
@@ -200,11 +226,12 @@ func (s *Scheduler) Create(ctx context.Context, input CreateInput) (Record, erro
 	}
 
 	record := Record{
-		ID:        fmt.Sprintf("cron-%d", time.Now().UnixNano()),
-		Name:      name,
-		Schedule:  schedule,
-		Command:   command,
-		CreatedAt: time.Now().UTC(),
+		ID:         fmt.Sprintf("cron-%d", time.Now().UnixNano()),
+		Name:       name,
+		Schedule:   schedule,
+		Command:    command,
+		CreatedAt:  time.Now().UTC(),
+		Executions: make([]ExecutionLog, 0),
 	}
 
 	if s.store != nil {
@@ -240,7 +267,7 @@ func (s *Scheduler) Create(ctx context.Context, input CreateInput) (Record, erro
 		return Record{}, fmt.Errorf("register cron job: %w", registerErr)
 	}
 
-	return record, nil
+	return cloneRecord(record), nil
 }
 
 func (s *Scheduler) Update(ctx context.Context, id string, input UpdateInput) (Record, error) {
@@ -303,7 +330,7 @@ func (s *Scheduler) Update(ctx context.Context, id string, input UpdateInput) (R
 		s.entries[id] = newEntryID
 	}
 
-	return updated, nil
+	return cloneRecord(updated), nil
 }
 
 func (s *Scheduler) Delete(ctx context.Context, id string) (Record, bool, error) {
@@ -420,8 +447,37 @@ func (s *Scheduler) executeJob(job Record) {
 	commandName, commandArgs := shellCommand(job.Command)
 	cmd := exec.Command(commandName, commandArgs...)
 	output, err := cmd.CombinedOutput()
+	finishedAt := time.Now()
 	duration := time.Since(startedAt)
 	trimmedOutput := strings.TrimSpace(string(output))
+	execution := ExecutionLog{
+		ID:         fmt.Sprintf("cron-run-%d", finishedAt.UnixNano()),
+		JobID:      job.ID,
+		StartedAt:  startedAt.UTC(),
+		FinishedAt: finishedAt.UTC(),
+		DurationMS: duration.Milliseconds(),
+		Output:     truncate(trimmedOutput, maxExecutionOutputSize),
+	}
+
+	if err != nil {
+		execution.Status = "failed"
+		execution.Error = err.Error()
+	} else {
+		execution.Status = "success"
+	}
+
+	if s.store != nil {
+		if storeErr := s.store.InsertExecutionLog(context.Background(), execution); storeErr != nil {
+			s.logger.Error("persist cron execution log failed",
+				zap.String("job_id", job.ID),
+				zap.Error(storeErr),
+			)
+		}
+	}
+
+	s.mu.Lock()
+	s.prependExecutionLocked(job.ID, execution)
+	s.mu.Unlock()
 
 	if err != nil {
 		fields := []zap.Field{
@@ -465,6 +521,46 @@ func (s *Scheduler) removeRecordLocked(id string) {
 	}
 
 	s.jobs = append(s.jobs[:index], s.jobs[index+1:]...)
+}
+
+func (s *Scheduler) prependExecutionLocked(id string, execution ExecutionLog) {
+	index, record, ok := s.findJobLocked(id)
+	if !ok {
+		return
+	}
+
+	record.Executions = append([]ExecutionLog{execution}, record.Executions...)
+	if len(record.Executions) > maxExecutionLogsPerJob {
+		record.Executions = record.Executions[:maxExecutionLogsPerJob]
+	}
+
+	s.jobs[index] = record
+}
+
+func cloneRecords(records []Record) []Record {
+	if len(records) == 0 {
+		return []Record{}
+	}
+
+	cloned := make([]Record, len(records))
+	for index, record := range records {
+		cloned[index] = cloneRecord(record)
+	}
+
+	return cloned
+}
+
+func cloneRecord(record Record) Record {
+	record.Executions = cloneExecutionLogs(record.Executions)
+	return record
+}
+
+func cloneExecutionLogs(executions []ExecutionLog) []ExecutionLog {
+	if len(executions) == 0 {
+		return []ExecutionLog{}
+	}
+
+	return append([]ExecutionLog(nil), executions...)
 }
 
 func shellCommand(command string) (string, []string) {

@@ -2,7 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   createCronJob,
   deleteCronJob,
+  type CronExecutionLog,
   fetchCronJobs,
+  type CronPayload,
   runCronJob,
   type CronApiError,
   type CronJob,
@@ -13,7 +15,9 @@ import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Table,
   TableBody,
@@ -24,6 +28,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
+import { sleep } from "@/lib/utils";
 import { toast } from "sonner";
 
 type FormState = {
@@ -74,7 +79,47 @@ function getSchedulerBadge(enabled: boolean, started: boolean) {
 }
 
 function normalizeJobs(jobs: CronJob[] | null | undefined) {
-  return Array.isArray(jobs) ? jobs : [];
+  if (!Array.isArray(jobs)) {
+    return [];
+  }
+
+  return jobs.map((job) => ({
+    ...job,
+    executions: Array.isArray(job.executions) ? job.executions : [],
+  }));
+}
+
+function formatDuration(durationMs: number) {
+  if (durationMs < 1000) {
+    return `${durationMs} ms`;
+  }
+
+  const seconds = durationMs / 1000;
+  if (seconds < 60) {
+    return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1)} s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  if (remainingSeconds === 0) {
+    return `${minutes} min`;
+  }
+
+  return `${minutes} min ${remainingSeconds}s`;
+}
+
+function getExecutionBadge(execution: CronExecutionLog) {
+  if (execution.status === "failed") {
+    return {
+      label: "Failed",
+      variant: "destructive" as const,
+    };
+  }
+
+  return {
+    label: "Succeeded",
+    variant: "secondary" as const,
+  };
 }
 
 export function CronPage() {
@@ -90,14 +135,52 @@ export function CronPage() {
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+  const [logsJobId, setLogsJobId] = useState<string | null>(null);
   const schedulerBadge = getSchedulerBadge(enabled, started);
   const isEditing = editingJobId !== null;
+  const logsJob = jobs.find((job) => job.id === logsJobId) ?? null;
 
   function resetForm() {
     setForm(initialForm);
     setErrors({});
     setFormError(null);
     setEditingJobId(null);
+  }
+
+  function syncPayload(payload: CronPayload, preferredJobId?: string | null) {
+    const nextJobs = normalizeJobs(payload.jobs);
+
+    setJobs(nextJobs);
+    setEnabled(payload.enabled);
+    setStarted(payload.started);
+    setLogsJobId((currentLogsJobId) => {
+      const desiredJobId = preferredJobId ?? currentLogsJobId;
+      if (desiredJobId && nextJobs.some((job) => job.id === desiredJobId)) {
+        return desiredJobId;
+      }
+
+      return currentLogsJobId === null ? null : nextJobs[0]?.id ?? null;
+    });
+  }
+
+  async function refreshExecutions(jobId: string, previousExecutionCount: number) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await sleep(400);
+
+      try {
+        const payload = await fetchCronJobs();
+        const nextJobs = normalizeJobs(payload.jobs);
+
+        syncPayload(payload, jobId);
+
+        const nextJob = nextJobs.find((currentJob) => currentJob.id === jobId);
+        if ((nextJob?.executions.length ?? 0) > previousExecutionCount) {
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
   }
 
   useEffect(() => {
@@ -110,9 +193,7 @@ export function CronPage() {
           return;
         }
 
-        setJobs(normalizeJobs(payload.jobs));
-        setEnabled(payload.enabled);
-        setStarted(payload.started);
+        syncPayload(payload);
         setLoadError(null);
       } catch (error) {
         if (!active) {
@@ -139,9 +220,7 @@ export function CronPage() {
 
     try {
       const payload = await fetchCronJobs();
-      setJobs(normalizeJobs(payload.jobs));
-      setEnabled(payload.enabled);
-      setStarted(payload.started);
+      syncPayload(payload);
       setLoadError(null);
     } catch (error) {
       setLoadError(getErrorMessage(error, "Failed to load cron jobs."));
@@ -219,6 +298,7 @@ export function CronPage() {
     try {
       await runCronJob(job.id);
       toast.success(`Started "${job.name}".`);
+      void refreshExecutions(job.id, job.executions.length);
     } catch (error) {
       setLoadError(getErrorMessage(error, `Failed to run ${job.name}.`));
       toast.error(`Failed to start "${job.name}".`);
@@ -237,7 +317,11 @@ export function CronPage() {
 
     try {
       await deleteCronJob(job.id);
-      setJobs((currentJobs) => currentJobs.filter((currentJob) => currentJob.id !== job.id));
+      const nextJobs = jobs.filter((currentJob) => currentJob.id !== job.id);
+      setJobs(nextJobs);
+      if (logsJobId === job.id) {
+        setLogsJobId(null);
+      }
       if (editingJobId === job.id) {
         resetForm();
       }
@@ -393,13 +477,20 @@ export function CronPage() {
                     <TableHead>Schedule</TableHead>
                     <TableHead>Command</TableHead>
                     <TableHead>Added</TableHead>
-                    <TableHead className="w-[152px] text-right">Actions</TableHead>
+                    <TableHead className="w-[196px] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {jobs.map((job) => (
-                    <TableRow key={job.id}>
-                      <TableCell className="font-medium">{job.name}</TableCell>
+                    <TableRow key={job.id} className="align-top">
+                      <TableCell className="font-medium">
+                        <div className="space-y-1">
+                          <div>{job.name}</div>
+                          <div className="text-xs font-normal text-muted-foreground">
+                            {job.executions.length} {job.executions.length === 1 ? "execution" : "executions"}
+                          </div>
+                        </div>
+                      </TableCell>
                       <TableCell className="font-mono text-xs">{job.schedule}</TableCell>
                       <TableCell className="max-w-[28rem] whitespace-normal break-all font-mono text-xs text-muted-foreground">
                         {job.command}
@@ -436,6 +527,16 @@ export function CronPage() {
                             type="button"
                             variant="ghost"
                             size="icon"
+                            onClick={() => setLogsJobId(job.id)}
+                            aria-label={`Show logs for ${job.name}`}
+                            title="Logs"
+                          >
+                            <TerminalSquare className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
                             onClick={() => void handleDelete(job)}
                             disabled={deletingJobId === job.id}
                             aria-label={`Delete ${job.name}`}
@@ -457,6 +558,76 @@ export function CronPage() {
           </section>
         </div>
       </div>
+
+      <Dialog open={logsJob !== null} onOpenChange={(open) => (!open ? setLogsJobId(null) : null)}>
+        <DialogContent className="max-w-4xl p-0 sm:max-w-4xl">
+          <DialogHeader className="border-b px-6 py-5">
+            <DialogTitle>{logsJob ? `${logsJob.name} logs` : "Execution logs"}</DialogTitle>
+            <DialogDescription>
+              {logsJob
+                ? `${logsJob.schedule} - ${logsJob.command}`
+                : "Recent cron job execution output."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="px-6 pb-6 pt-5">
+            {logsJob ? (
+              logsJob.executions.length === 0 ? (
+                <div className="rounded-md border border-dashed px-4 py-10 text-sm text-muted-foreground">
+                  No executions recorded for this job yet.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {logsJob.executions.map((execution) => {
+                    const badge = getExecutionBadge(execution);
+
+                    return (
+                      <article key={execution.id} className="rounded-md border">
+                        <div className="flex flex-col gap-3 px-4 py-4">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={badge.variant}>{badge.label}</Badge>
+                              <span className="text-sm text-muted-foreground">
+                                {formatDateTime(execution.started_at)}
+                              </span>
+                            </div>
+                            <span className="text-sm text-muted-foreground">
+                              Duration {formatDuration(execution.duration_ms)}
+                            </span>
+                          </div>
+
+                          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                            <div>
+                              <span className="font-medium text-foreground">Started</span>
+                              <div>{formatDateTime(execution.started_at)}</div>
+                            </div>
+                            <div>
+                              <span className="font-medium text-foreground">Finished</span>
+                              <div>{formatDateTime(execution.finished_at)}</div>
+                            </div>
+                          </div>
+
+                          {execution.error ? <p className="text-sm text-destructive">{execution.error}</p> : null}
+
+                          {execution.output ? (
+                            <ScrollArea className="max-h-64 rounded-md border bg-muted/30">
+                              <pre className="p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words">
+                                {execution.output}
+                              </pre>
+                            </ScrollArea>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">No output captured.</p>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

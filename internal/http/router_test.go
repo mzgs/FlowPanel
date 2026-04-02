@@ -641,10 +641,10 @@ func TestCronListCreateAndDeleteEndpoints(t *testing.T) {
 }
 
 func TestCronRunEndpointExecutesSavedCommand(t *testing.T) {
-	router, _, _ := newTestCronRouter(t, false)
+	router, _, store := newTestCronRouter(t, false)
 
 	outputPath := filepath.Join(t.TempDir(), "cron-run.txt")
-	command := "printf manual-run > " + outputPath
+	command := "printf manual-run | tee " + outputPath
 	requestBody := `{"name":"Manual trigger","schedule":"@daily","command":"` + command + `"}`
 
 	createRequest := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(requestBody))
@@ -684,6 +684,65 @@ func TestCronRunEndpointExecutesSavedCommand(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("manual run did not produce output at %s", outputPath)
+		}
+
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		logs, err := store.ListExecutionLogs(context.Background(), 10)
+		if err != nil {
+			t.Fatalf("list execution logs: %v", err)
+		}
+
+		executions := logs[createPayload.Job.ID]
+		if len(executions) > 0 {
+			if executions[0].Status != "success" {
+				t.Fatalf("execution status = %q, want success", executions[0].Status)
+			}
+			if executions[0].Output != "manual-run" {
+				t.Fatalf("execution output = %q, want manual-run", executions[0].Output)
+			}
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatal("manual run execution log was not persisted")
+		}
+
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		listRecorder := httptest.NewRecorder()
+		router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/cron", nil))
+
+		if listRecorder.Code != http.StatusOK {
+			t.Fatalf("list status = %d, want %d", listRecorder.Code, http.StatusOK)
+		}
+
+		var listPayload struct {
+			Jobs []flowcron.Record `json:"jobs"`
+		}
+		if err := json.Unmarshal(listRecorder.Body.Bytes(), &listPayload); err != nil {
+			t.Fatalf("decode cron list: %v", err)
+		}
+
+		if len(listPayload.Jobs) == 1 && len(listPayload.Jobs[0].Executions) > 0 {
+			execution := listPayload.Jobs[0].Executions[0]
+			if execution.Status != "success" {
+				t.Fatalf("listed execution status = %q, want success", execution.Status)
+			}
+			if execution.Output != "manual-run" {
+				t.Fatalf("listed execution output = %q, want manual-run", execution.Output)
+			}
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatal("manual run execution log was not returned by the cron API")
 		}
 
 		time.Sleep(25 * time.Millisecond)

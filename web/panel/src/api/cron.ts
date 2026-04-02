@@ -1,9 +1,21 @@
+export type CronExecutionLog = {
+  id: string;
+  job_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  output: string;
+  error: string;
+};
+
 export type CronJob = {
   id: string;
   name: string;
   schedule: string;
   command: string;
   created_at: string;
+  executions: CronExecutionLog[];
 };
 
 export type CronPayload = {
