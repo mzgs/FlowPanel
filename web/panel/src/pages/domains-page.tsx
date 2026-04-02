@@ -1,6 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { LoaderCircle, Pencil, Plus, Trash2 } from "@/components/icons/tabler-icons";
+import {
+  FolderOpen,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  Trash2,
+} from "@/components/icons/tabler-icons";
 import {
   createDomain,
   deleteDomain,
@@ -434,9 +440,8 @@ export function DomainsPage() {
                     <TableHead>Domain</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Cache</TableHead>
-                    <TableHead>Target</TableHead>
                     <TableHead>Created</TableHead>
-                    <TableHead className="w-[96px] text-right">Actions</TableHead>
+                    <TableHead className="w-[132px] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -471,25 +476,28 @@ export function DomainsPage() {
                             {domain.cache_enabled ? "Enabled" : "Off"}
                           </span>
                         </TableCell>
-                        <TableCell className="font-mono text-[12px] text-[var(--app-text-muted)]">
-                          {filesPath !== null ? (
-                            <Link
-                              to="/files"
-                              search={filesPath ? { path: filesPath } : {}}
-                              className="transition-colors hover:text-primary hover:underline"
-                              title="Open in Files"
-                            >
-                              {domain.target}
-                            </Link>
-                          ) : (
-                            domain.target
-                          )}
-                        </TableCell>
                         <TableCell className="text-[12px] text-[var(--app-text-muted)]">
                           {formatDateTime(domain.created_at)}
                         </TableCell>
-                        <TableCell className="w-[96px]">
+                        <TableCell className="w-[132px]">
                           <div className="flex items-center justify-end gap-2">
+                            {filesPath !== null ? (
+                              <Button
+                                asChild
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Open site folder for ${domain.hostname}`}
+                                title="Open site folder"
+                                className="size-8"
+                              >
+                                <Link
+                                  to="/files"
+                                  search={filesPath ? { path: filesPath } : {}}
+                                >
+                                  <FolderOpen className="size-6" />
+                                </Link>
+                              </Button>
+                            ) : null}
                             <Button
                               type="button"
                               variant="ghost"
