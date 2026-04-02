@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { Pencil, Plus, Trash2 } from "@/components/icons/tabler-icons";
+import { LoaderCircle, Pencil, Plus, Trash2 } from "@/components/icons/tabler-icons";
 import {
   createDomain,
   deleteDomain,
@@ -436,7 +436,7 @@ export function DomainsPage() {
                     <TableHead>Cache</TableHead>
                     <TableHead>Target</TableHead>
                     <TableHead>Created</TableHead>
-                    <TableHead className="w-[168px] text-right">Actions</TableHead>
+                    <TableHead className="w-[96px] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -488,30 +488,37 @@ export function DomainsPage() {
                         <TableCell className="text-[12px] text-[var(--app-text-muted)]">
                           {formatDateTime(domain.created_at)}
                         </TableCell>
-                        <TableCell className="w-[168px]">
+                        <TableCell className="w-[96px]">
                           <div className="flex items-center justify-end gap-2">
                             <Button
                               type="button"
                               variant="ghost"
-                              size="sm"
+                              size="icon"
                               onClick={() => openEditForm(domain)}
                               disabled={deletingDomainId !== null}
+                              aria-label={`Edit ${domain.hostname}`}
+                              title="Edit"
+                              className="size-8"
                             >
-                              <Pencil className="h-4 w-4" />
-                              Edit
+                              <Pencil className="size-6" />
                             </Button>
                             <Button
                               type="button"
                               variant="ghost"
-                              size="sm"
+                              size="icon"
                               onClick={() => {
                                 void handleDelete(domain);
                               }}
                               disabled={deletingDomainId !== null}
-                              className="text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
+                              className="size-8 text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
+                              aria-label={`Delete ${domain.hostname}`}
+                              title="Delete"
                             >
-                              <Trash2 className="h-4 w-4" />
-                              {deletingDomainId === domain.id ? "Deleting..." : "Delete"}
+                              {deletingDomainId === domain.id ? (
+                                <LoaderCircle className="size-6 animate-spin" />
+                              ) : (
+                                <Trash2 className="size-6" />
+                              )}
                             </Button>
                           </div>
                         </TableCell>
