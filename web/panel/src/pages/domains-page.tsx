@@ -8,12 +8,14 @@ import {
   LoaderCircle,
   Pencil,
   Plus,
+  RotateCcw,
   Trash2,
 } from "@/components/icons/tabler-icons";
 import {
   createBackup,
   fetchBackups,
   getBackupDownloadUrl,
+  restoreBackup,
   type BackupRecord,
 } from "@/api/backups";
 import {
@@ -231,6 +233,7 @@ export function DomainsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null);
   const [creatingBackupDomainId, setCreatingBackupDomainId] = useState<string | null>(null);
+  const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
   const [createdBackupDomainId, setCreatedBackupDomainId] = useState<string | null>(null);
   const [downloadingDomainId, setDownloadingDomainId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -509,6 +512,31 @@ export function DomainsPage() {
     }
   }
 
+  async function handleRestoreBackup(name: string) {
+    const confirmed = window.confirm(
+      `Restore backup "${name}"? This overwrites the site files stored in that archive.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setRestoringBackupName(name);
+
+    try {
+      const result = await restoreBackup(name);
+      const restoredCount = result.restored_sites?.length ?? 0;
+      toast.success(
+        restoredCount > 0
+          ? `Restored ${restoredCount === 1 ? "1 site" : `${restoredCount} sites`} from ${name}.`
+          : `Restored backup ${name}.`,
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to restore ${name}.`));
+    } finally {
+      setRestoringBackupName(null);
+    }
+  }
+
   return (
     <>
       <Dialog
@@ -560,18 +588,37 @@ export function DomainsPage() {
                         {formatBytes(backup.size)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          asChild
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Download ${backup.name}`}
-                          title={`Download ${backup.name}`}
-                        >
-                          <a href={getBackupDownloadUrl(backup.name)}>
-                            <Download className="size-6" stroke={domainActionIconStroke} />
-                          </a>
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              void handleRestoreBackup(backup.name);
+                            }}
+                            disabled={restoringBackupName !== null}
+                            aria-label={`Restore ${backup.name}`}
+                            title={`Restore ${backup.name}`}
+                          >
+                            {restoringBackupName === backup.name ? (
+                              <LoaderCircle className="size-6 animate-spin" stroke={domainActionIconStroke} />
+                            ) : (
+                              <RotateCcw className="size-6" stroke={domainActionIconStroke} />
+                            )}
+                          </Button>
+                          <Button
+                            asChild
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Download ${backup.name}`}
+                            title={`Download ${backup.name}`}
+                          >
+                            <a href={getBackupDownloadUrl(backup.name)}>
+                              <Download className="size-6" stroke={domainActionIconStroke} />
+                            </a>
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

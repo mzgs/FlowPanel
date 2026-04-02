@@ -418,6 +418,131 @@ func TestCreateRequiresAtLeastOneSelection(t *testing.T) {
 	}
 }
 
+func TestRestoreAppliesPanelDataSitesAndDatabases(t *testing.T) {
+	t.Helper()
+
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	sitesBasePath := filepath.Join(t.TempDir(), "sites")
+	dbPath := filepath.Join(dataPath, "flowpanel.db")
+	dbConn := openTestDB(t, dbPath)
+
+	if _, err := dbConn.ExecContext(context.Background(), `CREATE TABLE notes (value TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create notes table: %v", err)
+	}
+	if _, err := dbConn.ExecContext(context.Background(), `INSERT INTO notes (value) VALUES ('alpha')`); err != nil {
+		t.Fatalf("insert note: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataPath, "runtime.txt"), []byte("original"), 0o644); err != nil {
+		t.Fatalf("write runtime file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataPath, "mariadb-root-password"), []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write password file: %v", err)
+	}
+
+	siteRoot := filepath.Join(sitesBasePath, "example.com")
+	if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+		t.Fatalf("create site root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "index.html"), []byte("site-original"), 0o644); err != nil {
+		t.Fatalf("write site file: %v", err)
+	}
+
+	databaseSource := fakeDatabaseSource{
+		records: []mariadb.DatabaseRecord{{Name: "appdb"}},
+		dumps: map[string][]byte{
+			"appdb": []byte("CREATE DATABASE `appdb`;\nUSE `appdb`;\nCREATE TABLE test (id INT);\n"),
+		},
+		restored: make(map[string][]byte),
+	}
+	service := NewService(
+		zap.NewNop(),
+		dataPath,
+		backupPath,
+		dbPath,
+		dbConn,
+		fakeDomainSource{
+			basePath: sitesBasePath,
+			records: []domain.Record{
+				{Hostname: "example.com", Kind: domain.KindStaticSite, Target: siteRoot},
+			},
+		},
+		databaseSource,
+	)
+
+	record, err := service.Create(context.Background(), CreateInput{
+		IncludePanelData: true,
+		IncludeSites:     true,
+		IncludeDatabases: true,
+	})
+	if err != nil {
+		t.Fatalf("create backup: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dataPath, "runtime.txt"), []byte("mutated"), 0o644); err != nil {
+		t.Fatalf("mutate runtime file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataPath, "extra.txt"), []byte("extra"), 0o644); err != nil {
+		t.Fatalf("write extra runtime file: %v", err)
+	}
+	if _, err := dbConn.ExecContext(context.Background(), `DELETE FROM notes`); err != nil {
+		t.Fatalf("clear notes: %v", err)
+	}
+	if _, err := dbConn.ExecContext(context.Background(), `INSERT INTO notes (value) VALUES ('beta')`); err != nil {
+		t.Fatalf("insert mutated note: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "index.html"), []byte("site-mutated"), 0o644); err != nil {
+		t.Fatalf("mutate site file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "extra.txt"), []byte("extra-site"), 0o644); err != nil {
+		t.Fatalf("write extra site file: %v", err)
+	}
+
+	result, err := service.Restore(context.Background(), record.Name)
+	if err != nil {
+		t.Fatalf("restore backup: %v", err)
+	}
+
+	if !result.RestoredPanelFiles {
+		t.Fatal("expected panel files to be restored")
+	}
+	if !result.RestoredPanelDatabase {
+		t.Fatal("expected panel database to be restored")
+	}
+	if !slices.Equal(result.RestoredSites, []string{"example.com"}) {
+		t.Fatalf("restored sites = %v, want [example.com]", result.RestoredSites)
+	}
+	if !slices.Equal(result.RestoredDatabases, []string{"appdb"}) {
+		t.Fatalf("restored databases = %v, want [appdb]", result.RestoredDatabases)
+	}
+
+	if got := string(mustReadFile(t, filepath.Join(dataPath, "runtime.txt"))); got != "original" {
+		t.Fatalf("runtime file = %q, want original", got)
+	}
+	if _, err := os.Stat(filepath.Join(dataPath, "extra.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("extra runtime file stat error = %v, want not exists", err)
+	}
+
+	var note string
+	if err := dbConn.QueryRowContext(context.Background(), `SELECT value FROM notes LIMIT 1`).Scan(&note); err != nil {
+		t.Fatalf("query restored notes: %v", err)
+	}
+	if note != "alpha" {
+		t.Fatalf("restored note = %q, want alpha", note)
+	}
+
+	if got := string(mustReadFile(t, filepath.Join(siteRoot, "index.html"))); got != "site-original" {
+		t.Fatalf("site file = %q, want site-original", got)
+	}
+	if _, err := os.Stat(filepath.Join(siteRoot, "extra.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("extra site file stat error = %v, want not exists", err)
+	}
+
+	if got := string(databaseSource.restored["appdb"]); got != "CREATE DATABASE `appdb`;\nUSE `appdb`;\nCREATE TABLE test (id INT);\n" {
+		t.Fatalf("restored database dump = %q, want original dump", got)
+	}
+}
+
 func openTestDB(t *testing.T, dbPath string) *sql.DB {
 	t.Helper()
 
@@ -472,17 +597,34 @@ func readArchiveEntries(t *testing.T, archivePath string) map[string][]byte {
 	return entries
 }
 
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file %q: %v", path, err)
+	}
+
+	return content
+}
+
 type fakeDomainSource struct {
-	records []domain.Record
+	basePath string
+	records  []domain.Record
 }
 
 func (f fakeDomainSource) List() []domain.Record {
 	return append([]domain.Record(nil), f.records...)
 }
 
+func (f fakeDomainSource) BasePath() string {
+	return f.basePath
+}
+
 type fakeDatabaseSource struct {
-	records []mariadb.DatabaseRecord
-	dumps   map[string][]byte
+	records  []mariadb.DatabaseRecord
+	dumps    map[string][]byte
+	restored map[string][]byte
 }
 
 func (f fakeDatabaseSource) ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error) {
@@ -491,4 +633,12 @@ func (f fakeDatabaseSource) ListDatabases(context.Context) ([]mariadb.DatabaseRe
 
 func (f fakeDatabaseSource) DumpDatabase(_ context.Context, name string) ([]byte, error) {
 	return append([]byte(nil), f.dumps[name]...), nil
+}
+
+func (f fakeDatabaseSource) RestoreDatabase(_ context.Context, name string, dump []byte) error {
+	if f.restored == nil {
+		return nil
+	}
+	f.restored[name] = append([]byte(nil), dump...)
+	return nil
 }

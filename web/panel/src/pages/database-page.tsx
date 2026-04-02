@@ -24,11 +24,12 @@ import {
   createBackup,
   fetchBackups,
   getBackupDownloadUrl,
+  restoreBackup,
   type BackupRecord,
 } from "@/api/backups";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
-import { Check, Copy, Download, Eye, EyeOff, HardDrive, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { Check, Copy, Download, Eye, EyeOff, HardDrive, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -267,6 +268,7 @@ export function DatabasePage() {
   const [deletingName, setDeletingName] = useState<string | null>(null);
   const [downloadingName, setDownloadingName] = useState<string | null>(null);
   const [creatingBackupName, setCreatingBackupName] = useState<string | null>(null);
+  const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
   const [createdBackupName, setCreatedBackupName] = useState<string | null>(null);
   const [rootPasswordOpen, setRootPasswordOpen] = useState(false);
   const [rootPassword, setRootPassword] = useState<string>("");
@@ -693,6 +695,32 @@ export function DatabasePage() {
     }
   }
 
+  async function handleRestoreBackup(name: string) {
+    const confirmed = window.confirm(
+      `Restore backup "${name}"? This overwrites the database contents stored in that archive.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setRestoringBackupName(name);
+
+    try {
+      const result = await restoreBackup(name);
+      const restoredCount = result.restored_databases?.length ?? 0;
+      toast.success(
+        restoredCount > 0
+          ? `Restored ${restoredCount === 1 ? "1 database" : `${restoredCount} databases`} from ${name}.`
+          : `Restored backup ${name}.`,
+      );
+      await reloadDatabases();
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to restore ${name}.`));
+    } finally {
+      setRestoringBackupName(null);
+    }
+  }
+
   function handleTogglePasswordVisibility(database: MariaDBDatabase) {
     const key = getDatabasePasswordKey(database);
     setVisiblePasswords((current) => ({
@@ -777,14 +805,32 @@ export function DatabasePage() {
                           {formatBytes(backup.size)}
                         </td>
                         <td className="px-3 py-2.5 text-right">
-                          <a
-                            href={getBackupDownloadUrl(backup.name)}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
-                            aria-label={`Download ${backup.name}`}
-                            title={`Download ${backup.name}`}
-                          >
-                            <Download className="h-4 w-4" />
-                          </a>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleRestoreBackup(backup.name);
+                              }}
+                              disabled={restoringBackupName !== null}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                              aria-label={`Restore ${backup.name}`}
+                              title={`Restore ${backup.name}`}
+                            >
+                              {restoringBackupName === backup.name ? (
+                                <LoaderCircle className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <RotateCcw className="h-4 w-4" />
+                              )}
+                            </button>
+                            <a
+                              href={getBackupDownloadUrl(backup.name)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
+                              aria-label={`Download ${backup.name}`}
+                              title={`Download ${backup.name}`}
+                            >
+                              <Download className="h-4 w-4" />
+                            </a>
+                          </div>
                         </td>
                       </tr>
                     ))}

@@ -115,6 +115,10 @@ func (fakeMariaDBManager) DumpDatabase(_ context.Context, name string) ([]byte, 
 	return []byte("CREATE DATABASE `" + strings.TrimSpace(name) + "`;\n"), nil
 }
 
+func (fakeMariaDBManager) RestoreDatabase(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+
 func (fakeMariaDBManager) UpdateDatabase(context.Context, string, mariadb.UpdateDatabaseInput) (mariadb.DatabaseRecord, error) {
 	return mariadb.DatabaseRecord{
 		Name:     "flowpanel",
@@ -901,6 +905,24 @@ func TestBackupsCreateListDownloadAndDeleteEndpoints(t *testing.T) {
 	}
 	if downloadRecorder.Body.Len() == 0 {
 		t.Fatal("download body is empty")
+	}
+
+	restoreRecorder := httptest.NewRecorder()
+	restoreRequest := httptest.NewRequest(http.MethodPost, "/api/backups/"+createPayload.Backup.Name+"/restore", nil)
+	router.ServeHTTP(restoreRecorder, restoreRequest)
+
+	if restoreRecorder.Code != http.StatusOK {
+		t.Fatalf("restore status = %d, want %d, body = %s", restoreRecorder.Code, http.StatusOK, restoreRecorder.Body.String())
+	}
+
+	var restorePayload struct {
+		Restore backup.RestoreResult `json:"restore"`
+	}
+	if err := json.Unmarshal(restoreRecorder.Body.Bytes(), &restorePayload); err != nil {
+		t.Fatalf("decode restore response: %v", err)
+	}
+	if len(restorePayload.Restore.RestoredDatabases) != 1 || restorePayload.Restore.RestoredDatabases[0] != "flowpanel" {
+		t.Fatalf("restored databases = %v, want [flowpanel]", restorePayload.Restore.RestoredDatabases)
 	}
 
 	deleteRecorder := httptest.NewRecorder()

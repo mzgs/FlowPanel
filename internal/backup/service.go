@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -32,6 +33,7 @@ var (
 type Manager interface {
 	List(context.Context) ([]Record, error)
 	Create(context.Context, CreateInput) (Record, error)
+	Restore(context.Context, string) (RestoreResult, error)
 	Delete(context.Context, string) error
 	DownloadPath(string) (string, string, error)
 }
@@ -56,6 +58,13 @@ func (v ValidationErrors) Error() string {
 	return "validation failed"
 }
 
+type RestoreResult struct {
+	RestoredPanelFiles    bool     `json:"restored_panel_files"`
+	RestoredPanelDatabase bool     `json:"restored_panel_database"`
+	RestoredSites         []string `json:"restored_sites,omitempty"`
+	RestoredDatabases     []string `json:"restored_databases,omitempty"`
+}
+
 type Service struct {
 	logger       *zap.Logger
 	dataPath     string
@@ -76,11 +85,13 @@ type manifest struct {
 
 type DomainSource interface {
 	List() []domain.Record
+	BasePath() string
 }
 
 type DatabaseSource interface {
 	ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error)
 	DumpDatabase(context.Context, string) ([]byte, error)
+	RestoreDatabase(context.Context, string, []byte) error
 }
 
 type siteArchive struct {
@@ -295,6 +306,67 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		Size:      info.Size(),
 		CreatedAt: info.ModTime().UTC(),
 	}, nil
+}
+
+func (s *Service) Restore(ctx context.Context, name string) (RestoreResult, error) {
+	backupPath, err := s.resolveBackupPath(name)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return RestoreResult{}, ErrNotFound
+		}
+		return RestoreResult{}, fmt.Errorf("stat backup %q: %w", name, err)
+	}
+
+	stagingPath, err := os.MkdirTemp("", "flowpanel-restore-*")
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("create restore staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingPath)
+
+	if err := extractBackupArchive(backupPath, stagingPath); err != nil {
+		return RestoreResult{}, err
+	}
+
+	result := RestoreResult{}
+	snapshotRelPath, _ := archiveRelativePath(s.dataPath, s.databasePath)
+	snapshotStagingPath := ""
+	if snapshotRelPath != "" {
+		candidate := filepath.Join(stagingPath, filepath.FromSlash(snapshotRelPath))
+		if info, statErr := os.Stat(candidate); statErr == nil && info.Mode().IsRegular() {
+			snapshotStagingPath = candidate
+		}
+	}
+
+	if hasPanelEntries(stagingPath, snapshotRelPath) {
+		if err := s.restorePanelFiles(stagingPath, snapshotRelPath); err != nil {
+			return RestoreResult{}, err
+		}
+		result.RestoredPanelFiles = true
+	}
+
+	if snapshotStagingPath != "" {
+		if err := s.restoreSQLiteSnapshot(ctx, snapshotStagingPath); err != nil {
+			return RestoreResult{}, err
+		}
+		result.RestoredPanelDatabase = true
+	}
+
+	restoredSites, err := s.restoreSiteArchives(stagingPath)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	result.RestoredSites = restoredSites
+
+	restoredDatabases, err := s.restoreDatabaseDumps(ctx, stagingPath)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	result.RestoredDatabases = restoredDatabases
+
+	return result, nil
 }
 
 func (s *Service) Delete(_ context.Context, name string) error {
@@ -637,6 +709,585 @@ func writeTarEntry(tarWriter *tar.Writer, sourcePath, archivePath string, info f
 	}
 
 	return nil
+}
+
+func extractBackupArchive(archivePath, targetRoot string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("open backup archive: %w", err)
+	}
+	defer file.Close()
+
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("open backup archive gzip stream: %w", err)
+	}
+	defer gzipReader.Close()
+
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read backup archive: %w", err)
+		}
+
+		relativePath, ok := sanitizeArchivePath(header.Name)
+		if !ok {
+			return fmt.Errorf("backup archive contains invalid entry %q", header.Name)
+		}
+		if relativePath == "" {
+			continue
+		}
+
+		targetPath := filepath.Join(targetRoot, filepath.FromSlash(relativePath))
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(targetPath, header.FileInfo().Mode().Perm()); err != nil {
+				return fmt.Errorf("create restore directory %q: %w", relativePath, err)
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return fmt.Errorf("create restore parent directory %q: %w", relativePath, err)
+			}
+			fileMode := header.FileInfo().Mode().Perm()
+			if fileMode == 0 {
+				fileMode = 0o644
+			}
+			file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, fileMode)
+			if err != nil {
+				return fmt.Errorf("create restore file %q: %w", relativePath, err)
+			}
+			if _, err := io.Copy(file, tarReader); err != nil {
+				_ = file.Close()
+				return fmt.Errorf("write restore file %q: %w", relativePath, err)
+			}
+			if err := file.Close(); err != nil {
+				return fmt.Errorf("close restore file %q: %w", relativePath, err)
+			}
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return fmt.Errorf("create restore symlink parent %q: %w", relativePath, err)
+			}
+			if err := os.Symlink(header.Linkname, targetPath); err != nil {
+				return fmt.Errorf("create restore symlink %q: %w", relativePath, err)
+			}
+		default:
+			return fmt.Errorf("backup archive entry %q uses unsupported type", header.Name)
+		}
+	}
+}
+
+func hasPanelEntries(stagingPath, snapshotRelPath string) bool {
+	entries, err := os.ReadDir(stagingPath)
+	if err != nil {
+		return false
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "manifest.json" || name == "sites" || name == "databases" {
+			continue
+		}
+		if snapshotRelPath != "" && filepath.Clean(filepath.FromSlash(snapshotRelPath)) == name {
+			continue
+		}
+		return true
+	}
+
+	return false
+}
+
+func (s *Service) restorePanelFiles(stagingPath, snapshotRelPath string) error {
+	if strings.TrimSpace(s.dataPath) == "" {
+		return fmt.Errorf("data path is not configured")
+	}
+	if err := os.MkdirAll(s.dataPath, 0o755); err != nil {
+		return fmt.Errorf("create data path %q: %w", s.dataPath, err)
+	}
+
+	preservedPaths := map[string]struct{}{}
+	if snapshotRelPath != "" {
+		preservedPaths[filepath.Join(s.dataPath, filepath.FromSlash(snapshotRelPath))] = struct{}{}
+	}
+	if err := clearDirectoryContents(s.dataPath, preservedPaths); err != nil {
+		return err
+	}
+
+	return filepath.WalkDir(stagingPath, func(currentPath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk restore staging: %w", walkErr)
+		}
+		if samePath(currentPath, stagingPath) {
+			return nil
+		}
+
+		relativePath, err := filepath.Rel(stagingPath, currentPath)
+		if err != nil {
+			return fmt.Errorf("resolve restore path %q: %w", currentPath, err)
+		}
+		relativePath = filepath.ToSlash(relativePath)
+		if relativePath == "manifest.json" || relativePath == "sites" || relativePath == "databases" {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(relativePath, "sites/") || strings.HasPrefix(relativePath, "databases/") {
+			if entry.IsDir() && (relativePath == "sites" || relativePath == "databases") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if snapshotRelPath != "" && filepath.Clean(filepath.FromSlash(relativePath)) == filepath.Clean(filepath.FromSlash(snapshotRelPath)) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		targetPath := filepath.Join(s.dataPath, filepath.FromSlash(relativePath))
+		if entry.IsDir() {
+			return os.MkdirAll(targetPath, 0o755)
+		}
+		return copyPath(currentPath, targetPath)
+	})
+}
+
+func (s *Service) restoreSiteArchives(stagingPath string) ([]string, error) {
+	sitesPath := filepath.Join(stagingPath, "sites")
+	entries, err := os.ReadDir(sitesPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read restore sites directory: %w", err)
+	}
+
+	restored := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		hostname := strings.TrimSpace(entry.Name())
+		if hostname == "" {
+			continue
+		}
+
+		targetRoot, err := s.siteRootPath(hostname)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.MkdirAll(targetRoot, 0o755); err != nil {
+			return nil, fmt.Errorf("create site restore directory %q: %w", targetRoot, err)
+		}
+		if err := clearDirectoryContents(targetRoot, nil); err != nil {
+			return nil, err
+		}
+
+		sourceRoot := filepath.Join(sitesPath, hostname)
+		if err := copyTreeContents(sourceRoot, targetRoot); err != nil {
+			return nil, err
+		}
+		restored = append(restored, hostname)
+	}
+
+	sort.Strings(restored)
+	return restored, nil
+}
+
+func (s *Service) restoreDatabaseDumps(ctx context.Context, stagingPath string) ([]string, error) {
+	databasesPath := filepath.Join(stagingPath, "databases")
+	entries, err := os.ReadDir(databasesPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read restore databases directory: %w", err)
+	}
+	if s.mariaDB == nil {
+		return nil, fmt.Errorf("mariadb is not configured")
+	}
+
+	restored := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".sql") {
+			continue
+		}
+
+		databaseName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		dump, err := os.ReadFile(filepath.Join(databasesPath, entry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("read restore database dump %q: %w", entry.Name(), err)
+		}
+		if err := s.mariaDB.RestoreDatabase(ctx, databaseName, dump); err != nil {
+			return nil, fmt.Errorf("restore mariadb database %q: %w", databaseName, err)
+		}
+		restored = append(restored, databaseName)
+	}
+
+	sort.Strings(restored)
+	return restored, nil
+}
+
+func (s *Service) siteRootPath(hostname string) (string, error) {
+	if s.domains != nil {
+		for _, record := range s.domains.List() {
+			if record.Hostname != hostname {
+				continue
+			}
+			switch record.Kind {
+			case domain.KindStaticSite, domain.KindPHP:
+				if strings.TrimSpace(record.Target) != "" {
+					return record.Target, nil
+				}
+			}
+		}
+	}
+
+	basePath := ""
+	if s.domains != nil {
+		basePath = strings.TrimSpace(s.domains.BasePath())
+	}
+	if basePath == "" {
+		return "", fmt.Errorf("site base path is not configured")
+	}
+
+	return filepath.Join(basePath, hostname), nil
+}
+
+func (s *Service) restoreSQLiteSnapshot(ctx context.Context, snapshotPath string) error {
+	if s.db == nil {
+		return fmt.Errorf("sqlite database is not configured")
+	}
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("open sqlite restore connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("ATTACH DATABASE %s AS restore", sqliteStringLiteral(snapshotPath))); err != nil {
+		return fmt.Errorf("attach restore database: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), "DETACH DATABASE restore")
+	}()
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin sqlite restore transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("disable sqlite foreign keys: %w", err)
+	}
+
+	currentObjects, err := listSQLiteObjects(ctx, tx, "main")
+	if err != nil {
+		return err
+	}
+	restoreObjects, err := listSQLiteObjects(ctx, tx, "restore")
+	if err != nil {
+		return err
+	}
+
+	if err := dropSQLiteObjects(ctx, tx, currentObjects); err != nil {
+		return err
+	}
+	if err := createSQLiteTables(ctx, tx, restoreObjects); err != nil {
+		return err
+	}
+	if err := copySQLiteTableData(ctx, tx, restoreObjects); err != nil {
+		return err
+	}
+	if err := restoreSQLiteSequence(ctx, tx); err != nil {
+		return err
+	}
+	if err := createSQLiteNonTableObjects(ctx, tx, restoreObjects); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		return fmt.Errorf("enable sqlite foreign keys: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit sqlite restore: %w", err)
+	}
+
+	return nil
+}
+
+type sqliteObject struct {
+	Type string
+	Name string
+	SQL  string
+}
+
+func listSQLiteObjects(ctx context.Context, tx *sql.Tx, schema string) ([]sqliteObject, error) {
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+SELECT type, name, sql
+FROM %s.sqlite_master
+WHERE name NOT LIKE 'sqlite_%%'
+  AND type IN ('table', 'view', 'index', 'trigger')
+  AND sql IS NOT NULL
+ORDER BY
+  CASE type
+    WHEN 'table' THEN 0
+    WHEN 'view' THEN 1
+    WHEN 'index' THEN 2
+    WHEN 'trigger' THEN 3
+    ELSE 4
+  END,
+  name ASC
+`, schema))
+	if err != nil {
+		return nil, fmt.Errorf("list sqlite objects from %s: %w", schema, err)
+	}
+	defer rows.Close()
+
+	objects := make([]sqliteObject, 0)
+	for rows.Next() {
+		var object sqliteObject
+		if err := rows.Scan(&object.Type, &object.Name, &object.SQL); err != nil {
+			return nil, fmt.Errorf("scan sqlite object from %s: %w", schema, err)
+		}
+		objects = append(objects, object)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sqlite objects from %s: %w", schema, err)
+	}
+
+	return objects, nil
+}
+
+func dropSQLiteObjects(ctx context.Context, tx *sql.Tx, objects []sqliteObject) error {
+	for index := len(objects) - 1; index >= 0; index-- {
+		object := objects[index]
+		statement := fmt.Sprintf("DROP %s IF EXISTS %s", strings.ToUpper(object.Type), quoteSQLiteIdentifier(object.Name))
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("drop sqlite %s %q: %w", object.Type, object.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func createSQLiteTables(ctx context.Context, tx *sql.Tx, objects []sqliteObject) error {
+	for _, object := range objects {
+		if object.Type != "table" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, object.SQL); err != nil {
+			return fmt.Errorf("create sqlite table %q: %w", object.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func copySQLiteTableData(ctx context.Context, tx *sql.Tx, objects []sqliteObject) error {
+	for _, object := range objects {
+		if object.Type != "table" {
+			continue
+		}
+		statement := fmt.Sprintf(
+			"INSERT INTO main.%s SELECT * FROM restore.%s",
+			quoteSQLiteIdentifier(object.Name),
+			quoteSQLiteIdentifier(object.Name),
+		)
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("copy sqlite table %q: %w", object.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func restoreSQLiteSequence(ctx context.Context, tx *sql.Tx) error {
+	var count int
+	if err := tx.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM restore.sqlite_master
+WHERE type = 'table' AND name = 'sqlite_sequence'
+`).Scan(&count); err != nil {
+		return fmt.Errorf("query restore sqlite_sequence: %w", err)
+	}
+	if count == 0 {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM main.sqlite_sequence`); err != nil {
+		return fmt.Errorf("clear sqlite_sequence: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO main.sqlite_sequence(name, seq)
+SELECT name, seq
+FROM restore.sqlite_sequence
+`); err != nil {
+		return fmt.Errorf("restore sqlite_sequence: %w", err)
+	}
+
+	return nil
+}
+
+func createSQLiteNonTableObjects(ctx context.Context, tx *sql.Tx, objects []sqliteObject) error {
+	for _, object := range objects {
+		if object.Type == "table" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, object.SQL); err != nil {
+			return fmt.Errorf("create sqlite %s %q: %w", object.Type, object.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func clearDirectoryContents(root string, preserved map[string]struct{}) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read directory %q: %w", root, err)
+	}
+
+	for _, entry := range entries {
+		currentPath := filepath.Join(root, entry.Name())
+		if shouldPreservePath(currentPath, preserved) {
+			if entry.IsDir() {
+				if err := clearDirectoryContents(currentPath, preserved); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		if err := os.RemoveAll(currentPath); err != nil {
+			return fmt.Errorf("remove %q: %w", currentPath, err)
+		}
+	}
+
+	return nil
+}
+
+func shouldPreservePath(targetPath string, preserved map[string]struct{}) bool {
+	if len(preserved) == 0 {
+		return false
+	}
+
+	targetPath = filepath.Clean(targetPath)
+	for preservedPath := range preserved {
+		preservedPath = filepath.Clean(preservedPath)
+		if targetPath == preservedPath {
+			return true
+		}
+		if strings.HasPrefix(preservedPath, targetPath+string(filepath.Separator)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func copyTreeContents(sourceRoot, targetRoot string) error {
+	return filepath.WalkDir(sourceRoot, func(currentPath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk restore source: %w", walkErr)
+		}
+		if samePath(currentPath, sourceRoot) {
+			return nil
+		}
+
+		relativePath, err := filepath.Rel(sourceRoot, currentPath)
+		if err != nil {
+			return fmt.Errorf("resolve restore source path %q: %w", currentPath, err)
+		}
+		targetPath := filepath.Join(targetRoot, relativePath)
+		if entry.IsDir() {
+			return os.MkdirAll(targetPath, 0o755)
+		}
+		return copyPath(currentPath, targetPath)
+	})
+}
+
+func copyPath(sourcePath, targetPath string) error {
+	info, err := os.Lstat(sourcePath)
+	if err != nil {
+		return fmt.Errorf("stat restore source %q: %w", sourcePath, err)
+	}
+
+	if info.IsDir() {
+		return os.MkdirAll(targetPath, info.Mode().Perm())
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return fmt.Errorf("create restore symlink parent %q: %w", targetPath, err)
+		}
+		if err := os.RemoveAll(targetPath); err != nil {
+			return fmt.Errorf("remove existing restore target %q: %w", targetPath, err)
+		}
+		linkTarget, err := os.Readlink(sourcePath)
+		if err != nil {
+			return fmt.Errorf("read restore symlink %q: %w", sourcePath, err)
+		}
+		if err := os.Symlink(linkTarget, targetPath); err != nil {
+			return fmt.Errorf("create restore symlink %q: %w", targetPath, err)
+		}
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return fmt.Errorf("create restore parent %q: %w", targetPath, err)
+	}
+
+	sourceFile, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open restore source %q: %w", sourcePath, err)
+	}
+	defer sourceFile.Close()
+
+	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+	if err != nil {
+		return fmt.Errorf("open restore target %q: %w", targetPath, err)
+	}
+	if _, err := io.Copy(file, sourceFile); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("copy restore file %q: %w", targetPath, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close restore target %q: %w", targetPath, err)
+	}
+
+	return nil
+}
+
+func sanitizeArchivePath(value string) (string, bool) {
+	value = filepath.ToSlash(strings.TrimSpace(value))
+	value = strings.TrimPrefix(value, "./")
+	value = strings.TrimPrefix(value, "/")
+	if value == "" {
+		return "", false
+	}
+	cleaned := path.Clean(value)
+	if cleaned == "." || cleaned == "" {
+		return "", false
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", false
+	}
+
+	return cleaned, true
+}
+
+func quoteSQLiteIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func archiveRelativePath(rootPath, targetPath string) (string, bool) {

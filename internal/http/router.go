@@ -277,6 +277,45 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/backups/{backupName}/download", backupsDownloadHandler)
 
+		backupsRestoreHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Backups == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "backup service is not configured",
+				})
+				return
+			}
+
+			name := chi.URLParam(r, "backupName")
+			result, err := app.Backups.Restore(r.Context(), name)
+			if err != nil {
+				writeBackupError(w, err)
+				app.Logger.Error("restore backup failed",
+					zap.String("backup_name", name),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "failed", "Failed to restore a backup archive.")
+				return
+			}
+
+			if err := syncBackupRestoreState(r.Context(), app, result); err != nil {
+				app.Logger.Error("sync restored backup state failed",
+					zap.String("backup_name", name),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "failed", "Restored backup archive but failed to reload runtime state.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "backup restored but runtime sync failed",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "succeeded", fmt.Sprintf("Restored backup %q.", name))
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"restore": result,
+			})
+		})
+		r.Method(stdhttp.MethodPost, "/backups/{backupName}/restore", backupsRestoreHandler)
+
 		cronListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Cron == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -1711,6 +1750,41 @@ func writeFileError(w stdhttp.ResponseWriter, err error) {
 			"error": "file operation failed",
 		})
 	}
+}
+
+func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.RestoreResult) error {
+	if !result.RestoredPanelDatabase {
+		return nil
+	}
+
+	if app.Domains != nil {
+		if err := app.Domains.Load(ctx); err != nil {
+			return fmt.Errorf("reload domains: %w", err)
+		}
+	}
+
+	if app.Cron != nil {
+		snapshot := app.Cron.Snapshot()
+		if snapshot.Started {
+			if err := app.Cron.Stop(ctx); err != nil {
+				return fmt.Errorf("stop cron scheduler: %w", err)
+			}
+		}
+		if err := app.Cron.Load(ctx); err != nil {
+			return fmt.Errorf("reload cron jobs: %w", err)
+		}
+		if snapshot.Started {
+			app.Cron.Start()
+		}
+	}
+
+	if app.Caddy != nil && app.Domains != nil {
+		if err := app.Caddy.Sync(ctx, app.Domains.List()); err != nil {
+			return fmt.Errorf("sync caddy runtime: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func writeBackupError(w stdhttp.ResponseWriter, err error) {

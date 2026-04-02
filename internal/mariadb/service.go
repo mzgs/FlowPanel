@@ -78,6 +78,7 @@ type Manager interface {
 	SetRootPassword(context.Context, string) error
 	ListDatabases(context.Context) ([]DatabaseRecord, error)
 	DumpDatabase(context.Context, string) ([]byte, error)
+	RestoreDatabase(context.Context, string, []byte) error
 	CreateDatabase(context.Context, CreateDatabaseInput) (DatabaseRecord, error)
 	UpdateDatabase(context.Context, string, UpdateDatabaseInput) (DatabaseRecord, error)
 	DeleteDatabase(context.Context, string, DeleteDatabaseInput) error
@@ -474,6 +475,92 @@ func (s *Service) DumpDatabase(ctx context.Context, databaseName string) ([]byte
 	}
 
 	return stdout.Bytes(), nil
+}
+
+func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump []byte) error {
+	databaseName = strings.TrimSpace(databaseName)
+	if message := validateIdentifier(databaseName, "Database name"); message != "" {
+		return ValidationErrors{
+			"name": message,
+		}
+	}
+	if isSystemDatabase(databaseName) {
+		return ValidationErrors{
+			"name": "System databases cannot be restored.",
+		}
+	}
+	if len(bytes.TrimSpace(dump)) == 0 {
+		return errors.New("database dump is empty")
+	}
+
+	if _, err := s.runSQL(ctx, fmt.Sprintf(
+		"CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+		quoteIdentifier(databaseName),
+	)); err != nil {
+		return err
+	}
+
+	clientPath, ok := lookupFirstCommand(clientBinaryCandidates...)
+	if !ok {
+		return errors.New("mariadb/mysql client is not installed")
+	}
+
+	runCtx := ctx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+
+	if _, hasDeadline := runCtx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(runCtx, dumpCommandTimeout)
+		defer cancel()
+	}
+
+	config, err := s.resolveSQLClientConfig()
+	if err != nil {
+		return err
+	}
+
+	args := []string{
+		fmt.Sprintf("--user=%s", config.user),
+	}
+	if config.socket != "" {
+		args = append(args, "--protocol=socket", fmt.Sprintf("--socket=%s", config.socket))
+	} else {
+		args = append(args,
+			"--protocol=tcp",
+			fmt.Sprintf("--host=%s", config.host),
+			fmt.Sprintf("--port=%s", config.port),
+		)
+	}
+
+	cmd := exec.CommandContext(runCtx, clientPath, args...)
+	cmd.Stdin = bytes.NewReader(dump)
+	if config.password != "" {
+		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.password)
+	}
+
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+
+	err = cmd.Run()
+	combinedOutput := strings.TrimSpace(output.String())
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s timed out", clientPath)
+	}
+	if errors.Is(runCtx.Err(), context.Canceled) {
+		return fmt.Errorf("%s was canceled", clientPath)
+	}
+	if combinedOutput == "" {
+		return fmt.Errorf("%s failed: %w", clientPath, err)
+	}
+
+	return fmt.Errorf("%s failed: %s", clientPath, combinedOutput)
 }
 
 func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input UpdateDatabaseInput) (DatabaseRecord, error) {

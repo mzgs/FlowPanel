@@ -4,8 +4,10 @@ import {
   deleteBackup,
   fetchBackups,
   getBackupDownloadUrl,
+  restoreBackup,
   type CreateBackupInput,
   type BackupRecord,
+  type RestoreBackupResult,
 } from "@/api/backups";
 import {
   Database,
@@ -14,6 +16,7 @@ import {
   HardDrive,
   LoaderCircle,
   RefreshCw,
+  RotateCcw,
   Trash2,
 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
@@ -53,12 +56,35 @@ const initialScope: CreateBackupInput = {
   include_databases: true,
 };
 
+function describeRestoreOutcome(result: RestoreBackupResult) {
+  const parts: string[] = [];
+
+  if (result.restored_panel_database) {
+    parts.push("panel state");
+  } else if (result.restored_panel_files) {
+    parts.push("panel files");
+  }
+  if ((result.restored_sites?.length ?? 0) > 0) {
+    parts.push(result.restored_sites!.length === 1 ? "1 site" : `${result.restored_sites!.length} sites`);
+  }
+  if ((result.restored_databases?.length ?? 0) > 0) {
+    parts.push(
+      result.restored_databases!.length === 1
+        ? "1 database"
+        : `${result.restored_databases!.length} databases`,
+    );
+  }
+
+  return parts.length > 0 ? parts.join(", ") : "backup contents";
+}
+
 export function BackupsPage() {
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deletingName, setDeletingName] = useState<string | null>(null);
+  const [restoringName, setRestoringName] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [scope, setScope] = useState<CreateBackupInput>(initialScope);
@@ -128,6 +154,31 @@ export function BackupsPage() {
       toast.error(getErrorMessage(error, "Failed to delete backup."));
     } finally {
       setDeletingName(null);
+    }
+  }
+
+  async function handleRestoreBackup(name: string) {
+    const confirmed = window.confirm(
+      `Restore backup "${name}"? This overwrites the matching panel files, site files, and databases contained in the archive.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setRestoringName(name);
+
+    try {
+      const result = await restoreBackup(name);
+      toast.success(`Restored ${describeRestoreOutcome(result)} from ${name}.`);
+      if (result.restored_panel_database) {
+        window.setTimeout(() => {
+          window.location.reload();
+        }, 700);
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to restore backup."));
+    } finally {
+      setRestoringName(null);
     }
   }
 
@@ -312,6 +363,7 @@ export function BackupsPage() {
               ) : (
                 backups.map((backup) => {
                   const deleting = deletingName === backup.name;
+                  const restoring = restoringName === backup.name;
 
                   return (
                     <TableRow key={backup.name}>
@@ -324,6 +376,21 @@ export function BackupsPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => void handleRestoreBackup(backup.name)}
+                            disabled={restoring || deleting}
+                            aria-label={`Restore ${backup.name}`}
+                            title={`Restore ${backup.name}`}
+                          >
+                            {restoring ? (
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RotateCcw className="h-4 w-4" />
+                            )}
+                          </Button>
                           <Button type="button" variant="outline" asChild>
                             <a href={getBackupDownloadUrl(backup.name)}>
                               <Download className="h-4 w-4" />

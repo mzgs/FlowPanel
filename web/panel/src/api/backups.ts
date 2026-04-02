@@ -12,12 +12,23 @@ export type CreateBackupInput = {
   database_names?: string[];
 };
 
+export type RestoreBackupResult = {
+  restored_panel_files: boolean;
+  restored_panel_database: boolean;
+  restored_sites?: string[];
+  restored_databases?: string[];
+};
+
 type BackupsPayload = {
   backups: BackupRecord[];
 };
 
 type BackupPayload = {
   backup: BackupRecord;
+};
+
+type RestoreBackupPayload = {
+  restore: RestoreBackupResult;
 };
 
 type BackupApiError = Error;
@@ -61,6 +72,20 @@ export async function deleteBackup(name: string): Promise<void> {
   if (!response.ok) {
     throw await readBackupApiError(response, "delete backup");
   }
+}
+
+export async function restoreBackup(name: string): Promise<RestoreBackupResult> {
+  const response = await fetch(`/api/backups/${encodeURIComponent(name)}/restore`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await readBackupApiError(response, "restore backup");
+  }
+
+  const payload = (await response.json()) as RestoreBackupPayload;
+  return payload.restore;
 }
 
 export function getBackupDownloadUrl(name: string) {
