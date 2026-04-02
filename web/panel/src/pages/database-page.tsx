@@ -20,7 +20,12 @@ import {
   type MariaDBDatabase,
   type MariaDBStatus,
 } from "@/api/mariadb";
-import { createBackup } from "@/api/backups";
+import {
+  createBackup,
+  fetchBackups,
+  getBackupDownloadUrl,
+  type BackupRecord,
+} from "@/api/backups";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import { Check, Copy, Download, Eye, EyeOff, HardDrive, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
@@ -35,6 +40,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn, copyTextToClipboard } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -111,6 +117,8 @@ const databaseTableHeaderCellClass = "px-3 py-0.5 font-medium";
 const databaseTableBodyCellClass = "px-3 py-0.5 align-middle";
 const databaseTableActionHeaderCellClass = `${databaseTableHeaderCellClass} text-right`;
 const databaseTableActionBodyCellClass = `${databaseTableBodyCellClass} text-right`;
+const databaseBackupPrefix = "flowpanel-database-";
+const databaseBackupSeparator = "-backup-";
 
 type CopyWithFeedbackInput = {
   text: string;
@@ -220,16 +228,33 @@ function CopyIconButton({
   );
 }
 
+function getDatabaseNameFromBackupRecord(record: BackupRecord) {
+  if (!record.name.startsWith(databaseBackupPrefix)) {
+    return null;
+  }
+
+  const suffixIndex = record.name.indexOf(databaseBackupSeparator, databaseBackupPrefix.length);
+  if (suffixIndex <= databaseBackupPrefix.length) {
+    return null;
+  }
+
+  return record.name.slice(databaseBackupPrefix.length, suffixIndex);
+}
+
 export function DatabasePage() {
   const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
+  const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [domains, setDomains] = useState<DomainRecord[]>([]);
   const [mariaDBStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [backupsLoading, setBackupsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [backupsLoadError, setBackupsLoadError] = useState<string | null>(null);
   const [domainsLoadError, setDomainsLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
+  const [backupDialogDatabase, setBackupDialogDatabase] = useState<MariaDBDatabase | null>(null);
   const [form, setForm] = useState<FormState>(initialForm);
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitting, setSubmitting] = useState(false);
@@ -257,11 +282,12 @@ export function DatabasePage() {
 
     async function loadData() {
       try {
-        const [databasesResult, statusResult, domainsResult, phpMyAdminResult] = await Promise.allSettled([
+        const [databasesResult, statusResult, domainsResult, phpMyAdminResult, backupsResult] = await Promise.allSettled([
           fetchMariaDBDatabases(),
           fetchMariaDBStatus(),
           fetchDomains(),
           fetchPHPMyAdminStatus(),
+          fetchBackups(),
         ]);
 
         if (!active) {
@@ -298,9 +324,18 @@ export function DatabasePage() {
         } else {
           setPHPMyAdminStatus(null);
         }
+
+        if (backupsResult.status === "fulfilled") {
+          setBackups(backupsResult.value.backups);
+          setBackupsLoadError(null);
+        } else {
+          setBackups([]);
+          setBackupsLoadError(getErrorMessage(backupsResult.reason, "Failed to load backups."));
+        }
       } finally {
         if (active) {
           setLoading(false);
+          setBackupsLoading(false);
         }
       }
     }
@@ -436,6 +471,21 @@ export function DatabasePage() {
       .toLowerCase()
       .includes(normalizedSearch);
   });
+  const databaseBackups = backups.reduce<Record<string, BackupRecord[]>>((groups, backup) => {
+    const databaseName = getDatabaseNameFromBackupRecord(backup);
+    if (!databaseName) {
+      return groups;
+    }
+
+    if (!groups[databaseName]) {
+      groups[databaseName] = [];
+    }
+    groups[databaseName].push(backup);
+    return groups;
+  }, {});
+  const selectedDatabaseBackups = backupDialogDatabase
+    ? databaseBackups[backupDialogDatabase.name] ?? []
+    : [];
 
   const formTitle = dialogMode === "create" ? "Create database" : "Edit database";
   const formDescription =
@@ -620,6 +670,8 @@ export function DatabasePage() {
         include_databases: true,
         database_names: [database.name],
       });
+      setBackups((current) => [record, ...current.filter((item) => item.name !== record.name)]);
+      setBackupsLoadError(null);
       if (createdBackupTimeoutRef.current !== null) {
         window.clearTimeout(createdBackupTimeoutRef.current);
       }
@@ -668,6 +720,77 @@ export function DatabasePage() {
 
   return (
     <>
+      <Dialog
+        open={backupDialogDatabase !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBackupDialogDatabase(null);
+          }
+        }}
+      >
+        <DialogContent className="gap-4 sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {backupDialogDatabase ? `${backupDialogDatabase.name} backups` : "Database backups"}
+            </DialogTitle>
+            <DialogDescription>
+              Local backup archives created for this database.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedDatabaseBackups.length === 0 ? (
+            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-4 text-[13px] text-[var(--app-text-muted)]">
+              No backups found.
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-[var(--app-border)]">
+              <div className="max-h-[320px] overflow-auto">
+                <table className="w-full min-w-[520px] text-left">
+                  <thead className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+                    <tr className="text-[12px] text-[var(--app-text-muted)]">
+                      <th className="px-3 py-2 font-medium">Backup name</th>
+                      <th className="px-3 py-2 font-medium">Date</th>
+                      <th className="px-3 py-2 font-medium">Size</th>
+                      <th className="px-3 py-2 text-right font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedDatabaseBackups.map((backup) => (
+                      <tr
+                        key={backup.name}
+                        className="border-b border-[var(--app-border)] text-[13px] text-[var(--app-text)] last:border-b-0"
+                      >
+                        <td className="max-w-[240px] px-3 py-2.5 font-medium">
+                          <div className="truncate" title={backup.name}>
+                            {backup.name}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 text-[var(--app-text-muted)]">
+                          {formatDateTime(backup.created_at)}
+                        </td>
+                        <td className="px-3 py-2.5 text-[var(--app-text-muted)]">
+                          {formatBytes(backup.size)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          <a
+                            href={getBackupDownloadUrl(backup.name)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
+                            aria-label={`Download ${backup.name}`}
+                            title={`Download ${backup.name}`}
+                          >
+                            <Download className="h-4 w-4" />
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <div className="px-4 py-6 sm:px-6 lg:px-8">
         <section className="space-y-4">
           {loadError ? (
@@ -889,7 +1012,29 @@ export function DatabasePage() {
                             </div>
                           ) : null}
                         </td>
-                        <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>Not set</td>
+                        <td className={databaseTableBodyCellClass}>
+                          {backupsLoading ? (
+                            <span className="text-[13px] text-[var(--app-text-muted)]">Loading...</span>
+                          ) : backupsLoadError ? (
+                            <span
+                              className="text-[13px] text-[var(--app-text-muted)]"
+                              title={backupsLoadError}
+                            >
+                              Unavailable
+                            </span>
+                          ) : (databaseBackups[database.name]?.length ?? 0) > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setBackupDialogDatabase(database)}
+                              className="text-[13px] font-medium text-[var(--app-text)] underline decoration-[var(--app-border-strong)] underline-offset-4 transition hover:text-[var(--app-text-muted)]"
+                            >
+                              {databaseBackups[database.name]?.length}{" "}
+                              {databaseBackups[database.name]?.length === 1 ? "backup" : "backups"}
+                            </button>
+                          ) : (
+                            <span className="text-[13px] text-[var(--app-text-muted)]">No backups</span>
+                          )}
+                        </td>
                         <td className={databaseTableBodyCellClass}>{database.host || "localhost"}</td>
                         <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
                         <td className={databaseTableActionBodyCellClass}>
