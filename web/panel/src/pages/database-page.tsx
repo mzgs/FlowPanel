@@ -743,7 +743,7 @@ export function DatabasePage() {
               No backups found.
             </div>
           ) : (
-            <div className="overflow-hidden rounded-lg border border-[var(--app-border)]">
+            <div className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
               <div className="max-h-[320px] overflow-auto">
                 <table className="w-full min-w-[520px] text-left">
                   <thead className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]">
