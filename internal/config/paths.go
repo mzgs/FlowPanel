@@ -17,7 +17,7 @@ func DefaultDatabasePath() string {
 }
 
 func BackupsPath() string {
-	return filepath.Join(FlowPanelDataPath(), "backups")
+	return filepath.Join(FLOWPANEL_PATH, "backups")
 }
 
 func EnsureFlowPanelDataPath() error {

@@ -23,6 +23,7 @@ func TestCreateIncludesDataFilesAndDatabaseSnapshot(t *testing.T) {
 	t.Helper()
 
 	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
 	dbPath := filepath.Join(dataPath, "flowpanel.db")
 	dbConn := openTestDB(t, dbPath)
 
@@ -36,10 +37,10 @@ func TestCreateIncludesDataFilesAndDatabaseSnapshot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataPath, "mariadb-root-password"), []byte("secret"), 0o600); err != nil {
 		t.Fatalf("write password file: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataPath, "backups"), 0o755); err != nil {
+	if err := os.MkdirAll(backupPath, 0o755); err != nil {
 		t.Fatalf("create backups directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dataPath, "backups", "old.tar.gz"), []byte("ignore"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(backupPath, "old.tar.gz"), []byte("ignore"), 0o644); err != nil {
 		t.Fatalf("write existing backup: %v", err)
 	}
 	siteRoot := filepath.Join(t.TempDir(), "example.com")
@@ -53,6 +54,7 @@ func TestCreateIncludesDataFilesAndDatabaseSnapshot(t *testing.T) {
 	service := NewService(
 		zap.NewNop(),
 		dataPath,
+		backupPath,
 		dbPath,
 		dbConn,
 		fakeDomainSource{
@@ -140,10 +142,11 @@ func TestListDeleteAndDownloadPath(t *testing.T) {
 	t.Helper()
 
 	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
 	dbPath := filepath.Join(dataPath, "flowpanel.db")
 	dbConn := openTestDB(t, dbPath)
 
-	service := NewService(zap.NewNop(), dataPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{})
+	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{})
 	record, err := service.Create(context.Background(), CreateInput{
 		IncludePanelData: true,
 		IncludeSites:     true,
@@ -187,6 +190,7 @@ func TestCreateCanLimitScope(t *testing.T) {
 	t.Helper()
 
 	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
 	dbPath := filepath.Join(dataPath, "flowpanel.db")
 	dbConn := openTestDB(t, dbPath)
 
@@ -204,6 +208,7 @@ func TestCreateCanLimitScope(t *testing.T) {
 	service := NewService(
 		zap.NewNop(),
 		dataPath,
+		backupPath,
 		dbPath,
 		dbConn,
 		fakeDomainSource{
@@ -252,7 +257,9 @@ func TestCreateCanLimitScope(t *testing.T) {
 func TestCreateRequiresAtLeastOneSelection(t *testing.T) {
 	t.Helper()
 
-	service := NewService(zap.NewNop(), t.TempDir(), "", nil, fakeDomainSource{}, fakeDatabaseSource{})
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	service := NewService(zap.NewNop(), dataPath, backupPath, "", nil, fakeDomainSource{}, fakeDatabaseSource{})
 	if _, err := service.Create(context.Background(), CreateInput{}); err == nil {
 		t.Fatal("create backup error = nil, want validation error")
 	}

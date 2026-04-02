@@ -86,7 +86,7 @@ type siteArchive struct {
 	RootPath string
 }
 
-func NewService(logger *zap.Logger, dataPath, databasePath string, db *sql.DB, domains DomainSource, mariaDB DatabaseSource) *Service {
+func NewService(logger *zap.Logger, dataPath, backupPath, databasePath string, db *sql.DB, domains DomainSource, mariaDB DatabaseSource) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -95,11 +95,15 @@ func NewService(logger *zap.Logger, dataPath, databasePath string, db *sql.DB, d
 	if dataPath == "." {
 		dataPath = ""
 	}
+	backupPath = filepath.Clean(strings.TrimSpace(backupPath))
+	if backupPath == "." {
+		backupPath = ""
+	}
 
 	return &Service{
 		logger:       logger,
 		dataPath:     dataPath,
-		backupPath:   filepath.Join(dataPath, "backups"),
+		backupPath:   backupPath,
 		databasePath: filepath.Clean(strings.TrimSpace(databasePath)),
 		db:           db,
 		domains:      domains,

@@ -108,6 +108,7 @@ func run() error {
 	backupService := backup.NewService(
 		logger.Named("backup"),
 		config.FlowPanelDataPath(),
+		config.BackupsPath(),
 		cfg.Database.Path,
 		dbConn,
 		domainService,

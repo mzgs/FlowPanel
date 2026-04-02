@@ -1265,7 +1265,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	if err != nil {
 		t.Fatalf("new file manager: %v", err)
 	}
-	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), cfg.Database.Path, dbConn, domains, fakeMariaDBManager{})
+	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), filepath.Join(t.TempDir(), "backups"), cfg.Database.Path, dbConn, domains, fakeMariaDBManager{})
 
 	router, err := NewRouter(app.New(
 		cfg,
@@ -1345,7 +1345,7 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 	if err != nil {
 		t.Fatalf("new file manager: %v", err)
 	}
-	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), cfg.Database.Path, dbConn, domains, fakeMariaDBManager{})
+	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), filepath.Join(t.TempDir(), "backups"), cfg.Database.Path, dbConn, domains, fakeMariaDBManager{})
 
 	scheduler := flowcron.NewScheduler(logger.Named("cron"), enabled, cronStore)
 	if err := scheduler.Load(context.Background()); err != nil {
