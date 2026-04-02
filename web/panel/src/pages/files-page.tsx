@@ -102,6 +102,7 @@ type SettingsState = {
 
 const VIEW_STORAGE_KEY = "flowpanel.files.view";
 const START_PATH_STORAGE_KEY = "flowpanel.files.start-path";
+const LAST_PATH_STORAGE_KEY = "flowpanel.files.last-path";
 
 const editableExtensions = new Set([
   "bash",
@@ -159,6 +160,14 @@ function readStoredStartPath() {
   }
 
   return window.localStorage.getItem(START_PATH_STORAGE_KEY) || "";
+}
+
+function readStoredLastPath() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.localStorage.getItem(LAST_PATH_STORAGE_KEY);
 }
 
 function isEditableFile(item: FileEntry) {
@@ -298,7 +307,14 @@ export function FilesPage() {
     },
   });
 
-  const [currentPath, setCurrentPath] = useState(readStoredStartPath);
+  const [currentPath, setCurrentPath] = useState(() => {
+    if (requestedPath) {
+      return requestedPath;
+    }
+
+    const lastPath = readStoredLastPath();
+    return lastPath ?? readStoredStartPath();
+  });
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [anchorPath, setAnchorPath] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -393,6 +409,14 @@ export function FilesPage() {
   }, [viewMode]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !listingQuery.isSuccess) {
+      return;
+    }
+
+    window.localStorage.setItem(LAST_PATH_STORAGE_KEY, listing?.path ?? currentPath);
+  }, [currentPath, listing?.path, listingQuery.isSuccess]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -421,7 +445,25 @@ export function FilesPage() {
     }
 
     if (getErrorMessage(listingQuery.error, "").toLowerCase().includes("not found")) {
+      const storedLastPath = readStoredLastPath();
+      const storedStartPath = readStoredStartPath();
+      const fromRequestedPath = requestedPath && requestedPath === currentPath;
+      const fromLastPath = storedLastPath === currentPath;
+      const fromStartPath = storedStartPath === currentPath;
+
+      if (typeof window !== "undefined" && fromLastPath) {
+        window.localStorage.removeItem(LAST_PATH_STORAGE_KEY);
+      }
+
       setCurrentPath("");
+      setSearch("");
+      setContextMenu(null);
+      clearSelection();
+
+      if (fromStartPath) {
+        setSettings((current) => ({ ...current, startPath: "" }));
+      }
+
       if (requestedPath && requestedPath === currentPath) {
         setFlash({
           tone: "error",
@@ -430,10 +472,34 @@ export function FilesPage() {
         return;
       }
 
-      setSettings((current) => ({ ...current, startPath: "" }));
+      if (fromLastPath && storedStartPath && storedStartPath !== currentPath) {
+        setCurrentPath(storedStartPath);
+        setFlash({
+          tone: "error",
+          text: "The last opened folder no longer exists. FlowPanel returned to your saved start folder.",
+        });
+        return;
+      }
+
+      if (fromLastPath && !fromStartPath) {
+        setFlash({
+          tone: "error",
+          text: "The last opened folder no longer exists. FlowPanel returned to the root.",
+        });
+        return;
+      }
+
+      if (fromStartPath) {
+        setFlash({
+          tone: "error",
+          text: "The saved start folder no longer exists. FlowPanel returned to the root.",
+        });
+        return;
+      }
+
       setFlash({
         tone: "error",
-        text: "The saved start folder no longer exists. FlowPanel returned to the root.",
+        text: "The folder no longer exists. FlowPanel returned to the root.",
       });
     }
   }, [currentPath, listingQuery.error, listingQuery.isError, requestedPath]);
@@ -708,6 +774,11 @@ export function FilesPage() {
   function handleSelectionClick(item: FileEntry, event: ReactMouseEvent<HTMLElement>) {
     const withMeta = event.metaKey || event.ctrlKey;
     const withShift = event.shiftKey;
+
+    if (!withMeta && !withShift && item.type === "directory") {
+      handleNavigate(item.path);
+      return;
+    }
 
     if (withShift && anchorPath) {
       const start = itemOrder.indexOf(anchorPath);
@@ -1457,7 +1528,6 @@ export function FilesPage() {
                             className={cn(
                               "relative mb-2.5 flex aspect-square w-full max-w-[3.8rem] items-center justify-center overflow-hidden rounded-[15px] border",
                               tone.frame,
-                              tone.glow,
                             )}
                           >
                             <Icon className="relative z-10 h-7 w-7" />
@@ -1641,7 +1711,7 @@ export function FilesPage() {
           <DialogHeader>
             <DialogTitle>File Manager Settings</DialogTitle>
             <DialogDescription>
-              Persist the start folder and your preferred browsing mode for this browser.
+              Resume the last opened folder automatically, with an optional fallback start folder and preferred view.
             </DialogDescription>
           </DialogHeader>
 
@@ -1659,7 +1729,7 @@ export function FilesPage() {
                 placeholder="Leave blank for the root"
               />
               <p className="text-[12px] text-[var(--app-text-muted)]">
-                Current root: {listing?.root_path || "Loading..."}
+                Current root: {listing?.root_path || "Loading..."} Leave blank to use the last opened folder or root.
               </p>
             </div>
 
