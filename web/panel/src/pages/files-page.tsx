@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { useLocation } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
@@ -290,6 +291,12 @@ export function FilesPage() {
   const browserRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const requestedPath = useLocation({
+    select: (location) => {
+      const path = location.search.path;
+      return typeof path === "string" ? path.trim() : "";
+    },
+  });
 
   const [currentPath, setCurrentPath] = useState(readStoredStartPath);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
@@ -366,6 +373,18 @@ export function FilesPage() {
   }
 
   useEffect(() => {
+    if (!requestedPath || requestedPath === currentPath) {
+      return;
+    }
+
+    setCurrentPath(requestedPath);
+    setSelectedPaths([]);
+    setAnchorPath(null);
+    setSearch("");
+    setContextMenu(null);
+  }, [currentPath, requestedPath]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -403,13 +422,21 @@ export function FilesPage() {
 
     if (getErrorMessage(listingQuery.error, "").toLowerCase().includes("not found")) {
       setCurrentPath("");
+      if (requestedPath && requestedPath === currentPath) {
+        setFlash({
+          tone: "error",
+          text: "The requested folder no longer exists. FlowPanel returned to the root.",
+        });
+        return;
+      }
+
       setSettings((current) => ({ ...current, startPath: "" }));
       setFlash({
         tone: "error",
         text: "The saved start folder no longer exists. FlowPanel returned to the root.",
       });
     }
-  }, [currentPath, listingQuery.error, listingQuery.isError]);
+  }, [currentPath, listingQuery.error, listingQuery.isError, requestedPath]);
 
   useEffect(() => {
     function handleDocumentClick(event: MouseEvent) {

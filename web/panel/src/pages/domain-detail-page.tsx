@@ -1,9 +1,10 @@
-import { useParams } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Settings } from "@/components/icons/tabler-icons";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { PageHeader } from "@/components/page-header";
 import { formatDateTime } from "@/lib/format";
+import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {
@@ -16,6 +17,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 export function DomainDetailPage() {
   const { domainId } = useParams({ from: "/domains/$domainId" });
   const [domain, setDomain] = useState<DomainRecord | null>(null);
+  const [sitesBasePath, setSitesBasePath] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -35,6 +37,7 @@ export function DomainDetailPage() {
         const matchedDomain =
           payload.domains.find((record) => record.id === domainId) ?? null;
 
+        setSitesBasePath(payload.sites_base_path);
         setDomain(matchedDomain);
         setLoadError(matchedDomain ? null : "The selected domain could not be found.");
       } catch (error) {
@@ -56,6 +59,11 @@ export function DomainDetailPage() {
       active = false;
     };
   }, [domainId]);
+
+  const filesPath =
+    domain === null
+      ? null
+      : getFilesPathFromDomainTarget(domain.kind, sitesBasePath, domain.target);
 
   return (
     <>
@@ -105,7 +113,18 @@ export function DomainDetailPage() {
                         Target
                       </dt>
                       <dd className="mt-1 break-all font-mono text-[12px] text-[var(--app-text-muted)]">
-                        {domain.target}
+                        {filesPath !== null ? (
+                          <Link
+                            to="/files"
+                            search={filesPath ? { path: filesPath } : {}}
+                            className="transition-colors hover:text-primary hover:underline"
+                            title="Open in Files"
+                          >
+                            {domain.target}
+                          </Link>
+                        ) : (
+                          domain.target
+                        )}
                       </dd>
                     </div>
                     <div>

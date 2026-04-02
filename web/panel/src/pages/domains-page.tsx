@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { formatDateTime } from "@/lib/format";
+import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 import { cn } from "@/lib/utils";
 
 type FormState = {
@@ -175,6 +176,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 export function DomainsPage() {
   const [domains, setDomains] = useState<DomainRecord[]>([]);
+  const [sitesBasePath, setSitesBasePath] = useState("");
   const [form, setForm] = useState<FormState>(initialFormState);
   const [errors, setErrors] = useState<FormErrors>({});
   const [formOpen, setFormOpen] = useState(false);
@@ -199,6 +201,7 @@ export function DomainsPage() {
         }
 
         setDomains(payload.domains);
+        setSitesBasePath(payload.sites_base_path);
         setLoadError(null);
       } catch (error) {
         if (!active) {
@@ -437,65 +440,84 @@ export function DomainsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {domains.map((domain) => (
-                    <TableRow key={domain.id}>
-                      <TableCell className="font-medium text-[var(--app-text)]">
-                        <Link
-                          to="/domains/$domainId"
-                          params={{ domainId: domain.id }}
-                          className="transition-colors hover:text-primary hover:underline"
-                        >
-                          {domain.hostname}
-                        </Link>
-                      </TableCell>
-                      <TableCell>{domain.kind}</TableCell>
-                      <TableCell>
-                        <span
-                          className={cn(
-                            "inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium",
-                            domain.cache_enabled
-                              ? "bg-emerald-500/12 text-emerald-700"
-                              : "bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]",
+                  {domains.map((domain) => {
+                    const filesPath = getFilesPathFromDomainTarget(
+                      domain.kind,
+                      sitesBasePath,
+                      domain.target,
+                    );
+
+                    return (
+                      <TableRow key={domain.id}>
+                        <TableCell className="font-medium text-[var(--app-text)]">
+                          <Link
+                            to="/domains/$domainId"
+                            params={{ domainId: domain.id }}
+                            className="transition-colors hover:text-primary hover:underline"
+                          >
+                            {domain.hostname}
+                          </Link>
+                        </TableCell>
+                        <TableCell>{domain.kind}</TableCell>
+                        <TableCell>
+                          <span
+                            className={cn(
+                              "inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium",
+                              domain.cache_enabled
+                                ? "bg-emerald-500/12 text-emerald-700"
+                                : "bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]",
+                            )}
+                          >
+                            {domain.cache_enabled ? "Enabled" : "Off"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="font-mono text-[12px] text-[var(--app-text-muted)]">
+                          {filesPath !== null ? (
+                            <Link
+                              to="/files"
+                              search={filesPath ? { path: filesPath } : {}}
+                              className="transition-colors hover:text-primary hover:underline"
+                              title="Open in Files"
+                            >
+                              {domain.target}
+                            </Link>
+                          ) : (
+                            domain.target
                           )}
-                        >
-                          {domain.cache_enabled ? "Enabled" : "Off"}
-                        </span>
-                      </TableCell>
-                      <TableCell className="font-mono text-[12px] text-[var(--app-text-muted)]">
-                        {domain.target}
-                      </TableCell>
-                      <TableCell className="text-[12px] text-[var(--app-text-muted)]">
-                        {formatDateTime(domain.created_at)}
-                      </TableCell>
-                      <TableCell className="w-[168px]">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openEditForm(domain)}
-                            disabled={deletingDomainId !== null}
-                          >
-                            <Pencil className="h-4 w-4" />
-                            Edit
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              void handleDelete(domain);
-                            }}
-                            disabled={deletingDomainId !== null}
-                            className="text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            {deletingDomainId === domain.id ? "Deleting..." : "Delete"}
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell className="text-[12px] text-[var(--app-text-muted)]">
+                          {formatDateTime(domain.created_at)}
+                        </TableCell>
+                        <TableCell className="w-[168px]">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEditForm(domain)}
+                              disabled={deletingDomainId !== null}
+                            >
+                              <Pencil className="h-4 w-4" />
+                              Edit
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                void handleDelete(domain);
+                              }}
+                              disabled={deletingDomainId !== null}
+                              className="text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {deletingDomainId === domain.id ? "Deleting..." : "Delete"}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             ) : (
