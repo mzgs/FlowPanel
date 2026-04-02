@@ -21,7 +21,7 @@ import {
 } from "@/api/mariadb";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
-import { Check, Copy, Eye, EyeOff, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { Check, Copy, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -104,6 +104,11 @@ function getDatabasePasswordKey(database: Pick<MariaDBDatabase, "name" | "userna
 function maskPassword(password: string) {
   return password ? "**********" : "";
 }
+
+const databaseTableHeaderCellClass = "px-3 py-0.5 font-medium";
+const databaseTableBodyCellClass = "px-3 py-0.5 align-middle";
+const databaseTableActionHeaderCellClass = `${databaseTableHeaderCellClass} text-right`;
+const databaseTableActionBodyCellClass = `${databaseTableBodyCellClass} text-right`;
 
 type CopyWithFeedbackInput = {
   text: string;
@@ -758,16 +763,16 @@ export function DatabasePage() {
               <table className="min-w-[1040px] w-full text-left">
                 <thead className="border-b border-[var(--app-border)] bg-[var(--app-surface)]">
                   <tr className="text-[13px] text-[var(--app-text-muted)]">
-                    <th className="w-[46px] px-3 py-3">
+                    <th className={`w-[46px] ${databaseTableHeaderCellClass}`}>
                       <input type="checkbox" aria-label="Select all" className="h-4 w-4 rounded border-[var(--app-border)]" />
                     </th>
-                    <th className="px-3 py-3 font-medium">Database name</th>
-                    <th className="px-3 py-3 font-medium">Username</th>
-                    <th className="px-3 py-3 font-medium">Password</th>
-                    <th className="px-3 py-3 font-medium">Backup</th>
-                    <th className="px-3 py-3 font-medium">Location</th>
-                    <th className="px-3 py-3 font-medium">Domain</th>
-                    <th className="px-3 py-3 text-right font-medium">Operate</th>
+                    <th className={databaseTableHeaderCellClass}>Database name</th>
+                    <th className={databaseTableHeaderCellClass}>Username</th>
+                    <th className={databaseTableHeaderCellClass}>Password</th>
+                    <th className={databaseTableHeaderCellClass}>Backup</th>
+                    <th className={databaseTableHeaderCellClass}>Location</th>
+                    <th className={databaseTableHeaderCellClass}>Domain</th>
+                    <th className={databaseTableActionHeaderCellClass}>Operate</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -789,12 +794,12 @@ export function DatabasePage() {
                         key={database.name}
                         className="border-b border-[var(--app-border)] text-[14px] text-[var(--app-text)] last:border-b-0"
                       >
-                        <td className="px-3 py-3 align-middle">
+                        <td className={databaseTableBodyCellClass}>
                           <input type="checkbox" aria-label={`Select ${database.name}`} className="h-4 w-4 rounded border-[var(--app-border)]" />
                         </td>
-                        <td className="px-3 py-3 align-middle">{database.name}</td>
-                        <td className="px-3 py-3 align-middle">{database.username || "Not set"}</td>
-                        <td className="px-3 py-3 align-middle">
+                        <td className={databaseTableBodyCellClass}>{database.name}</td>
+                        <td className={databaseTableBodyCellClass}>{database.username || "Not set"}</td>
+                        <td className={databaseTableBodyCellClass}>
                           {database.password ? (
                             <div className="flex items-center gap-1.5 whitespace-nowrap">
                               <span className="font-mono text-[13px] text-[var(--app-text-muted)]">
@@ -830,33 +835,35 @@ export function DatabasePage() {
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-3 py-3 align-middle text-[var(--app-text-muted)]">Not set</td>
-                        <td className="px-3 py-3 align-middle">{database.host || "localhost"}</td>
-                        <td className="px-3 py-3 align-middle text-[var(--app-text-muted)]">{database.domain || ""}</td>
-                        <td className="px-3 py-3 align-middle text-right">
-                          <div className="flex items-center justify-end gap-2 text-[13px]">
+                        <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>Not set</td>
+                        <td className={databaseTableBodyCellClass}>{database.host || "localhost"}</td>
+                        <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
+                        <td className={databaseTableActionBodyCellClass}>
+                          <div className="flex items-center justify-end gap-1.5">
                             <button
                               type="button"
                               onClick={() => openEditDialog(database)}
-                              className="inline-flex items-center gap-1"
+                              aria-label={`Edit ${database.name}`}
+                              title={`Edit ${database.name}`}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
                             >
-                              <Pencil className="h-3.5 w-3.5" />
-                              Edit
+                              <Pencil className="h-5 w-5" />
                             </button>
-                            <span className="text-[var(--app-border)]">|</span>
                             <button
                               type="button"
                               onClick={() => {
                                 void handleDelete(database);
                               }}
                               disabled={deletingName !== null}
-                              className={cn(
-                                "inline-flex items-center gap-1 text-red-400 hover:text-red-300",
-                                deletingName !== null ? "opacity-60" : "",
-                              )}
+                              aria-label={`Delete ${database.name}`}
+                              title={deletingName === database.name ? `Deleting ${database.name}` : `Delete ${database.name}`}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-red-400 transition hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              {deletingName === database.name ? "Deleting..." : "Delete"}
+                              {deletingName === database.name ? (
+                                <LoaderCircle className="h-5 w-5 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-5 w-5" />
+                              )}
                             </button>
                           </div>
                         </td>
