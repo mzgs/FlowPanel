@@ -14,7 +14,6 @@ import {
   FolderOpen,
   HardDrive,
   LoaderCircle,
-  RefreshCw,
   RotateCcw,
   Trash2,
 } from "@/components/icons/tabler-icons";
@@ -59,7 +58,6 @@ const initialScope: CreateBackupInput = {
 export function BackupsPage() {
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deletingName, setDeletingName] = useState<string | null>(null);
   const [restoringName, setRestoringName] = useState<string | null>(null);
@@ -75,11 +73,7 @@ export function BackupsPage() {
   const siteFilesCheckboxId = "backup-scope-site-files";
   const databaseDumpsCheckboxId = "backup-scope-database-dumps";
 
-  async function loadBackups(showRefreshState: boolean) {
-    if (showRefreshState) {
-      setRefreshing(true);
-    }
-
+  async function loadBackups() {
     try {
       const payload = await fetchBackups();
       setBackups(payload.backups);
@@ -88,14 +82,11 @@ export function BackupsPage() {
       setLoadError(getErrorMessage(error, "Failed to load backups."));
     } finally {
       setLoading(false);
-      if (showRefreshState) {
-        setRefreshing(false);
-      }
     }
   }
 
   useEffect(() => {
-    void loadBackups(false);
+    void loadBackups();
   }, []);
 
   useEffect(() => {
@@ -183,25 +174,10 @@ export function BackupsPage() {
       <PageHeader
         title="Backups"
         actions={(
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void loadBackups(true)}
-              disabled={refreshing || creating}
-            >
-              {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Refresh
-            </Button>
-            <Button
-              type="button"
-              onClick={() => setCreateDialogOpen(true)}
-              disabled={refreshing}
-            >
-              <HardDrive className="h-4 w-4" />
-              Create backup
-            </Button>
-          </>
+          <Button type="button" onClick={() => setCreateDialogOpen(true)}>
+            <HardDrive className="h-4 w-4" />
+            Create backup
+          </Button>
         )}
       />
 
