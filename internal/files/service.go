@@ -1,7 +1,9 @@
 package files
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -383,19 +385,135 @@ func (s *Service) Upload(relPath string, headers []*multipart.FileHeader) error 
 	return nil
 }
 
-func (s *Service) DownloadPath(relPath string) (string, string, error) {
+func (s *Service) DownloadPath(relPath string) (string, string, func(), error) {
 	absolutePath, normalizedPath, entryType, err := s.resolveExisting(relPath)
 	if err != nil {
-		return "", "", err
-	}
-	if entryType != EntryTypeFile {
-		if entryType == EntryTypeDirectory {
-			return "", "", ErrFileExpected
-		}
-		return "", "", ErrUnsupportedEntry
+		return "", "", nil, err
 	}
 
-	return absolutePath, filepath.Base(normalizedPath), nil
+	switch entryType {
+	case EntryTypeFile:
+		return absolutePath, filepath.Base(normalizedPath), func() {}, nil
+	case EntryTypeDirectory:
+		archivePath, archiveName, err := createDirectoryArchive(absolutePath, normalizedPath, s.rootName)
+		if err != nil {
+			return "", "", nil, err
+		}
+
+		return archivePath, archiveName, func() {
+			_ = os.Remove(archivePath)
+		}, nil
+	default:
+		return "", "", nil, ErrUnsupportedEntry
+	}
+}
+
+func createDirectoryArchive(absolutePath, normalizedPath, rootName string) (string, string, error) {
+	archiveBaseName := filepath.Base(normalizedPath)
+	if normalizedPath == "" {
+		archiveBaseName = rootName
+	}
+	if archiveBaseName == "." || archiveBaseName == string(filepath.Separator) || archiveBaseName == "" {
+		archiveBaseName = "download"
+	}
+
+	file, err := os.CreateTemp("", "flowpanel-download-*.tar.gz")
+	if err != nil {
+		return "", "", fmt.Errorf("create download archive: %w", err)
+	}
+
+	archivePath := file.Name()
+	success := false
+	defer func() {
+		if err := file.Close(); err != nil && !success {
+			_ = os.Remove(archivePath)
+		}
+		if !success {
+			_ = os.Remove(archivePath)
+		}
+	}()
+
+	gzipWriter := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gzipWriter)
+
+	rootParent := filepath.Dir(absolutePath)
+	walkErr := filepath.WalkDir(absolutePath, func(currentPath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		info, err := os.Lstat(currentPath)
+		if err != nil {
+			return err
+		}
+
+		archiveEntryPath, err := filepath.Rel(rootParent, currentPath)
+		if err != nil {
+			return err
+		}
+
+		return writeTarEntry(tarWriter, currentPath, archiveEntryPath, info)
+	})
+	closeTarErr := tarWriter.Close()
+	closeGzipErr := gzipWriter.Close()
+	closeFileErr := file.Close()
+
+	if walkErr != nil {
+		return "", "", fmt.Errorf("archive directory: %w", walkErr)
+	}
+	if closeTarErr != nil {
+		return "", "", fmt.Errorf("close tar archive: %w", closeTarErr)
+	}
+	if closeGzipErr != nil {
+		return "", "", fmt.Errorf("close gzip archive: %w", closeGzipErr)
+	}
+	if closeFileErr != nil {
+		return "", "", fmt.Errorf("close archive file: %w", closeFileErr)
+	}
+
+	success = true
+
+	return archivePath, archiveBaseName + ".tar.gz", nil
+}
+
+func writeTarEntry(tarWriter *tar.Writer, sourcePath, archivePath string, info fs.FileInfo) error {
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return fmt.Errorf("build tar header for %q: %w", sourcePath, err)
+	}
+
+	header.Name = filepath.ToSlash(strings.TrimPrefix(archivePath, "./"))
+	if info.IsDir() && !strings.HasSuffix(header.Name, "/") {
+		header.Name += "/"
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		linkTarget, err := os.Readlink(sourcePath)
+		if err != nil {
+			return fmt.Errorf("read symlink %q: %w", sourcePath, err)
+		}
+		header.Linkname = linkTarget
+	}
+
+	if err := tarWriter.WriteHeader(header); err != nil {
+		return fmt.Errorf("write tar header for %q: %w", sourcePath, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open download source %q: %w", sourcePath, err)
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(tarWriter, file); err != nil {
+		return fmt.Errorf("write download source %q: %w", sourcePath, err)
+	}
+
+	return nil
 }
 
 func (s *Service) Transfer(mode string, sources []string, target string) error {

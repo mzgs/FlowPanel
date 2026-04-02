@@ -167,6 +167,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				IncludePanelData *bool    `json:"include_panel_data"`
 				IncludeSites     *bool    `json:"include_sites"`
 				IncludeDatabases *bool    `json:"include_databases"`
+				SiteHostnames    []string `json:"site_hostnames"`
 				DatabaseNames    []string `json:"database_names"`
 			}
 			if r.Body != nil {
@@ -186,6 +187,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			if payload.IncludeDatabases != nil {
 				input.IncludeDatabases = *payload.IncludeDatabases
 			}
+			input.SiteHostnames = payload.SiteHostnames
 			input.DatabaseNames = payload.DatabaseNames
 
 			record, err := app.Backups.Create(r.Context(), input)
@@ -1382,11 +1384,12 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			absolutePath, name, err := app.Files.DownloadPath(r.URL.Query().Get("path"))
+			absolutePath, name, cleanup, err := app.Files.DownloadPath(r.URL.Query().Get("path"))
 			if err != nil {
 				writeFileError(w, err)
 				return
 			}
+			defer cleanup()
 
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 			stdhttp.ServeFile(w, r, absolutePath)

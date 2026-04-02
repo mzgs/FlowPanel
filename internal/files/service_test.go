@@ -1,7 +1,10 @@
 package files
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"io"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -201,4 +204,107 @@ func TestTransferRejectsMovingFolderIntoItself(t *testing.T) {
 	if err := service.Transfer("move", []string{"parent"}, "parent/child"); err != ErrInvalidTransfer {
 		t.Fatalf("transfer error = %v, want %v", err, ErrInvalidTransfer)
 	}
+}
+
+func TestDownloadPathReturnsFileWithoutCleanup(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	path := filepath.Join(service.RootPath(), "note.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	downloadPath, name, cleanup, err := service.DownloadPath("note.txt")
+	if err != nil {
+		t.Fatalf("download path: %v", err)
+	}
+
+	if downloadPath != path {
+		t.Fatalf("download path = %q, want %q", downloadPath, path)
+	}
+	if name != "note.txt" {
+		t.Fatalf("download name = %q, want note.txt", name)
+	}
+
+	cleanup()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file missing after cleanup: %v", err)
+	}
+}
+
+func TestDownloadPathArchivesDirectory(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, "site"), 0o755); err != nil {
+		t.Fatalf("mkdir site: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "site", "index.html"), []byte("<h1>hello</h1>"), 0o644); err != nil {
+		t.Fatalf("write site file: %v", err)
+	}
+
+	downloadPath, name, cleanup, err := service.DownloadPath("site")
+	if err != nil {
+		t.Fatalf("download path: %v", err)
+	}
+
+	if name != "site.tar.gz" {
+		t.Fatalf("download name = %q, want site.tar.gz", name)
+	}
+
+	entries := readArchiveEntries(t, downloadPath)
+	if got := string(entries["site/index.html"]); got != "<h1>hello</h1>" {
+		t.Fatalf("archive entry = %q, want site content", got)
+	}
+
+	cleanup()
+	if _, err := os.Stat(downloadPath); !os.IsNotExist(err) {
+		t.Fatalf("archive still exists after cleanup: %v", err)
+	}
+}
+
+func readArchiveEntries(t *testing.T, archivePath string) map[string][]byte {
+	t.Helper()
+
+	file, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer file.Close()
+
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatalf("open gzip archive: %v", err)
+	}
+	defer gzipReader.Close()
+
+	tarReader := tar.NewReader(gzipReader)
+	entries := make(map[string][]byte)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar archive: %v", err)
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		payload, err := io.ReadAll(tarReader)
+		if err != nil {
+			t.Fatalf("read archive entry %q: %v", header.Name, err)
+		}
+		entries[header.Name] = payload
+	}
+
+	return entries
 }

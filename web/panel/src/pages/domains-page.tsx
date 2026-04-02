@@ -1,12 +1,16 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
+  Check,
+  Download,
   FolderOpen,
+  HardDrive,
   LoaderCircle,
   Pencil,
   Plus,
   Trash2,
 } from "@/components/icons/tabler-icons";
+import { createBackup } from "@/api/backups";
 import {
   createDomain,
   deleteDomain,
@@ -16,6 +20,7 @@ import {
   type DomainKind,
   type DomainRecord,
 } from "@/api/domains";
+import { downloadEntry } from "@/api/files";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +44,7 @@ import { Switch } from "@/components/ui/switch";
 import { formatDateTime } from "@/lib/format";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 type FormState = {
   hostname: string;
@@ -68,6 +74,11 @@ const initialFormState: FormState = {
   target: "",
   cacheEnabled: false,
 };
+
+const domainActionButtonClass =
+  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
+const domainDangerActionButtonClass =
+  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
 
 const hostnamePattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/i;
@@ -192,6 +203,9 @@ export function DomainsPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null);
+  const [creatingBackupDomainId, setCreatingBackupDomainId] = useState<string | null>(null);
+  const [createdBackupDomainId, setCreatedBackupDomainId] = useState<string | null>(null);
+  const [downloadingDomainId, setDownloadingDomainId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const hostnameInputRef = useRef<HTMLInputElement | null>(null);
@@ -391,6 +405,52 @@ export function DomainsPage() {
     }
   }
 
+  async function handleCreateBackup(domain: DomainRecord) {
+    if (!isSiteBackedKind(domain.kind) || creatingBackupDomainId !== null) {
+      return;
+    }
+
+    setCreatingBackupDomainId(domain.id);
+    setCreatedBackupDomainId(null);
+
+    try {
+      const record = await createBackup({
+        include_panel_data: false,
+        include_sites: true,
+        include_databases: false,
+        site_hostnames: [domain.hostname],
+      });
+      setCreatedBackupDomainId(domain.id);
+      window.setTimeout(() => {
+        setCreatedBackupDomainId((current) =>
+          current === domain.id ? null : current,
+        );
+      }, 1500);
+      toast.success(`Created backup ${record.name}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to create backup for ${domain.hostname}.`));
+    } finally {
+      setCreatingBackupDomainId(null);
+    }
+  }
+
+  async function handleDownload(domain: DomainRecord, filesPath: string) {
+    if (downloadingDomainId !== null) {
+      return;
+    }
+
+    setDownloadingDomainId(domain.id);
+
+    try {
+      const fileName = await downloadEntry(filesPath);
+      toast.success(`Downloaded ${fileName}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to download ${domain.hostname}.`));
+    } finally {
+      setDownloadingDomainId(null);
+    }
+  }
+
   return (
     <Dialog open={formOpen} onOpenChange={handleOpenChange}>
       <PageHeader
@@ -441,7 +501,7 @@ export function DomainsPage() {
                     <TableHead>Type</TableHead>
                     <TableHead>Cache</TableHead>
                     <TableHead>Created</TableHead>
-                    <TableHead className="w-[132px] text-right">Actions</TableHead>
+                    <TableHead className="w-[220px] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -479,8 +539,58 @@ export function DomainsPage() {
                         <TableCell className="text-[12px] text-[var(--app-text-muted)]">
                           {formatDateTime(domain.created_at)}
                         </TableCell>
-                        <TableCell className="w-[132px]">
-                          <div className="flex items-center justify-end gap-2">
+                        <TableCell className="w-[220px]">
+                          <div className="flex items-center justify-end gap-0.5">
+                            {filesPath !== null ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    void handleCreateBackup(domain);
+                                  }}
+                                  disabled={creatingBackupDomainId !== null}
+                                  aria-label={`Create backup for ${domain.hostname}`}
+                                  title={
+                                    creatingBackupDomainId === domain.id
+                                      ? `Creating backup for ${domain.hostname}`
+                                      : `Create backup for ${domain.hostname}`
+                                  }
+                                  className={domainActionButtonClass}
+                                >
+                                  {creatingBackupDomainId === domain.id ? (
+                                    <LoaderCircle className="size-6 animate-spin" />
+                                  ) : createdBackupDomainId === domain.id ? (
+                                    <Check className="size-6 text-emerald-500" />
+                                  ) : (
+                                    <HardDrive className="size-6" />
+                                  )}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    void handleDownload(domain, filesPath);
+                                  }}
+                                  disabled={downloadingDomainId !== null}
+                                  aria-label={`Download files for ${domain.hostname}`}
+                                  title={
+                                    downloadingDomainId === domain.id
+                                      ? `Downloading files for ${domain.hostname}`
+                                      : `Download files for ${domain.hostname}`
+                                  }
+                                  className={domainActionButtonClass}
+                                >
+                                  {downloadingDomainId === domain.id ? (
+                                    <LoaderCircle className="size-6 animate-spin" />
+                                  ) : (
+                                    <Download className="size-6" />
+                                  )}
+                                </Button>
+                              </>
+                            ) : null}
                             {filesPath !== null ? (
                               <Button
                                 asChild
@@ -488,7 +598,7 @@ export function DomainsPage() {
                                 size="icon"
                                 aria-label={`Open site folder for ${domain.hostname}`}
                                 title="Open site folder"
-                                className="size-8"
+                                className={domainActionButtonClass}
                               >
                                 <Link
                                   to="/files"
@@ -506,7 +616,7 @@ export function DomainsPage() {
                               disabled={deletingDomainId !== null}
                               aria-label={`Edit ${domain.hostname}`}
                               title="Edit"
-                              className="size-8"
+                              className={domainActionButtonClass}
                             >
                               <Pencil className="size-6" />
                             </Button>
@@ -518,7 +628,7 @@ export function DomainsPage() {
                                 void handleDelete(domain);
                               }}
                               disabled={deletingDomainId !== null}
-                              className="size-8 text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
+                              className={domainDangerActionButtonClass}
                               aria-label={`Delete ${domain.hostname}`}
                               title="Delete"
                             >

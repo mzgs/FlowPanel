@@ -968,6 +968,44 @@ func TestBackupsCreateEndpointAcceptsDatabaseNames(t *testing.T) {
 	}
 }
 
+func TestBackupsCreateEndpointAcceptsSiteHostnames(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	siteRoot := filepath.Join(t.TempDir(), "example.com")
+	if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+		t.Fatalf("create site root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "index.html"), []byte("site"), 0o644); err != nil {
+		t.Fatalf("write site file: %v", err)
+	}
+	if _, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "example.com",
+		Kind:     domain.KindStaticSite,
+		Target:   siteRoot,
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/backups", strings.NewReader(`{"include_panel_data":false,"include_sites":true,"include_databases":false,"site_hostnames":["example.com"]}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var payload struct {
+		Backup backup.Record `json:"backup"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(payload.Backup.Name, "site-example.com-backup") {
+		t.Fatalf("backup name = %q, want site-specific prefix", payload.Backup.Name)
+	}
+}
+
 func TestSystemStatusEndpoint(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 

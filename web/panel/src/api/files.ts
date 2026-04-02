@@ -126,6 +126,33 @@ export function getDownloadUrl(path: string) {
   return `/api/files/download?path=${encodeURIComponent(path)}`;
 }
 
+export async function downloadEntry(path: string): Promise<string> {
+  const response = await fetch(getDownloadUrl(path), {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await readFileApiError(response, "download entry");
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const fileName = getDownloadFilename(response.headers.get("Content-Disposition"), path);
+  const anchor = document.createElement("a");
+
+  anchor.href = downloadUrl;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(downloadUrl);
+  }, 0);
+
+  return fileName;
+}
+
 export async function transferEntries(input: TransferEntriesInput): Promise<void> {
   await sendJSON("/api/files/transfer", "POST", input, "transfer entries");
 }
@@ -165,4 +192,22 @@ async function readFileApiError(response: Response, action: string): Promise<Fil
   }
 
   return new Error(message);
+}
+
+function getDownloadFilename(contentDisposition: string | null, path: string) {
+  if (contentDisposition) {
+    const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (encodedMatch?.[1]) {
+      return decodeURIComponent(encodedMatch[1]);
+    }
+
+    const plainMatch = contentDisposition.match(/filename=\"([^\"]+)\"|filename=([^;]+)/i);
+    const value = plainMatch?.[1] ?? plainMatch?.[2];
+    if (value) {
+      return value.trim();
+    }
+  }
+
+  const fallback = path.split("/").filter(Boolean).pop() ?? "download";
+  return fallback;
 }

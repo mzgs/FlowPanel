@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -300,6 +301,109 @@ func TestCreateCanLimitBackupToSingleDatabase(t *testing.T) {
 	}
 	if _, ok := entries["databases/appdb.sql"]; ok {
 		t.Fatal("database backup unexpectedly included appdb dump")
+	}
+}
+
+func TestCreateCanLimitBackupToSingleSite(t *testing.T) {
+	t.Helper()
+
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	dbPath := filepath.Join(dataPath, "flowpanel.db")
+	dbConn := openTestDB(t, dbPath)
+
+	firstSiteRoot := filepath.Join(t.TempDir(), "example.com")
+	if err := os.MkdirAll(firstSiteRoot, 0o755); err != nil {
+		t.Fatalf("create first site root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(firstSiteRoot, "index.html"), []byte("first"), 0o644); err != nil {
+		t.Fatalf("write first site file: %v", err)
+	}
+
+	secondSiteRoot := filepath.Join(t.TempDir(), "admin.example.com")
+	if err := os.MkdirAll(secondSiteRoot, 0o755); err != nil {
+		t.Fatalf("create second site root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(secondSiteRoot, "index.html"), []byte("second"), 0o644); err != nil {
+		t.Fatalf("write second site file: %v", err)
+	}
+
+	service := NewService(
+		zap.NewNop(),
+		dataPath,
+		backupPath,
+		dbPath,
+		dbConn,
+		fakeDomainSource{
+			records: []domain.Record{
+				{Hostname: "example.com", Kind: domain.KindStaticSite, Target: firstSiteRoot},
+				{Hostname: "admin.example.com", Kind: domain.KindPHP, Target: secondSiteRoot},
+			},
+		},
+		fakeDatabaseSource{},
+	)
+
+	record, err := service.Create(context.Background(), CreateInput{
+		IncludeSites:  true,
+		SiteHostnames: []string{"admin.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("create site backup: %v", err)
+	}
+	if !strings.Contains(record.Name, "site-admin.example.com-backup") {
+		t.Fatalf("backup name = %q, want site-specific prefix", record.Name)
+	}
+
+	archivePath, _, err := service.DownloadPath(record.Name)
+	if err != nil {
+		t.Fatalf("download path: %v", err)
+	}
+
+	entries := readArchiveEntries(t, archivePath)
+	if got := string(entries["sites/admin.example.com/index.html"]); got != "second" {
+		t.Fatalf("site entry = %q, want second", got)
+	}
+	if _, ok := entries["sites/example.com/index.html"]; ok {
+		t.Fatal("site backup unexpectedly included example.com")
+	}
+}
+
+func TestCreateRejectsUnknownSiteHostnames(t *testing.T) {
+	t.Helper()
+
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	dbPath := filepath.Join(dataPath, "flowpanel.db")
+	dbConn := openTestDB(t, dbPath)
+
+	service := NewService(
+		zap.NewNop(),
+		dataPath,
+		backupPath,
+		dbPath,
+		dbConn,
+		fakeDomainSource{
+			records: []domain.Record{
+				{Hostname: "example.com", Kind: domain.KindStaticSite, Target: filepath.Join(t.TempDir(), "example.com")},
+			},
+		},
+		fakeDatabaseSource{},
+	)
+
+	_, err := service.Create(context.Background(), CreateInput{
+		IncludeSites:  true,
+		SiteHostnames: []string{"missing.example.com"},
+	})
+	if err == nil {
+		t.Fatal("create backup error = nil, want validation error")
+	}
+
+	var validation ValidationErrors
+	if !errors.As(err, &validation) {
+		t.Fatalf("error = %v, want validation error", err)
+	}
+	if validation["site_hostnames"] != `Site "missing.example.com" was not found.` {
+		t.Fatalf("site_hostnames error = %q, want missing site message", validation["site_hostnames"])
 	}
 }
 

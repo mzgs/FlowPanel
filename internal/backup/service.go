@@ -46,6 +46,7 @@ type CreateInput struct {
 	IncludePanelData bool     `json:"include_panel_data"`
 	IncludeSites     bool     `json:"include_sites"`
 	IncludeDatabases bool     `json:"include_databases"`
+	SiteHostnames    []string `json:"site_hostnames,omitempty"`
 	DatabaseNames    []string `json:"database_names,omitempty"`
 }
 
@@ -154,6 +155,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 	if err := s.ensureBackupPath(); err != nil {
 		return Record{}, err
 	}
+	input.SiteHostnames = normalizeSiteHostnames(input.SiteHostnames)
 	input.DatabaseNames = normalizeDatabaseNames(input.DatabaseNames)
 	if validation := validateCreateInput(input); len(validation) > 0 {
 		return Record{}, validation
@@ -183,7 +185,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		}
 	}
 	if input.IncludeSites {
-		sites, err = s.collectSites()
+		sites, err = s.collectSites(input.SiteHostnames)
 		if err != nil {
 			return Record{}, err
 		}
@@ -373,18 +375,31 @@ func (s *Service) createDatabaseSnapshot(ctx context.Context, stagingPath string
 	return snapshotPath, relPath, nil
 }
 
-func (s *Service) collectSites() ([]siteArchive, error) {
+func (s *Service) collectSites(hostnames []string) ([]siteArchive, error) {
 	if s.domains == nil {
 		return nil, nil
 	}
 
+	selected := make(map[string]struct{}, len(hostnames))
+	for _, hostname := range hostnames {
+		selected[hostname] = struct{}{}
+	}
+
 	records := s.domains.List()
+	available := make(map[string]struct{}, len(records))
 	sites := make([]siteArchive, 0, len(records))
 	for _, record := range records {
 		switch record.Kind {
 		case domain.KindStaticSite, domain.KindPHP:
 		default:
 			continue
+		}
+
+		available[record.Hostname] = struct{}{}
+		if len(selected) > 0 {
+			if _, ok := selected[record.Hostname]; !ok {
+				continue
+			}
 		}
 
 		rootPath := strings.TrimSpace(record.Target)
@@ -409,6 +424,14 @@ func (s *Service) collectSites() ([]siteArchive, error) {
 	sort.Slice(sites, func(i, j int) bool {
 		return sites[i].Hostname < sites[j].Hostname
 	})
+
+	for _, hostname := range hostnames {
+		if _, ok := available[hostname]; !ok {
+			return nil, ValidationErrors{
+				"site_hostnames": fmt.Sprintf("Site %q was not found.", hostname),
+			}
+		}
+	}
 
 	return sites, nil
 }
@@ -653,6 +676,11 @@ func databaseDumpNames(dumps []databaseDump) []string {
 }
 
 func validateCreateInput(input CreateInput) ValidationErrors {
+	if len(input.SiteHostnames) > 0 && !input.IncludeSites {
+		return ValidationErrors{
+			"site_hostnames": "Select site files before choosing specific domains.",
+		}
+	}
 	if len(input.DatabaseNames) > 0 && !input.IncludeDatabases {
 		return ValidationErrors{
 			"database_names": "Select database dumps before choosing specific databases.",
@@ -670,6 +698,9 @@ func validateCreateInput(input CreateInput) ValidationErrors {
 func backupNamePrefix(input CreateInput) string {
 	if input.IncludePanelData && input.IncludeSites && input.IncludeDatabases {
 		return "flowpanel-full-backup"
+	}
+	if !input.IncludePanelData && input.IncludeSites && !input.IncludeDatabases && len(input.SiteHostnames) == 1 {
+		return "flowpanel-site-" + input.SiteHostnames[0] + "-backup"
 	}
 	if !input.IncludePanelData && !input.IncludeSites && input.IncludeDatabases && len(input.DatabaseNames) == 1 {
 		return "flowpanel-database-" + input.DatabaseNames[0] + "-backup"
@@ -700,6 +731,14 @@ func samePath(left, right string) bool {
 }
 
 func normalizeDatabaseNames(names []string) []string {
+	return normalizeNames(names)
+}
+
+func normalizeSiteHostnames(hostnames []string) []string {
+	return normalizeNames(hostnames)
+}
+
+func normalizeNames(names []string) []string {
 	if len(names) == 0 {
 		return nil
 	}
