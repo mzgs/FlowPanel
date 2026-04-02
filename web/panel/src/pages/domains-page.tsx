@@ -1,7 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  Check,
   Download,
   FolderOpen,
   HardDrive,
@@ -28,6 +27,7 @@ import {
   type DomainRecord,
 } from "@/api/domains";
 import { downloadEntry } from "@/api/files";
+import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import {
@@ -234,6 +234,7 @@ export function DomainsPage() {
   const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null);
   const [creatingBackupDomainId, setCreatingBackupDomainId] = useState<string | null>(null);
   const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
+  const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
   const [createdBackupDomainId, setCreatedBackupDomainId] = useState<string | null>(null);
   const [downloadingDomainId, setDownloadingDomainId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -243,6 +244,8 @@ export function DomainsPage() {
     null,
   );
   const hostnameInputRef = useRef<HTMLInputElement | null>(null);
+  const createdBackupTimeoutRef = useRef<number | null>(null);
+  const restoredBackupTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -284,6 +287,17 @@ export function DomainsPage() {
 
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (createdBackupTimeoutRef.current !== null) {
+        window.clearTimeout(createdBackupTimeoutRef.current);
+      }
+      if (restoredBackupTimeoutRef.current !== null) {
+        window.clearTimeout(restoredBackupTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -479,11 +493,15 @@ export function DomainsPage() {
       });
       setBackups((current) => [record, ...current.filter((item) => item.name !== record.name)]);
       setBackupsLoadError(null);
+      if (createdBackupTimeoutRef.current !== null) {
+        window.clearTimeout(createdBackupTimeoutRef.current);
+      }
       setCreatedBackupDomainId(domain.id);
-      window.setTimeout(() => {
+      createdBackupTimeoutRef.current = window.setTimeout(() => {
         setCreatedBackupDomainId((current) =>
           current === domain.id ? null : current,
         );
+        createdBackupTimeoutRef.current = null;
       }, 1500);
       toast.success(`Created backup ${record.name}.`);
     } catch (error) {
@@ -521,15 +539,18 @@ export function DomainsPage() {
     }
 
     setRestoringBackupName(name);
+    setRestoredBackupName(null);
 
     try {
-      const result = await restoreBackup(name);
-      const restoredCount = result.restored_sites?.length ?? 0;
-      toast.success(
-        restoredCount > 0
-          ? `Restored ${restoredCount === 1 ? "1 site" : `${restoredCount} sites`} from ${name}.`
-          : `Restored backup ${name}.`,
-      );
+      await restoreBackup(name);
+      if (restoredBackupTimeoutRef.current !== null) {
+        window.clearTimeout(restoredBackupTimeoutRef.current);
+      }
+      setRestoredBackupName(name);
+      restoredBackupTimeoutRef.current = window.setTimeout(() => {
+        setRestoredBackupName((current) => (current === name ? null : current));
+        restoredBackupTimeoutRef.current = null;
+      }, 1500);
     } catch (error) {
       toast.error(getErrorMessage(error, `Failed to restore ${name}.`));
     } finally {
@@ -600,11 +621,13 @@ export function DomainsPage() {
                             aria-label={`Restore ${backup.name}`}
                             title={`Restore ${backup.name}`}
                           >
-                            {restoringBackupName === backup.name ? (
-                              <LoaderCircle className="size-6 animate-spin" stroke={domainActionIconStroke} />
-                            ) : (
-                              <RotateCcw className="size-6" stroke={domainActionIconStroke} />
-                            )}
+                            <ActionFeedbackIcon
+                              busy={restoringBackupName === backup.name}
+                              done={restoredBackupName === backup.name}
+                              icon={RotateCcw}
+                              className="size-6"
+                              stroke={domainActionIconStroke}
+                            />
                           </Button>
                           <Button
                             asChild
@@ -751,22 +774,13 @@ export function DomainsPage() {
                                     }
                                     className={domainActionButtonClass}
                                   >
-                                    {creatingBackupDomainId === domain.id ? (
-                                      <LoaderCircle
-                                        className="size-6 animate-spin"
-                                        stroke={domainActionIconStroke}
-                                      />
-                                    ) : createdBackupDomainId === domain.id ? (
-                                      <Check
-                                        className="size-6 text-emerald-500"
-                                        stroke={domainActionIconStroke}
-                                      />
-                                    ) : (
-                                      <HardDrive
-                                        className="size-6"
-                                        stroke={domainActionIconStroke}
-                                      />
-                                    )}
+                                    <ActionFeedbackIcon
+                                      busy={creatingBackupDomainId === domain.id}
+                                      done={createdBackupDomainId === domain.id}
+                                      icon={HardDrive}
+                                      className="size-6"
+                                      stroke={domainActionIconStroke}
+                                    />
                                   </Button>
                                   <Button
                                     type="button"

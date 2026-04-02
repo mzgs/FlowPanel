@@ -30,6 +30,7 @@ import {
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import { Check, Copy, Download, Eye, EyeOff, HardDrive, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -269,6 +270,7 @@ export function DatabasePage() {
   const [downloadingName, setDownloadingName] = useState<string | null>(null);
   const [creatingBackupName, setCreatingBackupName] = useState<string | null>(null);
   const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
+  const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
   const [createdBackupName, setCreatedBackupName] = useState<string | null>(null);
   const [rootPasswordOpen, setRootPasswordOpen] = useState(false);
   const [rootPassword, setRootPassword] = useState<string>("");
@@ -281,6 +283,7 @@ export function DatabasePage() {
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [copiedPasswordKey, setCopiedPasswordKey] = useState<string | null>(null);
   const createdBackupTimeoutRef = useRef<number | null>(null);
+  const restoredBackupTimeoutRef = useRef<number | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(search);
 
@@ -398,6 +401,9 @@ export function DatabasePage() {
     return () => {
       if (createdBackupTimeoutRef.current !== null) {
         window.clearTimeout(createdBackupTimeoutRef.current);
+      }
+      if (restoredBackupTimeoutRef.current !== null) {
+        window.clearTimeout(restoredBackupTimeoutRef.current);
       }
     };
   }, []);
@@ -704,15 +710,18 @@ export function DatabasePage() {
     }
 
     setRestoringBackupName(name);
+    setRestoredBackupName(null);
 
     try {
-      const result = await restoreBackup(name);
-      const restoredCount = result.restored_databases?.length ?? 0;
-      toast.success(
-        restoredCount > 0
-          ? `Restored ${restoredCount === 1 ? "1 database" : `${restoredCount} databases`} from ${name}.`
-          : `Restored backup ${name}.`,
-      );
+      await restoreBackup(name);
+      if (restoredBackupTimeoutRef.current !== null) {
+        window.clearTimeout(restoredBackupTimeoutRef.current);
+      }
+      setRestoredBackupName(name);
+      restoredBackupTimeoutRef.current = window.setTimeout(() => {
+        setRestoredBackupName((current) => (current === name ? null : current));
+        restoredBackupTimeoutRef.current = null;
+      }, 1500);
       await reloadDatabases();
     } catch (error) {
       toast.error(getErrorMessage(error, `Failed to restore ${name}.`));
@@ -816,11 +825,12 @@ export function DatabasePage() {
                               aria-label={`Restore ${backup.name}`}
                               title={`Restore ${backup.name}`}
                             >
-                              {restoringBackupName === backup.name ? (
-                                <LoaderCircle className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <RotateCcw className="h-4 w-4" />
-                              )}
+                              <ActionFeedbackIcon
+                                busy={restoringBackupName === backup.name}
+                                done={restoredBackupName === backup.name}
+                                icon={RotateCcw}
+                                className="h-4 w-4"
+                              />
                             </button>
                             <a
                               href={getBackupDownloadUrl(backup.name)}
@@ -1104,22 +1114,13 @@ export function DatabasePage() {
                               }
                               className={databaseActionButtonClass}
                             >
-                              {creatingBackupName === database.name ? (
-                                <LoaderCircle
-                                  className="size-6 animate-spin"
-                                  stroke={databaseActionIconStroke}
-                                />
-                              ) : createdBackupName === database.name ? (
-                                <Check
-                                  className="size-6 text-emerald-500"
-                                  stroke={databaseActionIconStroke}
-                                />
-                              ) : (
-                                <HardDrive
-                                  className="size-6"
-                                  stroke={databaseActionIconStroke}
-                                />
-                              )}
+                              <ActionFeedbackIcon
+                                busy={creatingBackupName === database.name}
+                                done={createdBackupName === database.name}
+                                icon={HardDrive}
+                                className="size-6"
+                                stroke={databaseActionIconStroke}
+                              />
                             </button>
                             <button
                               type="button"

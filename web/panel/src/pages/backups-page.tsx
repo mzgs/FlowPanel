@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createBackup,
   deleteBackup,
@@ -7,7 +7,6 @@ import {
   restoreBackup,
   type CreateBackupInput,
   type BackupRecord,
-  type RestoreBackupResult,
 } from "@/api/backups";
 import {
   Database,
@@ -19,6 +18,7 @@ import {
   RotateCcw,
   Trash2,
 } from "@/components/icons/tabler-icons";
+import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -56,28 +56,6 @@ const initialScope: CreateBackupInput = {
   include_databases: true,
 };
 
-function describeRestoreOutcome(result: RestoreBackupResult) {
-  const parts: string[] = [];
-
-  if (result.restored_panel_database) {
-    parts.push("panel state");
-  } else if (result.restored_panel_files) {
-    parts.push("panel files");
-  }
-  if ((result.restored_sites?.length ?? 0) > 0) {
-    parts.push(result.restored_sites!.length === 1 ? "1 site" : `${result.restored_sites!.length} sites`);
-  }
-  if ((result.restored_databases?.length ?? 0) > 0) {
-    parts.push(
-      result.restored_databases!.length === 1
-        ? "1 database"
-        : `${result.restored_databases!.length} databases`,
-    );
-  }
-
-  return parts.length > 0 ? parts.join(", ") : "backup contents";
-}
-
 export function BackupsPage() {
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,9 +63,11 @@ export function BackupsPage() {
   const [creating, setCreating] = useState(false);
   const [deletingName, setDeletingName] = useState<string | null>(null);
   const [restoringName, setRestoringName] = useState<string | null>(null);
+  const [restoredName, setRestoredName] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [scope, setScope] = useState<CreateBackupInput>(initialScope);
+  const restoredTimeoutRef = useRef<number | null>(null);
 
   const hasSelectedScope =
     scope.include_panel_data || scope.include_sites || scope.include_databases;
@@ -116,6 +96,14 @@ export function BackupsPage() {
 
   useEffect(() => {
     void loadBackups(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (restoredTimeoutRef.current !== null) {
+        window.clearTimeout(restoredTimeoutRef.current);
+      }
+    };
   }, []);
 
   async function handleCreateBackup() {
@@ -166,10 +154,18 @@ export function BackupsPage() {
     }
 
     setRestoringName(name);
+    setRestoredName(null);
 
     try {
       const result = await restoreBackup(name);
-      toast.success(`Restored ${describeRestoreOutcome(result)} from ${name}.`);
+      if (restoredTimeoutRef.current !== null) {
+        window.clearTimeout(restoredTimeoutRef.current);
+      }
+      setRestoredName(name);
+      restoredTimeoutRef.current = window.setTimeout(() => {
+        setRestoredName((current) => (current === name ? null : current));
+        restoredTimeoutRef.current = null;
+      }, 1500);
       if (result.restored_panel_database) {
         window.setTimeout(() => {
           window.location.reload();
@@ -364,6 +360,7 @@ export function BackupsPage() {
                 backups.map((backup) => {
                   const deleting = deletingName === backup.name;
                   const restoring = restoringName === backup.name;
+                  const restored = restoredName === backup.name;
 
                   return (
                     <TableRow key={backup.name}>
@@ -385,11 +382,12 @@ export function BackupsPage() {
                             aria-label={`Restore ${backup.name}`}
                             title={`Restore ${backup.name}`}
                           >
-                            {restoring ? (
-                              <LoaderCircle className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <RotateCcw className="h-4 w-4" />
-                            )}
+                            <ActionFeedbackIcon
+                              busy={restoring}
+                              done={restored}
+                              icon={RotateCcw}
+                              className="h-4 w-4"
+                            />
                           </Button>
                           <Button type="button" variant="outline" asChild>
                             <a href={getBackupDownloadUrl(backup.name)}>
