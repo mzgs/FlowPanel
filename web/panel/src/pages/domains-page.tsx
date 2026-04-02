@@ -79,6 +79,7 @@ const domainActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
 const domainDangerActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
+const domainActionIconStroke = 1.5;
 
 const hostnamePattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/i;
@@ -560,11 +561,20 @@ export function DomainsPage() {
                                   className={domainActionButtonClass}
                                 >
                                   {creatingBackupDomainId === domain.id ? (
-                                    <LoaderCircle className="size-6 animate-spin" />
+                                    <LoaderCircle
+                                      className="size-6 animate-spin"
+                                      stroke={domainActionIconStroke}
+                                    />
                                   ) : createdBackupDomainId === domain.id ? (
-                                    <Check className="size-6 text-emerald-500" />
+                                    <Check
+                                      className="size-6 text-emerald-500"
+                                      stroke={domainActionIconStroke}
+                                    />
                                   ) : (
-                                    <HardDrive className="size-6" />
+                                    <HardDrive
+                                      className="size-6"
+                                      stroke={domainActionIconStroke}
+                                    />
                                   )}
                                 </Button>
                                 <Button
@@ -584,9 +594,15 @@ export function DomainsPage() {
                                   className={domainActionButtonClass}
                                 >
                                   {downloadingDomainId === domain.id ? (
-                                    <LoaderCircle className="size-6 animate-spin" />
+                                    <LoaderCircle
+                                      className="size-6 animate-spin"
+                                      stroke={domainActionIconStroke}
+                                    />
                                   ) : (
-                                    <Download className="size-6" />
+                                    <Download
+                                      className="size-6"
+                                      stroke={domainActionIconStroke}
+                                    />
                                   )}
                                 </Button>
                               </>
@@ -599,14 +615,17 @@ export function DomainsPage() {
                                 aria-label={`Open site folder for ${domain.hostname}`}
                                 title="Open site folder"
                                 className={domainActionButtonClass}
-                              >
-                                <Link
-                                  to="/files"
-                                  search={filesPath ? { path: filesPath } : {}}
                                 >
-                                  <FolderOpen className="size-6" />
-                                </Link>
-                              </Button>
+                                  <Link
+                                    to="/files"
+                                    search={filesPath ? { path: filesPath } : {}}
+                                  >
+                                    <FolderOpen
+                                      className="size-6"
+                                      stroke={domainActionIconStroke}
+                                    />
+                                  </Link>
+                                </Button>
                             ) : null}
                             <Button
                               type="button"
@@ -618,7 +637,10 @@ export function DomainsPage() {
                               title="Edit"
                               className={domainActionButtonClass}
                             >
-                              <Pencil className="size-6" />
+                              <Pencil
+                                className="size-6"
+                                stroke={domainActionIconStroke}
+                              />
                             </Button>
                             <Button
                               type="button"
@@ -633,9 +655,15 @@ export function DomainsPage() {
                               title="Delete"
                             >
                               {deletingDomainId === domain.id ? (
-                                <LoaderCircle className="size-6 animate-spin" />
+                                <LoaderCircle
+                                  className="size-6 animate-spin"
+                                  stroke={domainActionIconStroke}
+                                />
                               ) : (
-                                <Trash2 className="size-6" />
+                                <Trash2
+                                  className="size-6"
+                                  stroke={domainActionIconStroke}
+                                />
                               )}
                             </Button>
                           </div>

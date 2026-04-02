@@ -119,6 +119,11 @@ const databaseTableActionHeaderCellClass = `${databaseTableHeaderCellClass} text
 const databaseTableActionBodyCellClass = `${databaseTableBodyCellClass} text-right`;
 const databaseBackupPrefix = "flowpanel-database-";
 const databaseBackupSeparator = "-backup-";
+const databaseActionButtonClass =
+  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
+const databaseDangerActionButtonClass =
+  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
+const databaseActionIconStroke = 1.5;
 
 type CopyWithFeedbackInput = {
   text: string;
@@ -1051,14 +1056,23 @@ export function DatabasePage() {
                                   ? `Creating local backup for ${database.name}`
                                   : `Create local backup for ${database.name}`
                               }
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                              className={databaseActionButtonClass}
                             >
                               {creatingBackupName === database.name ? (
-                                <LoaderCircle className="h-5 w-5 animate-spin" />
+                                <LoaderCircle
+                                  className="size-6 animate-spin"
+                                  stroke={databaseActionIconStroke}
+                                />
                               ) : createdBackupName === database.name ? (
-                                <Check className="h-5 w-5 text-emerald-500" />
+                                <Check
+                                  className="size-6 text-emerald-500"
+                                  stroke={databaseActionIconStroke}
+                                />
                               ) : (
-                                <HardDrive className="h-5 w-5" />
+                                <HardDrive
+                                  className="size-6"
+                                  stroke={databaseActionIconStroke}
+                                />
                               )}
                             </button>
                             <button
@@ -1073,12 +1087,18 @@ export function DatabasePage() {
                                   ? `Downloading backup for ${database.name}`
                                   : `Download backup for ${database.name}`
                               }
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                              className={databaseActionButtonClass}
                             >
                               {downloadingName === database.name ? (
-                                <LoaderCircle className="h-5 w-5 animate-spin" />
+                                <LoaderCircle
+                                  className="size-6 animate-spin"
+                                  stroke={databaseActionIconStroke}
+                                />
                               ) : (
-                                <Download className="h-5 w-5" />
+                                <Download
+                                  className="size-6"
+                                  stroke={databaseActionIconStroke}
+                                />
                               )}
                             </button>
                             <button
@@ -1086,9 +1106,12 @@ export function DatabasePage() {
                               onClick={() => openEditDialog(database)}
                               aria-label={`Edit ${database.name}`}
                               title={`Edit ${database.name}`}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
+                              className={databaseActionButtonClass}
                             >
-                              <Pencil className="h-5 w-5" />
+                              <Pencil
+                                className="size-6"
+                                stroke={databaseActionIconStroke}
+                              />
                             </button>
                             <button
                               type="button"
@@ -1098,12 +1121,18 @@ export function DatabasePage() {
                               disabled={deletingName !== null}
                               aria-label={`Delete ${database.name}`}
                               title={deletingName === database.name ? `Deleting ${database.name}` : `Delete ${database.name}`}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-red-400 transition hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                              className={databaseDangerActionButtonClass}
                             >
                               {deletingName === database.name ? (
-                                <LoaderCircle className="h-5 w-5 animate-spin" />
+                                <LoaderCircle
+                                  className="size-6 animate-spin"
+                                  stroke={databaseActionIconStroke}
+                                />
                               ) : (
-                                <Trash2 className="h-5 w-5" />
+                                <Trash2
+                                  className="size-6"
+                                  stroke={databaseActionIconStroke}
+                                />
                               )}
                             </button>
                           </div>
