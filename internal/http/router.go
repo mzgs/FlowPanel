@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/backup"
@@ -162,9 +164,10 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				IncludeDatabases: true,
 			}
 			var payload struct {
-				IncludePanelData *bool `json:"include_panel_data"`
-				IncludeSites     *bool `json:"include_sites"`
-				IncludeDatabases *bool `json:"include_databases"`
+				IncludePanelData *bool    `json:"include_panel_data"`
+				IncludeSites     *bool    `json:"include_sites"`
+				IncludeDatabases *bool    `json:"include_databases"`
+				DatabaseNames    []string `json:"database_names"`
 			}
 			if r.Body != nil {
 				if err := decodeJSON(r, &payload); err != nil && !errors.Is(err, io.EOF) {
@@ -183,6 +186,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			if payload.IncludeDatabases != nil {
 				input.IncludeDatabases = *payload.IncludeDatabases
 			}
+			input.DatabaseNames = payload.DatabaseNames
 
 			record, err := app.Backups.Create(r.Context(), input)
 			if err != nil {
@@ -609,6 +613,44 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/mariadb/databases", mariaDBDatabasesListHandler)
 		r.Method(stdhttp.MethodHead, "/mariadb/databases", mariaDBDatabasesListHandler)
+
+		mariaDBDatabaseBackupHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			databaseName := chi.URLParam(r, "databaseName")
+			dump, err := app.MariaDB.DumpDatabase(r.Context(), databaseName)
+			if err != nil {
+				var validation mariadb.ValidationErrors
+				switch {
+				case errors.As(err, &validation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				default:
+					app.Logger.Error("dump mariadb database failed",
+						zap.String("database_name", databaseName),
+						zap.Error(err),
+					)
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to back up database",
+					})
+					return
+				}
+			}
+
+			fileName := fmt.Sprintf("%s-%s.sql", strings.TrimSpace(databaseName), time.Now().UTC().Format("20060102-150405"))
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+			w.Header().Set("Content-Type", "application/sql; charset=utf-8")
+			stdhttp.ServeContent(w, r, fileName, time.Now().UTC(), bytes.NewReader(dump))
+		})
+		r.Method(stdhttp.MethodGet, "/mariadb/databases/{databaseName}/backup", mariaDBDatabaseBackupHandler)
 
 		mariaDBDatabaseCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.MariaDB == nil {

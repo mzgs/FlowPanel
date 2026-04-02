@@ -945,6 +945,29 @@ func TestBackupsCreateEndpointValidatesScope(t *testing.T) {
 	}
 }
 
+func TestBackupsCreateEndpointAcceptsDatabaseNames(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/backups", strings.NewReader(`{"include_panel_data":false,"include_sites":false,"include_databases":true,"database_names":["flowpanel"]}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var payload struct {
+		Backup backup.Record `json:"backup"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(payload.Backup.Name, "database-flowpanel-backup") {
+		t.Fatalf("backup name = %q, want database-specific prefix", payload.Backup.Name)
+	}
+}
+
 func TestSystemStatusEndpoint(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 
@@ -1099,6 +1122,23 @@ func TestMariaDBDatabasesListEndpoint(t *testing.T) {
 	}
 	if payload.Databases[0].Name != "flowpanel" {
 		t.Fatalf("name = %q, want flowpanel", payload.Databases[0].Name)
+	}
+}
+
+func TestMariaDBDatabaseBackupEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/mariadb/databases/flowpanel/backup", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, "flowpanel-") || !strings.Contains(disposition, ".sql") {
+		t.Fatalf("content-disposition = %q, want sql filename for flowpanel", disposition)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "CREATE DATABASE `flowpanel`;") {
+		t.Fatalf("body = %q, want database dump", body)
 	}
 }
 

@@ -127,6 +127,33 @@ export async function fetchMariaDBDatabases(): Promise<MariaDBDatabasesPayload> 
   return (await response.json()) as MariaDBDatabasesPayload;
 }
 
+export async function downloadMariaDBDatabaseBackup(name: string): Promise<string> {
+  const response = await fetch(`/api/mariadb/databases/${encodeURIComponent(name)}/backup`, {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await readMariaDBApiError(response, "back up database");
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const fileName = getDownloadFilename(response.headers.get("Content-Disposition"), name);
+  const anchor = document.createElement("a");
+
+  anchor.href = downloadUrl;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(downloadUrl);
+  }, 0);
+
+  return fileName;
+}
+
 export async function createMariaDBDatabase(
   input: CreateMariaDBDatabaseInput,
 ): Promise<MariaDBDatabase> {
@@ -186,6 +213,23 @@ export async function deleteMariaDBDatabase(
   if (!response.ok) {
     throw await readMariaDBApiError(response, "delete database");
   }
+}
+
+function getDownloadFilename(contentDisposition: string | null, name: string) {
+  if (contentDisposition) {
+    const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (encodedMatch?.[1]) {
+      return decodeURIComponent(encodedMatch[1]);
+    }
+
+    const plainMatch = contentDisposition.match(/filename="([^"]+)"|filename=([^;]+)/i);
+    const value = plainMatch?.[1] ?? plainMatch?.[2];
+    if (value) {
+      return value.trim();
+    }
+  }
+
+  return `${name}.sql`;
 }
 
 async function readMariaDBApiError(

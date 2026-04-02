@@ -8,6 +8,7 @@ export type CreateBackupInput = {
   include_panel_data: boolean;
   include_sites: boolean;
   include_databases: boolean;
+  database_names?: string[];
 };
 
 type BackupsPayload = {

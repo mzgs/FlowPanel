@@ -9,6 +9,7 @@ import {
 import {
   createMariaDBDatabase,
   deleteMariaDBDatabase,
+  downloadMariaDBDatabaseBackup,
   fetchMariaDBDatabases,
   fetchMariaDBRootPassword,
   fetchMariaDBStatus,
@@ -19,9 +20,10 @@ import {
   type MariaDBDatabase,
   type MariaDBStatus,
 } from "@/api/mariadb";
+import { createBackup } from "@/api/backups";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
-import { Check, Copy, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { Check, Copy, Download, Eye, EyeOff, HardDrive, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -233,6 +235,9 @@ export function DatabasePage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState<string | null>(null);
+  const [downloadingName, setDownloadingName] = useState<string | null>(null);
+  const [creatingBackupName, setCreatingBackupName] = useState<string | null>(null);
+  const [createdBackupName, setCreatedBackupName] = useState<string | null>(null);
   const [rootPasswordOpen, setRootPasswordOpen] = useState(false);
   const [rootPassword, setRootPassword] = useState<string>("");
   const [rootPasswordDraft, setRootPasswordDraft] = useState<string>("");
@@ -243,6 +248,7 @@ export function DatabasePage() {
   const [rootPasswordCopied, setRootPasswordCopied] = useState(false);
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [copiedPasswordKey, setCopiedPasswordKey] = useState<string | null>(null);
+  const createdBackupTimeoutRef = useRef<number | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(search);
 
@@ -345,6 +351,14 @@ export function DatabasePage() {
       active = false;
     };
   }, [rootPasswordOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (createdBackupTimeoutRef.current !== null) {
+        window.clearTimeout(createdBackupTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const rootPasswordDirty = rootPasswordDraft !== rootPassword;
   const rootPasswordCandidate = rootPasswordDraft.trim();
@@ -579,6 +593,46 @@ export function DatabasePage() {
       setLoadError(getErrorMessage(error, `Failed to delete ${database.name}.`));
     } finally {
       setDeletingName(null);
+    }
+  }
+
+  async function handleDownloadBackup(database: MariaDBDatabase) {
+    setDownloadingName(database.name);
+
+    try {
+      const fileName = await downloadMariaDBDatabaseBackup(database.name);
+      toast.success(`Downloaded backup ${fileName}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to back up ${database.name}.`));
+    } finally {
+      setDownloadingName(null);
+    }
+  }
+
+  async function handleCreateLocalBackup(database: MariaDBDatabase) {
+    setCreatingBackupName(database.name);
+    setCreatedBackupName((current) => (current === database.name ? null : current));
+
+    try {
+      const record = await createBackup({
+        include_panel_data: false,
+        include_sites: false,
+        include_databases: true,
+        database_names: [database.name],
+      });
+      if (createdBackupTimeoutRef.current !== null) {
+        window.clearTimeout(createdBackupTimeoutRef.current);
+      }
+      setCreatedBackupName(database.name);
+      createdBackupTimeoutRef.current = window.setTimeout(() => {
+        setCreatedBackupName((current) => (current === database.name ? null : current));
+        createdBackupTimeoutRef.current = null;
+      }, 1500);
+      toast.success(`Created local backup ${record.name}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to create local backup for ${database.name}.`));
+    } finally {
+      setCreatingBackupName(null);
     }
   }
 
@@ -839,7 +893,49 @@ export function DatabasePage() {
                         <td className={databaseTableBodyCellClass}>{database.host || "localhost"}</td>
                         <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
                         <td className={databaseTableActionBodyCellClass}>
-                          <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex items-center justify-end gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleCreateLocalBackup(database);
+                              }}
+                              disabled={creatingBackupName !== null}
+                              aria-label={`Create local backup for ${database.name}`}
+                              title={
+                                creatingBackupName === database.name
+                                  ? `Creating local backup for ${database.name}`
+                                  : `Create local backup for ${database.name}`
+                              }
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {creatingBackupName === database.name ? (
+                                <LoaderCircle className="h-5 w-5 animate-spin" />
+                              ) : createdBackupName === database.name ? (
+                                <Check className="h-5 w-5 text-emerald-500" />
+                              ) : (
+                                <HardDrive className="h-5 w-5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleDownloadBackup(database);
+                              }}
+                              disabled={downloadingName !== null}
+                              aria-label={`Download backup for ${database.name}`}
+                              title={
+                                downloadingName === database.name
+                                  ? `Downloading backup for ${database.name}`
+                                  : `Download backup for ${database.name}`
+                              }
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {downloadingName === database.name ? (
+                                <LoaderCircle className="h-5 w-5 animate-spin" />
+                              ) : (
+                                <Download className="h-5 w-5" />
+                              )}
+                            </button>
                             <button
                               type="button"
                               onClick={() => openEditDialog(database)}

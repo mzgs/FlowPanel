@@ -43,9 +43,10 @@ type Record struct {
 }
 
 type CreateInput struct {
-	IncludePanelData bool `json:"include_panel_data"`
-	IncludeSites     bool `json:"include_sites"`
-	IncludeDatabases bool `json:"include_databases"`
+	IncludePanelData bool     `json:"include_panel_data"`
+	IncludeSites     bool     `json:"include_sites"`
+	IncludeDatabases bool     `json:"include_databases"`
+	DatabaseNames    []string `json:"database_names,omitempty"`
 }
 
 type ValidationErrors map[string]string
@@ -153,6 +154,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 	if err := s.ensureBackupPath(); err != nil {
 		return Record{}, err
 	}
+	input.DatabaseNames = normalizeDatabaseNames(input.DatabaseNames)
 	if validation := validateCreateInput(input); len(validation) > 0 {
 		return Record{}, validation
 	}
@@ -187,7 +189,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		}
 	}
 	if input.IncludeDatabases {
-		databaseDumps, err = s.collectDatabaseDumps(ctx)
+		databaseDumps, err = s.collectDatabaseDumps(ctx, input.DatabaseNames)
 		if err != nil {
 			return Record{}, err
 		}
@@ -416,7 +418,7 @@ type databaseDump struct {
 	Content []byte
 }
 
-func (s *Service) collectDatabaseDumps(ctx context.Context) ([]databaseDump, error) {
+func (s *Service) collectDatabaseDumps(ctx context.Context, names []string) ([]databaseDump, error) {
 	if s.mariaDB == nil {
 		return nil, nil
 	}
@@ -426,8 +428,32 @@ func (s *Service) collectDatabaseDumps(ctx context.Context) ([]databaseDump, err
 		return nil, fmt.Errorf("list mariadb databases for backup: %w", err)
 	}
 
+	selected := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		selected[name] = struct{}{}
+	}
+	if len(selected) > 0 {
+		available := make(map[string]struct{}, len(records))
+		for _, record := range records {
+			available[record.Name] = struct{}{}
+		}
+		for _, name := range names {
+			if _, ok := available[name]; !ok {
+				return nil, ValidationErrors{
+					"database_names": fmt.Sprintf("Database %q was not found.", name),
+				}
+			}
+		}
+	}
+
 	dumps := make([]databaseDump, 0, len(records))
 	for _, record := range records {
+		if len(selected) > 0 {
+			if _, ok := selected[record.Name]; !ok {
+				continue
+			}
+		}
+
 		content, err := s.mariaDB.DumpDatabase(ctx, record.Name)
 		if err != nil {
 			return nil, fmt.Errorf("dump mariadb database %q: %w", record.Name, err)
@@ -627,6 +653,11 @@ func databaseDumpNames(dumps []databaseDump) []string {
 }
 
 func validateCreateInput(input CreateInput) ValidationErrors {
+	if len(input.DatabaseNames) > 0 && !input.IncludeDatabases {
+		return ValidationErrors{
+			"database_names": "Select database dumps before choosing specific databases.",
+		}
+	}
 	if input.IncludePanelData || input.IncludeSites || input.IncludeDatabases {
 		return nil
 	}
@@ -639,6 +670,9 @@ func validateCreateInput(input CreateInput) ValidationErrors {
 func backupNamePrefix(input CreateInput) string {
 	if input.IncludePanelData && input.IncludeSites && input.IncludeDatabases {
 		return "flowpanel-full-backup"
+	}
+	if !input.IncludePanelData && !input.IncludeSites && input.IncludeDatabases && len(input.DatabaseNames) == 1 {
+		return "flowpanel-database-" + input.DatabaseNames[0] + "-backup"
 	}
 
 	parts := make([]string, 0, 3)
@@ -663,6 +697,33 @@ func samePath(left, right string) bool {
 	}
 
 	return left == right
+}
+
+func normalizeDatabaseNames(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(names))
+	normalized := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		normalized = append(normalized, name)
+	}
+
+	sort.Strings(normalized)
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	return normalized
 }
 
 func sqliteStringLiteral(value string) string {

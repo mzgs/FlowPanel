@@ -254,6 +254,55 @@ func TestCreateCanLimitScope(t *testing.T) {
 	}
 }
 
+func TestCreateCanLimitBackupToSingleDatabase(t *testing.T) {
+	t.Helper()
+
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	dbPath := filepath.Join(dataPath, "flowpanel.db")
+	dbConn := openTestDB(t, dbPath)
+
+	service := NewService(
+		zap.NewNop(),
+		dataPath,
+		backupPath,
+		dbPath,
+		dbConn,
+		fakeDomainSource{},
+		fakeDatabaseSource{
+			records: []mariadb.DatabaseRecord{{Name: "appdb"}, {Name: "logsdb"}},
+			dumps: map[string][]byte{
+				"appdb":  []byte("app dump"),
+				"logsdb": []byte("logs dump"),
+			},
+		},
+	)
+
+	record, err := service.Create(context.Background(), CreateInput{
+		IncludeDatabases: true,
+		DatabaseNames:    []string{"logsdb"},
+	})
+	if err != nil {
+		t.Fatalf("create database backup: %v", err)
+	}
+	if !strings.Contains(record.Name, "database-logsdb-backup") {
+		t.Fatalf("backup name = %q, want database-specific prefix", record.Name)
+	}
+
+	archivePath, _, err := service.DownloadPath(record.Name)
+	if err != nil {
+		t.Fatalf("download path: %v", err)
+	}
+
+	entries := readArchiveEntries(t, archivePath)
+	if got := string(entries["databases/logsdb.sql"]); got != "logs dump" {
+		t.Fatalf("logsdb dump = %q, want logs dump", got)
+	}
+	if _, ok := entries["databases/appdb.sql"]; ok {
+		t.Fatal("database backup unexpectedly included appdb dump")
+	}
+}
+
 func TestCreateRequiresAtLeastOneSelection(t *testing.T) {
 	t.Helper()
 
