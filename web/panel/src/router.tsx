@@ -39,6 +39,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { CronPage } from "@/pages/cron-page";
+import { DomainDetailPage } from "@/pages/domain-detail-page";
 import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
@@ -61,6 +62,10 @@ function getPathLabel(pathname: string) {
     return "Dashboard";
   }
 
+  if (pathname.startsWith("/domains/")) {
+    return "details";
+  }
+
   if (pathname === "/jobs" || pathname === "/cron") {
     return "cron";
   }
@@ -72,6 +77,7 @@ function RootLayout() {
   const location = useLocation();
   const isNavItemActive = (to: string) =>
     location.pathname === to ||
+    (to === "/domains" && location.pathname.startsWith("/domains/")) ||
     (to === "/files" && location.pathname === "/file-manager") ||
     (to === "/cron" && location.pathname === "/jobs");
   const activeItem =
@@ -135,15 +141,26 @@ function RootLayout() {
               <Separator orientation="vertical" className="h-4" />
 
               <div className="min-w-0">
-                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <Link
+                  to="/"
+                  className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+                >
                   Control center
-                </div>
+                </Link>
                 <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
-                  <span className="truncate">{activeItem.label}</span>
+                  <Link
+                    to={activeItem.to}
+                    className="truncate transition-colors hover:text-primary"
+                  >
+                    {activeItem.label}
+                  </Link>
                   <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-muted-foreground">
+                  <Link
+                    to={location.pathname}
+                    className="truncate text-muted-foreground transition-colors hover:text-foreground"
+                  >
                     {getPathLabel(location.pathname)}
-                  </span>
+                  </Link>
                 </div>
               </div>
             </div>
@@ -210,6 +227,12 @@ const domainsRoute = createRoute({
   component: DomainsPage,
 });
 
+const domainDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/domains/$domainId",
+  component: DomainDetailPage,
+});
+
 const databaseRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/database",
@@ -255,6 +278,7 @@ const sshRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   domainsRoute,
+  domainDetailRoute,
   databaseRoute,
   filesRoute,
   legacyFileManagerRoute,

@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Pencil, Plus, Trash2 } from "@/components/icons/tabler-icons";
 import {
@@ -439,7 +440,13 @@ export function DomainsPage() {
                   {domains.map((domain) => (
                     <TableRow key={domain.id}>
                       <TableCell className="font-medium text-[var(--app-text)]">
-                        {domain.hostname}
+                        <Link
+                          to="/domains/$domainId"
+                          params={{ domainId: domain.id }}
+                          className="transition-colors hover:text-primary hover:underline"
+                        >
+                          {domain.hostname}
+                        </Link>
                       </TableCell>
                       <TableCell>{domain.kind}</TableCell>
                       <TableCell>
