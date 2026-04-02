@@ -182,7 +182,6 @@ export function BackupsPage() {
     <>
       <PageHeader
         title="Backups"
-        meta="Create downloadable archives of FlowPanel-managed state, including the panel database snapshot and files stored under the FlowPanel data directory."
         actions={(
           <>
             <Button
@@ -324,10 +323,6 @@ export function BackupsPage() {
 
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
-          <div className="border-b border-[var(--app-border)] px-4 py-3 text-sm text-muted-foreground">
-            Existing backup archives are excluded from new exports to avoid recursive copies.
-          </div>
-
           {loadError ? (
             <div className="border-b border-[var(--app-border)] px-4 py-3 text-sm text-[var(--app-danger)]">
               {loadError}
@@ -389,20 +384,25 @@ export function BackupsPage() {
                               className="h-4 w-4"
                             />
                           </Button>
-                          <Button type="button" variant="outline" asChild>
-                            <a href={getBackupDownloadUrl(backup.name)}>
+                          <Button type="button" variant="outline" size="icon" asChild>
+                            <a
+                              href={getBackupDownloadUrl(backup.name)}
+                              aria-label={`Download ${backup.name}`}
+                              title={`Download ${backup.name}`}
+                            >
                               <Download className="h-4 w-4" />
-                              Download
                             </a>
                           </Button>
                           <Button
                             type="button"
                             variant="destructive"
+                            size="icon"
                             onClick={() => void handleDeleteBackup(backup.name)}
                             disabled={deleting}
+                            aria-label={`Delete ${backup.name}`}
+                            title={`Delete ${backup.name}`}
                           >
                             {deleting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                            Delete
                           </Button>
                         </div>
                       </TableCell>
