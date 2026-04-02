@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,6 +23,8 @@ const (
 
 var ErrDuplicateHostname = errors.New("duplicate hostname")
 var ErrNotFound = errors.New("domain not found")
+
+var hostnamePattern = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$`)
 
 type Kind string
 
@@ -291,6 +294,14 @@ func validateHostname(value string) string {
 		}
 
 		return "Domain can contain only letters, numbers, dots, and hyphens."
+	}
+
+	if len(value) > 253 {
+		return "Enter a valid domain like example.com."
+	}
+
+	if !hostnamePattern.MatchString(value) {
+		return "Enter a valid domain like example.com."
 	}
 
 	return ""

@@ -61,6 +61,9 @@ const initialFormState: FormState = {
   cacheEnabled: false,
 };
 
+const hostnamePattern =
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/i;
+
 const kindConfig: Record<
   DomainKind,
   {
@@ -106,6 +109,10 @@ function validateHostname(value: string) {
 
   if (!/^[a-z0-9.-]+$/i.test(value)) {
     return "Domain can contain only letters, numbers, dots, and hyphens.";
+  }
+
+  if (!hostnamePattern.test(value)) {
+    return "Enter a valid domain like example.com.";
   }
 
   return undefined;
@@ -318,7 +325,9 @@ export function DomainsPage() {
       setFormOpen(false);
     } catch (error) {
       const domainError = error as DomainApiError;
+      let hasFieldErrors = false;
       if (domainError.fieldErrors) {
+        hasFieldErrors = Object.keys(domainError.fieldErrors).length > 0;
         setErrors({
           hostname: domainError.fieldErrors.hostname,
           kind: domainError.fieldErrors.kind,
@@ -327,10 +336,12 @@ export function DomainsPage() {
       }
 
       setFormError(
-        getErrorMessage(
-          error,
-          isEditing ? "Failed to update domain." : "Failed to create domain.",
-        ),
+        hasFieldErrors
+          ? null
+          : getErrorMessage(
+              error,
+              isEditing ? "Failed to update domain." : "Failed to create domain.",
+            ),
       );
     } finally {
       setSubmitting(false);

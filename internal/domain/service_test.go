@@ -177,6 +177,27 @@ func TestCreateReverseProxyRejectsPathTargets(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsInvalidHostnameFormat(t *testing.T) {
+	service := newService(t.TempDir(), nil)
+
+	_, err := service.Create(context.Background(), CreateInput{
+		Hostname: "example..com",
+		Kind:     KindStaticSite,
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	validation, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("error = %T, want ValidationErrors", err)
+	}
+
+	if validation["hostname"] != "Enter a valid domain like example.com." {
+		t.Fatalf("hostname validation = %q, want valid domain message", validation["hostname"])
+	}
+}
+
 func TestDeleteRemovesMatchingRecord(t *testing.T) {
 	service := newService(t.TempDir(), nil)
 
@@ -309,6 +330,36 @@ func TestUpdateRejectsHostnameChange(t *testing.T) {
 	}
 	if validation["hostname"] != "Domain cannot be changed after creation." {
 		t.Fatalf("hostname validation = %q, want immutable domain message", validation["hostname"])
+	}
+}
+
+func TestUpdateRejectsInvalidHostnameFormat(t *testing.T) {
+	service := newService(t.TempDir(), nil)
+
+	record, err := service.Create(context.Background(), CreateInput{
+		Hostname: "app.example.com",
+		Kind:     KindApp,
+		Target:   "3000",
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	_, _, err = service.Update(context.Background(), record.ID, UpdateInput{
+		Hostname: "app..example.com",
+		Kind:     KindReverseProxy,
+		Target:   "https://backend.example.com",
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	validation, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("error = %T, want ValidationErrors", err)
+	}
+	if validation["hostname"] != "Enter a valid domain like example.com." {
+		t.Fatalf("hostname validation = %q, want valid domain message", validation["hostname"])
 	}
 }
 
