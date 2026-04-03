@@ -63,6 +63,24 @@ export async function createBackup(input: CreateBackupInput): Promise<BackupReco
   return payload.backup;
 }
 
+export async function importBackup(file: File): Promise<BackupRecord> {
+  const formData = new FormData();
+  formData.set("backup", file);
+
+  const response = await fetch("/api/backups/import", {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw await readBackupApiError(response, "import backup");
+  }
+
+  const payload = (await response.json()) as BackupPayload;
+  return payload.backup;
+}
+
 export async function deleteBackup(name: string): Promise<void> {
   const response = await fetch(`/api/backups/${encodeURIComponent(name)}`, {
     method: "DELETE",

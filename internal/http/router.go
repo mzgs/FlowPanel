@@ -216,6 +216,63 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodPost, "/backups", backupsCreateHandler)
 
+		backupsImportHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Backups == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "backup service is not configured",
+				})
+				return
+			}
+			if err := r.ParseMultipartForm(64 << 20); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid backup upload",
+				})
+				return
+			}
+
+			headers := r.MultipartForm.File["backup"]
+			if len(headers) != 1 {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "provide exactly one backup file",
+				})
+				return
+			}
+
+			header := headers[0]
+			file, err := header.Open()
+			if err != nil {
+				app.Logger.Error("open uploaded backup failed",
+					zap.String("backup_name", header.Filename),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to read backup upload",
+				})
+				return
+			}
+			defer file.Close()
+
+			record, err := app.Backups.Import(r.Context(), header.Filename, file)
+			if err != nil {
+				writeBackupError(w, err)
+				if errors.Is(err, backup.ErrAlreadyExists) || errors.Is(err, backup.ErrInvalidName) || errors.Is(err, backup.ErrInvalidArchive) {
+					return
+				}
+				app.Logger.Error("import backup failed",
+					zap.String("backup_name", header.Filename),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "backups", "import", "backup", header.Filename, header.Filename, "failed", "Failed to import a backup archive.")
+				return
+			}
+
+			mutationEvent(r.Context(), "backups", "import", "backup", record.Name, record.Name, "succeeded", fmt.Sprintf("Imported backup %q.", record.Name))
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{
+				"backup": record,
+			})
+		})
+		r.Method(stdhttp.MethodPost, "/backups/import", backupsImportHandler)
+
 		backupsDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Backups == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -224,7 +281,11 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			name := chi.URLParam(r, "backupName")
+			name, err := decodeBackupNameParam(r)
+			if err != nil {
+				writeBackupError(w, err)
+				return
+			}
 			if err := app.Backups.Delete(r.Context(), name); err != nil {
 				switch {
 				case errors.Is(err, backup.ErrInvalidName):
@@ -266,7 +327,13 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			absolutePath, name, err := app.Backups.DownloadPath(chi.URLParam(r, "backupName"))
+			name, err := decodeBackupNameParam(r)
+			if err != nil {
+				writeBackupError(w, err)
+				return
+			}
+
+			absolutePath, name, err := app.Backups.DownloadPath(name)
 			if err != nil {
 				writeBackupError(w, err)
 				return
@@ -285,7 +352,11 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			name := chi.URLParam(r, "backupName")
+			name, err := decodeBackupNameParam(r)
+			if err != nil {
+				writeBackupError(w, err)
+				return
+			}
 			result, err := app.Backups.Restore(r.Context(), name)
 			if err != nil {
 				writeBackupError(w, err)
@@ -293,7 +364,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("backup_name", name),
 					zap.Error(err),
 				)
-				mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "failed", "Failed to restore a backup archive.")
+				mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "failed", fmt.Sprintf("Failed to restore backup %q: %v", name, err))
 				return
 			}
 
@@ -1797,9 +1868,26 @@ func writeBackupError(w stdhttp.ResponseWriter, err error) {
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
 			"error": "invalid backup name",
 		})
+	case errors.Is(err, backup.ErrInvalidArchive):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "invalid backup archive",
+		})
+	case errors.Is(err, backup.ErrAlreadyExists):
+		writeJSON(w, stdhttp.StatusConflict, map[string]any{
+			"error": "backup already exists",
+		})
 	default:
 		writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
-			"error": "backup operation failed",
+			"error": err.Error(),
 		})
 	}
+}
+
+func decodeBackupNameParam(r *stdhttp.Request) (string, error) {
+	name, err := url.PathUnescape(chi.URLParam(r, "backupName"))
+	if err != nil {
+		return "", backup.ErrInvalidName
+	}
+
+	return name, nil
 }

@@ -26,13 +26,18 @@ import (
 const backupExtension = ".tar.gz"
 
 var (
-	ErrNotFound    = errors.New("backup not found")
-	ErrInvalidName = errors.New("invalid backup name")
+	ErrNotFound       = errors.New("backup not found")
+	ErrInvalidName    = errors.New("invalid backup name")
+	ErrAlreadyExists  = errors.New("backup already exists")
+	ErrInvalidArchive = errors.New("invalid backup archive")
 )
+
+const backupFormat = "flowpanel-backup-v1"
 
 type Manager interface {
 	List(context.Context) ([]Record, error)
 	Create(context.Context, CreateInput) (Record, error)
+	Import(context.Context, string, io.Reader) (Record, error)
 	Restore(context.Context, string) (RestoreResult, error)
 	Delete(context.Context, string) error
 	DownloadPath(string) (string, string, error)
@@ -240,7 +245,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 	}
 
 	manifestPayload, err := json.MarshalIndent(manifest{
-		Format:    "flowpanel-backup-v1",
+		Format:    backupFormat,
 		CreatedAt: createdAt,
 		Contents:  contents,
 		Sites:     siteHostnames(sites),
@@ -303,6 +308,64 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 
 	return Record{
 		Name:      name,
+		Size:      info.Size(),
+		CreatedAt: info.ModTime().UTC(),
+	}, nil
+}
+
+func (s *Service) Import(_ context.Context, name string, archive io.Reader) (Record, error) {
+	if archive == nil {
+		return Record{}, ErrInvalidArchive
+	}
+
+	targetPath, err := s.resolveBackupPath(name)
+	if err != nil {
+		return Record{}, err
+	}
+
+	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return Record{}, ErrAlreadyExists
+		}
+		return Record{}, fmt.Errorf("create imported backup %q: %w", name, err)
+	}
+
+	success := false
+	defer func() {
+		_ = file.Close()
+		if !success {
+			_ = os.Remove(targetPath)
+		}
+	}()
+
+	written, err := io.Copy(file, archive)
+	if err != nil {
+		return Record{}, fmt.Errorf("write imported backup %q: %w", name, err)
+	}
+	if written == 0 {
+		return Record{}, ErrInvalidArchive
+	}
+	if err := file.Close(); err != nil {
+		return Record{}, fmt.Errorf("close imported backup %q: %w", name, err)
+	}
+	if err := validateImportedArchive(targetPath); err != nil {
+		return Record{}, err
+	}
+
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return Record{}, fmt.Errorf("stat imported backup %q: %w", name, err)
+	}
+
+	success = true
+	s.logger.Info("imported backup archive",
+		zap.String("path", targetPath),
+		zap.Int64("size", info.Size()),
+	)
+
+	return Record{
+		Name:      filepath.Base(targetPath),
 		Size:      info.Size(),
 		CreatedAt: info.ModTime().UTC(),
 	}, nil
@@ -778,6 +841,36 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 			return fmt.Errorf("backup archive entry %q uses unsupported type", header.Name)
 		}
 	}
+}
+
+func validateImportedArchive(archivePath string) error {
+	stagingPath, err := os.MkdirTemp("", "flowpanel-import-validate-*")
+	if err != nil {
+		return fmt.Errorf("create backup validation staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingPath)
+
+	if err := extractBackupArchive(archivePath, stagingPath); err != nil {
+		return ErrInvalidArchive
+	}
+
+	manifestPayload, err := os.ReadFile(filepath.Join(stagingPath, "manifest.json"))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ErrInvalidArchive
+		}
+		return fmt.Errorf("read backup manifest: %w", err)
+	}
+
+	var snapshot manifest
+	if err := json.Unmarshal(manifestPayload, &snapshot); err != nil {
+		return ErrInvalidArchive
+	}
+	if snapshot.Format != backupFormat {
+		return ErrInvalidArchive
+	}
+
+	return nil
 }
 
 func hasPanelEntries(stagingPath, snapshotRelPath string) bool {

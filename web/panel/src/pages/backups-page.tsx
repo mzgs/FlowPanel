@@ -4,6 +4,7 @@ import {
   deleteBackup,
   fetchBackups,
   getBackupDownloadUrl,
+  importBackup,
   restoreBackup,
   type CreateBackupInput,
   type BackupRecord,
@@ -16,6 +17,7 @@ import {
   LoaderCircle,
   RotateCcw,
   Trash2,
+  Upload,
 } from "@/components/icons/tabler-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { PageHeader } from "@/components/page-header";
@@ -54,6 +56,12 @@ const initialScope: CreateBackupInput = {
   include_sites: true,
   include_databases: true,
 };
+const backupArchiveExtension = ".tar.gz";
+
+function isBackupArchiveFileName(name: string) {
+  const normalizedName = name.trim().toLowerCase();
+  return normalizedName.endsWith(backupArchiveExtension);
+}
 
 export function BackupsPage() {
   const [backups, setBackups] = useState<BackupRecord[]>([]);
@@ -62,10 +70,12 @@ export function BackupsPage() {
   const [deletingName, setDeletingName] = useState<string | null>(null);
   const [restoringName, setRestoringName] = useState<string | null>(null);
   const [restoredName, setRestoredName] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [scope, setScope] = useState<CreateBackupInput>(initialScope);
   const restoredTimeoutRef = useRef<number | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasSelectedScope =
     scope.include_panel_data || scope.include_sites || scope.include_databases;
@@ -169,16 +179,65 @@ export function BackupsPage() {
     }
   }
 
+  function handleOpenImportDialog() {
+    if (importing) {
+      return;
+    }
+
+    importInputRef.current?.click();
+  }
+
+  async function handleImportSelection(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!isBackupArchiveFileName(file.name)) {
+      toast.error("Select a FlowPanel backup archive ending in .tar.gz.");
+      return;
+    }
+
+    setImporting(true);
+
+    try {
+      const record = await importBackup(file);
+      setBackups((current) => [record, ...current.filter((item) => item.name !== record.name)]);
+      setLoadError(null);
+      toast.success(`Imported backup ${record.name}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to import backup."));
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <>
       <PageHeader
         title="Backups"
         actions={(
-          <Button type="button" onClick={() => setCreateDialogOpen(true)}>
-            <HardDrive className="h-4 w-4" />
-            Create backup
-          </Button>
+          <>
+            <Button type="button" variant="outline" onClick={handleOpenImportDialog} disabled={importing}>
+              {importing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              Import backup
+            </Button>
+            <Button type="button" onClick={() => setCreateDialogOpen(true)}>
+              <HardDrive className="h-4 w-4" />
+              Create backup
+            </Button>
+          </>
         )}
+      />
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept={`${backupArchiveExtension},application/gzip,application/x-gzip,application/octet-stream`}
+        className="hidden"
+        onChange={(event) => {
+          void handleImportSelection(event.target.files);
+          event.target.value = "";
+        }}
       />
 
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>

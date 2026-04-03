@@ -187,6 +187,83 @@ func TestListDeleteAndDownloadPath(t *testing.T) {
 	}
 }
 
+func TestImportStoresValidatedArchive(t *testing.T) {
+	t.Helper()
+
+	sourceDataPath := t.TempDir()
+	sourceBackupPath := filepath.Join(t.TempDir(), "source-backups")
+	sourceDBPath := filepath.Join(sourceDataPath, "flowpanel.db")
+	sourceDBConn := openTestDB(t, sourceDBPath)
+
+	sourceService := NewService(zap.NewNop(), sourceDataPath, sourceBackupPath, sourceDBPath, sourceDBConn, fakeDomainSource{}, fakeDatabaseSource{
+		records: []mariadb.DatabaseRecord{{Name: "flowpanel"}},
+		dumps: map[string][]byte{
+			"flowpanel": []byte("dump"),
+		},
+	})
+
+	created, err := sourceService.Create(context.Background(), CreateInput{
+		IncludeDatabases: true,
+		DatabaseNames:    []string{"flowpanel"},
+	})
+	if err != nil {
+		t.Fatalf("create source backup: %v", err)
+	}
+
+	archivePath, _, err := sourceService.DownloadPath(created.Name)
+	if err != nil {
+		t.Fatalf("source download path: %v", err)
+	}
+
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatalf("open source archive: %v", err)
+	}
+	defer archive.Close()
+
+	targetDataPath := t.TempDir()
+	targetBackupPath := filepath.Join(t.TempDir(), "target-backups")
+	targetDBPath := filepath.Join(targetDataPath, "flowpanel.db")
+	targetDBConn := openTestDB(t, targetDBPath)
+	targetService := NewService(zap.NewNop(), targetDataPath, targetBackupPath, targetDBPath, targetDBConn, fakeDomainSource{}, fakeDatabaseSource{})
+
+	importedName := "flowpanel-database-flowpanel-backup-imported.tar.gz"
+	record, err := targetService.Import(context.Background(), importedName, archive)
+	if err != nil {
+		t.Fatalf("import backup: %v", err)
+	}
+	if record.Name != importedName {
+		t.Fatalf("imported backup name = %q, want %q", record.Name, importedName)
+	}
+	if record.Size <= 0 {
+		t.Fatalf("imported backup size = %d, want positive value", record.Size)
+	}
+
+	importedPath, _, err := targetService.DownloadPath(importedName)
+	if err != nil {
+		t.Fatalf("imported download path: %v", err)
+	}
+	entries := readArchiveEntries(t, importedPath)
+	if got := string(entries["manifest.json"]); !strings.Contains(got, backupFormat) {
+		t.Fatalf("manifest = %q, want backup format", got)
+	}
+}
+
+func TestImportRejectsInvalidArchive(t *testing.T) {
+	t.Helper()
+
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	dbPath := filepath.Join(dataPath, "flowpanel.db")
+	dbConn := openTestDB(t, dbPath)
+
+	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{})
+	_, err := service.Import(context.Background(), "flowpanel-database-invalid-backup.tar.gz", strings.NewReader("not a gzip archive"))
+	if !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("import error = %v, want %v", err, ErrInvalidArchive)
+	}
+}
+
 func TestCreateCanLimitScope(t *testing.T) {
 	t.Helper()
 

@@ -1,11 +1,15 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -940,6 +944,136 @@ func TestBackupsCreateListDownloadAndDeleteEndpoints(t *testing.T) {
 	}
 }
 
+func TestBackupsImportEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, httptest.NewRequest(http.MethodPost, "/api/backups", strings.NewReader(`{"include_panel_data":false,"include_sites":false,"include_databases":true,"database_names":["flowpanel"]}`)))
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body = %s", createRecorder.Code, http.StatusCreated, createRecorder.Body.String())
+	}
+
+	var createPayload struct {
+		Backup backup.Record `json:"backup"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	downloadRecorder := httptest.NewRecorder()
+	router.ServeHTTP(downloadRecorder, httptest.NewRequest(http.MethodGet, "/api/backups/"+createPayload.Backup.Name+"/download", nil))
+	if downloadRecorder.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want %d, body = %s", downloadRecorder.Code, http.StatusOK, downloadRecorder.Body.String())
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("backup", "flowpanel-database-flowpanel-backup-imported.tar.gz")
+	if err != nil {
+		t.Fatalf("create multipart file: %v", err)
+	}
+	if _, err := part.Write(downloadRecorder.Body.Bytes()); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	importRequest := httptest.NewRequest(http.MethodPost, "/api/backups/import", &body)
+	importRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	importRecorder := httptest.NewRecorder()
+	router.ServeHTTP(importRecorder, importRequest)
+
+	if importRecorder.Code != http.StatusCreated {
+		t.Fatalf("import status = %d, want %d, body = %s", importRecorder.Code, http.StatusCreated, importRecorder.Body.String())
+	}
+
+	var importPayload struct {
+		Backup backup.Record `json:"backup"`
+	}
+	if err := json.Unmarshal(importRecorder.Body.Bytes(), &importPayload); err != nil {
+		t.Fatalf("decode import response: %v", err)
+	}
+	if importPayload.Backup.Name != "flowpanel-database-flowpanel-backup-imported.tar.gz" {
+		t.Fatalf("imported name = %q, want imported archive name", importPayload.Backup.Name)
+	}
+
+	listRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/backups", nil))
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d, body = %s", listRecorder.Code, http.StatusOK, listRecorder.Body.String())
+	}
+
+	var listPayload struct {
+		Backups []backup.Record `json:"backups"`
+	}
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listPayload.Backups) != 2 {
+		t.Fatalf("backup count = %d, want 2", len(listPayload.Backups))
+	}
+}
+
+func TestBackupsEndpointsHandleImportedNamesWithSpaces(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/backups", strings.NewReader(`{"include_panel_data":false,"include_sites":false,"include_databases":true,"database_names":["flowpanel"]}`))
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body = %s", createRecorder.Code, http.StatusCreated, createRecorder.Body.String())
+	}
+
+	var createPayload struct {
+		Backup backup.Record `json:"backup"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	downloadSourceRecorder := httptest.NewRecorder()
+	router.ServeHTTP(downloadSourceRecorder, httptest.NewRequest(http.MethodGet, "/api/backups/"+createPayload.Backup.Name+"/download", nil))
+	if downloadSourceRecorder.Code != http.StatusOK {
+		t.Fatalf("download source status = %d, want %d, body = %s", downloadSourceRecorder.Code, http.StatusOK, downloadSourceRecorder.Body.String())
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	importedName := "flowpanel-database-flowpanel-backup-20260402-165246-000000000 (1).tar.gz"
+	part, err := writer.CreateFormFile("backup", importedName)
+	if err != nil {
+		t.Fatalf("create multipart file: %v", err)
+	}
+	if _, err := part.Write(downloadSourceRecorder.Body.Bytes()); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	importRequest := httptest.NewRequest(http.MethodPost, "/api/backups/import", &body)
+	importRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	importRecorder := httptest.NewRecorder()
+	router.ServeHTTP(importRecorder, importRequest)
+	if importRecorder.Code != http.StatusCreated {
+		t.Fatalf("import status = %d, want %d, body = %s", importRecorder.Code, http.StatusCreated, importRecorder.Body.String())
+	}
+
+	downloadImportedRecorder := httptest.NewRecorder()
+	router.ServeHTTP(downloadImportedRecorder, httptest.NewRequest(http.MethodGet, "/api/backups/"+url.PathEscape(importedName)+"/download", nil))
+	if downloadImportedRecorder.Code != http.StatusOK {
+		t.Fatalf("download imported status = %d, want %d, body = %s", downloadImportedRecorder.Code, http.StatusOK, downloadImportedRecorder.Body.String())
+	}
+
+	restoreRecorder := httptest.NewRecorder()
+	router.ServeHTTP(restoreRecorder, httptest.NewRequest(http.MethodPost, "/api/backups/"+url.PathEscape(importedName)+"/restore", nil))
+	if restoreRecorder.Code != http.StatusOK {
+		t.Fatalf("restore status = %d, want %d, body = %s", restoreRecorder.Code, http.StatusOK, restoreRecorder.Body.String())
+	}
+}
+
 func TestBackupsCreateEndpointValidatesScope(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 
@@ -1025,6 +1159,26 @@ func TestBackupsCreateEndpointAcceptsSiteHostnames(t *testing.T) {
 	}
 	if !strings.Contains(payload.Backup.Name, "site-example.com-backup") {
 		t.Fatalf("backup name = %q, want site-specific prefix", payload.Backup.Name)
+	}
+}
+
+func TestWriteBackupErrorUsesConcreteMessageForUnexpectedError(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	writeBackupError(recorder, errors.New("site base path is not configured"))
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error != "site base path is not configured" {
+		t.Fatalf("error = %q, want concrete error message", payload.Error)
 	}
 }
 
