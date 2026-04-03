@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Download,
+  ExternalLink,
   FolderOpen,
   HardDrive,
   LoaderCircle,
@@ -21,6 +22,7 @@ import {
   createDomain,
   deleteDomain,
   fetchDomains,
+  getDomainSiteUrl,
   updateDomain,
   type DomainApiError,
   type DomainKind,
@@ -29,6 +31,7 @@ import {
 import { downloadEntry } from "@/api/files";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -726,13 +729,27 @@ export function DomainsPage() {
                         return (
                           <TableRow key={domain.id}>
                             <TableCell className="font-medium text-[var(--app-text)]">
-                              <Link
-                                to="/domains/$hostname"
-                                params={{ hostname: domain.hostname }}
-                                className="transition-colors hover:text-primary hover:underline"
-                              >
-                                {domain.hostname}
-                              </Link>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Link
+                                  to="/domains/$hostname"
+                                  params={{ hostname: domain.hostname }}
+                                  className="transition-colors hover:text-primary hover:underline"
+                                >
+                                  {domain.hostname}
+                                </Link>
+                                <Badge asChild variant="outline" className="rounded-full">
+                                  <a
+                                    href={getDomainSiteUrl(domain.hostname)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    aria-label={`Visit ${domain.hostname}`}
+                                    title={`Visit ${domain.hostname}`}
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                    Visit
+                                  </a>
+                                </Badge>
+                              </div>
                             </TableCell>
                             <TableCell>{domain.kind}</TableCell>
                             <TableCell>

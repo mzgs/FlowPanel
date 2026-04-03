@@ -1,8 +1,14 @@
 import { useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { fetchDomainPreview, fetchDomains, type DomainRecord } from "@/api/domains";
-import { LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
+import {
+  fetchDomainPreview,
+  fetchDomains,
+  getDomainSiteUrl,
+  type DomainRecord,
+} from "@/api/domains";
+import { ExternalLink, LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -24,6 +30,7 @@ export function DomainDetailPage() {
   const [previewErrorMessage, setPreviewErrorMessage] = useState<string | null>(null);
   const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
+  const siteUrl = domain ? getDomainSiteUrl(domain.hostname) : "";
 
   useEffect(() => {
     let active = true;
@@ -137,7 +144,29 @@ export function DomainDetailPage() {
   return (
     <>
       <PageHeader
-        title={loading ? "Domain details" : domain?.hostname ?? "Domain details"}
+        title={
+          loading ? (
+            "Domain details"
+          ) : domain ? (
+            <span className="flex flex-wrap items-center gap-3">
+              <span>{domain.hostname}</span>
+              <Badge asChild variant="outline" className="rounded-full align-middle">
+                <a
+                  href={siteUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Visit ${domain.hostname}`}
+                  title={`Visit ${domain.hostname}`}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Visit
+                </a>
+              </Badge>
+            </span>
+          ) : (
+            "Domain details"
+          )
+        }
         meta={
           loading
             ? "Loading domain details..."
@@ -162,51 +191,60 @@ export function DomainDetailPage() {
                   <div className="relative aspect-[4/3] w-full bg-[var(--app-surface-muted)]">
                     {domain ? (
                       <>
-                        {previewUrl ? (
-                          <img
-                            src={previewUrl}
-                            alt={`${domain.hostname} site preview`}
-                            className={cn(
-                              "h-full w-full object-contain transition-opacity duration-200",
-                              previewLoaded ? "opacity-100" : "opacity-0",
-                            )}
-                            loading="eager"
-                            onLoad={() => {
-                              setPreviewLoaded(true);
-                              setPreviewError(false);
-                              setPreviewErrorMessage(null);
-                              setPreviewRefreshing(false);
-                            }}
-                            onError={() => {
-                              setPreviewLoaded(false);
-                              setPreviewError(true);
-                              setPreviewErrorMessage("Preview image could not be displayed.");
-                              setPreviewRefreshing(false);
-                            }}
-                          />
-                        ) : null}
+                        <a
+                          href={siteUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Visit ${domain.hostname}`}
+                          title={`Visit ${domain.hostname}`}
+                          className="group block h-full w-full"
+                        >
+                          {previewUrl ? (
+                            <img
+                              src={previewUrl}
+                              alt={`${domain.hostname} site preview`}
+                              className={cn(
+                                "h-full w-full object-contain transition-opacity duration-200",
+                                previewLoaded ? "opacity-100" : "opacity-0",
+                              )}
+                              loading="eager"
+                              onLoad={() => {
+                                setPreviewLoaded(true);
+                                setPreviewError(false);
+                                setPreviewErrorMessage(null);
+                                setPreviewRefreshing(false);
+                              }}
+                              onError={() => {
+                                setPreviewLoaded(false);
+                                setPreviewError(true);
+                                setPreviewErrorMessage("Preview image could not be displayed.");
+                                setPreviewRefreshing(false);
+                              }}
+                            />
+                          ) : null}
 
-                        {!previewLoaded && (!previewUrl || previewError) ? (
-                          <div className="absolute inset-0 flex flex-col justify-between bg-[var(--app-surface)]/92 p-4">
-                            <div className="inline-flex w-fit rounded-full border border-[var(--app-border)] bg-[var(--app-surface)]/85 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
-                              Preview
+                          {!previewLoaded && (!previewUrl || previewError) ? (
+                            <div className="absolute inset-0 flex flex-col justify-between bg-[var(--app-surface)]/92 p-4">
+                              <div className="inline-flex w-fit rounded-full border border-[var(--app-border)] bg-[var(--app-surface)]/85 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
+                                Preview
+                              </div>
+                              <div>
+                                <p className="text-sm font-semibold text-[var(--app-text)]">{domain.hostname}</p>
+                                <p className="mt-1 text-xs text-[var(--app-text-muted)]">
+                                  {previewError
+                                    ? previewErrorMessage ?? "Preview is unavailable right now."
+                                    : previewRefreshing
+                                      ? "Refreshing preview..."
+                                      : "Loading cached preview..."}
+                                </p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-sm font-semibold text-[var(--app-text)]">{domain.hostname}</p>
-                              <p className="mt-1 text-xs text-[var(--app-text-muted)]">
-                                {previewError
-                                  ? previewErrorMessage ?? "Preview is unavailable right now."
-                                  : previewRefreshing
-                                    ? "Refreshing preview..."
-                                    : "Loading cached preview..."}
-                              </p>
-                            </div>
-                          </div>
-                        ) : null}
+                          ) : null}
+                        </a>
 
                         <button
                           type="button"
-                          className="absolute right-3 bottom-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-surface)]/92 text-[var(--app-text)] shadow-[var(--app-shadow)] transition hover:bg-[var(--app-surface)] disabled:cursor-not-allowed disabled:opacity-70"
+                          className="absolute right-3 bottom-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-surface)]/92 text-[var(--app-text)] shadow-[var(--app-shadow)] transition hover:bg-[var(--app-surface)] disabled:cursor-not-allowed disabled:opacity-70"
                           aria-label={`Refresh preview for ${domain.hostname}`}
                           title="Refresh preview"
                           disabled={previewRefreshing}
