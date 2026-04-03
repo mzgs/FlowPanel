@@ -1070,6 +1070,46 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		domainsPreviewHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostname := chi.URLParam(r, "hostname")
+			refreshRequested := false
+			switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("refresh"))) {
+			case "1", "true", "yes":
+				refreshRequested = true
+			}
+
+			var (
+				previewPath string
+				err         error
+			)
+			if refreshRequested {
+				previewPath, err = app.Domains.RefreshPreview(r.Context(), hostname)
+			} else {
+				previewPath, err = app.Domains.EnsurePreview(r.Context(), hostname)
+			}
+			if err != nil {
+				switch {
+				case errors.Is(err, domain.ErrNotFound):
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "domain not found",
+					})
+				default:
+					app.Logger.Error("load domain preview failed",
+						zap.String("hostname", hostname),
+						zap.Error(err),
+					)
+					writeJSON(w, stdhttp.StatusBadGateway, map[string]any{
+						"error": "failed to load domain preview",
+					})
+				}
+				return
+			}
+
+			w.Header().Set("Cache-Control", "private, max-age=3600")
+			w.Header().Set("Content-Type", "image/png")
+			stdhttp.ServeFile(w, r, previewPath)
+		})
+
 		domainsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			var input domain.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
@@ -1297,6 +1337,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 		r.Method(stdhttp.MethodGet, "/domains", domainsListHandler)
 		r.Method(stdhttp.MethodHead, "/domains", domainsListHandler)
+		r.Method(stdhttp.MethodGet, "/domains/{hostname}/preview", domainsPreviewHandler)
+		r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
 		r.Method(stdhttp.MethodPost, "/domains", domainsCreateHandler)
 		r.Method(stdhttp.MethodPut, "/domains/{domainID}", domainsUpdateHandler)
 		r.Method(stdhttp.MethodDelete, "/domains/{domainID}", domainsDeleteHandler)

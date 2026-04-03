@@ -84,6 +84,38 @@ export async function deleteDomain(id: string): Promise<void> {
   }
 }
 
+export async function fetchDomainPreview(
+  hostname: string,
+  options?: {
+    refresh?: boolean;
+    refreshToken?: number;
+    signal?: AbortSignal;
+  },
+): Promise<Blob> {
+  const previewUrl = new URL(getDomainPreviewUrl(hostname), window.location.origin);
+  if (options?.refresh) {
+    previewUrl.searchParams.set("refresh", "1");
+  }
+  if (options?.refreshToken) {
+    previewUrl.searchParams.set("t", String(options.refreshToken));
+  }
+
+  const response = await fetch(previewUrl.pathname + previewUrl.search, {
+    credentials: "include",
+    signal: options?.signal,
+  });
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "load domain preview");
+  }
+
+  return response.blob();
+}
+
+export function getDomainPreviewUrl(hostname: string): string {
+  return `/api/domains/${encodeURIComponent(hostname)}/preview`;
+}
+
 async function readDomainMutationResponse(
   response: Response,
   action: string,

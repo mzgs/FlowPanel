@@ -65,10 +65,15 @@ func (e ValidationErrors) Error() string {
 }
 
 type Service struct {
-	basePath string
-	store    *Store
-	mu       sync.RWMutex
-	records  []Record
+	basePath         string
+	store            *Store
+	previewCachePath string
+	previewTTL       time.Duration
+	previewGenerator PreviewGenerator
+	now              func() time.Time
+	mu               sync.RWMutex
+	previewMu        sync.Mutex
+	records          []Record
 }
 
 func NewService(store *Store) *Service {
@@ -77,9 +82,13 @@ func NewService(store *Store) *Service {
 
 func newService(basePath string, store *Store) *Service {
 	return &Service{
-		basePath: strings.TrimSpace(basePath),
-		store:    store,
-		records:  make([]Record, 0),
+		basePath:         strings.TrimSpace(basePath),
+		store:            store,
+		previewCachePath: defaultPreviewCachePath(),
+		previewTTL:       defaultPreviewTTL(),
+		previewGenerator: defaultPreviewGenerator(),
+		now:              time.Now,
+		records:          make([]Record, 0),
 	}
 }
 

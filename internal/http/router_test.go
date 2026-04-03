@@ -44,6 +44,12 @@ type installablePHPMyAdminManager struct {
 	status phpmyadmin.Status
 }
 
+type previewGeneratorFunc func(ctx context.Context, targetURL string) ([]byte, error)
+
+func (f previewGeneratorFunc) Capture(ctx context.Context, targetURL string) ([]byte, error) {
+	return f(ctx, targetURL)
+}
+
 func (fakePHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
 		Ready:         true,
@@ -518,6 +524,123 @@ func TestDeleteDomainRollsBackWhenPublishFails(t *testing.T) {
 		t.Fatalf("persisted domain count after failed delete = %d, want 1", len(persisted))
 	}
 	assertDomainRecordEqual(t, persisted[0], record)
+}
+
+func TestDomainPreviewEndpointServesCachedThumbnail(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("FLOWPANEL_DOMAIN_PREVIEW_CACHE_PATH", cacheDir)
+
+	router, domains, _ := newTestDomainRouter(t)
+	requestCount := 0
+	domains.SetPreviewGenerator(previewGeneratorFunc(func(context.Context, string) ([]byte, error) {
+		requestCount++
+		return []byte("preview-image"), nil
+	}))
+	if _, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "preview.example.com",
+		Kind:     domain.KindStaticSite,
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	firstRecorder := httptest.NewRecorder()
+	router.ServeHTTP(firstRecorder, httptest.NewRequest(http.MethodGet, "/api/domains/preview.example.com/preview", nil))
+
+	if firstRecorder.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want %d, body = %s", firstRecorder.Code, http.StatusOK, firstRecorder.Body.String())
+	}
+	if firstRecorder.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("content-type = %q, want image/png", firstRecorder.Header().Get("Content-Type"))
+	}
+	if firstRecorder.Body.String() != "preview-image" {
+		t.Fatalf("preview body = %q, want preview-image", firstRecorder.Body.String())
+	}
+
+	secondRecorder := httptest.NewRecorder()
+	router.ServeHTTP(secondRecorder, httptest.NewRequest(http.MethodGet, "/api/domains/preview.example.com/preview", nil))
+
+	if secondRecorder.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want %d, body = %s", secondRecorder.Code, http.StatusOK, secondRecorder.Body.String())
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1", requestCount)
+	}
+}
+
+func TestDomainPreviewEndpointRefreshesWhenRequested(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("FLOWPANEL_DOMAIN_PREVIEW_CACHE_PATH", cacheDir)
+
+	router, domains, _ := newTestDomainRouter(t)
+	requestCount := 0
+	domains.SetPreviewGenerator(previewGeneratorFunc(func(_ context.Context, targetURL string) ([]byte, error) {
+		requestCount++
+		if requestCount == 1 {
+			return []byte("preview-v1"), nil
+		}
+		if !strings.Contains(targetURL, "flowpanel_preview_refresh=") {
+			t.Fatalf("forced refresh query missing: %q", targetURL)
+		}
+		return []byte("preview-v2"), nil
+	}))
+	if _, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "refresh.example.com",
+		Kind:     domain.KindStaticSite,
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	firstRecorder := httptest.NewRecorder()
+	router.ServeHTTP(firstRecorder, httptest.NewRequest(http.MethodGet, "/api/domains/refresh.example.com/preview", nil))
+	if firstRecorder.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want %d, body = %s", firstRecorder.Code, http.StatusOK, firstRecorder.Body.String())
+	}
+	if firstRecorder.Body.String() != "preview-v1" {
+		t.Fatalf("first preview body = %q, want preview-v1", firstRecorder.Body.String())
+	}
+
+	refreshRecorder := httptest.NewRecorder()
+	router.ServeHTTP(refreshRecorder, httptest.NewRequest(http.MethodGet, "/api/domains/refresh.example.com/preview?refresh=1", nil))
+	if refreshRecorder.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d, want %d, body = %s", refreshRecorder.Code, http.StatusOK, refreshRecorder.Body.String())
+	}
+	if refreshRecorder.Body.String() != "preview-v2" {
+		t.Fatalf("refresh preview body = %q, want preview-v2", refreshRecorder.Body.String())
+	}
+	if requestCount != 2 {
+		t.Fatalf("request count = %d, want 2", requestCount)
+	}
+}
+
+func TestDomainPreviewEndpointReturnsBadGatewayWhenGenerationFails(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("FLOWPANEL_DOMAIN_PREVIEW_CACHE_PATH", cacheDir)
+
+	router, domains, _ := newTestDomainRouter(t)
+	domains.SetPreviewGenerator(previewGeneratorFunc(func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("generation failed")
+	}))
+	if _, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "preview.example.com",
+		Kind:     domain.KindStaticSite,
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/domains/preview.example.com/preview", nil))
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadGateway, recorder.Body.String())
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["error"] != "failed to load domain preview" {
+		t.Fatalf("error = %q, want %q", payload["error"], "failed to load domain preview")
+	}
 }
 
 func TestCronListCreateAndDeleteEndpoints(t *testing.T) {

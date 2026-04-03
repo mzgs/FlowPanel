@@ -1,15 +1,27 @@
 package domain
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"flowpanel/internal/db"
 )
+
+type previewGeneratorFunc func(ctx context.Context, targetURL string) ([]byte, error)
+
+func (f previewGeneratorFunc) Capture(ctx context.Context, targetURL string) ([]byte, error) {
+	return f(ctx, targetURL)
+}
 
 func TestCreateStaticSiteCreatesSiteDirectory(t *testing.T) {
 	tempDir := t.TempDir()
@@ -300,6 +312,187 @@ func TestUpdatePersistsDomain(t *testing.T) {
 		records[0].CacheEnabled != updated.CacheEnabled ||
 		!records[0].CreatedAt.Equal(updated.CreatedAt) {
 		t.Fatalf("persisted record = %#v, want %#v", records[0], updated)
+	}
+}
+
+func TestEnsurePreviewCachesFetchedImage(t *testing.T) {
+	tempDir := t.TempDir()
+	service := newService(tempDir, nil)
+	service.previewCachePath = filepath.Join(tempDir, "cache")
+	service.previewTTL = 24 * time.Hour
+
+	if _, err := service.Create(context.Background(), CreateInput{
+		Hostname: "preview.example.com",
+		Kind:     KindStaticSite,
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	var requestCount atomic.Int32
+	service.SetPreviewGenerator(previewGeneratorFunc(func(context.Context, string) ([]byte, error) {
+		requestCount.Add(1)
+		return []byte("png-preview"), nil
+	}))
+
+	firstPath, err := service.EnsurePreview(context.Background(), "preview.example.com")
+	if err != nil {
+		t.Fatalf("ensure preview: %v", err)
+	}
+
+	if filepath.Base(firstPath) != "preview.example.com.png" {
+		t.Fatalf("preview filename = %q, want preview.example.com.png", filepath.Base(firstPath))
+	}
+
+	cachedData, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatalf("read preview cache: %v", err)
+	}
+	if string(cachedData) != "png-preview" {
+		t.Fatalf("preview cache = %q, want png-preview", string(cachedData))
+	}
+
+	secondPath, err := service.EnsurePreview(context.Background(), "preview.example.com")
+	if err != nil {
+		t.Fatalf("ensure cached preview: %v", err)
+	}
+	if secondPath != firstPath {
+		t.Fatalf("cached path = %q, want %q", secondPath, firstPath)
+	}
+	if got := requestCount.Load(); got != 1 {
+		t.Fatalf("request count = %d, want 1", got)
+	}
+}
+
+func TestThumbnailPreviewImageProducesCardSizedPNG(t *testing.T) {
+	sourceImage := image.NewRGBA(image.Rect(0, 0, 160, 640))
+	for y := 0; y < sourceImage.Bounds().Dy(); y++ {
+		for x := 0; x < sourceImage.Bounds().Dx(); x++ {
+			sourceImage.Set(x, y, color.RGBA{R: 0x33, G: 0x66, B: 0x99, A: 0xff})
+		}
+	}
+
+	var source bytes.Buffer
+	if err := png.Encode(&source, sourceImage); err != nil {
+		t.Fatalf("encode source image: %v", err)
+	}
+
+	thumbnail, err := thumbnailPreviewImage(source.Bytes())
+	if err != nil {
+		t.Fatalf("thumbnail preview image: %v", err)
+	}
+
+	decodedThumbnail, err := png.Decode(bytes.NewReader(thumbnail))
+	if err != nil {
+		t.Fatalf("decode thumbnail: %v", err)
+	}
+	if decodedThumbnail.Bounds().Dx() != defaultDomainPreviewWidth || decodedThumbnail.Bounds().Dy() != defaultDomainPreviewHeight {
+		t.Fatalf("thumbnail bounds = %v, want %dx%d", decodedThumbnail.Bounds(), defaultDomainPreviewWidth, defaultDomainPreviewHeight)
+	}
+}
+
+func TestEnsurePreviewReturnsStaleCacheWhenRefreshFails(t *testing.T) {
+	tempDir := t.TempDir()
+	service := newService(tempDir, nil)
+	service.previewCachePath = filepath.Join(tempDir, "cache")
+	service.previewTTL = time.Hour
+	service.now = func() time.Time {
+		return time.Unix(1_800, 0)
+	}
+
+	if _, err := service.Create(context.Background(), CreateInput{
+		Hostname: "stale.example.com",
+		Kind:     KindStaticSite,
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	cachePath := service.previewPath("stale.example.com")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatalf("mkdir preview cache: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte("stale-preview"), 0o644); err != nil {
+		t.Fatalf("write stale preview: %v", err)
+	}
+	oldTime := time.Unix(0, 0)
+	if err := os.Chtimes(cachePath, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes preview: %v", err)
+	}
+
+	service.SetPreviewGenerator(previewGeneratorFunc(func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("preview generation failed")
+	}))
+
+	path, err := service.EnsurePreview(context.Background(), "stale.example.com")
+	if err != nil {
+		t.Fatalf("ensure preview with stale fallback: %v", err)
+	}
+	if path != cachePath {
+		t.Fatalf("path = %q, want %q", path, cachePath)
+	}
+
+	cachedData, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read stale preview: %v", err)
+	}
+	if string(cachedData) != "stale-preview" {
+		t.Fatalf("stale preview = %q, want stale-preview", string(cachedData))
+	}
+}
+
+func TestRefreshPreviewForcesRefetch(t *testing.T) {
+	tempDir := t.TempDir()
+	service := newService(tempDir, nil)
+	service.previewCachePath = filepath.Join(tempDir, "cache")
+	service.previewTTL = 7 * 24 * time.Hour
+
+	if _, err := service.Create(context.Background(), CreateInput{
+		Hostname: "refresh.example.com",
+		Kind:     KindStaticSite,
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	var requestCount atomic.Int32
+	service.SetPreviewGenerator(previewGeneratorFunc(func(_ context.Context, targetURL string) ([]byte, error) {
+		currentCount := requestCount.Add(1)
+		if currentCount == 1 {
+			if strings.Contains(targetURL, "flowpanel_preview_refresh") {
+				t.Fatalf("first request unexpectedly forced refresh: %q", targetURL)
+			}
+			return []byte("preview-v1"), nil
+		}
+
+		if !strings.Contains(targetURL, "flowpanel_preview_refresh=") {
+			t.Fatalf("forced refresh query missing: %q", targetURL)
+		}
+		return []byte("preview-v2"), nil
+	}))
+
+	firstPath, err := service.EnsurePreview(context.Background(), "refresh.example.com")
+	if err != nil {
+		t.Fatalf("ensure preview: %v", err)
+	}
+	firstData, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatalf("read first preview: %v", err)
+	}
+	if string(firstData) != "preview-v1" {
+		t.Fatalf("first preview = %q, want preview-v1", string(firstData))
+	}
+
+	refreshedPath, err := service.RefreshPreview(context.Background(), "refresh.example.com")
+	if err != nil {
+		t.Fatalf("refresh preview: %v", err)
+	}
+	refreshedData, err := os.ReadFile(refreshedPath)
+	if err != nil {
+		t.Fatalf("read refreshed preview: %v", err)
+	}
+	if string(refreshedData) != "preview-v2" {
+		t.Fatalf("refreshed preview = %q, want preview-v2", string(refreshedData))
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("request count = %d, want 2", got)
 	}
 }
 
