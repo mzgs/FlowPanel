@@ -693,203 +693,205 @@ export function DomainsPage() {
             ) : null}
 
             <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-              <div className="border-b border-[var(--app-border)] px-5 py-4">
+              <div className="border-b border-[var(--app-border)] px-6 py-4">
                 <div className="text-[14px] font-medium text-[var(--app-text)]">
                   Domain list
                 </div>
               </div>
 
               {loading ? (
-                <div className="px-5 py-10 text-[13px] text-[var(--app-text-muted)]">
+                <div className="px-6 py-10 text-[13px] text-[var(--app-text-muted)]">
                   Loading domains...
                 </div>
               ) : domains.length ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead>Domain</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Backup</TableHead>
-                      <TableHead className="w-[220px] text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {domains.map((domain) => {
-                      const filesPath = getFilesPathFromDomainTarget(
-                        domain.kind,
-                        sitesBasePath,
-                        domain.target,
-                      );
-                      const backupCount = siteBackups[domain.hostname]?.length ?? 0;
+                <div className="px-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead>Domain</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Backup</TableHead>
+                        <TableHead className="w-[220px] text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {domains.map((domain) => {
+                        const filesPath = getFilesPathFromDomainTarget(
+                          domain.kind,
+                          sitesBasePath,
+                          domain.target,
+                        );
+                        const backupCount = siteBackups[domain.hostname]?.length ?? 0;
 
-                      return (
-                        <TableRow key={domain.id}>
-                          <TableCell className="font-medium text-[var(--app-text)]">
-                            <Link
-                              to="/domains/$hostname"
-                              params={{ hostname: domain.hostname }}
-                              className="transition-colors hover:text-primary hover:underline"
-                            >
-                              {domain.hostname}
-                            </Link>
-                          </TableCell>
-                          <TableCell>{domain.kind}</TableCell>
-                          <TableCell>
-                            {!isSiteBackedKind(domain.kind) ? (
-                              <span className="text-[13px] text-[var(--app-text-muted)]">
-                                Not available
-                              </span>
-                            ) : backupsLoading ? (
-                              <span className="text-[13px] text-[var(--app-text-muted)]">
-                                Loading...
-                              </span>
-                            ) : backupsLoadError ? (
-                              <span
-                                className="text-[13px] text-[var(--app-text-muted)]"
-                                title={backupsLoadError}
+                        return (
+                          <TableRow key={domain.id}>
+                            <TableCell className="font-medium text-[var(--app-text)]">
+                              <Link
+                                to="/domains/$hostname"
+                                params={{ hostname: domain.hostname }}
+                                className="transition-colors hover:text-primary hover:underline"
                               >
-                                Unavailable
-                              </span>
-                            ) : backupCount > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => setBackupDialogDomain(domain)}
-                                className="text-[13px] font-medium text-[var(--app-text)] underline decoration-[var(--app-border-strong)] underline-offset-4 transition hover:text-[var(--app-text-muted)]"
-                              >
-                                {backupCount} {backupCount === 1 ? "backup" : "backups"}
-                              </button>
-                            ) : (
-                              <span className="text-[13px] text-[var(--app-text-muted)]">
-                                No backups
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell className="w-[220px]">
-                            <div className="flex items-center justify-end gap-0.5">
-                              {filesPath !== null ? (
-                                <>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => {
-                                      void handleCreateBackup(domain);
-                                    }}
-                                    disabled={creatingBackupDomainId !== null}
-                                    aria-label={`Create backup for ${domain.hostname}`}
-                                    title={
-                                      creatingBackupDomainId === domain.id
-                                        ? `Creating backup for ${domain.hostname}`
-                                        : `Create backup for ${domain.hostname}`
-                                    }
-                                    className={domainActionButtonClass}
-                                  >
-                                    <ActionFeedbackIcon
-                                      busy={creatingBackupDomainId === domain.id}
-                                      done={createdBackupDomainId === domain.id}
-                                      icon={HardDrive}
-                                      className="size-6"
-                                      stroke={domainActionIconStroke}
-                                    />
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => {
-                                      void handleDownload(domain, filesPath);
-                                    }}
-                                    disabled={downloadingDomainId !== null}
-                                    aria-label={`Download files for ${domain.hostname}`}
-                                    title={
-                                      downloadingDomainId === domain.id
-                                        ? `Downloading files for ${domain.hostname}`
-                                        : `Download files for ${domain.hostname}`
-                                    }
-                                    className={domainActionButtonClass}
-                                  >
-                                    {downloadingDomainId === domain.id ? (
-                                      <LoaderCircle
-                                        className="size-6 animate-spin"
-                                        stroke={domainActionIconStroke}
-                                      />
-                                    ) : (
-                                      <Download
+                                {domain.hostname}
+                              </Link>
+                            </TableCell>
+                            <TableCell>{domain.kind}</TableCell>
+                            <TableCell>
+                              {!isSiteBackedKind(domain.kind) ? (
+                                <span className="text-[13px] text-[var(--app-text-muted)]">
+                                  Not available
+                                </span>
+                              ) : backupsLoading ? (
+                                <span className="text-[13px] text-[var(--app-text-muted)]">
+                                  Loading...
+                                </span>
+                              ) : backupsLoadError ? (
+                                <span
+                                  className="text-[13px] text-[var(--app-text-muted)]"
+                                  title={backupsLoadError}
+                                >
+                                  Unavailable
+                                </span>
+                              ) : backupCount > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setBackupDialogDomain(domain)}
+                                  className="text-[13px] font-medium text-[var(--app-text)] underline decoration-[var(--app-border-strong)] underline-offset-4 transition hover:text-[var(--app-text-muted)]"
+                                >
+                                  {backupCount} {backupCount === 1 ? "backup" : "backups"}
+                                </button>
+                              ) : (
+                                <span className="text-[13px] text-[var(--app-text-muted)]">
+                                  No backups
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="w-[220px]">
+                              <div className="flex items-center justify-end gap-0.5">
+                                {filesPath !== null ? (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => {
+                                        void handleCreateBackup(domain);
+                                      }}
+                                      disabled={creatingBackupDomainId !== null}
+                                      aria-label={`Create backup for ${domain.hostname}`}
+                                      title={
+                                        creatingBackupDomainId === domain.id
+                                          ? `Creating backup for ${domain.hostname}`
+                                          : `Create backup for ${domain.hostname}`
+                                      }
+                                      className={domainActionButtonClass}
+                                    >
+                                      <ActionFeedbackIcon
+                                        busy={creatingBackupDomainId === domain.id}
+                                        done={createdBackupDomainId === domain.id}
+                                        icon={HardDrive}
                                         className="size-6"
                                         stroke={domainActionIconStroke}
                                       />
-                                    )}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => {
+                                        void handleDownload(domain, filesPath);
+                                      }}
+                                      disabled={downloadingDomainId !== null}
+                                      aria-label={`Download files for ${domain.hostname}`}
+                                      title={
+                                        downloadingDomainId === domain.id
+                                          ? `Downloading files for ${domain.hostname}`
+                                          : `Download files for ${domain.hostname}`
+                                      }
+                                      className={domainActionButtonClass}
+                                    >
+                                      {downloadingDomainId === domain.id ? (
+                                        <LoaderCircle
+                                          className="size-6 animate-spin"
+                                          stroke={domainActionIconStroke}
+                                        />
+                                      ) : (
+                                        <Download
+                                          className="size-6"
+                                          stroke={domainActionIconStroke}
+                                        />
+                                      )}
+                                    </Button>
+                                  </>
+                                ) : null}
+                                {filesPath !== null ? (
+                                  <Button
+                                    asChild
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label={`Open site folder for ${domain.hostname}`}
+                                    title="Open site folder"
+                                    className={domainActionButtonClass}
+                                  >
+                                    <Link
+                                      to="/files"
+                                      search={filesPath ? { path: filesPath } : {}}
+                                    >
+                                      <FolderOpen
+                                        className="size-6"
+                                        stroke={domainActionIconStroke}
+                                      />
+                                    </Link>
                                   </Button>
-                                </>
-                              ) : null}
-                              {filesPath !== null ? (
+                                ) : null}
                                 <Button
-                                  asChild
+                                  type="button"
                                   variant="ghost"
                                   size="icon"
-                                  aria-label={`Open site folder for ${domain.hostname}`}
-                                  title="Open site folder"
+                                  onClick={() => openEditForm(domain)}
+                                  disabled={deletingDomainId !== null}
+                                  aria-label={`Edit ${domain.hostname}`}
+                                  title="Edit"
                                   className={domainActionButtonClass}
                                 >
-                                  <Link
-                                    to="/files"
-                                    search={filesPath ? { path: filesPath } : {}}
-                                  >
-                                    <FolderOpen
-                                      className="size-6"
-                                      stroke={domainActionIconStroke}
-                                    />
-                                  </Link>
-                                </Button>
-                              ) : null}
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openEditForm(domain)}
-                                disabled={deletingDomainId !== null}
-                                aria-label={`Edit ${domain.hostname}`}
-                                title="Edit"
-                                className={domainActionButtonClass}
-                              >
-                                <Pencil
-                                  className="size-6"
-                                  stroke={domainActionIconStroke}
-                                />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => {
-                                  void handleDelete(domain);
-                                }}
-                                disabled={deletingDomainId !== null}
-                                className={domainDangerActionButtonClass}
-                                aria-label={`Delete ${domain.hostname}`}
-                                title="Delete"
-                              >
-                                {deletingDomainId === domain.id ? (
-                                  <LoaderCircle
-                                    className="size-6 animate-spin"
-                                    stroke={domainActionIconStroke}
-                                  />
-                                ) : (
-                                  <Trash2
+                                  <Pencil
                                     className="size-6"
                                     stroke={domainActionIconStroke}
                                   />
-                                )}
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    void handleDelete(domain);
+                                  }}
+                                  disabled={deletingDomainId !== null}
+                                  className={domainDangerActionButtonClass}
+                                  aria-label={`Delete ${domain.hostname}`}
+                                  title="Delete"
+                                >
+                                  {deletingDomainId === domain.id ? (
+                                    <LoaderCircle
+                                      className="size-6 animate-spin"
+                                      stroke={domainActionIconStroke}
+                                    />
+                                  ) : (
+                                    <Trash2
+                                      className="size-6"
+                                      stroke={domainActionIconStroke}
+                                    />
+                                  )}
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
               ) : (
-                <div className="px-5 py-10">
+                <div className="px-6 py-10">
                   <div className="max-w-xl space-y-3">
                     <p className="text-[14px] text-[var(--app-text)]">
                       No domains configured.
