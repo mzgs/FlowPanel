@@ -241,7 +241,7 @@ const activityRoute = createRoute({
 
 const domainDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/domains/$domainId",
+  path: "/domains/$hostname",
   component: DomainDetailPage,
 });
 

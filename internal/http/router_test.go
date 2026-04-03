@@ -1470,6 +1470,36 @@ func TestPanelHandlerFallsBackToIndexForClientRoutes(t *testing.T) {
 	}
 }
 
+func TestPanelHandlerFallsBackToIndexForClientRoutesWithDots(t *testing.T) {
+	handler, err := newPanelHandlerWithFS(fstest.MapFS{
+		"index.html": {
+			Data: []byte(`<!doctype html><html><head><link rel="stylesheet" href="/assets/index.css"><script type="module" src="/assets/index.js"></script></head><body><div id="root"></div></body></html>`),
+		},
+		"assets/index.css": {
+			Data: []byte("body { background: #fff; }"),
+		},
+		"assets/index.js": {
+			Data: []byte("console.log('ok')"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("new panel handler: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/domains/home.mzgs.net-1775070267872817000", nil)
+	request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), `<div id="root"></div>`) {
+		t.Fatalf("body = %q, want index html", recorder.Body.String())
+	}
+}
+
 func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.Store) {
 	t.Helper()
 

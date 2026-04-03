@@ -148,6 +148,18 @@ function validateHostname(value: string) {
   return undefined;
 }
 
+function getDuplicateHostnameError(
+  hostname: string,
+  domains: DomainRecord[],
+  editingDomainId: string | null,
+) {
+  return domains.some(
+    (domain) => domain.id !== editingDomainId && domain.hostname === hostname,
+  )
+    ? "This domain already exists."
+    : undefined;
+}
+
 function validateTarget(kind: DomainKind, value: string) {
   const trimmed = value.trim();
 
@@ -381,9 +393,7 @@ export function DomainsPage() {
 
     if (
       !nextErrors.hostname &&
-      domains.some(
-        (domain) => domain.id !== editingDomainId && domain.hostname === hostname,
-      )
+      getDuplicateHostnameError(hostname, domains, editingDomainId)
     ) {
       nextErrors.hostname = "This domain already exists.";
     }
@@ -716,8 +726,8 @@ export function DomainsPage() {
                         <TableRow key={domain.id}>
                           <TableCell className="font-medium text-[var(--app-text)]">
                             <Link
-                              to="/domains/$domainId"
-                              params={{ domainId: domain.id }}
+                              to="/domains/$hostname"
+                              params={{ hostname: domain.hostname }}
                               className="transition-colors hover:text-primary hover:underline"
                             >
                               {domain.hostname}
@@ -949,16 +959,21 @@ export function DomainsPage() {
                 value={form.hostname}
                 readOnly={isEditing}
                 onChange={(event) => {
+                  const nextHostname = event.target.value;
+                  const normalizedHostname = normalizeHostname(nextHostname);
+
                   setForm((current) => ({
                     ...current,
-                    hostname: event.target.value,
+                    hostname: nextHostname,
                   }));
-                  if (errors.hostname) {
-                    setErrors((current) => ({
-                      ...current,
-                      hostname: undefined,
-                    }));
-                  }
+                  setErrors((current) => ({
+                    ...current,
+                    hostname: getDuplicateHostnameError(
+                      normalizedHostname,
+                      domains,
+                      editingDomainId,
+                    ),
+                  }));
                 }}
                 placeholder="example.com"
                 autoComplete="off"

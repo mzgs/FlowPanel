@@ -15,7 +15,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 export function DomainDetailPage() {
-  const { domainId } = useParams({ from: "/domains/$domainId" });
+  const { hostname } = useParams({ from: "/domains/$hostname" });
   const [domain, setDomain] = useState<DomainRecord | null>(null);
   const [sitesBasePath, setSitesBasePath] = useState("");
   const [loading, setLoading] = useState(true);
@@ -35,7 +35,7 @@ export function DomainDetailPage() {
         }
 
         const matchedDomain =
-          payload.domains.find((record) => record.id === domainId) ?? null;
+          payload.domains.find((record) => record.hostname === hostname) ?? null;
 
         setSitesBasePath(payload.sites_base_path);
         setDomain(matchedDomain);
@@ -58,7 +58,7 @@ export function DomainDetailPage() {
     return () => {
       active = false;
     };
-  }, [domainId]);
+  }, [hostname]);
 
   const filesPath =
     domain === null

@@ -1710,7 +1710,7 @@ func (h *panelHandler) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		_ = file.Close()
 	}
 
-	if cleanPath != "index.html" && path.Ext(cleanPath) != "" {
+	if cleanPath != "index.html" && path.Ext(cleanPath) != "" && !requestPrefersHTML(r) {
 		stdhttp.NotFound(w, r)
 		return
 	}
@@ -1722,6 +1722,11 @@ func (h *panelHandler) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 
 	_, _ = w.Write(h.index)
+}
+
+func requestPrefersHTML(r *stdhttp.Request) bool {
+	accept := strings.ToLower(strings.TrimSpace(r.Header.Get("Accept")))
+	return strings.Contains(accept, "text/html")
 }
 
 func validatePanelAssets(distFS fs.FS, index []byte) error {
