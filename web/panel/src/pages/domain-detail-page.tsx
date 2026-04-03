@@ -236,10 +236,8 @@ export function DomainDetailPage() {
                     {previewErrorMessage}
                   </p>
                 ) : null}
-              </aside>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-5 shadow-[var(--app-shadow)]">
+                <section className="w-[280px] max-w-full rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-5 shadow-[var(--app-shadow)]">
                   <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
                     Overview
                   </p>
@@ -260,19 +258,8 @@ export function DomainDetailPage() {
                     </div>
                   </dl>
                 </section>
+              </aside>
 
-                <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-5 shadow-[var(--app-shadow)]">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
-                    Target
-                  </p>
-                  <p className="mt-4 break-all text-sm leading-6 text-[var(--app-text)]">
-                    {domain?.target ?? "Loading target..."}
-                  </p>
-                  <p className="mt-4 text-xs leading-5 text-[var(--app-text-muted)]">
-                    Site previews are cached on the server. Use refresh to fetch a new thumbnail.
-                  </p>
-                </section>
-              </div>
             </section>
           ) : null}
         </div>
