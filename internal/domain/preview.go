@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	webshotchrome "github.com/4everland/screenshot/chrome"
+	"github.com/chromedp/chromedp"
 	xdraw "golang.org/x/image/draw"
 
 	"flowpanel/internal/config"
@@ -37,9 +37,8 @@ type PreviewGenerator interface {
 	Capture(ctx context.Context, targetURL string) ([]byte, error)
 }
 
-type webshotPreviewGenerator struct {
-	browser *webshotchrome.Chrome
-	now     func() time.Time
+type chromedpPreviewGenerator struct {
+	execPath string
 }
 
 func defaultPreviewCachePath() string {
@@ -79,31 +78,69 @@ func defaultPreviewChromePath() string {
 }
 
 func defaultPreviewGenerator() PreviewGenerator {
-	return &webshotPreviewGenerator{
-		browser: webshotchrome.NewLocalChrome(defaultPreviewChromePath(), ""),
-		now:     time.Now,
+	return &chromedpPreviewGenerator{
+		execPath: defaultPreviewChromePath(),
 	}
 }
 
-func (g *webshotPreviewGenerator) Capture(ctx context.Context, targetURL string) ([]byte, error) {
-	parsedURL, err := url.Parse(targetURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse preview target URL: %w", err)
-	}
-
-	screenshot, err := g.browser.Screenshot(ctx, webshotchrome.ScreenshotOptions{
-		URL:     parsedURL,
-		Width:   defaultDomainPreviewCaptureWidth,
-		Height:  defaultDomainPreviewCaptureHeight,
-		Delay:   defaultDomainPreviewCaptureDelay,
-		EndTime: g.now().Add(defaultDomainPreviewTimeout),
-		Full:    false,
-	})
+func (g *chromedpPreviewGenerator) Capture(ctx context.Context, targetURL string) ([]byte, error) {
+	screenshot, err := captureWebsiteScreenshot(ctx, g.execPath, targetURL)
 	if err != nil {
 		return nil, err
 	}
 
 	return thumbnailPreviewImage(screenshot)
+}
+
+func captureWebsiteScreenshot(parent context.Context, execPath string, targetURL string) ([]byte, error) {
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		if err == nil {
+			err = errors.New("missing URL scheme or host")
+		}
+		return nil, fmt.Errorf("parse preview target URL: %w", err)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(parent, defaultDomainPreviewTimeout)
+	defer cancel()
+
+	allocatorOptions := append(
+		[]chromedp.ExecAllocatorOption{},
+		chromedp.DefaultExecAllocatorOptions[:]...,
+	)
+	allocatorOptions = append(
+		allocatorOptions,
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("hide-scrollbars", true),
+		chromedp.Flag("ignore-certificate-errors", true),
+		chromedp.Flag("mute-audio", true),
+	)
+	if execPath != "" {
+		allocatorOptions = append(allocatorOptions, chromedp.ExecPath(execPath))
+	}
+
+	allocatorCtx, allocatorCancel := chromedp.NewExecAllocator(timeoutCtx, allocatorOptions...)
+	defer allocatorCancel()
+
+	browserCtx, browserCancel := chromedp.NewContext(allocatorCtx)
+	defer browserCancel()
+
+	var screenshot []byte
+	if err := chromedp.Run(
+		browserCtx,
+		chromedp.EmulateViewport(defaultDomainPreviewCaptureWidth, defaultDomainPreviewCaptureHeight),
+		chromedp.Navigate(parsedURL.String()),
+		chromedp.Sleep(defaultDomainPreviewCaptureDelay),
+		chromedp.CaptureScreenshot(&screenshot),
+	); err != nil {
+		return nil, fmt.Errorf("capture preview screenshot: %w", err)
+	}
+
+	if len(screenshot) == 0 {
+		return nil, errors.New("empty screenshot image")
+	}
+
+	return screenshot, nil
 }
 
 func (s *Service) SetPreviewGenerator(generator PreviewGenerator) {
