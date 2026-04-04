@@ -25,6 +25,7 @@ import (
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
+	"flowpanel/internal/settings"
 
 	"go.uber.org/zap"
 )
@@ -90,6 +91,10 @@ func run() error {
 	if err := eventsStore.Ensure(startupCtx); err != nil {
 		return fmt.Errorf("ensure event storage: %w", err)
 	}
+	settingsStore := settings.NewStore(dbConn)
+	if err := settingsStore.Ensure(startupCtx); err != nil {
+		return fmt.Errorf("ensure settings storage: %w", err)
+	}
 
 	domainService := domain.NewService(domainStore)
 	if err := domainService.Load(startupCtx); err != nil {
@@ -105,6 +110,7 @@ func run() error {
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
+	settingsService := settings.NewService(settingsStore)
 	backupService := backup.NewService(
 		logger.Named("backup"),
 		config.FlowPanelDataPath(),
@@ -141,6 +147,7 @@ func run() error {
 		fileManager,
 		eventService,
 		backupService,
+		settingsService,
 	)
 
 	router, err := httpx.NewRouter(appContainer)

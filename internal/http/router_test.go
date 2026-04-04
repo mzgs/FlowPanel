@@ -30,6 +30,7 @@ import (
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
+	"flowpanel/internal/settings"
 
 	"go.uber.org/zap"
 )
@@ -1481,6 +1482,120 @@ func TestSystemStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestSettingsEndpointReturnsDefaults(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var payload struct {
+		Settings struct {
+			PanelName   string `json:"panel_name"`
+			GitHubToken string `json:"github_token"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if payload.Settings.PanelName != "FlowPanel" {
+		t.Fatalf("panel_name = %q, want FlowPanel", payload.Settings.PanelName)
+	}
+	if payload.Settings.GitHubToken != "" {
+		t.Fatalf("github_token = %q, want empty string", payload.Settings.GitHubToken)
+	}
+}
+
+func TestSettingsUpdateEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	request := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{
+		"panel_name":"Operations Console",
+		"github_token":"github_pat_1234567890"
+	}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var payload struct {
+		Settings struct {
+			PanelName   string `json:"panel_name"`
+			GitHubToken string `json:"github_token"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if payload.Settings.PanelName != "Operations Console" {
+		t.Fatalf("panel_name = %q, want Operations Console", payload.Settings.PanelName)
+	}
+	if payload.Settings.GitHubToken != "github_pat_1234567890" {
+		t.Fatalf("github_token = %q, want github_pat_1234567890", payload.Settings.GitHubToken)
+	}
+
+	getRecorder := httptest.NewRecorder()
+	router.ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d, body = %s", getRecorder.Code, http.StatusOK, getRecorder.Body.String())
+	}
+
+	var getPayload struct {
+		Settings struct {
+			PanelName   string `json:"panel_name"`
+			GitHubToken string `json:"github_token"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(getRecorder.Body.Bytes(), &getPayload); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if getPayload.Settings.PanelName != "Operations Console" {
+		t.Fatalf("persisted panel_name = %q, want Operations Console", getPayload.Settings.PanelName)
+	}
+	if getPayload.Settings.GitHubToken != "github_pat_1234567890" {
+		t.Fatalf("persisted github_token = %q, want github_pat_1234567890", getPayload.Settings.GitHubToken)
+	}
+}
+
+func TestSettingsUpdateEndpointValidatesInput(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	request := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{
+		"panel_name":"",
+		"github_token":"`+strings.Repeat("x", 4097)+`"
+	}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+
+	var payload struct {
+		FieldErrors map[string]string `json:"field_errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.FieldErrors["panel_name"] == "" {
+		t.Fatal("missing panel_name validation error")
+	}
+	if payload.FieldErrors["github_token"] == "" {
+		t.Fatal("missing github_token validation error")
+	}
+}
+
 func TestMariaDBStatusEndpoint(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 
@@ -1819,6 +1934,10 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	if err := eventStore.Ensure(context.Background()); err != nil {
 		t.Fatalf("ensure event store: %v", err)
 	}
+	settingsStore := settings.NewStore(dbConn)
+	if err := settingsStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure settings store: %v", err)
+	}
 
 	domains := domain.NewService(store)
 	fileManager, err := files.NewService(t.TempDir())
@@ -1848,6 +1967,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		fileManager,
 		events.NewService(logger.Named("events"), eventStore),
 		backupManager,
+		settings.NewService(settingsStore),
 	))
 	if err != nil {
 		t.Fatalf("new router: %v", err)
@@ -1912,6 +2032,10 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 	if err := eventStore.Ensure(context.Background()); err != nil {
 		t.Fatalf("ensure event store: %v", err)
 	}
+	settingsStore := settings.NewStore(dbConn)
+	if err := settingsStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure settings store: %v", err)
+	}
 
 	domains := domain.NewService(domainStore)
 	fileManager, err := files.NewService(t.TempDir())
@@ -1946,6 +2070,7 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 		fileManager,
 		events.NewService(logger.Named("events"), eventStore),
 		backupManager,
+		settings.NewService(settingsStore),
 	))
 	if err != nil {
 		t.Fatalf("new router: %v", err)

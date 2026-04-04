@@ -13,6 +13,7 @@ import (
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
+	"flowpanel/internal/settings"
 
 	"github.com/alexedwards/scs/v2"
 	"go.uber.org/zap"
@@ -32,6 +33,7 @@ type App struct {
 	Files      *files.Service
 	Events     *events.Service
 	Backups    backup.Manager
+	Settings   *settings.Service
 }
 
 func New(
@@ -48,6 +50,7 @@ func New(
 	fileManager *files.Service,
 	eventService *events.Service,
 	backupManager backup.Manager,
+	settingsService *settings.Service,
 ) *App {
 	return &App{
 		Config:     cfg,
@@ -63,5 +66,6 @@ func New(
 		Files:      fileManager,
 		Events:     eventService,
 		Backups:    backupManager,
+		Settings:   settingsService,
 	}
 }

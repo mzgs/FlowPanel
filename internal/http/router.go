@@ -27,6 +27,7 @@ import (
 	eventlog "flowpanel/internal/events"
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/settings"
 	"flowpanel/internal/systemstatus"
 	"flowpanel/web"
 
@@ -92,6 +93,58 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
+
+		settingsGetHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			record, err := app.Settings.Get(r.Context())
+			if err != nil {
+				app.Logger.Error("load settings failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to load settings",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"settings": record,
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/settings", settingsGetHandler)
+		r.Method(stdhttp.MethodHead, "/settings", settingsGetHandler)
+
+		settingsUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			var input settings.UpdateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			record, err := app.Settings.Update(r.Context(), input)
+			if err != nil {
+				var validation settings.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("update settings failed", zap.Error(err))
+				mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "failed", "Failed to update panel settings.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to update settings",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "succeeded", "Updated panel settings.")
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"settings": record,
+			})
+		})
+		r.Method(stdhttp.MethodPut, "/settings", settingsUpdateHandler)
 
 		eventsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Events == nil {
