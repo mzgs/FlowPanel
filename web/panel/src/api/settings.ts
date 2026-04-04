@@ -1,5 +1,6 @@
 export type PanelSettings = {
   panel_name: string;
+  panel_url: string;
   github_token: string;
 };
 

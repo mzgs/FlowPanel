@@ -22,6 +22,7 @@ import (
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/backup"
+	"flowpanel/internal/caddy"
 	flowcron "flowpanel/internal/cron"
 	"flowpanel/internal/domain"
 	eventlog "flowpanel/internal/events"
@@ -58,7 +59,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 	router.Route("/api", func(r chi.Router) {
 		syncDomainsWithCaddy := func(ctx context.Context) error {
-			return app.Caddy.Sync(ctx, app.Domains.List())
+			return syncDomainsWithCurrentSettings(ctx, app)
 		}
 		recordEvent := func(ctx context.Context, input eventlog.CreateInput) {
 			if app == nil || app.Events == nil {
@@ -120,6 +121,15 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
+			previousPanelURL, err := currentPanelURL(r.Context(), app)
+			if err != nil {
+				app.Logger.Error("load settings before update failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to load settings",
+				})
+				return
+			}
+
 			record, err := app.Settings.Update(r.Context(), input)
 			if err != nil {
 				var validation settings.ValidationErrors
@@ -137,6 +147,24 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					"error": "failed to update settings",
 				})
 				return
+			}
+
+			if previousPanelURL != record.PanelURL {
+				if err := syncDomainsWithPanelURL(r.Context(), app, record.PanelURL); err != nil {
+					if errors.Is(err, caddy.ErrRuntimeNotStarted) {
+						mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "succeeded", "Updated panel settings.")
+						writeJSON(w, stdhttp.StatusOK, map[string]any{
+							"settings": record,
+						})
+						return
+					}
+					app.Logger.Error("sync caddy runtime after settings update failed", zap.Error(err))
+					mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "failed", "Saved panel settings but could not refresh panel routing.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "settings saved but panel routing could not be refreshed",
+					})
+					return
+				}
 			}
 
 			mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "succeeded", "Updated panel settings.")
@@ -1420,7 +1448,19 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					}
 				}
 
-				webhookURL, err := buildGitHubWebhookURL(r, record.Hostname)
+				panelURL, panelURLErr := currentPanelURL(r.Context(), app)
+				if panelURLErr != nil {
+					app.Logger.Error("load panel url for github webhook failed",
+						zap.String("hostname", hostname),
+						zap.Error(panelURLErr),
+					)
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to load panel url",
+					})
+					return
+				}
+
+				webhookURL, err := buildGitHubWebhookURL(r, record.Hostname, panelURL)
 				if err != nil {
 					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
 						"error": err.Error(),
@@ -2176,11 +2216,37 @@ func newPHPMyAdminRedirectHandler(app *app.App) stdhttp.Handler {
 }
 
 func syncPHPMyAdminRoute(ctx context.Context, app *app.App) error {
+	return syncDomainsWithCurrentSettings(ctx, app)
+}
+
+func syncDomainsWithCurrentSettings(ctx context.Context, app *app.App) error {
+	panelURL, err := currentPanelURL(ctx, app)
+	if err != nil {
+		return err
+	}
+
+	return syncDomainsWithPanelURL(ctx, app, panelURL)
+}
+
+func syncDomainsWithPanelURL(ctx context.Context, app *app.App, panelURL string) error {
 	if app == nil || app.Caddy == nil || app.Domains == nil {
 		return nil
 	}
 
-	return app.Caddy.Sync(ctx, app.Domains.List())
+	return app.Caddy.Sync(ctx, app.Domains.List(), panelURL)
+}
+
+func currentPanelURL(ctx context.Context, app *app.App) (string, error) {
+	if app == nil || app.Settings == nil {
+		return "", nil
+	}
+
+	record, err := app.Settings.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return record.PanelURL, nil
 }
 
 func phpMyAdminExternalURL(listenAddr, requestHost, requestPath string) (*url.URL, error) {
@@ -2522,7 +2588,7 @@ func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.Res
 	}
 
 	if app.Caddy != nil && app.Domains != nil {
-		if err := app.Caddy.Sync(ctx, app.Domains.List()); err != nil {
+		if err := syncDomainsWithCurrentSettings(ctx, app); err != nil {
 			return fmt.Errorf("sync caddy runtime: %w", err)
 		}
 	}

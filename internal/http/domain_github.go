@@ -383,8 +383,11 @@ func readGitHubAPIError(response *stdhttp.Response, action string) error {
 	return errors.New(message)
 }
 
-func buildGitHubWebhookURL(r *stdhttp.Request, hostname string) (string, error) {
-	baseURL := requestBaseURL(r)
+func buildGitHubWebhookURL(r *stdhttp.Request, hostname string, panelURL string) (string, error) {
+	baseURL := strings.TrimSpace(panelURL)
+	if baseURL == "" {
+		baseURL = requestBaseURL(r)
+	}
 	parsedBaseURL, err := neturl.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("parse webhook base URL: %w", err)
@@ -504,17 +507,13 @@ func runDomainGitHubDeploy(
 		return domainGitHubDeployResult{}, err
 	}
 
-	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "show-ref", "--verify", "--quiet", "refs/heads/"+branch); err != nil {
-		if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "checkout", "-b", branch, "--track", "origin/"+branch); err != nil {
-			return domainGitHubDeployResult{}, err
-		}
-	} else {
-		if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "checkout", branch); err != nil {
-			return domainGitHubDeployResult{}, err
-		}
+	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "checkout", "--force", "-B", branch, "origin/"+branch); err != nil {
+		return domainGitHubDeployResult{}, err
 	}
-
-	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "pull", "--ff-only", "origin", branch); err != nil {
+	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "reset", "--hard", "origin/"+branch); err != nil {
+		return domainGitHubDeployResult{}, err
+	}
+	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "clean", "-fd"); err != nil {
 		return domainGitHubDeployResult{}, err
 	}
 

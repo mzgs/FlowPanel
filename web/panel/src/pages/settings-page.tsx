@@ -14,17 +14,20 @@ import { toast } from "sonner";
 
 type SettingsFormState = {
   panel_name: string;
+  panel_url: string;
   github_token: string;
 };
 
 const initialForm: SettingsFormState = {
   panel_name: "",
+  panel_url: "",
   github_token: "",
 };
 
 function toFormState(settings: PanelSettings): SettingsFormState {
   return {
     panel_name: settings.panel_name,
+    panel_url: settings.panel_url,
     github_token: settings.github_token,
   };
 }
@@ -32,6 +35,7 @@ function toFormState(settings: PanelSettings): SettingsFormState {
 function sameFormState(left: SettingsFormState, right: SettingsFormState) {
   return (
     left.panel_name === right.panel_name &&
+    left.panel_url === right.panel_url &&
     left.github_token === right.github_token
   );
 }
@@ -88,6 +92,7 @@ export function SettingsPage() {
     try {
       const settings = await updateSettings({
         panel_name: form.panel_name,
+        panel_url: form.panel_url,
         github_token: form.github_token,
       });
       const nextForm = toFormState(settings);
@@ -109,7 +114,7 @@ export function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        meta="Store the panel name and GitHub token in SQLite. These values are editable from the UI and persist across restarts."
+        meta="Store panel identity, the optional public panel URL, and GitHub credentials in SQLite. These values persist across restarts."
       />
 
       <div className="px-4 pb-8 sm:px-6 lg:px-8">
@@ -145,7 +150,7 @@ export function SettingsPage() {
                 General
               </h2>
               <p className="mt-1 text-sm text-[var(--app-text-muted)]">
-                Basic identity and integration credentials for the panel.
+                Basic identity, public routing, and integration credentials for the panel.
               </p>
             </div>
 
@@ -164,6 +169,28 @@ export function SettingsPage() {
                   aria-invalid={fieldErrors.panel_name ? true : undefined}
                 />
                 <FieldError message={fieldErrors.panel_name} />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="panel_url">Panel URL</Label>
+                <Input
+                  id="panel_url"
+                  value={form.panel_url}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      panel_url: event.target.value,
+                    }))
+                  }
+                  placeholder="panel.example.com"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-invalid={fieldErrors.panel_url ? true : undefined}
+                />
+                <p className="text-sm text-[var(--app-text-muted)]">
+                  Optional public hostname or URL for the panel. Example: <span className="font-medium text-[var(--app-text)]">panel.com</span>
+                </p>
+                <FieldError message={fieldErrors.panel_url} />
               </div>
 
               <div className="space-y-2">

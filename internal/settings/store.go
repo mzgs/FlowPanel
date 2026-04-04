@@ -13,11 +13,13 @@ const (
 	legacyPanelSettingsTable = "panel_settings"
 	panelSettingsKeyPrefix   = "panel."
 	panelNameKey             = panelSettingsKeyPrefix + "panel_name"
+	panelURLKey              = panelSettingsKeyPrefix + "panel_url"
 	gitHubTokenKey           = panelSettingsKeyPrefix + "github_token"
 )
 
 var panelSettingKeys = []string{
 	panelNameKey,
+	panelURLKey,
 	gitHubTokenKey,
 }
 
@@ -68,10 +70,10 @@ func (s *Store) Get(ctx context.Context) (Record, error) {
 	query := fmt.Sprintf(`
 SELECT key, value
 FROM %s
-WHERE key IN (?, ?)
+WHERE key IN (?, ?, ?)
 `, settingsTableName)
 
-	rows, err := s.db.QueryContext(ctx, query, panelNameKey, gitHubTokenKey)
+	rows, err := s.db.QueryContext(ctx, query, panelNameKey, panelURLKey, gitHubTokenKey)
 	if err != nil {
 		return Record{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -92,6 +94,8 @@ WHERE key IN (?, ?)
 			if strings.TrimSpace(value) != "" {
 				record.PanelName = strings.TrimSpace(value)
 			}
+		case panelURLKey:
+			record.PanelURL = strings.TrimSpace(value)
 		case gitHubTokenKey:
 			record.GitHubToken = strings.TrimSpace(value)
 		}
@@ -130,6 +134,7 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 
 	values := map[string]string{
 		panelNameKey:   record.PanelName,
+		panelURLKey:    record.PanelURL,
 		gitHubTokenKey: record.GitHubToken,
 	}
 
@@ -206,6 +211,7 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 
 	values := map[string]string{
 		panelNameKey:   record.PanelName,
+		panelURLKey:    record.PanelURL,
 		gitHubTokenKey: record.GitHubToken,
 	}
 

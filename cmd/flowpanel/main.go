@@ -122,6 +122,7 @@ func run() error {
 	)
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
+		cfg.AdminListenAddr,
 		cfg.PublicHTTPAddr,
 		cfg.PublicHTTPSAddr,
 		phpManager,
@@ -158,7 +159,11 @@ func run() error {
 	if err := caddyRuntime.Start(context.Background()); err != nil {
 		return fmt.Errorf("start embedded caddy runtime: %w", err)
 	}
-	if err := caddyRuntime.Sync(context.Background(), domainService.List()); err != nil {
+	settingsRecord, err := settingsService.Get(startupCtx)
+	if err != nil {
+		return fmt.Errorf("load persisted settings: %w", err)
+	}
+	if err := caddyRuntime.Sync(context.Background(), domainService.List(), settingsRecord.PanelURL); err != nil {
 		return fmt.Errorf("sync embedded caddy runtime: %w", err)
 	}
 	scheduler.Start()

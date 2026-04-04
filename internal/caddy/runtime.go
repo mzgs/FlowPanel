@@ -3,6 +3,7 @@ package caddy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -33,6 +34,7 @@ import (
 
 type Runtime struct {
 	logger          *zap.Logger
+	adminListenAddr string
 	publicHTTPAddr  string
 	publicHTTPSAddr string
 	php             phpenv.Manager
@@ -59,6 +61,11 @@ type phpMyAdminRouteConfig struct {
 	root           string
 }
 
+type panelRouteConfig struct {
+	hostname string
+	upstream string
+}
+
 type runtimeSyncMode int
 
 const (
@@ -70,8 +77,11 @@ const defaultCacheTTL = 120 * time.Second
 
 var loggerNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
+var ErrRuntimeNotStarted = errors.New("embedded caddy runtime is not started")
+
 func NewRuntime(
 	logger *zap.Logger,
+	adminListenAddr,
 	publicHTTPAddr,
 	publicHTTPSAddr string,
 	phpManager phpenv.Manager,
@@ -80,6 +90,7 @@ func NewRuntime(
 ) *Runtime {
 	return &Runtime{
 		logger:          logger,
+		adminListenAddr: strings.TrimSpace(adminListenAddr),
 		publicHTTPAddr:  strings.TrimSpace(publicHTTPAddr),
 		publicHTTPSAddr: strings.TrimSpace(publicHTTPSAddr),
 		php:             phpManager,
@@ -101,9 +112,11 @@ func (r *Runtime) Start(ctx context.Context) error {
 	}
 
 	cfg, summary, err := buildConfig(
+		r.adminListenAddr,
 		r.publicHTTPAddr,
 		r.publicHTTPSAddr,
 		r.phpMyAdminAddr,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -131,7 +144,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runtime) Sync(ctx context.Context, records []domain.Record) error {
+func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -140,7 +153,7 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record) error {
 	defer r.mu.Unlock()
 
 	if !r.started {
-		return fmt.Errorf("embedded caddy runtime is not started")
+		return ErrRuntimeNotStarted
 	}
 
 	phpConfig, err := r.resolvePHPRouteConfig(ctx, records)
@@ -151,16 +164,22 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record) error {
 	if err != nil {
 		return err
 	}
+	panelConfig, err := buildPanelRouteConfig(r.adminListenAddr, panelURL)
+	if err != nil {
+		return err
+	}
 
 	mode := runtimeSyncModeStandard
 	for {
 		cfg, summary, err := buildConfig(
+			r.adminListenAddr,
 			r.publicHTTPAddr,
 			r.publicHTTPSAddr,
 			r.phpMyAdminAddr,
 			records,
 			phpConfig,
 			phpMyAdminConfig,
+			panelConfig,
 			mode,
 		)
 		if err != nil {
@@ -281,12 +300,14 @@ func (r *Runtime) resolvePHPMyAdminRouteConfig(ctx context.Context) (*phpMyAdmin
 }
 
 func buildConfig(
+	adminListenAddr,
 	publicHTTPAddr,
 	publicHTTPSAddr,
 	phpMyAdminAddr string,
 	records []domain.Record,
 	phpConfig *phpRouteConfig,
 	phpMyAdminConfig *phpMyAdminRouteConfig,
+	panelConfig *panelRouteConfig,
 	mode runtimeSyncMode,
 ) (*caddyv2.Config, configSummary, error) {
 	summary := configSummary{
@@ -305,20 +326,24 @@ func buildConfig(
 		cfg.Logging = loggingConfig
 	}
 
-	if len(records) == 0 && phpMyAdminConfig == nil {
+	if len(records) == 0 && phpMyAdminConfig == nil && panelConfig == nil {
 		return cfg, summary, nil
 	}
 
 	httpApp := caddyhttp.App{
 		Servers: map[string]*caddyhttp.Server{},
 	}
-	if len(records) > 0 {
+	if len(records) > 0 || panelConfig != nil {
 		httpsPort, err := parseTCPPort(publicHTTPSAddr)
 		if err != nil {
 			return nil, configSummary{}, fmt.Errorf("parse public HTTPS listener: %w", err)
 		}
 
-		routes := make(caddyhttp.RouteList, 0, len(records))
+		routes := make(caddyhttp.RouteList, 0, len(records)+1)
+		if panelConfig != nil {
+			routes = append(routes, routeForPanel(*panelConfig))
+			summary.activeRoutes++
+		}
 		for _, record := range records {
 			route, placeholder, err := routeForRecord(record, phpConfig)
 			if err != nil {
@@ -498,6 +523,24 @@ func routeForPHPMyAdmin(config phpMyAdminRouteConfig) caddyhttp.Route {
 	}
 }
 
+func routeForPanel(config panelRouteConfig) caddyhttp.Route {
+	return caddyhttp.Route{
+		MatcherSetsRaw: []caddyv2.ModuleMap{{
+			"host": caddyconfig.JSON(caddyhttp.MatchHost{config.hostname}, nil),
+		}},
+		HandlersRaw: []json.RawMessage{
+			caddyconfig.JSONModuleObject(reverseproxy.Handler{
+				Upstreams: reverseproxy.UpstreamPool{
+					&reverseproxy.Upstream{
+						Dial: config.upstream,
+					},
+				},
+			}, "handler", "reverse_proxy", nil),
+		},
+		Terminal: true,
+	}
+}
+
 func phpSubrouteRoutes(root, fastCGIAddress string) caddyhttp.RouteList {
 	return caddyhttp.RouteList{
 		{
@@ -617,6 +660,54 @@ func upstreamDialAddress(targetURL *url.URL) string {
 	}
 
 	return net.JoinHostPort(host, port)
+}
+
+func buildPanelRouteConfig(adminListenAddr, panelURL string) (*panelRouteConfig, error) {
+	panelURL = strings.TrimSpace(panelURL)
+	if panelURL == "" {
+		return nil, nil
+	}
+
+	parsed, err := url.Parse(panelURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse panel URL: %w", err)
+	}
+	if parsed.Hostname() == "" {
+		return nil, fmt.Errorf("parse panel URL: missing hostname")
+	}
+
+	upstream, err := adminDialAddress(adminListenAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &panelRouteConfig{
+		hostname: strings.ToLower(parsed.Hostname()),
+		upstream: upstream,
+	}, nil
+}
+
+func adminDialAddress(listenAddr string) (string, error) {
+	address := strings.TrimSpace(listenAddr)
+	if address == "" {
+		return "", fmt.Errorf("admin listen address is not configured")
+	}
+
+	if strings.HasPrefix(address, ":") {
+		return net.JoinHostPort("localhost", strings.TrimPrefix(address, ":")), nil
+	}
+
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", fmt.Errorf("parse admin listen address: %w", err)
+	}
+
+	switch strings.TrimSpace(host) {
+	case "", "0.0.0.0", "::":
+		host = "localhost"
+	}
+
+	return net.JoinHostPort(host, port), nil
 }
 
 func parseTCPPort(address string) (int, error) {

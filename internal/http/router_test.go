@@ -188,7 +188,7 @@ func TestPHPMyAdminInstallSyncsCaddy(t *testing.T) {
 			InstallPath: installPath,
 		},
 	}
-	runtime := caddy.NewRuntime(zap.NewNop(), ":0", ":0", fakePHPManager{}, manager, phpMyAdminAddr)
+	runtime := caddy.NewRuntime(zap.NewNop(), ":18080", ":0", ":0", fakePHPManager{}, manager, phpMyAdminAddr)
 	if err := runtime.Start(context.Background()); err != nil {
 		t.Fatalf("start caddy runtime: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestPHPMyAdminRedirectSyncsCaddyForManualInstall(t *testing.T) {
 			Message:     "phpMyAdmin is installed.",
 		},
 	}
-	runtime := caddy.NewRuntime(zap.NewNop(), ":0", ":0", fakePHPManager{}, manager, phpMyAdminAddr)
+	runtime := caddy.NewRuntime(zap.NewNop(), ":18080", ":0", ":0", fakePHPManager{}, manager, phpMyAdminAddr)
 	if err := runtime.Start(context.Background()); err != nil {
 		t.Fatalf("start caddy runtime: %v", err)
 	}
@@ -779,6 +779,71 @@ func TestDomainGitHubIntegrationSaveHandlerConfiguresWebhook(t *testing.T) {
 	}
 }
 
+func TestDomainGitHubIntegrationSaveHandlerPrefersConfiguredPanelURL(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	projectPath := t.TempDir()
+	record := domain.Record{
+		ID:        "example.com-1",
+		Hostname:  "example.com",
+		Kind:      domain.KindStaticSite,
+		Target:    projectPath,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := domains.Restore(context.Background(), record); err != nil {
+		t.Fatalf("restore domain: %v", err)
+	}
+
+	settingsRecorder := httptest.NewRecorder()
+	settingsRequest := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"panel_name":"FlowPanel","panel_url":"panel.mzgs.net","github_token":"github_pat_test"}`))
+	settingsRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(settingsRecorder, settingsRequest)
+	if settingsRecorder.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d, body = %s", settingsRecorder.Code, http.StatusOK, settingsRecorder.Body.String())
+	}
+
+	var receivedWebhookURL string
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/test-owner/test-repo":
+			_, _ = w.Write([]byte(`{"clone_url":"https://github.com/test-owner/test-repo.git","default_branch":"main","html_url":"https://github.com/test-owner/test-repo"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/test-owner/test-repo/hooks":
+			var payload struct {
+				Config struct {
+					URL string `json:"url"`
+				} `json:"config"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode webhook request: %v", err)
+			}
+			receivedWebhookURL = payload.Config.URL
+			_, _ = w.Write([]byte(`{"id":42}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer githubServer.Close()
+
+	originalBaseURL := githubAPIBaseURL
+	githubAPIBaseURL = githubServer.URL
+	defer func() {
+		githubAPIBaseURL = originalBaseURL
+	}()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/domains/example.com/github", strings.NewReader(`{"repository_url":"https://github.com/test-owner/test-repo","auto_deploy_on_push":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Host = "203.0.113.10:8080"
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if receivedWebhookURL != "https://panel.mzgs.net/api/domains/example.com/github/webhook" {
+		t.Fatalf("webhook URL = %q, want %q", receivedWebhookURL, "https://panel.mzgs.net/api/domains/example.com/github/webhook")
+	}
+}
+
 func TestDomainGitHubIntegrationSaveHandlerReusesExistingWebhookOnValidationFailed(t *testing.T) {
 	router, domains, _ := newTestDomainRouter(t)
 
@@ -922,7 +987,7 @@ func TestDomainGitHubWebhookHandlerDeploysOnPush(t *testing.T) {
 	}
 
 	logPath := filepath.Join(t.TempDir(), "git.log")
-	installFakeGit(t, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FLOWPANEL_GIT_LOG\"\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"show-ref\" ]; then\n    exit 1\n  fi\ndone\nexit 0\n")
+	installFakeGit(t, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FLOWPANEL_GIT_LOG\"\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"pull\" ]; then\n    echo 'unexpected pull' >&2\n    exit 1\n  fi\ndone\nexit 0\n")
 	t.Setenv("FLOWPANEL_GIT_LOG", logPath)
 
 	integration := domain.GitHubIntegration{
@@ -974,8 +1039,14 @@ func TestDomainGitHubWebhookHandlerDeploysOnPush(t *testing.T) {
 	if !strings.Contains(logText, "fetch --depth 1 origin main") {
 		t.Fatalf("git log missing fetch command: %s", logText)
 	}
-	if !strings.Contains(logText, "pull --ff-only origin main") {
-		t.Fatalf("git log missing pull command: %s", logText)
+	if !strings.Contains(logText, "checkout --force -B main origin/main") {
+		t.Fatalf("git log missing checkout command: %s", logText)
+	}
+	if !strings.Contains(logText, "reset --hard origin/main") {
+		t.Fatalf("git log missing reset command: %s", logText)
+	}
+	if !strings.Contains(logText, "clean -fd") {
+		t.Fatalf("git log missing clean command: %s", logText)
 	}
 }
 
@@ -1867,6 +1938,7 @@ func TestSettingsEndpointReturnsDefaults(t *testing.T) {
 	var payload struct {
 		Settings struct {
 			PanelName   string `json:"panel_name"`
+			PanelURL    string `json:"panel_url"`
 			GitHubToken string `json:"github_token"`
 		} `json:"settings"`
 	}
@@ -1880,6 +1952,9 @@ func TestSettingsEndpointReturnsDefaults(t *testing.T) {
 	if payload.Settings.GitHubToken != "" {
 		t.Fatalf("github_token = %q, want empty string", payload.Settings.GitHubToken)
 	}
+	if payload.Settings.PanelURL != "" {
+		t.Fatalf("panel_url = %q, want empty string", payload.Settings.PanelURL)
+	}
 }
 
 func TestSettingsUpdateEndpoint(t *testing.T) {
@@ -1887,6 +1962,7 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{
 		"panel_name":"Operations Console",
+		"panel_url":"panel.mzgs.net",
 		"github_token":"github_pat_1234567890"
 	}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -1901,6 +1977,7 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 	var payload struct {
 		Settings struct {
 			PanelName   string `json:"panel_name"`
+			PanelURL    string `json:"panel_url"`
 			GitHubToken string `json:"github_token"`
 		} `json:"settings"`
 	}
@@ -1910,6 +1987,9 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 
 	if payload.Settings.PanelName != "Operations Console" {
 		t.Fatalf("panel_name = %q, want Operations Console", payload.Settings.PanelName)
+	}
+	if payload.Settings.PanelURL != "https://panel.mzgs.net" {
+		t.Fatalf("panel_url = %q, want https://panel.mzgs.net", payload.Settings.PanelURL)
 	}
 	if payload.Settings.GitHubToken != "github_pat_1234567890" {
 		t.Fatalf("github_token = %q, want github_pat_1234567890", payload.Settings.GitHubToken)
@@ -1924,6 +2004,7 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 	var getPayload struct {
 		Settings struct {
 			PanelName   string `json:"panel_name"`
+			PanelURL    string `json:"panel_url"`
 			GitHubToken string `json:"github_token"`
 		} `json:"settings"`
 	}
@@ -1932,6 +2013,9 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 	}
 	if getPayload.Settings.PanelName != "Operations Console" {
 		t.Fatalf("persisted panel_name = %q, want Operations Console", getPayload.Settings.PanelName)
+	}
+	if getPayload.Settings.PanelURL != "https://panel.mzgs.net" {
+		t.Fatalf("persisted panel_url = %q, want https://panel.mzgs.net", getPayload.Settings.PanelURL)
 	}
 	if getPayload.Settings.GitHubToken != "github_pat_1234567890" {
 		t.Fatalf("persisted github_token = %q, want github_pat_1234567890", getPayload.Settings.GitHubToken)
@@ -1943,6 +2027,7 @@ func TestSettingsUpdateEndpointValidatesInput(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{
 		"panel_name":"",
+		"panel_url":"https://panel.mzgs.net/settings",
 		"github_token":"`+strings.Repeat("x", 4097)+`"
 	}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -1962,6 +2047,9 @@ func TestSettingsUpdateEndpointValidatesInput(t *testing.T) {
 	}
 	if payload.FieldErrors["panel_name"] == "" {
 		t.Fatal("missing panel_name validation error")
+	}
+	if payload.FieldErrors["panel_url"] == "" {
+		t.Fatal("missing panel_url validation error")
 	}
 	if payload.FieldErrors["github_token"] == "" {
 		t.Fatal("missing github_token validation error")
@@ -2327,6 +2415,7 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		flowcron.NewScheduler(logger.Named("cron"), false, cronStore),
 		caddy.NewRuntime(
 			logger.Named("caddy"),
+			cfg.AdminListenAddr,
 			cfg.PublicHTTPAddr,
 			cfg.PublicHTTPSAddr,
 			fakePHPManager{},
@@ -2443,6 +2532,7 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 		scheduler,
 		caddy.NewRuntime(
 			logger.Named("caddy"),
+			cfg.AdminListenAddr,
 			cfg.PublicHTTPAddr,
 			cfg.PublicHTTPSAddr,
 			fakePHPManager{},

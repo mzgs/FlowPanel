@@ -25,6 +25,7 @@ func TestStoreRoundTripUsesKeyValueTable(t *testing.T) {
 
 	initial := Record{
 		PanelName:   "Ops",
+		PanelURL:    "https://panel.example.com",
 		GitHubToken: "github_pat_test_token",
 	}
 	if err := store.Upsert(ctx, initial); err != nil {
@@ -94,6 +95,9 @@ VALUES (1, ?)
 	}
 	if got.GitHubToken != "" {
 		t.Fatalf("github token = %q, want empty string", got.GitHubToken)
+	}
+	if got.PanelURL != "" {
+		t.Fatalf("panel url = %q, want empty string", got.PanelURL)
 	}
 
 	var legacyCount int
