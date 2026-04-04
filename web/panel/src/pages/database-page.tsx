@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { useLocation } from "@tanstack/react-router";
 import {
   createMariaDBDatabase,
   deleteMariaDBDatabase,
@@ -250,6 +251,12 @@ function getDatabaseNameFromBackupRecord(record: BackupRecord) {
 }
 
 export function DatabasePage() {
+  const requestedDomainFilter = useLocation({
+    select: (location) => {
+      const domain = location.search.domain;
+      return typeof domain === "string" ? domain.trim() : "";
+    },
+  });
   const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [domains, setDomains] = useState<DomainRecord[]>([]);
@@ -260,7 +267,7 @@ export function DatabasePage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [backupsLoadError, setBackupsLoadError] = useState<string | null>(null);
   const [domainsLoadError, setDomainsLoadError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(requestedDomainFilter);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [backupDialogDatabase, setBackupDialogDatabase] = useState<MariaDBDatabase | null>(null);
   const [form, setForm] = useState<FormState>(initialForm);
@@ -410,6 +417,10 @@ export function DatabasePage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    setSearch(requestedDomainFilter);
+  }, [requestedDomainFilter]);
 
   const rootPasswordDirty = rootPasswordDraft !== rootPassword;
   const rootPasswordCandidate = rootPasswordDraft.trim();

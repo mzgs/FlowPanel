@@ -450,14 +450,20 @@ export function DomainDetailPage() {
                   title="Files & Databases"
                   items={fileAndDatabaseActions}
                   onItemClick={(item) => {
-                    if (item.title !== "Files" || filesPath === null) {
+                    if (item.title === "Files" && filesPath !== null) {
+                      void navigate({
+                        to: "/files",
+                        search: filesPath ? { path: filesPath } : {},
+                      });
                       return;
                     }
 
-                    void navigate({
-                      to: "/files",
-                      search: filesPath ? { path: filesPath } : {},
-                    });
+                    if (item.title === "Databases" && domain !== null) {
+                      void navigate({
+                        to: "/database",
+                        search: { domain: domain.hostname },
+                      });
+                    }
                   }}
                 />
                 <div className="pt-2">
