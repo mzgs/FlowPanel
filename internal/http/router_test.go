@@ -643,6 +643,47 @@ func TestDomainPreviewEndpointReturnsBadGatewayWhenGenerationFails(t *testing.T)
 	}
 }
 
+func TestDomainComposerInstallHandlerRunsComposer(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+	installFakeComposer(t, "#!/bin/sh\nif [ \"$1\" = \"install\" ]; then\ncat <<'EOF' > composer.lock\n{\"packages\":[{\"name\":\"laravel/framework\",\"version\":\"v11.0.0\"}],\"packages-dev\":[]}\nEOF\nexit 0\nfi\necho \"unexpected args: $*\" >&2\nexit 1\n")
+
+	projectPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectPath, "composer.json"), []byte("{\"require\":{\"laravel/framework\":\"^11.0\"}}\n"), 0o644); err != nil {
+		t.Fatalf("write composer.json: %v", err)
+	}
+
+	record := domain.Record{
+		ID:        "example.com-1",
+		Hostname:  "example.com",
+		Kind:      domain.KindPHP,
+		Target:    projectPath,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := domains.Restore(context.Background(), record); err != nil {
+		t.Fatalf("restore domain: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/domains/example.com/composer/install", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var payload struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.OK {
+		t.Fatalf("ok = false, want true")
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, "composer.lock")); err != nil {
+		t.Fatalf("composer.lock missing after install: %v", err)
+	}
+}
+
 func TestDomainLogsEndpointReturnsFilteredLogs(t *testing.T) {
 	router, domains, _ := newTestDomainRouter(t)
 
@@ -1813,6 +1854,19 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	}
 
 	return router, domains, store
+}
+
+func installFakeComposer(t *testing.T, script string) string {
+	t.Helper()
+
+	binDir := t.TempDir()
+	composerPath := filepath.Join(binDir, "composer")
+	if err := os.WriteFile(composerPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake composer: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return composerPath
 }
 
 func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Scheduler, *flowcron.Store) {

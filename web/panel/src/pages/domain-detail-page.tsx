@@ -13,6 +13,7 @@ import {
   getDomainSiteUrl,
   type DomainRecord,
 } from "@/api/domains";
+import { fetchFileContent } from "@/api/files";
 import {
   fetchMariaDBDatabases,
   type MariaDBDatabase,
@@ -40,6 +41,10 @@ import {
   TerminalSquare,
 } from "@/components/icons/tabler-icons";
 import { DomainBackupRestoreDialog } from "@/components/domain-backup-restore-dialog";
+import {
+  DomainComposerDialog,
+  type ComposerPackage,
+} from "@/components/domain-composer-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -144,9 +149,66 @@ const devToolActions: DomainActionItem[] = [
 ];
 
 const siteBackupTargetKey = "__domain_site_backup__";
+const composerManifestName = "composer.json";
 
 function isSiteBackedKind(kind: DomainRecord["kind"]) {
   return kind === "Static site" || kind === "Php site";
+}
+
+function getComposerManifestPath(path: string | null) {
+  if (path === null) {
+    return null;
+  }
+
+  return path ? `${path}/${composerManifestName}` : composerManifestName;
+}
+
+function parseComposerPackages(content: string) {
+  const payload = JSON.parse(content) as {
+    require?: Record<string, string>;
+    "require-dev"?: Record<string, string>;
+  };
+  const packages: ComposerPackage[] = [];
+
+  for (const [name, version] of Object.entries(payload.require ?? {})) {
+    packages.push({ name, version, dev: false });
+  }
+
+  for (const [name, version] of Object.entries(payload["require-dev"] ?? {})) {
+    packages.push({ name, version, dev: true });
+  }
+
+  return packages.sort((left, right) => {
+    if (left.name === right.name) {
+      return Number(left.dev) - Number(right.dev);
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+}
+
+async function runComposerAction(hostname: string, action: "install" | "update") {
+  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/composer/${action}`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (response.ok) {
+    return;
+  }
+
+  let message = `composer ${action} request failed with status ${response.status}`;
+
+  try {
+    const payload = (await response.json()) as { error?: unknown };
+    if (typeof payload.error === "string" && payload.error) {
+      message = payload.error;
+    }
+  } catch {
+    // Ignore non-JSON error responses.
+  }
+
+  throw new Error(message);
 }
 
 function DomainActionSection({
@@ -194,6 +256,14 @@ export function DomainDetailPage() {
   const [backupDataLoading, setBackupDataLoading] = useState(true);
   const [backupDataError, setBackupDataError] = useState<string | null>(null);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
+  const [composerDialogOpen, setComposerDialogOpen] = useState(false);
+  const [composerHasManifest, setComposerHasManifest] = useState(false);
+  const [composerPackages, setComposerPackages] = useState<ComposerPackage[]>([]);
+  const [composerLoading, setComposerLoading] = useState(false);
+  const [composerError, setComposerError] = useState<string | null>(null);
+  const [composerRunningAction, setComposerRunningAction] = useState<
+    "install" | "update" | null
+  >(null);
   const [creatingBackupTarget, setCreatingBackupTarget] = useState<string | null>(
     null,
   );
@@ -226,6 +296,12 @@ export function DomainDetailPage() {
     setBackupDataLoading(true);
     setBackupDataError(null);
     setBackupDialogOpen(false);
+    setComposerDialogOpen(false);
+    setComposerHasManifest(false);
+    setComposerPackages([]);
+    setComposerLoading(false);
+    setComposerError(null);
+    setComposerRunningAction(null);
     setCreatingBackupTarget(null);
     setCreatedBackupTarget(null);
     setRestoringBackupName(null);
@@ -374,6 +450,53 @@ export function DomainDetailPage() {
   const filesPath = domain
     ? getFilesPathFromDomainTarget(domain.kind, sitesBasePath, domain.target)
     : null;
+  const composerManifestPath = getComposerManifestPath(filesPath);
+
+  useEffect(() => {
+    if (!composerDialogOpen || !domain || composerManifestPath === null) {
+      return;
+    }
+
+    if (domain.kind !== "Static site" && domain.kind !== "Php site") {
+      return;
+    }
+
+    let active = true;
+    setComposerLoading(true);
+    setComposerError(null);
+
+    async function loadComposer() {
+      try {
+        const file = await fetchFileContent(composerManifestPath);
+        if (!active) {
+          return;
+        }
+
+        setComposerHasManifest(true);
+        setComposerPackages(parseComposerPackages(file.content));
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message = getErrorMessage(error, "Failed to load Composer details.");
+        setComposerHasManifest(false);
+        setComposerPackages([]);
+        setComposerError(message === "file or directory not found" ? null : message);
+      } finally {
+        if (active) {
+          setComposerLoading(false);
+        }
+      }
+    }
+
+    void loadComposer();
+
+    return () => {
+      active = false;
+    };
+  }, [composerDialogOpen, composerManifestPath, domain]);
+
   const showSiteBackups = domain ? isSiteBackedKind(domain.kind) : false;
   const siteBackups = domain
     ? backups.filter(
@@ -533,6 +656,29 @@ export function DomainDetailPage() {
     }
   }
 
+  async function handleComposerAction(action: "install" | "update") {
+    if (!domain || composerManifestPath === null || composerRunningAction !== null) {
+      return;
+    }
+
+    setComposerRunningAction(action);
+    setComposerError(null);
+
+    try {
+      await runComposerAction(domain.hostname, action);
+      const file = await fetchFileContent(composerManifestPath);
+      setComposerHasManifest(true);
+      setComposerPackages(parseComposerPackages(file.content));
+      toast.success(`composer ${action} finished for ${domain.hostname}.`);
+    } catch (error) {
+      const message = getErrorMessage(error, `Failed to run composer ${action}.`);
+      setComposerError(message);
+      toast.error(message);
+    } finally {
+      setComposerRunningAction(null);
+    }
+  }
+
   return (
     <>
       <DomainBackupRestoreDialog
@@ -567,6 +713,23 @@ export function DomainDetailPage() {
           void handleDeleteBackup(name);
         }}
         deletingBackupName={deletingBackupName}
+      />
+      <DomainComposerDialog
+        open={composerDialogOpen && domain !== null}
+        onOpenChange={setComposerDialogOpen}
+        hostname={domain?.hostname ?? hostname}
+        projectPath={domain?.target ?? ""}
+        hasManifest={composerHasManifest}
+        packages={composerPackages}
+        loading={composerLoading}
+        loadError={composerError}
+        runningAction={composerRunningAction}
+        onInstall={() => {
+          void handleComposerAction("install");
+        }}
+        onUpdate={() => {
+          void handleComposerAction("update");
+        }}
       />
       <PageHeader
         title={
@@ -759,6 +922,18 @@ export function DomainDetailPage() {
                     title="Dev Tools"
                     items={devToolActions}
                     onItemClick={(item) => {
+                      if (item.title === "PHP Composer" && domain !== null) {
+                        if (domain.kind !== "Static site" && domain.kind !== "Php site") {
+                          toast.error(
+                            "Composer is available only for Static site and Php site domains.",
+                          );
+                          return;
+                        }
+
+                        setComposerDialogOpen(true);
+                        return;
+                      }
+
                       if (item.title === "Logs" && domain !== null) {
                         void navigate({
                           to: "/domains/$hostname/logs",

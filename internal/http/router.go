@@ -1172,6 +1172,61 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			stdhttp.ServeFile(w, r, previewPath)
 		})
 
+		domainsComposerActionHandler := func(action string) stdhttp.HandlerFunc {
+			return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+				hostname := chi.URLParam(r, "hostname")
+				record, err := runDomainComposerAction(r.Context(), app.Domains, hostname, action)
+				if err != nil {
+					switch {
+					case errors.Is(err, domain.ErrNotFound):
+						writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+							"error": "domain not found",
+						})
+					case errors.Is(err, errComposerUnsupportedDomain), errors.Is(err, errComposerMissingManifest):
+						writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+							"error": err.Error(),
+						})
+					case errors.Is(err, errComposerUnavailable):
+						writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+							"error": err.Error(),
+						})
+					default:
+						app.Logger.Error("run composer command failed",
+							zap.String("hostname", hostname),
+							zap.String("action", action),
+							zap.Error(err),
+						)
+						mutationEvent(
+							r.Context(),
+							"domains",
+							"composer_"+action,
+							"domain",
+							record.ID,
+							record.Hostname,
+							"failed",
+							fmt.Sprintf("Failed to run composer %s for %q.", action, record.Hostname),
+						)
+						writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+							"error": err.Error(),
+						})
+					}
+					return
+				}
+
+				mutationEvent(
+					r.Context(),
+					"domains",
+					"composer_"+action,
+					"domain",
+					record.ID,
+					record.Hostname,
+					"succeeded",
+					fmt.Sprintf("Ran composer %s for %q.", action, record.Hostname),
+				)
+				writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+			}
+		}
+
 		domainsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			var input domain.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
@@ -1403,6 +1458,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodHead, "/domains/logs", domainsLogsHandler)
 		r.Method(stdhttp.MethodGet, "/domains/{hostname}/preview", domainsPreviewHandler)
 		r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
+		r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/install", domainsComposerActionHandler("install"))
+		r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/update", domainsComposerActionHandler("update"))
 		r.Method(stdhttp.MethodPost, "/domains", domainsCreateHandler)
 		r.Method(stdhttp.MethodPut, "/domains/{domainID}", domainsUpdateHandler)
 		r.Method(stdhttp.MethodDelete, "/domains/{domainID}", domainsDeleteHandler)
