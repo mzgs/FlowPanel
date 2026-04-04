@@ -22,6 +22,7 @@ import {
 } from "@/api/mariadb";
 import {
   createBackup,
+  deleteBackup,
   fetchBackups,
   restoreBackup,
   type BackupRecord,
@@ -30,6 +31,7 @@ import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import { Copy, Download, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
+import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { BackupRecordsDialog } from "@/components/backup-records-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -266,8 +268,10 @@ export function DatabasePage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState<string | null>(null);
+  const [deleteDatabaseCandidate, setDeleteDatabaseCandidate] = useState<MariaDBDatabase | null>(null);
   const [downloadingName, setDownloadingName] = useState<string | null>(null);
   const [creatingBackupName, setCreatingBackupName] = useState<string | null>(null);
+  const [deletingBackupName, setDeletingBackupName] = useState<string | null>(null);
   const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
   const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
   const [createdBackupName, setCreatedBackupName] = useState<string | null>(null);
@@ -639,18 +643,20 @@ export function DatabasePage() {
     }
   }
 
-  async function handleDelete(database: MariaDBDatabase) {
+  function handleDelete(database: MariaDBDatabase) {
     if (submitting || deletingName !== null) {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Delete ${database.name}? This will remove the database and may remove user ${database.username} if unused.`,
-    );
-    if (!confirmed) {
+    setDeleteDatabaseCandidate(database);
+  }
+
+  async function confirmDeleteDatabase() {
+    if (!deleteDatabaseCandidate) {
       return;
     }
 
+    const database = deleteDatabaseCandidate;
     setDeletingName(database.name);
     try {
       await deleteMariaDBDatabase(database.name, database.username);
@@ -659,6 +665,7 @@ export function DatabasePage() {
       setLoadError(getErrorMessage(error, `Failed to delete ${database.name}.`));
     } finally {
       setDeletingName(null);
+      setDeleteDatabaseCandidate((current) => (current?.name === database.name ? null : current));
     }
   }
 
@@ -705,10 +712,7 @@ export function DatabasePage() {
   }
 
   async function handleRestoreBackup(name: string) {
-    const confirmed = window.confirm(
-      `Restore backup "${name}"? This overwrites the database contents stored in that archive.`,
-    );
-    if (!confirmed) {
+    if (restoringBackupName === name || deletingBackupName === name) {
       return;
     }
 
@@ -730,6 +734,24 @@ export function DatabasePage() {
       toast.error(getErrorMessage(error, `Failed to restore ${name}.`));
     } finally {
       setRestoringBackupName(null);
+    }
+  }
+
+  async function handleDeleteBackup(name: string) {
+    if (deletingBackupName === name || restoringBackupName === name) {
+      return;
+    }
+
+    setDeletingBackupName(name);
+
+    try {
+      await deleteBackup(name);
+      setBackups((current) => current.filter((item) => item.name !== name));
+      toast.success(`Deleted backup ${name}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to delete ${name}.`));
+    } finally {
+      setDeletingBackupName(null);
     }
   }
 
@@ -789,6 +811,37 @@ export function DatabasePage() {
         }}
         restoringBackupName={restoringBackupName}
         restoredBackupName={restoredBackupName}
+        restoreConfirmTitle="Restore backup"
+        restoreConfirmText="Restore backup"
+        getRestoreConfirmDescription={(name) =>
+          `Restore backup "${name}"? This overwrites the database contents stored in that archive.`
+        }
+        onDeleteBackup={(name) => {
+          void handleDeleteBackup(name);
+        }}
+        deletingBackupName={deletingBackupName}
+        actionIconStroke={databaseActionIconStroke}
+      />
+      <ActionConfirmDialog
+        open={deleteDatabaseCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open && deletingName === null) {
+            setDeleteDatabaseCandidate(null);
+          }
+        }}
+        title="Delete database"
+        desc={
+          deleteDatabaseCandidate
+            ? `Delete ${deleteDatabaseCandidate.name}? This will remove the database and may remove user ${deleteDatabaseCandidate.username} if unused.`
+            : "Delete this database?"
+        }
+        confirmText="Delete database"
+        destructive
+        isLoading={deleteDatabaseCandidate !== null && deletingName === deleteDatabaseCandidate.name}
+        handleConfirm={() => {
+          void confirmDeleteDatabase();
+        }}
+        className="sm:max-w-md"
       />
 
       <div className="px-4 py-6 sm:px-6 lg:px-8">

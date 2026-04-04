@@ -46,6 +46,7 @@ import {
   type FileEntry,
   type FileListing,
 } from "@/api/files";
+import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import {
@@ -321,6 +322,7 @@ export function FilesPage() {
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [dialogValue, setDialogValue] = useState("");
+  const [confirmDeletePaths, setConfirmDeletePaths] = useState<string[]>([]);
   const [flash, setFlash] = useState<FlashMessage | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [clipboardMode, setClipboardMode] = useState<ClipboardMode>(null);
@@ -374,6 +376,10 @@ export function FilesPage() {
     .map((path) => itemMap.get(path) ?? null)
     .filter((item): item is FileEntry => item !== null);
   const selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
+  const confirmDeleteSinglePath = confirmDeletePaths.length === 1 ? confirmDeletePaths[0] : null;
+  const confirmDeleteSingleName = confirmDeleteSinglePath
+    ? itemMap.get(confirmDeleteSinglePath)?.name ?? confirmDeleteSinglePath
+    : null;
   const breadcrumbs = getBreadcrumbs(listing);
   const clipboardReady = clipboardPaths.length > 0 && clipboardMode !== null;
   const summaryParts = [
@@ -709,6 +715,9 @@ export function FilesPage() {
     onError: (error) => {
       setFlash({ tone: "error", text: getErrorMessage(error, "Failed to delete selection.") });
     },
+    onSettled: () => {
+      setConfirmDeletePaths([]);
+    },
   });
 
   const uploadMutation = useMutation({
@@ -893,16 +902,19 @@ export function FilesPage() {
       return;
     }
 
-    const confirmed = window.confirm(
-      selectedPaths.length === 1
-        ? `Delete "${selectedItem?.name || selectedPaths[0]}"?`
-        : `Delete ${selectedPaths.length} selected items?`,
-    );
-    if (!confirmed) {
+    if (deleteMutation.isPending) {
       return;
     }
 
-    deleteMutation.mutate(selectedPaths);
+    setConfirmDeletePaths(selectedPaths);
+  }
+
+  function confirmDeleteSelection() {
+    if (confirmDeletePaths.length === 0 || deleteMutation.isPending) {
+      return;
+    }
+
+    deleteMutation.mutate(confirmDeletePaths);
   }
 
   function copySelection(mode: Exclude<ClipboardMode, null>) {
@@ -1194,6 +1206,27 @@ export function FilesPage() {
 
   return (
     <div className="min-h-[calc(100vh-var(--app-navbar-height))]">
+      <ActionConfirmDialog
+        open={confirmDeletePaths.length > 0}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) {
+            setConfirmDeletePaths([]);
+          }
+        }}
+        title={confirmDeletePaths.length > 1 ? "Delete selected items" : "Delete item"}
+        desc={
+          confirmDeletePaths.length > 1
+            ? `Delete ${confirmDeletePaths.length} selected items?`
+            : confirmDeleteSingleName
+              ? `Delete "${confirmDeleteSingleName}"?`
+              : "Delete this item?"
+        }
+        confirmText={confirmDeletePaths.length > 1 ? "Delete items" : "Delete item"}
+        destructive
+        isLoading={deleteMutation.isPending}
+        handleConfirm={confirmDeleteSelection}
+        className="sm:max-w-md"
+      />
       <PageHeader
         title="Files"
         meta={

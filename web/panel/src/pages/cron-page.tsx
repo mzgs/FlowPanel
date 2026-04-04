@@ -20,6 +20,7 @@ import {
   TerminalSquare,
   Trash2,
 } from "@/components/icons/tabler-icons";
+import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -160,6 +161,7 @@ export function CronPage() {
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+  const [deleteJobCandidate, setDeleteJobCandidate] = useState<CronJob | null>(null);
   const [logsJobId, setLogsJobId] = useState<string | null>(null);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
   const schedulerBadge = getSchedulerBadge(enabled, started);
@@ -353,12 +355,20 @@ export function CronPage() {
     }
   }
 
-  async function handleDelete(job: CronJob) {
-    const confirmed = window.confirm(`Delete cron job "${job.name}"?`);
-    if (!confirmed) {
+  function handleDelete(job: CronJob) {
+    if (deletingJobId !== null) {
       return;
     }
 
+    setDeleteJobCandidate(job);
+  }
+
+  async function confirmDeleteJob() {
+    if (!deleteJobCandidate) {
+      return;
+    }
+
+    const job = deleteJobCandidate;
     setDeletingJobId(job.id);
 
     try {
@@ -375,6 +385,7 @@ export function CronPage() {
       setLoadError(getErrorMessage(error, "Failed to delete cron job."));
     } finally {
       setDeletingJobId(null);
+      setDeleteJobCandidate((current) => (current?.id === job.id ? null : current));
     }
   }
 
@@ -402,6 +413,23 @@ export function CronPage() {
             Refresh
           </Button>
         }
+      />
+      <ActionConfirmDialog
+        open={deleteJobCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open && deletingJobId === null) {
+            setDeleteJobCandidate(null);
+          }
+        }}
+        title="Delete cron job"
+        desc={deleteJobCandidate ? `Delete cron job "${deleteJobCandidate.name}"?` : "Delete this cron job?"}
+        confirmText="Delete cron job"
+        destructive
+        isLoading={deleteJobCandidate !== null && deletingJobId === deleteJobCandidate.id}
+        handleConfirm={() => {
+          void confirmDeleteJob();
+        }}
+        className="sm:max-w-md"
       />
 
       <div className="space-y-6 px-4 pb-8 sm:px-6 lg:px-8">
@@ -596,7 +624,7 @@ export function CronPage() {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            onClick={() => void handleDelete(job)}
+                            onClick={() => handleDelete(job)}
                             disabled={deletingJobId === job.id}
                             aria-label={`Delete ${job.name}`}
                             title="Delete"

@@ -11,6 +11,7 @@ import {
 } from "@/components/icons/tabler-icons";
 import {
   createBackup,
+  deleteBackup,
   fetchBackups,
   restoreBackup,
   type BackupRecord,
@@ -26,6 +27,7 @@ import {
   type DomainRecord,
 } from "@/api/domains";
 import { downloadEntry } from "@/api/files";
+import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { BackupRecordsDialog } from "@/components/backup-records-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -243,9 +245,11 @@ export function DomainsPage() {
   const [backupsLoading, setBackupsLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null);
+  const [deleteDomainCandidate, setDeleteDomainCandidate] = useState<DomainRecord | null>(null);
   const [creatingBackupDomainId, setCreatingBackupDomainId] = useState<string | null>(null);
   const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
   const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
+  const [deletingBackupName, setDeletingBackupName] = useState<string | null>(null);
   const [createdBackupDomainId, setCreatedBackupDomainId] = useState<string | null>(null);
   const [downloadingDomainId, setDownloadingDomainId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -457,18 +461,20 @@ export function DomainsPage() {
     }
   }
 
-  async function handleDelete(domain: DomainRecord) {
+  function handleDelete(domain: DomainRecord) {
     if (submitting || deletingDomainId !== null) {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Delete ${domain.hostname}? This removes it from FlowPanel and republishes the active routing.`,
-    );
-    if (!confirmed) {
+    setDeleteDomainCandidate(domain);
+  }
+
+  async function confirmDeleteDomain() {
+    if (!deleteDomainCandidate) {
       return;
     }
 
+    const domain = deleteDomainCandidate;
     setDeletingDomainId(domain.id);
     setLoadError(null);
 
@@ -486,6 +492,7 @@ export function DomainsPage() {
       setLoadError(getErrorMessage(error, `Failed to delete ${domain.hostname}.`));
     } finally {
       setDeletingDomainId(null);
+      setDeleteDomainCandidate((current) => (current?.id === domain.id ? null : current));
     }
   }
 
@@ -544,10 +551,7 @@ export function DomainsPage() {
   }
 
   async function handleRestoreBackup(name: string) {
-    const confirmed = window.confirm(
-      `Restore backup "${name}"? This overwrites the site files stored in that archive.`,
-    );
-    if (!confirmed) {
+    if (restoringBackupName === name || deletingBackupName === name) {
       return;
     }
 
@@ -568,6 +572,24 @@ export function DomainsPage() {
       toast.error(getErrorMessage(error, `Failed to restore ${name}.`));
     } finally {
       setRestoringBackupName(null);
+    }
+  }
+
+  async function handleDeleteBackup(name: string) {
+    if (deletingBackupName === name || restoringBackupName === name) {
+      return;
+    }
+
+    setDeletingBackupName(name);
+
+    try {
+      await deleteBackup(name);
+      setBackups((current) => current.filter((item) => item.name !== name));
+      toast.success(`Deleted backup ${name}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to delete ${name}.`));
+    } finally {
+      setDeletingBackupName(null);
     }
   }
 
@@ -595,7 +617,37 @@ export function DomainsPage() {
         }}
         restoringBackupName={restoringBackupName}
         restoredBackupName={restoredBackupName}
+        restoreConfirmTitle="Restore backup"
+        restoreConfirmText="Restore backup"
+        getRestoreConfirmDescription={(name) =>
+          `Restore backup "${name}"? This overwrites the site files stored in that archive.`
+        }
+        onDeleteBackup={(name) => {
+          void handleDeleteBackup(name);
+        }}
+        deletingBackupName={deletingBackupName}
         actionIconStroke={domainActionIconStroke}
+      />
+      <ActionConfirmDialog
+        open={deleteDomainCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open && deletingDomainId === null) {
+            setDeleteDomainCandidate(null);
+          }
+        }}
+        title="Delete domain"
+        desc={
+          deleteDomainCandidate
+            ? `Delete ${deleteDomainCandidate.hostname}? This removes it from FlowPanel and republishes the active routing.`
+            : "Delete this domain?"
+        }
+        confirmText="Delete domain"
+        destructive
+        isLoading={deleteDomainCandidate !== null && deletingDomainId === deleteDomainCandidate.id}
+        handleConfirm={() => {
+          void confirmDeleteDomain();
+        }}
+        className="sm:max-w-md"
       />
 
       <Dialog open={formOpen} onOpenChange={handleOpenChange}>

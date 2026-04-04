@@ -20,6 +20,7 @@ import {
   Upload,
 } from "@/components/icons/tabler-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
+import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -68,6 +69,8 @@ export function BackupsPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [deletingName, setDeletingName] = useState<string | null>(null);
+  const [confirmDeleteName, setConfirmDeleteName] = useState<string | null>(null);
+  const [confirmRestoreName, setConfirmRestoreName] = useState<string | null>(null);
   const [restoringName, setRestoringName] = useState<string | null>(null);
   const [restoredName, setRestoredName] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
@@ -128,10 +131,20 @@ export function BackupsPage() {
     }
   }
 
-  async function handleDeleteBackup(name: string) {
-    if (!window.confirm(`Delete backup "${name}"?`)) {
+  function handleDeleteBackup(name: string) {
+    if (deletingName !== null) {
       return;
     }
+
+    setConfirmDeleteName(name);
+  }
+
+  async function confirmDeleteBackup() {
+    if (!confirmDeleteName) {
+      return;
+    }
+
+    const name = confirmDeleteName;
 
     setDeletingName(name);
 
@@ -143,16 +156,24 @@ export function BackupsPage() {
       toast.error(getErrorMessage(error, "Failed to delete backup."));
     } finally {
       setDeletingName(null);
+      setConfirmDeleteName((current) => (current === name ? null : current));
     }
   }
 
-  async function handleRestoreBackup(name: string) {
-    const confirmed = window.confirm(
-      `Restore backup "${name}"? This overwrites the matching panel files, site files, and databases contained in the archive.`,
-    );
-    if (!confirmed) {
+  function handleRestoreBackup(name: string) {
+    if (restoringName !== null || deletingName !== null) {
       return;
     }
+
+    setConfirmRestoreName(name);
+  }
+
+  async function confirmRestoreBackup() {
+    if (!confirmRestoreName) {
+      return;
+    }
+
+    const name = confirmRestoreName;
 
     setRestoringName(name);
     setRestoredName(null);
@@ -176,6 +197,7 @@ export function BackupsPage() {
       toast.error(getErrorMessage(error, "Failed to restore backup."));
     } finally {
       setRestoringName(null);
+      setConfirmRestoreName((current) => (current === name ? null : current));
     }
   }
 
@@ -356,6 +378,45 @@ export function BackupsPage() {
         </DialogContent>
       </Dialog>
 
+      <ActionConfirmDialog
+        open={confirmRestoreName !== null}
+        onOpenChange={(open) => {
+          if (!open && restoringName === null) {
+            setConfirmRestoreName(null);
+          }
+        }}
+        title="Restore backup"
+        desc={
+          confirmRestoreName
+            ? `Restore backup "${confirmRestoreName}"? This overwrites the matching panel files, site files, and databases contained in the archive.`
+            : "Restore this backup?"
+        }
+        confirmText="Restore backup"
+        isLoading={confirmRestoreName !== null && restoringName === confirmRestoreName}
+        handleConfirm={() => {
+          void confirmRestoreBackup();
+        }}
+        className="sm:max-w-md"
+      />
+
+      <ActionConfirmDialog
+        open={confirmDeleteName !== null}
+        onOpenChange={(open) => {
+          if (!open && deletingName === null) {
+            setConfirmDeleteName(null);
+          }
+        }}
+        title="Delete backup"
+        desc={confirmDeleteName ? `Delete backup "${confirmDeleteName}"?` : "Delete this backup?"}
+        confirmText="Delete backup"
+        destructive
+        isLoading={confirmDeleteName !== null && deletingName === confirmDeleteName}
+        handleConfirm={() => {
+          void confirmDeleteBackup();
+        }}
+        className="sm:max-w-md"
+      />
+
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
           {loadError ? (
@@ -407,7 +468,7 @@ export function BackupsPage() {
                             type="button"
                             variant="outline"
                             size="icon"
-                            onClick={() => void handleRestoreBackup(backup.name)}
+                            onClick={() => handleRestoreBackup(backup.name)}
                             disabled={restoring || deleting}
                             aria-label={`Restore ${backup.name}`}
                             title={`Restore ${backup.name}`}
@@ -432,7 +493,7 @@ export function BackupsPage() {
                             type="button"
                             variant="destructive"
                             size="icon"
-                            onClick={() => void handleDeleteBackup(backup.name)}
+                            onClick={() => handleDeleteBackup(backup.name)}
                             disabled={deleting}
                             aria-label={`Delete ${backup.name}`}
                             title={`Delete ${backup.name}`}
