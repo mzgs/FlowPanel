@@ -587,37 +587,33 @@ export function DomainsPage() {
       >
         <DialogContent className="gap-4 sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>
-              {backupDialogDomain ? `${backupDialogDomain.hostname} backups` : "Domain backups"}
-            </DialogTitle>
-            <DialogDescription>
-              Local backup archives created for this domain.
-            </DialogDescription>
+            <div className="flex flex-wrap items-center gap-3">
+              <DialogTitle>
+                {backupDialogDomain ? `${backupDialogDomain.hostname} backups` : "Domain backups"}
+              </DialogTitle>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  if (backupDialogDomain) {
+                    void handleCreateBackup(backupDialogDomain);
+                  }
+                }}
+                disabled={backupDialogDomain === null || creatingBackupDomainId !== null}
+              >
+                {backupDialogCreating ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <HardDrive className="h-4 w-4" />
+                )}
+                {backupDialogCreating
+                  ? "Backing up..."
+                  : backupDialogCreated
+                    ? "Backup created"
+                    : "Backup now"}
+              </Button>
+            </div>
           </DialogHeader>
-
-          <div className="flex justify-end">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                if (backupDialogDomain) {
-                  void handleCreateBackup(backupDialogDomain);
-                }
-              }}
-              disabled={backupDialogDomain === null || creatingBackupDomainId !== null}
-            >
-              {backupDialogCreating ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-              ) : (
-                <HardDrive className="h-4 w-4" />
-              )}
-              {backupDialogCreating
-                ? "Backing up..."
-                : backupDialogCreated
-                  ? "Backup created"
-                  : "Backup now"}
-            </Button>
-          </div>
 
           {selectedDomainBackups.length === 0 ? (
             <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-4 text-[13px] text-[var(--app-text-muted)]">
