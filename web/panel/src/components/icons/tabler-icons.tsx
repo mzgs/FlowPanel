@@ -59,6 +59,7 @@ export const FolderOpen = pick("IconFolderOpen");
 export const FolderPlus = pick("IconFolderPlus");
 export const GalleryVerticalEnd = pick("IconLayoutSidebarRightCollapse", "IconLayoutColumns");
 export const Globe = pick("IconGlobe");
+export const GitBranch = pick("IconGitBranch", "IconBrandGit");
 export const Grid2X2 = pick("IconLayoutGrid", "IconGridDots");
 export const HardDrive = pick("IconDeviceFloppy", "IconArchive", "IconDatabaseExport");
 export const HelpCircle = pick("IconHelpCircle");

@@ -1,12 +1,33 @@
 import { useParams } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import {
   fetchDomainPreview,
   fetchDomains,
   getDomainSiteUrl,
   type DomainRecord,
 } from "@/api/domains";
-import { ExternalLink, LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
+import {
+  Clock,
+  Copy,
+  Database,
+  Download,
+  ExternalLink,
+  File,
+  FileCode2,
+  Folder,
+  FolderOpen,
+  GitBranch,
+  Globe,
+  HardDrive,
+  LoaderCircle,
+  Monitor,
+  Package,
+  RefreshCw,
+  Settings2,
+  Sparkles,
+  Telescope,
+  TerminalSquare,
+} from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -17,6 +38,144 @@ function getErrorMessage(error: unknown, fallback: string) {
   }
 
   return fallback;
+}
+
+type ActionIcon = ComponentType<{
+  className?: string;
+  size?: number | string;
+  stroke?: number | string;
+}>;
+
+type DomainActionItem = {
+  title: string;
+  description: string;
+  icon: ActionIcon;
+};
+
+const fileAndDatabaseActions: DomainActionItem[] = [
+  {
+    title: "Connection Info",
+    description: "FTP and database access details",
+    icon: Globe,
+  },
+  {
+    title: "Files",
+    description: "Open the document root",
+    icon: Folder,
+  },
+  {
+    title: "Databases",
+    description: "MariaDB and phpMyAdmin",
+    icon: Database,
+  },
+  {
+    title: "FTP",
+    description: "Manage transfer users",
+    icon: FolderOpen,
+  },
+  {
+    title: "Backup & Restore",
+    description: "Site and database snapshots",
+    icon: HardDrive,
+  },
+  {
+    title: "Website Copying",
+    description: "Clone content to another target",
+    icon: Copy,
+  },
+];
+
+const devToolActions: DomainActionItem[] = [
+  {
+    title: "PHP",
+    description: "Runtime and extension settings",
+    icon: FileCode2,
+  },
+  {
+    title: "Logs",
+    description: "Access and error logs",
+    icon: File,
+  },
+  {
+    title: "SSH Terminal",
+    description: "Shell access placeholder",
+    icon: TerminalSquare,
+  },
+  {
+    title: "Monitoring",
+    description: "Domain health overview",
+    icon: Monitor,
+  },
+  {
+    title: "PHP Composer",
+    description: "Dependency management",
+    icon: Package,
+  },
+  {
+    title: "Scheduled Tasks",
+    description: "Cron-style job scheduling",
+    icon: Clock,
+  },
+  {
+    title: "Performance Booster",
+    description: "Caching and speed tools",
+    icon: Sparkles,
+  },
+  {
+    title: "Git",
+    description: "Repository deployment tools",
+    icon: GitBranch,
+  },
+  {
+    title: "SEO",
+    description: "Search visibility settings",
+    icon: Telescope,
+  },
+  {
+    title: "Website Importing",
+    description: "Bring in an existing site",
+    icon: Download,
+  },
+  {
+    title: "Docker Proxy Rules",
+    description: "Container routing setup",
+    icon: Settings2,
+  },
+];
+
+function DomainActionSection({
+  title,
+  items,
+}: {
+  title: string;
+  items: DomainActionItem[];
+}) {
+  return (
+    <section className="space-y-4">
+      <h2 className="text-base font-semibold text-[var(--app-text)]">{title}</h2>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {items.map(({ title: itemTitle, description, icon: Icon }) => (
+          <button
+            key={itemTitle}
+            type="button"
+            className="group flex min-h-24 items-center gap-4 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-left transition-[background-color,border-color] duration-150 hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"
+          >
+            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)] transition-colors duration-150 group-hover:text-[var(--app-accent)]">
+              <Icon className="h-6 w-6" stroke={1.75} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[15px] font-medium leading-5 text-[var(--app-text)]">
+                {itemTitle}
+              </span>
+              <span className="mt-1 block text-sm leading-5 text-[var(--app-text-muted)]">
+                {description}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 export function DomainDetailPage() {
@@ -171,7 +330,7 @@ export function DomainDetailPage() {
           loading
             ? "Loading domain details..."
             : domain
-              ? "Settings and site configuration will live here."
+              ? "Files, databases, and developer tools for this domain."
               : "This route is reserved for per-domain configuration."
         }
       />
@@ -297,7 +456,10 @@ export function DomainDetailPage() {
                   </dl>
                 </section>
               </aside>
-
+              <div className="space-y-6">
+                <DomainActionSection title="Files & Databases" items={fileAndDatabaseActions} />
+                <DomainActionSection title="Dev Tools" items={devToolActions} />
+              </div>
             </section>
           ) : null}
         </div>
