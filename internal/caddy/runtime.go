@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	fastcgi "github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy/fastcgi"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/rewrite"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
+	caddylogging "github.com/caddyserver/caddy/v2/modules/logging"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
 	"github.com/darkweak/souin/configurationtypes"
 	"go.uber.org/zap"
@@ -65,6 +67,8 @@ const (
 )
 
 const defaultCacheTTL = 120 * time.Second
+
+var loggerNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 func NewRuntime(
 	logger *zap.Logger,
@@ -297,6 +301,9 @@ func buildConfig(
 			},
 		},
 	}
+	if loggingConfig := domainLoggingConfig(records); loggingConfig != nil {
+		cfg.Logging = loggingConfig
+	}
 
 	if len(records) == 0 && phpMyAdminConfig == nil {
 		return cfg, summary, nil
@@ -333,7 +340,7 @@ func buildConfig(
 			IdleTimeout:       caddyv2.Duration(2 * time.Minute),
 			MaxHeaderBytes:    1024 * 10,
 			Routes:            routes,
-			Logs:              &caddyhttp.ServerLogConfig{},
+			Logs:              domainServerLogConfig(records),
 		}
 		if mode == runtimeSyncModeStandard {
 			httpPort, err := parseTCPPort(publicHTTPAddr)
@@ -736,4 +743,75 @@ func cacheHandlerConfig() httpcache.SouinCaddyMiddleware {
 			},
 		},
 	}
+}
+
+func domainLoggingConfig(records []domain.Record) *caddyv2.Logging {
+	if len(records) == 0 {
+		return nil
+	}
+
+	logs := make(map[string]*caddyv2.CustomLog, len(records)*2)
+	for _, record := range records {
+		if strings.TrimSpace(record.Logs.Access) == "" || strings.TrimSpace(record.Logs.Error) == "" {
+			continue
+		}
+
+		accessLoggerName, errorLoggerName := domainLoggerNames(record)
+		logs[accessLoggerName] = &caddyv2.CustomLog{
+			BaseLog: caddyv2.BaseLog{
+				WriterRaw: caddyconfig.JSONModuleObject(caddylogging.FileWriter{
+					Filename: record.Logs.Access,
+					DirMode:  "0755",
+				}, "output", "file", nil),
+				Level: "INFO",
+			},
+			Include: []string{"http.log.access." + accessLoggerName},
+		}
+		logs[errorLoggerName] = &caddyv2.CustomLog{
+			BaseLog: caddyv2.BaseLog{
+				WriterRaw: caddyconfig.JSONModuleObject(caddylogging.FileWriter{
+					Filename: record.Logs.Error,
+					DirMode:  "0755",
+				}, "output", "file", nil),
+				Level: "INFO",
+			},
+			Include: []string{"http.log.error." + errorLoggerName},
+		}
+	}
+
+	if len(logs) == 0 {
+		return nil
+	}
+
+	return &caddyv2.Logging{
+		Logs: logs,
+	}
+}
+
+func domainServerLogConfig(records []domain.Record) *caddyhttp.ServerLogConfig {
+	config := &caddyhttp.ServerLogConfig{
+		LoggerNames:       make(map[string]caddyhttp.StringArray, len(records)),
+		SkipUnmappedHosts: true,
+	}
+
+	for _, record := range records {
+		accessLoggerName, errorLoggerName := domainLoggerNames(record)
+		config.LoggerNames[record.Hostname] = caddyhttp.StringArray{accessLoggerName, errorLoggerName}
+	}
+
+	return config
+}
+
+func domainLoggerNames(record domain.Record) (string, string) {
+	name := strings.TrimSpace(record.ID)
+	if name == "" {
+		name = record.Hostname
+	}
+	name = loggerNameSanitizer.ReplaceAllString(name, "_")
+	name = strings.Trim(name, "_")
+	if name == "" {
+		name = "domain"
+	}
+
+	return name + "_access", name + "_error"
 }

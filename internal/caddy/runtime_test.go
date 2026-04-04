@@ -131,6 +131,63 @@ func TestBuildConfigAddsCacheAppAndHandlerForCachedDomains(t *testing.T) {
 	}
 }
 
+func TestBuildConfigCreatesPerDomainAccessAndErrorLogs(t *testing.T) {
+	logRoot := t.TempDir()
+	cfg, _, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
+		{
+			ID:       "static.example.com-1",
+			Hostname: "static.example.com",
+			Kind:     domain.KindStaticSite,
+			Target:   t.TempDir(),
+			Logs: domain.LogPaths{
+				Directory: logRoot,
+				Access:    logRoot + "/access.log",
+				Error:     logRoot + "/error.log",
+			},
+		},
+	}, nil, nil, runtimeSyncModeStandard)
+	if err != nil {
+		t.Fatalf("build config: %v", err)
+	}
+
+	if cfg.Logging == nil {
+		t.Fatal("expected logging config")
+	}
+	if len(cfg.Logging.Logs) != 2 {
+		t.Fatalf("custom log count = %d, want 2", len(cfg.Logging.Logs))
+	}
+
+	var httpApp caddyhttp.App
+	if err := json.Unmarshal(cfg.AppsRaw["http"], &httpApp); err != nil {
+		t.Fatalf("unmarshal http app: %v", err)
+	}
+
+	server := httpApp.Servers["public"]
+	if server == nil || server.Logs == nil {
+		t.Fatalf("unexpected public server logs: %#v", server)
+	}
+
+	loggerNames := server.Logs.LoggerNames["static.example.com"]
+	if len(loggerNames) != 2 {
+		t.Fatalf("logger names = %#v, want two mapped loggers", loggerNames)
+	}
+
+	rawConfig, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if !bytes.Contains(rawConfig, []byte(`access.log`)) {
+		t.Fatalf("raw config = %s, want access log file", string(rawConfig))
+	}
+	if !bytes.Contains(rawConfig, []byte(`error.log`)) {
+		t.Fatalf("raw config = %s, want error log file", string(rawConfig))
+	}
+
+	if err := caddyv2.Validate(cfg); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+}
+
 func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
 	cfg, summary, err := buildConfig(":9080", ":9443", ":32109", []domain.Record{
 		{

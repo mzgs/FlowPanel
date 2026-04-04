@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,8 +12,10 @@ import (
 	"net"
 	stdhttp "net/http"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1070,6 +1073,65 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		domainsLogsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostnameFilter := normalizeDomainLogHostname(r.URL.Query().Get("hostname"))
+			typeFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+			if typeFilter == "" {
+				typeFilter = "all"
+			}
+			switch typeFilter {
+			case "all", "access", "error":
+			default:
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "type must be one of all, access, or error",
+				})
+				return
+			}
+
+			limit := 200
+			if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+				parsedLimit, err := strconv.Atoi(rawLimit)
+				if err != nil || parsedLimit < 1 || parsedLimit > 1000 {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "limit must be an integer between 1 and 1000",
+					})
+					return
+				}
+				limit = parsedLimit
+			}
+
+			search := strings.TrimSpace(r.URL.Query().Get("search"))
+
+			records := app.Domains.List()
+			hostnames := make([]string, 0, len(records))
+			logs := make([]domainLogResponse, 0, len(records)*2)
+			for _, record := range records {
+				hostnames = append(hostnames, record.Hostname)
+				if hostnameFilter != "" && record.Hostname != hostnameFilter {
+					continue
+				}
+
+				if typeFilter == "all" || typeFilter == "access" {
+					logs = append(logs, readDomainLog(record.Hostname, "access", record.Logs.Access, search, limit))
+				}
+				if typeFilter == "all" || typeFilter == "error" {
+					logs = append(logs, readDomainLog(record.Hostname, "error", record.Logs.Error, search, limit))
+				}
+			}
+			sort.Strings(hostnames)
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"hostnames": hostnames,
+				"filters": map[string]any{
+					"hostname": hostnameFilter,
+					"type":     typeFilter,
+					"search":   search,
+					"limit":    limit,
+				},
+				"logs": logs,
+			})
+		})
+
 		domainsPreviewHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			hostname := chi.URLParam(r, "hostname")
 			refreshRequested := false
@@ -1337,6 +1399,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 		r.Method(stdhttp.MethodGet, "/domains", domainsListHandler)
 		r.Method(stdhttp.MethodHead, "/domains", domainsListHandler)
+		r.Method(stdhttp.MethodGet, "/domains/logs", domainsLogsHandler)
+		r.Method(stdhttp.MethodHead, "/domains/logs", domainsLogsHandler)
 		r.Method(stdhttp.MethodGet, "/domains/{hostname}/preview", domainsPreviewHandler)
 		r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
 		r.Method(stdhttp.MethodPost, "/domains", domainsCreateHandler)
@@ -1868,6 +1932,98 @@ func writeFileError(w stdhttp.ResponseWriter, err error) {
 			"error": "file operation failed",
 		})
 	}
+}
+
+type domainLogResponse struct {
+	Hostname     string     `json:"hostname"`
+	Type         string     `json:"type"`
+	Path         string     `json:"path"`
+	Available    bool       `json:"available"`
+	ModifiedAt   *time.Time `json:"modified_at,omitempty"`
+	SizeBytes    int64      `json:"size_bytes"`
+	TotalMatches int        `json:"total_matches"`
+	Truncated    bool       `json:"truncated"`
+	ReadError    string     `json:"read_error,omitempty"`
+	Lines        []string   `json:"lines"`
+}
+
+func normalizeDomainLogHostname(value string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+}
+
+func readDomainLog(hostname string, logType string, filePath string, search string, limit int) domainLogResponse {
+	response := domainLogResponse{
+		Hostname: hostname,
+		Type:     logType,
+		Path:     filePath,
+		Lines:    []string{},
+	}
+
+	if strings.TrimSpace(filePath) == "" {
+		return response
+	}
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			response.ReadError = err.Error()
+		}
+		return response
+	}
+
+	response.Available = true
+	response.SizeBytes = info.Size()
+	modifiedAt := info.ModTime().UTC()
+	response.ModifiedAt = &modifiedAt
+
+	lines, totalMatches, truncated, err := tailMatchingLogLines(filePath, search, limit)
+	if err != nil {
+		response.ReadError = err.Error()
+		return response
+	}
+
+	response.TotalMatches = totalMatches
+	response.Truncated = truncated
+	response.Lines = lines
+
+	return response
+}
+
+func tailMatchingLogLines(filePath string, search string, limit int) ([]string, int, bool, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer file.Close()
+
+	search = strings.ToLower(strings.TrimSpace(search))
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	lines := make([]string, 0, limit)
+	totalMatches := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		if search != "" && !strings.Contains(strings.ToLower(line), search) {
+			continue
+		}
+
+		totalMatches++
+		if len(lines) < limit {
+			lines = append(lines, line)
+			continue
+		}
+
+		copy(lines, lines[1:])
+		lines[len(lines)-1] = line
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, 0, false, err
+	}
+
+	return lines, totalMatches, totalMatches > limit, nil
 }
 
 func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.RestoreResult) error {

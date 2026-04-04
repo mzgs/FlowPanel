@@ -643,6 +643,118 @@ func TestDomainPreviewEndpointReturnsBadGatewayWhenGenerationFails(t *testing.T)
 	}
 }
 
+func TestDomainLogsEndpointReturnsFilteredLogs(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	logsRoot := t.TempDir()
+	domains.SetLogsBasePath(logsRoot)
+
+	alpha, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "alpha.example.com",
+		Kind:     domain.KindApp,
+		Target:   "3000",
+	})
+	if err != nil {
+		t.Fatalf("create alpha domain: %v", err)
+	}
+	beta, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "beta.example.com",
+		Kind:     domain.KindApp,
+		Target:   "3001",
+	})
+	if err != nil {
+		t.Fatalf("create beta domain: %v", err)
+	}
+
+	if err := os.MkdirAll(alpha.Logs.Directory, 0o755); err != nil {
+		t.Fatalf("mkdir alpha logs: %v", err)
+	}
+	if err := os.WriteFile(alpha.Logs.Access, []byte("{\"msg\":\"alpha request 1\"}\n{\"msg\":\"alpha request 2\"}\n"), 0o644); err != nil {
+		t.Fatalf("write alpha access log: %v", err)
+	}
+	if err := os.WriteFile(alpha.Logs.Error, []byte("{\"msg\":\"alpha failed\"}\n"), 0o644); err != nil {
+		t.Fatalf("write alpha error log: %v", err)
+	}
+
+	if err := os.MkdirAll(beta.Logs.Directory, 0o755); err != nil {
+		t.Fatalf("mkdir beta logs: %v", err)
+	}
+	if err := os.WriteFile(beta.Logs.Access, []byte("{\"msg\":\"beta request\"}\n"), 0o644); err != nil {
+		t.Fatalf("write beta access log: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/domains/logs?hostname=alpha.example.com&type=access&search=alpha&limit=1", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var payload struct {
+		Hostnames []string `json:"hostnames"`
+		Filters   struct {
+			Hostname string `json:"hostname"`
+			Type     string `json:"type"`
+			Search   string `json:"search"`
+			Limit    int    `json:"limit"`
+		} `json:"filters"`
+		Logs []struct {
+			Hostname     string   `json:"hostname"`
+			Type         string   `json:"type"`
+			Path         string   `json:"path"`
+			Available    bool     `json:"available"`
+			TotalMatches int      `json:"total_matches"`
+			Truncated    bool     `json:"truncated"`
+			Lines        []string `json:"lines"`
+		} `json:"logs"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(payload.Hostnames) != 2 {
+		t.Fatalf("hostname count = %d, want 2", len(payload.Hostnames))
+	}
+	if payload.Filters.Hostname != "alpha.example.com" {
+		t.Fatalf("hostname filter = %q, want alpha.example.com", payload.Filters.Hostname)
+	}
+	if payload.Filters.Type != "access" {
+		t.Fatalf("type filter = %q, want access", payload.Filters.Type)
+	}
+	if payload.Filters.Search != "alpha" {
+		t.Fatalf("search filter = %q, want alpha", payload.Filters.Search)
+	}
+	if payload.Filters.Limit != 1 {
+		t.Fatalf("limit filter = %d, want 1", payload.Filters.Limit)
+	}
+	if len(payload.Logs) != 1 {
+		t.Fatalf("log count = %d, want 1", len(payload.Logs))
+	}
+
+	logEntry := payload.Logs[0]
+	if logEntry.Hostname != alpha.Hostname {
+		t.Fatalf("hostname = %q, want %q", logEntry.Hostname, alpha.Hostname)
+	}
+	if logEntry.Type != "access" {
+		t.Fatalf("type = %q, want access", logEntry.Type)
+	}
+	if logEntry.Path != alpha.Logs.Access {
+		t.Fatalf("path = %q, want %q", logEntry.Path, alpha.Logs.Access)
+	}
+	if !logEntry.Available {
+		t.Fatal("expected log to be available")
+	}
+	if logEntry.TotalMatches != 2 {
+		t.Fatalf("total matches = %d, want 2", logEntry.TotalMatches)
+	}
+	if !logEntry.Truncated {
+		t.Fatal("expected truncated log result")
+	}
+	if len(logEntry.Lines) != 1 || !strings.Contains(logEntry.Lines[0], "alpha request 2") {
+		t.Fatalf("lines = %#v, want only the last matching log line", logEntry.Lines)
+	}
+}
+
 func TestCronListCreateAndDeleteEndpoints(t *testing.T) {
 	router, _, store := newTestCronRouter(t, false)
 

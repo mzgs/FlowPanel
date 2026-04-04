@@ -28,6 +28,7 @@ func TestCreateStaticSiteCreatesSiteDirectory(t *testing.T) {
 	basePath := filepath.Join(tempDir, "var", "www")
 
 	service := newService(basePath, nil)
+	service.logsBasePath = filepath.Join(tempDir, "logs")
 	record, err := service.Create(context.Background(), CreateInput{
 		Hostname: "Example.com",
 		Kind:     KindStaticSite,
@@ -53,6 +54,17 @@ func TestCreateStaticSiteCreatesSiteDirectory(t *testing.T) {
 
 	if !strings.Contains(string(indexContent), "<title>example.com</title>") {
 		t.Fatalf("site index missing hostname title: %s", string(indexContent))
+	}
+
+	expectedLogDir := filepath.Join(tempDir, "logs", "example.com")
+	if record.Logs.Directory != expectedLogDir {
+		t.Fatalf("log directory = %q, want %q", record.Logs.Directory, expectedLogDir)
+	}
+	if record.Logs.Access != filepath.Join(expectedLogDir, "access.log") {
+		t.Fatalf("access log path = %q, want %q", record.Logs.Access, filepath.Join(expectedLogDir, "access.log"))
+	}
+	if record.Logs.Error != filepath.Join(expectedLogDir, "error.log") {
+		t.Fatalf("error log path = %q, want %q", record.Logs.Error, filepath.Join(expectedLogDir, "error.log"))
 	}
 }
 
@@ -251,6 +263,7 @@ func TestUpdatePersistsDomain(t *testing.T) {
 	}
 
 	service := newService(t.TempDir(), store)
+	service.logsBasePath = t.TempDir()
 	record, err := service.Create(ctx, CreateInput{
 		Hostname: "app.example.com",
 		Kind:     KindApp,
@@ -312,6 +325,56 @@ func TestUpdatePersistsDomain(t *testing.T) {
 		records[0].CacheEnabled != updated.CacheEnabled ||
 		!records[0].CreatedAt.Equal(updated.CreatedAt) {
 		t.Fatalf("persisted record = %#v, want %#v", records[0], updated)
+	}
+}
+
+func TestLoadHydratesLogPathsForPersistedDomains(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	store := NewStore(conn)
+	if err := store.Ensure(ctx); err != nil {
+		t.Fatalf("ensure store: %v", err)
+	}
+
+	persisted := Record{
+		ID:        "example.com-1",
+		Hostname:  "example.com",
+		Kind:      KindStaticSite,
+		Target:    "/var/www/example.com",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := store.Insert(ctx, persisted); err != nil {
+		t.Fatalf("insert domain: %v", err)
+	}
+
+	logsBasePath := t.TempDir()
+	service := newService(t.TempDir(), store)
+	service.logsBasePath = logsBasePath
+	if err := service.Load(ctx); err != nil {
+		t.Fatalf("load domains: %v", err)
+	}
+
+	records := service.List()
+	if len(records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(records))
+	}
+
+	expectedLogDir := filepath.Join(logsBasePath, "example.com")
+	if records[0].Logs.Directory != expectedLogDir {
+		t.Fatalf("log directory = %q, want %q", records[0].Logs.Directory, expectedLogDir)
+	}
+	if records[0].Logs.Access != filepath.Join(expectedLogDir, "access.log") {
+		t.Fatalf("access log path = %q, want %q", records[0].Logs.Access, filepath.Join(expectedLogDir, "access.log"))
+	}
+	if records[0].Logs.Error != filepath.Join(expectedLogDir, "error.log") {
+		t.Fatalf("error log path = %q, want %q", records[0].Logs.Error, filepath.Join(expectedLogDir, "error.log"))
 	}
 }
 

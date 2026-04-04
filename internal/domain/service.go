@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"flowpanel/internal/config"
 )
 
 const (
@@ -40,8 +42,15 @@ type Record struct {
 	Hostname     string    `json:"hostname"`
 	Kind         Kind      `json:"kind"`
 	Target       string    `json:"target"`
+	Logs         LogPaths  `json:"logs"`
 	CacheEnabled bool      `json:"cache_enabled"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type LogPaths struct {
+	Directory string `json:"directory"`
+	Access    string `json:"access"`
+	Error     string `json:"error"`
 }
 
 type CreateInput struct {
@@ -66,6 +75,7 @@ func (e ValidationErrors) Error() string {
 
 type Service struct {
 	basePath         string
+	logsBasePath     string
 	store            *Store
 	previewCachePath string
 	previewTTL       time.Duration
@@ -83,6 +93,7 @@ func NewService(store *Store) *Service {
 func newService(basePath string, store *Store) *Service {
 	return &Service{
 		basePath:         strings.TrimSpace(basePath),
+		logsBasePath:     defaultLogsBasePath(),
 		store:            store,
 		previewCachePath: defaultPreviewCachePath(),
 		previewTTL:       defaultPreviewTTL(),
@@ -90,6 +101,10 @@ func newService(basePath string, store *Store) *Service {
 		now:              time.Now,
 		records:          make([]Record, 0),
 	}
+}
+
+func defaultLogsBasePath() string {
+	return filepath.Join(config.FlowPanelDataPath(), "logs", "sites")
 }
 
 func defaultSitesBasePath() string {
@@ -107,12 +122,24 @@ func (s *Service) BasePath() string {
 	return s.basePath
 }
 
+func (s *Service) SetLogsBasePath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.logsBasePath = strings.TrimSpace(path)
+	for i, record := range s.records {
+		s.records[i] = s.withLogPaths(record)
+	}
+}
+
 func (s *Service) List() []Record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	records := make([]Record, len(s.records))
-	copy(records, s.records)
+	for i, record := range s.records {
+		records[i] = s.withLogPaths(record)
+	}
 
 	return records
 }
@@ -130,7 +157,10 @@ func (s *Service) Load(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.records = append([]Record(nil), records...)
+	s.records = make([]Record, len(records))
+	for i, record := range records {
+		s.records[i] = s.withLogPaths(record)
+	}
 
 	return nil
 }
@@ -185,6 +215,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		CacheEnabled: input.CacheEnabled,
 		CreatedAt:    time.Now().UTC(),
 	}
+	record = s.withLogPaths(record)
 
 	if s.store != nil {
 		if err := s.store.Insert(ctx, record); err != nil {
@@ -226,6 +257,7 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 	updated.Kind = input.Kind
 	updated.Target = resolvedTarget
 	updated.CacheEnabled = input.CacheEnabled
+	updated = s.withLogPaths(updated)
 
 	if s.store != nil {
 		if err := s.store.Update(ctx, updated); err != nil {
@@ -241,6 +273,8 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 func (s *Service) Restore(ctx context.Context, record Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	record = s.withLogPaths(record)
 
 	index, _, exists := s.findRecordLocked(record.ID)
 	for _, existing := range s.records {
@@ -382,6 +416,8 @@ func (s *Service) findRecordLocked(id string) (int, Record, bool) {
 }
 
 func (s *Service) insertRecordLocked(record Record) {
+	record = s.withLogPaths(record)
+
 	index := len(s.records)
 	for i, existing := range s.records {
 		if record.CreatedAt.After(existing.CreatedAt) ||
@@ -394,6 +430,23 @@ func (s *Service) insertRecordLocked(record Record) {
 	s.records = append(s.records, Record{})
 	copy(s.records[index+1:], s.records[index:])
 	s.records[index] = record
+}
+
+func (s *Service) withLogPaths(record Record) Record {
+	host := normalizeHostname(record.Hostname)
+	if host == "" {
+		record.Logs = LogPaths{}
+		return record
+	}
+
+	logDir := filepath.Join(s.logsBasePath, host)
+	record.Logs = LogPaths{
+		Directory: logDir,
+		Access:    filepath.Join(logDir, "access.log"),
+		Error:     filepath.Join(logDir, "error.log"),
+	}
+
+	return record
 }
 
 func (s *Service) deriveTarget(hostname string, kind Kind, target string) (string, error) {

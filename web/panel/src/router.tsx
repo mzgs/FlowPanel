@@ -12,6 +12,7 @@ import {
   Database,
   ChevronRight,
   FolderOpen,
+  File,
   HardDrive,
   LayoutDashboard,
   List,
@@ -48,12 +49,14 @@ import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
 import { FilesPage } from "@/pages/files-page";
+import { LogsPage } from "@/pages/logs-page";
 import { SettingsPage } from "@/pages/settings-page";
 import { SshPage } from "@/pages/ssh-page";
 
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/activity", label: "Activity", icon: List },
+  { to: "/logs", label: "Logs", icon: File },
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
   { to: "/backups", label: "Backups", icon: HardDrive },
@@ -239,6 +242,12 @@ const activityRoute = createRoute({
   component: ActivityPage,
 });
 
+const logsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/logs",
+  component: LogsPage,
+});
+
 const domainDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/domains/$hostname",
@@ -296,6 +305,7 @@ const sshRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   activityRoute,
+  logsRoute,
   domainsRoute,
   domainDetailRoute,
   databaseRoute,
