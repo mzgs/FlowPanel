@@ -6,22 +6,20 @@ import {
   createRouter,
   useLocation,
 } from "@tanstack/react-router";
+import { Fragment } from "react";
 import {
   Bell,
   Clock,
   Database,
   ChevronRight,
   FolderOpen,
-  File,
   HardDrive,
   LayoutDashboard,
   List,
-  Menu,
   Search,
   Settings,
   TerminalSquare,
   World,
-  X,
 } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -56,7 +54,6 @@ import { SshPage } from "@/pages/ssh-page";
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/activity", label: "Activity", icon: List },
-  { to: "/logs", label: "Logs", icon: File },
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
   { to: "/backups", label: "Backups", icon: HardDrive },
@@ -66,31 +63,69 @@ const navigationItems = [
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
-function getPathLabel(pathname: string) {
+function formatSegmentLabel(segment: string) {
+  if (segment === "") {
+    return "Overview";
+  }
+
+  if (segment === "jobs") {
+    return "Cron";
+  }
+
+  if (segment === "file-manager") {
+    return "Files";
+  }
+
+  return decodeURIComponent(segment)
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getBreadcrumbs(pathname: string) {
   if (pathname === "/") {
-    return "Dashboard";
+    return [{ to: "/", label: "Overview" }];
   }
 
-  if (pathname.startsWith("/domains/")) {
-    return "details";
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] === "domains") {
+    const hostname = segments[1];
+    const breadcrumbs = [{ to: "/domains", label: "Domains" }];
+
+    if (hostname) {
+      breadcrumbs.push({
+        to: `/domains/${hostname}`,
+        label: decodeURIComponent(hostname),
+      });
+    }
+
+    if (segments[2]) {
+      breadcrumbs.push({
+        to: `/domains/${hostname}/${segments[2]}`,
+        label: formatSegmentLabel(segments[2]),
+      });
+    }
+
+    return breadcrumbs;
   }
 
-  if (pathname === "/jobs" || pathname === "/cron") {
-    return "cron";
-  }
-
-  return pathname.slice(1).replace(/-/g, " ");
+  let currentPath = "";
+  return segments.map((segment) => {
+    currentPath += `/${segment}`;
+    return {
+      to: segment === "jobs" ? "/cron" : segment === "file-manager" ? "/files" : currentPath,
+      label: formatSegmentLabel(segment),
+    };
+  });
 }
 
 function RootLayout() {
   const location = useLocation();
+  const breadcrumbs = getBreadcrumbs(location.pathname);
   const isNavItemActive = (to: string) =>
     location.pathname === to ||
     (to === "/domains" && location.pathname.startsWith("/domains/")) ||
     (to === "/files" && location.pathname === "/file-manager") ||
     (to === "/cron" && location.pathname === "/jobs");
-  const activeItem =
-    navigationItems.find((item) => isNavItemActive(item.to)) ?? navigationItems[0];
 
   return (
     <SidebarProvider defaultOpen>
@@ -156,20 +191,24 @@ function RootLayout() {
                 >
                   Control center
                 </Link>
-                <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
-                  <Link
-                    to={activeItem.to}
-                    className="truncate transition-colors hover:text-primary"
-                  >
-                    {activeItem.label}
-                  </Link>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <Link
-                    to={location.pathname}
-                    className="truncate text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    {getPathLabel(location.pathname)}
-                  </Link>
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                  {breadcrumbs.map((crumb, index) => (
+                    <Fragment key={crumb.to}>
+                      {index > 0 ? (
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      ) : null}
+                      <Link
+                        to={crumb.to}
+                        className={
+                          index === breadcrumbs.length - 1
+                            ? "truncate text-muted-foreground transition-colors hover:text-foreground"
+                            : "truncate transition-colors hover:text-primary"
+                        }
+                      >
+                        {crumb.label}
+                      </Link>
+                    </Fragment>
+                  ))}
                 </div>
               </div>
             </div>
@@ -244,7 +283,7 @@ const activityRoute = createRoute({
 
 const logsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/logs",
+  path: "/domains/$hostname/logs",
   component: LogsPage,
 });
 

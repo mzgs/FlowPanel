@@ -467,7 +467,18 @@ export function DomainDetailPage() {
                   }}
                 />
                 <div className="pt-2">
-                  <DomainActionSection title="Dev Tools" items={devToolActions} />
+                  <DomainActionSection
+                    title="Dev Tools"
+                    items={devToolActions}
+                    onItemClick={(item) => {
+                      if (item.title === "Logs" && domain !== null) {
+                        void navigate({
+                          to: "/domains/$hostname/logs",
+                          params: { hostname: domain.hostname },
+                        });
+                      }
+                    }}
+                  />
                 </div>
               </div>
             </section>

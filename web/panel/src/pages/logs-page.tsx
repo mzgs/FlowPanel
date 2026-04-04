@@ -1,3 +1,4 @@
+import { useParams } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   fetchDomainLogs,
@@ -35,7 +36,6 @@ import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type FilterState = {
-  hostname: string;
   type: DomainLogType;
   search: string;
   limit: string;
@@ -62,7 +62,6 @@ type ParsedLogRow = {
 };
 
 const initialFilters: FilterState = {
-  hostname: "",
   type: "all",
   search: "",
   limit: "200",
@@ -99,10 +98,10 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-function buildRequestFilters(filters: FilterState): FetchDomainLogsInput {
+function buildRequestFilters(filters: FilterState, hostname: string): FetchDomainLogsInput {
   const limit = Number.parseInt(filters.limit, 10);
   return {
-    hostname: filters.hostname || undefined,
+    hostname,
     type: filters.type,
     search: filters.search.trim() || undefined,
     limit: Number.isFinite(limit) ? limit : 200,
@@ -358,10 +357,12 @@ function applyClientFilters(rows: ParsedLogRow[], filters: ClientFilterState) {
 }
 
 export function LogsPage() {
+  const { hostname } = useParams({ from: "/domains/$hostname/logs" });
   const [filters, setFilters] = useState<FilterState>(initialFilters);
   const [clientFilters, setClientFilters] = useState<ClientFilterState>(initialClientFilters);
-  const [activeFilters, setActiveFilters] = useState<FetchDomainLogsInput>(buildRequestFilters(initialFilters));
-  const [hostnames, setHostnames] = useState<string[]>([]);
+  const [activeFilters, setActiveFilters] = useState<FetchDomainLogsInput>(() =>
+    buildRequestFilters(initialFilters, hostname),
+  );
   const [logs, setLogs] = useState<DomainLogRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -375,11 +376,10 @@ export function LogsPage() {
 
     try {
       const payload = await fetchDomainLogs(nextFilters);
-      setHostnames(payload.hostnames);
       setLogs(payload.logs);
       setLoadError(null);
       setActiveFilters({
-        hostname: payload.filters.hostname || undefined,
+        hostname,
         type: payload.filters.type,
         search: payload.filters.search || undefined,
         limit: payload.filters.limit,
@@ -395,8 +395,14 @@ export function LogsPage() {
   }
 
   useEffect(() => {
-    void loadLogs(activeFilters, false);
-  }, []);
+    const nextFilters = buildRequestFilters(initialFilters, hostname);
+    setFilters(initialFilters);
+    setClientFilters(initialClientFilters);
+    setLiveUpdates(false);
+    setLoading(true);
+    setActiveFilters(nextFilters);
+    void loadLogs(nextFilters, false);
+  }, [hostname]);
 
   useEffect(() => {
     if (!liveUpdates) {
@@ -412,21 +418,20 @@ export function LogsPage() {
 
   function handleApplyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void loadLogs(buildRequestFilters(filters), true);
+    void loadLogs(buildRequestFilters(filters, hostname), true);
   }
 
   function handleResetFilters() {
     setFilters(initialFilters);
     setClientFilters(initialClientFilters);
     setLiveUpdates(false);
-    void loadLogs(buildRequestFilters(initialFilters), true);
+    void loadLogs(buildRequestFilters(initialFilters, hostname), true);
   }
 
   const allRows = flattenLogRows(logs);
   const visibleRows = applyClientFilters(allRows, clientFilters);
   const rawRows = allRows.filter((row) => row.parseMode === "raw").length;
   const unavailableLogs = logs.filter((log) => !log.available || Boolean(log.read_error));
-  const selectedHostname = activeFilters.hostname || "all domains";
 
   return (
     <>
@@ -434,10 +439,9 @@ export function LogsPage() {
         title={(
           <span className="flex flex-wrap items-baseline gap-2">
             <span>Logs of</span>
-            <span className="text-primary">{selectedHostname}</span>
+            <span className="text-primary">{hostname}</span>
           </span>
         )}
-        meta="Structured where possible from access and error logs. Unparsed lines stay visible as raw messages."
         actions={(
           <>
             <Button
@@ -498,29 +502,7 @@ export function LogsPage() {
             className="border-b border-border bg-background/40 px-3 py-3 sm:px-4"
             onSubmit={handleApplyFilters}
           >
-            <div className="grid gap-3 lg:grid-cols-[220px_180px_140px_minmax(0,1fr)_auto]">
-              <Select
-                value={filters.hostname || "__all__"}
-                onValueChange={(value) =>
-                  setFilters((current) => ({
-                    ...current,
-                    hostname: value === "__all__" ? "" : value,
-                  }))
-                }
-              >
-                <SelectTrigger className="w-full bg-card" aria-label="Filter by domain">
-                  <SelectValue placeholder="All domains" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">All domains</SelectItem>
-                  {hostnames.map((hostname) => (
-                    <SelectItem key={hostname} value={hostname}>
-                      {hostname}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
+            <div className="grid gap-3 lg:grid-cols-[180px_140px_minmax(0,1fr)_auto]">
               <Input
                 value={clientFilters.ip}
                 onChange={(event) => setClientFilters((current) => ({ ...current, ip: event.target.value }))}
@@ -605,7 +587,7 @@ export function LogsPage() {
                 ) : visibleRows.length === 0 ? (
                   <TableRow className="hover:bg-transparent">
                     <TableCell colSpan={7} className="h-64 text-center text-sm text-muted-foreground">
-                      No log entries matched the current filters.
+                      No log entries matched the current filters for this domain.
                     </TableCell>
                   </TableRow>
                 ) : (
