@@ -4,17 +4,14 @@ import {
   Download,
   ExternalLink,
   FolderOpen,
-  HardDrive,
   LoaderCircle,
   Pencil,
   Plus,
-  RotateCcw,
   Trash2,
 } from "@/components/icons/tabler-icons";
 import {
   createBackup,
   fetchBackups,
-  getBackupDownloadUrl,
   restoreBackup,
   type BackupRecord,
 } from "@/api/backups";
@@ -29,7 +26,7 @@ import {
   type DomainRecord,
 } from "@/api/domains";
 import { downloadEntry } from "@/api/files";
-import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
+import { BackupRecordsDialog } from "@/components/backup-records-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,8 +35,6 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
-  DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
@@ -51,7 +46,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import { formatBytes, formatDateTime } from "@/lib/format";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -577,117 +571,30 @@ export function DomainsPage() {
 
   return (
     <>
-      <Dialog
+      <BackupRecordsDialog
         open={backupDialogDomain !== null}
         onOpenChange={(open) => {
           if (!open) {
             setBackupDialogDomain(null);
           }
         }}
-      >
-        <DialogContent className="gap-4 sm:max-w-3xl">
-          <DialogHeader>
-            <div className="flex flex-wrap items-center gap-3">
-              <DialogTitle>
-                {backupDialogDomain ? `${backupDialogDomain.hostname} backups` : "Domain backups"}
-              </DialogTitle>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  if (backupDialogDomain) {
-                    void handleCreateBackup(backupDialogDomain);
-                  }
-                }}
-                disabled={backupDialogDomain === null || creatingBackupDomainId !== null}
-              >
-                {backupDialogCreating ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                ) : (
-                  <HardDrive className="h-4 w-4" />
-                )}
-                {backupDialogCreating
-                  ? "Backing up..."
-                  : backupDialogCreated
-                    ? "Backup created"
-                    : "Backup now"}
-              </Button>
-            </div>
-          </DialogHeader>
-
-          {selectedDomainBackups.length === 0 ? (
-            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-4 text-[13px] text-[var(--app-text-muted)]">
-              No backups found.
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>Backup name</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Size</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {selectedDomainBackups.map((backup) => (
-                    <TableRow key={backup.name}>
-                      <TableCell
-                        className="max-w-[280px] truncate font-medium text-[var(--app-text)]"
-                        title={backup.name}
-                      >
-                        {backup.name}
-                      </TableCell>
-                      <TableCell className="text-[13px] text-[var(--app-text-muted)]">
-                        {formatDateTime(backup.created_at)}
-                      </TableCell>
-                      <TableCell className="text-[13px] text-[var(--app-text-muted)]">
-                        {formatBytes(backup.size)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              void handleRestoreBackup(backup.name);
-                            }}
-                            disabled={restoringBackupName !== null}
-                            aria-label={`Restore ${backup.name}`}
-                            title={`Restore ${backup.name}`}
-                          >
-                            <ActionFeedbackIcon
-                              busy={restoringBackupName === backup.name}
-                              done={restoredBackupName === backup.name}
-                              icon={RotateCcw}
-                              className="size-6"
-                              stroke={domainActionIconStroke}
-                            />
-                          </Button>
-                          <Button
-                            asChild
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Download ${backup.name}`}
-                            title={`Download ${backup.name}`}
-                          >
-                            <a href={getBackupDownloadUrl(backup.name)}>
-                              <Download className="size-6" stroke={domainActionIconStroke} />
-                            </a>
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+        title={backupDialogDomain ? `${backupDialogDomain.hostname} backups` : "Domain backups"}
+        backups={selectedDomainBackups}
+        onCreateBackup={() => {
+          if (backupDialogDomain) {
+            void handleCreateBackup(backupDialogDomain);
+          }
+        }}
+        createDisabled={backupDialogDomain === null || creatingBackupDomainId !== null}
+        createBusy={backupDialogCreating}
+        createDone={backupDialogCreated}
+        onRestoreBackup={(name) => {
+          void handleRestoreBackup(name);
+        }}
+        restoringBackupName={restoringBackupName}
+        restoredBackupName={restoredBackupName}
+        actionIconStroke={domainActionIconStroke}
+      />
 
       <Dialog open={formOpen} onOpenChange={handleOpenChange}>
         <PageHeader

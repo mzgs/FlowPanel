@@ -23,14 +23,14 @@ import {
 import {
   createBackup,
   fetchBackups,
-  getBackupDownloadUrl,
   restoreBackup,
   type BackupRecord,
 } from "@/api/backups";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
-import { Copy, Download, Eye, EyeOff, HardDrive, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { Copy, Download, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
+import { BackupRecordsDialog } from "@/components/backup-records-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,7 +42,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn, copyTextToClipboard } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -499,6 +498,10 @@ export function DatabasePage() {
   const selectedDatabaseBackups = backupDialogDatabase
     ? databaseBackups[backupDialogDatabase.name] ?? []
     : [];
+  const backupDialogCreating =
+    backupDialogDatabase !== null && creatingBackupName === backupDialogDatabase.name;
+  const backupDialogCreated =
+    backupDialogDatabase !== null && createdBackupName === backupDialogDatabase.name;
 
   const formTitle = dialogMode === "create" ? "Create database" : "Edit database";
   const formDescription =
@@ -762,95 +765,31 @@ export function DatabasePage() {
 
   return (
     <>
-      <Dialog
+      <BackupRecordsDialog
         open={backupDialogDatabase !== null}
         onOpenChange={(open) => {
           if (!open) {
             setBackupDialogDatabase(null);
           }
         }}
-      >
-        <DialogContent className="gap-4 sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>
-              {backupDialogDatabase ? `${backupDialogDatabase.name} backups` : "Database backups"}
-            </DialogTitle>
-            <DialogDescription>
-              Local backup archives created for this database.
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedDatabaseBackups.length === 0 ? (
-            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-4 text-[13px] text-[var(--app-text-muted)]">
-              No backups found.
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-              <div className="max-h-[320px] overflow-auto">
-                <table className="w-full min-w-[520px] text-left">
-                  <thead className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-                    <tr className="text-[12px] text-[var(--app-text-muted)]">
-                      <th className="px-3 py-2 font-medium">Backup name</th>
-                      <th className="px-3 py-2 font-medium">Date</th>
-                      <th className="px-3 py-2 font-medium">Size</th>
-                      <th className="px-3 py-2 text-right font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedDatabaseBackups.map((backup) => (
-                      <tr
-                        key={backup.name}
-                        className="border-b border-[var(--app-border)] text-[13px] text-[var(--app-text)] last:border-b-0"
-                      >
-                        <td className="max-w-[240px] px-3 py-2.5 font-medium">
-                          <div className="truncate" title={backup.name}>
-                            {backup.name}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2.5 text-[var(--app-text-muted)]">
-                          {formatDateTime(backup.created_at)}
-                        </td>
-                        <td className="px-3 py-2.5 text-[var(--app-text-muted)]">
-                          {formatBytes(backup.size)}
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void handleRestoreBackup(backup.name);
-                              }}
-                              disabled={restoringBackupName !== null}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60"
-                              aria-label={`Restore ${backup.name}`}
-                              title={`Restore ${backup.name}`}
-                            >
-                              <ActionFeedbackIcon
-                                busy={restoringBackupName === backup.name}
-                                done={restoredBackupName === backup.name}
-                                icon={RotateCcw}
-                                className="h-4 w-4"
-                              />
-                            </button>
-                            <a
-                              href={getBackupDownloadUrl(backup.name)}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
-                              aria-label={`Download ${backup.name}`}
-                              title={`Download ${backup.name}`}
-                            >
-                              <Download className="h-4 w-4" />
-                            </a>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+        title={
+          backupDialogDatabase ? `${backupDialogDatabase.name} backups` : "Database backups"
+        }
+        backups={selectedDatabaseBackups}
+        onCreateBackup={() => {
+          if (backupDialogDatabase) {
+            void handleCreateLocalBackup(backupDialogDatabase);
+          }
+        }}
+        createDisabled={backupDialogDatabase === null || creatingBackupName !== null}
+        createBusy={backupDialogCreating}
+        createDone={backupDialogCreated}
+        onRestoreBackup={(name) => {
+          void handleRestoreBackup(name);
+        }}
+        restoringBackupName={restoringBackupName}
+        restoredBackupName={restoredBackupName}
+      />
 
       <div className="px-4 py-6 sm:px-6 lg:px-8">
         <section className="space-y-4">
@@ -1083,45 +1022,31 @@ export function DatabasePage() {
                             >
                               Unavailable
                             </span>
-                          ) : (databaseBackups[database.name]?.length ?? 0) > 0 ? (
+                          ) : (
                             <button
                               type="button"
                               onClick={() => setBackupDialogDatabase(database)}
-                              className="text-[13px] font-medium text-[var(--app-text)] underline decoration-[var(--app-border-strong)] underline-offset-4 transition hover:text-[var(--app-text-muted)]"
+                              className={cn(
+                                "text-[13px] font-medium underline decoration-[var(--app-border-strong)] underline-offset-4 transition",
+                                (databaseBackups[database.name]?.length ?? 0) > 0
+                                  ? "text-[var(--app-text)] hover:text-[var(--app-text-muted)]"
+                                  : "text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
+                              )}
                             >
-                              {databaseBackups[database.name]?.length}{" "}
-                              {databaseBackups[database.name]?.length === 1 ? "backup" : "backups"}
+                              {(databaseBackups[database.name]?.length ?? 0) > 0
+                                ? `${databaseBackups[database.name]?.length} ${
+                                    databaseBackups[database.name]?.length === 1
+                                      ? "backup"
+                                      : "backups"
+                                  }`
+                                : "No backups"}
                             </button>
-                          ) : (
-                            <span className="text-[13px] text-[var(--app-text-muted)]">No backups</span>
                           )}
                         </td>
                         <td className={databaseTableBodyCellClass}>{database.host || "localhost"}</td>
                         <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
                         <td className={databaseTableActionBodyCellClass}>
                           <div className="flex items-center justify-end gap-0.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void handleCreateLocalBackup(database);
-                              }}
-                              disabled={creatingBackupName !== null}
-                              aria-label={`Create local backup for ${database.name}`}
-                              title={
-                                creatingBackupName === database.name
-                                  ? `Creating local backup for ${database.name}`
-                                  : `Create local backup for ${database.name}`
-                              }
-                              className={databaseActionButtonClass}
-                            >
-                              <ActionFeedbackIcon
-                                busy={creatingBackupName === database.name}
-                                done={createdBackupName === database.name}
-                                icon={HardDrive}
-                                className="size-6"
-                                stroke={databaseActionIconStroke}
-                              />
-                            </button>
                             <button
                               type="button"
                               onClick={() => {
