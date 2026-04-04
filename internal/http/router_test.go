@@ -3,6 +3,9 @@ package httpx
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"mime/multipart"
@@ -682,6 +685,375 @@ func TestDomainComposerInstallHandlerRunsComposer(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectPath, "composer.lock")); err != nil {
 		t.Fatalf("composer.lock missing after install: %v", err)
+	}
+}
+
+func TestDomainGitHubIntegrationSaveHandlerConfiguresWebhook(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	projectPath := t.TempDir()
+	record := domain.Record{
+		ID:        "example.com-1",
+		Hostname:  "example.com",
+		Kind:      domain.KindStaticSite,
+		Target:    projectPath,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := domains.Restore(context.Background(), record); err != nil {
+		t.Fatalf("restore domain: %v", err)
+	}
+
+	settingsRecorder := httptest.NewRecorder()
+	settingsRequest := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"panel_name":"FlowPanel","github_token":"github_pat_test"}`))
+	settingsRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(settingsRecorder, settingsRequest)
+	if settingsRecorder.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d, body = %s", settingsRecorder.Code, http.StatusOK, settingsRecorder.Body.String())
+	}
+
+	var receivedWebhookURL string
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/test-owner/test-repo":
+			_, _ = w.Write([]byte(`{"clone_url":"https://github.com/test-owner/test-repo.git","default_branch":"main","html_url":"https://github.com/test-owner/test-repo"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/test-owner/test-repo/hooks":
+			var payload struct {
+				Config struct {
+					URL string `json:"url"`
+				} `json:"config"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode webhook request: %v", err)
+			}
+			receivedWebhookURL = payload.Config.URL
+			_, _ = w.Write([]byte(`{"id":42}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer githubServer.Close()
+
+	originalBaseURL := githubAPIBaseURL
+	githubAPIBaseURL = githubServer.URL
+	defer func() {
+		githubAPIBaseURL = originalBaseURL
+	}()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/domains/example.com/github", strings.NewReader(`{"repository_url":"https://github.com/test-owner/test-repo","auto_deploy_on_push":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Host = "panel.example.test"
+	request.Header.Set("X-Forwarded-Proto", "https")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if receivedWebhookURL != "https://panel.example.test/api/domains/example.com/github/webhook" {
+		t.Fatalf("webhook URL = %q, want %q", receivedWebhookURL, "https://panel.example.test/api/domains/example.com/github/webhook")
+	}
+
+	var payload struct {
+		Domain struct {
+			GitHubIntegration *struct {
+				RepositoryURL    string `json:"repository_url"`
+				AutoDeployOnPush bool   `json:"auto_deploy_on_push"`
+				DefaultBranch    string `json:"default_branch"`
+			} `json:"github_integration"`
+		} `json:"domain"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Domain.GitHubIntegration == nil {
+		t.Fatal("github integration missing from response")
+	}
+	if payload.Domain.GitHubIntegration.RepositoryURL != "https://github.com/test-owner/test-repo.git" {
+		t.Fatalf("repository_url = %q, want %q", payload.Domain.GitHubIntegration.RepositoryURL, "https://github.com/test-owner/test-repo.git")
+	}
+	if !payload.Domain.GitHubIntegration.AutoDeployOnPush {
+		t.Fatal("auto_deploy_on_push = false, want true")
+	}
+	if payload.Domain.GitHubIntegration.DefaultBranch != "main" {
+		t.Fatalf("default_branch = %q, want %q", payload.Domain.GitHubIntegration.DefaultBranch, "main")
+	}
+}
+
+func TestDomainGitHubIntegrationSaveHandlerReusesExistingWebhookOnValidationFailed(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	projectPath := t.TempDir()
+	record := domain.Record{
+		ID:        "example.com-1",
+		Hostname:  "example.com",
+		Kind:      domain.KindStaticSite,
+		Target:    projectPath,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := domains.Restore(context.Background(), record); err != nil {
+		t.Fatalf("restore domain: %v", err)
+	}
+
+	settingsRecorder := httptest.NewRecorder()
+	settingsRequest := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"panel_name":"FlowPanel","github_token":"github_pat_test"}`))
+	settingsRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(settingsRecorder, settingsRequest)
+	if settingsRecorder.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d, body = %s", settingsRecorder.Code, http.StatusOK, settingsRecorder.Body.String())
+	}
+
+	var patchCount int
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/test-owner/test-repo":
+			_, _ = w.Write([]byte(`{"clone_url":"https://github.com/test-owner/test-repo.git","default_branch":"main","html_url":"https://github.com/test-owner/test-repo"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/test-owner/test-repo/hooks":
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"Validation Failed"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/test-owner/test-repo/hooks":
+			_, _ = w.Write([]byte(`[{"id":99,"config":{"url":"https://panel.example.test/api/domains/example.com/github/webhook"}}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/test-owner/test-repo/hooks/99":
+			patchCount++
+			_, _ = w.Write([]byte(`{"id":99}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer githubServer.Close()
+
+	originalBaseURL := githubAPIBaseURL
+	githubAPIBaseURL = githubServer.URL
+	defer func() {
+		githubAPIBaseURL = originalBaseURL
+	}()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/domains/example.com/github", strings.NewReader(`{"repository_url":"https://github.com/test-owner/test-repo","auto_deploy_on_push":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Host = "panel.example.test"
+	request.Header.Set("X-Forwarded-Proto", "https")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if patchCount != 1 {
+		t.Fatalf("patchCount = %d, want 1", patchCount)
+	}
+}
+
+func TestDomainGitHubIntegrationSaveHandlerRejectsNonHTTPSWebhookURL(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	projectPath := t.TempDir()
+	record := domain.Record{
+		ID:        "example.com-1",
+		Hostname:  "example.com",
+		Kind:      domain.KindStaticSite,
+		Target:    projectPath,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := domains.Restore(context.Background(), record); err != nil {
+		t.Fatalf("restore domain: %v", err)
+	}
+
+	settingsRecorder := httptest.NewRecorder()
+	settingsRequest := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"panel_name":"FlowPanel","github_token":"github_pat_test"}`))
+	settingsRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(settingsRecorder, settingsRequest)
+	if settingsRecorder.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d, body = %s", settingsRecorder.Code, http.StatusOK, settingsRecorder.Body.String())
+	}
+
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/test-owner/test-repo":
+			_, _ = w.Write([]byte(`{"clone_url":"https://github.com/test-owner/test-repo.git","default_branch":"main","html_url":"https://github.com/test-owner/test-repo"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer githubServer.Close()
+
+	originalBaseURL := githubAPIBaseURL
+	githubAPIBaseURL = githubServer.URL
+	defer func() {
+		githubAPIBaseURL = originalBaseURL
+	}()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/domains/example.com/github", strings.NewReader(`{"repository_url":"https://github.com/test-owner/test-repo","auto_deploy_on_push":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Host = "panel.example.test"
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "github webhooks require an HTTPS callback URL") {
+		t.Fatalf("body = %q, want HTTPS webhook error", recorder.Body.String())
+	}
+}
+
+func TestDomainGitHubWebhookHandlerDeploysOnPush(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	projectPath := t.TempDir()
+	if err := os.Mkdir(filepath.Join(projectPath, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	record := domain.Record{
+		ID:        "example.com-1",
+		Hostname:  "example.com",
+		Kind:      domain.KindStaticSite,
+		Target:    projectPath,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := domains.Restore(context.Background(), record); err != nil {
+		t.Fatalf("restore domain: %v", err)
+	}
+
+	settingsRecorder := httptest.NewRecorder()
+	settingsRequest := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"panel_name":"FlowPanel","github_token":"github_pat_test"}`))
+	settingsRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(settingsRecorder, settingsRequest)
+	if settingsRecorder.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d, body = %s", settingsRecorder.Code, http.StatusOK, settingsRecorder.Body.String())
+	}
+
+	logPath := filepath.Join(t.TempDir(), "git.log")
+	installFakeGit(t, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FLOWPANEL_GIT_LOG\"\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"show-ref\" ]; then\n    exit 1\n  fi\ndone\nexit 0\n")
+	t.Setenv("FLOWPANEL_GIT_LOG", logPath)
+
+	integration := domain.GitHubIntegration{
+		RepositoryURL:    "https://github.com/test-owner/test-repo.git",
+		AutoDeployOnPush: true,
+		DefaultBranch:    "main",
+		WebhookSecret:    "test-secret",
+		WebhookID:        42,
+		CreatedAt:        time.Now().UTC(),
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if _, err := domains.UpsertGitHubIntegration(context.Background(), "example.com", integration); err != nil {
+		t.Fatalf("upsert github integration: %v", err)
+	}
+
+	body := []byte(`{"ref":"refs/heads/main","repository":{"default_branch":"main","clone_url":"https://github.com/test-owner/test-repo.git"}}`)
+	mac := hmac.New(sha256.New, []byte("test-secret"))
+	mac.Write(body)
+	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/domains/example.com/github/webhook", bytes.NewReader(body))
+	request.Header.Set("X-GitHub-Event", "push")
+	request.Header.Set("X-Hub-Signature-256", signature)
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
+	}
+
+	var webhookPayload struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &webhookPayload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if webhookPayload.Action != "updated" {
+		t.Fatalf("action = %q, want %q", webhookPayload.Action, "updated")
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read git log: %v", err)
+	}
+	logText := string(logData)
+	if !strings.Contains(logText, "url.https://x-access-token:github_pat_test@github.com/.insteadOf=https://github.com/") {
+		t.Fatalf("git log missing token rewrite config: %s", logText)
+	}
+	if !strings.Contains(logText, "fetch --depth 1 origin main") {
+		t.Fatalf("git log missing fetch command: %s", logText)
+	}
+	if !strings.Contains(logText, "pull --ff-only origin main") {
+		t.Fatalf("git log missing pull command: %s", logText)
+	}
+}
+
+func TestDomainGitHubDeployHandlerClearsTargetBeforeInitialDeploy(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	projectPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectPath, "old.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write old file: %v", err)
+	}
+	record := domain.Record{
+		ID:        "example.com-1",
+		Hostname:  "example.com",
+		Kind:      domain.KindStaticSite,
+		Target:    projectPath,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := domains.Restore(context.Background(), record); err != nil {
+		t.Fatalf("restore domain: %v", err)
+	}
+
+	settingsRecorder := httptest.NewRecorder()
+	settingsRequest := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"panel_name":"FlowPanel","github_token":"github_pat_test"}`))
+	settingsRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(settingsRecorder, settingsRequest)
+	if settingsRecorder.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d, body = %s", settingsRecorder.Code, http.StatusOK, settingsRecorder.Body.String())
+	}
+
+	logPath := filepath.Join(t.TempDir(), "git.log")
+	installFakeGit(t, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FLOWPANEL_GIT_LOG\"\nexit 0\n")
+	t.Setenv("FLOWPANEL_GIT_LOG", logPath)
+
+	integration := domain.GitHubIntegration{
+		RepositoryURL:    "https://github.com/test-owner/test-repo.git",
+		AutoDeployOnPush: false,
+		DefaultBranch:    "main",
+		CreatedAt:        time.Now().UTC(),
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if _, err := domains.UpsertGitHubIntegration(context.Background(), "example.com", integration); err != nil {
+		t.Fatalf("upsert github integration: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/domains/example.com/github/deploy", nil)
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var deployPayload struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &deployPayload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if deployPayload.Action != "initialized" {
+		t.Fatalf("action = %q, want %q", deployPayload.Action, "initialized")
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, "old.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old file still exists after initial deploy: %v", err)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read git log: %v", err)
+	}
+	logText := string(logData)
+	if !strings.Contains(logText, "init") {
+		t.Fatalf("git log missing init command: %s", logText)
+	}
+	if !strings.Contains(logText, "fetch --depth 1 origin main") {
+		t.Fatalf("git log missing fetch command: %s", logText)
+	}
+	if !strings.Contains(logText, "checkout --force -B main origin/main") {
+		t.Fatalf("git log missing checkout command: %s", logText)
 	}
 }
 
@@ -1987,6 +2359,19 @@ func installFakeComposer(t *testing.T, script string) string {
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return composerPath
+}
+
+func installFakeGit(t *testing.T, script string) string {
+	t.Helper()
+
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return gitPath
 }
 
 func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Scheduler, *flowcron.Store) {

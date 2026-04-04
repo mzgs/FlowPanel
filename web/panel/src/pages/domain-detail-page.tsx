@@ -8,10 +8,12 @@ import {
   type BackupRecord,
 } from "@/api/backups";
 import {
+  deployDomainGitHubIntegration,
   fetchDomainPreview,
   fetchDomains,
   getDomainSiteUrl,
   type DomainRecord,
+  updateDomainGitHubIntegration,
 } from "@/api/domains";
 import { fetchFileContent } from "@/api/files";
 import {
@@ -45,6 +47,7 @@ import {
   DomainComposerDialog,
   type ComposerPackage,
 } from "@/components/domain-composer-dialog";
+import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -61,6 +64,34 @@ function getErrorMessage(error: unknown, fallback: string) {
   }
 
   return fallback;
+}
+
+type GitHubFormState = {
+  repositoryUrl: string;
+  autoDeployOnPush: boolean;
+};
+
+const initialGitHubForm: GitHubFormState = {
+  repositoryUrl: "",
+  autoDeployOnPush: false,
+};
+
+function toGitHubFormState(domain: DomainRecord | null): GitHubFormState {
+  if (!domain?.github_integration) {
+    return initialGitHubForm;
+  }
+
+  return {
+    repositoryUrl: domain.github_integration.repository_url,
+    autoDeployOnPush: domain.github_integration.auto_deploy_on_push,
+  };
+}
+
+function sameGitHubFormState(left: GitHubFormState, right: GitHubFormState) {
+  return (
+    left.repositoryUrl === right.repositoryUrl &&
+    left.autoDeployOnPush === right.autoDeployOnPush
+  );
 }
 
 type ActionIcon = ComponentType<{
@@ -257,6 +288,7 @@ export function DomainDetailPage() {
   const [backupDataError, setBackupDataError] = useState<string | null>(null);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [composerDialogOpen, setComposerDialogOpen] = useState(false);
+  const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
   const [composerHasManifest, setComposerHasManifest] = useState(false);
   const [composerPackages, setComposerPackages] = useState<ComposerPackage[]>([]);
   const [composerLoading, setComposerLoading] = useState(false);
@@ -264,6 +296,15 @@ export function DomainDetailPage() {
   const [composerRunningAction, setComposerRunningAction] = useState<
     "install" | "update" | null
   >(null);
+  const [githubForm, setGitHubForm] = useState<GitHubFormState>(initialGitHubForm);
+  const [savedGitHubForm, setSavedGitHubForm] = useState<GitHubFormState>(initialGitHubForm);
+  const [githubSaving, setGitHubSaving] = useState(false);
+  const [githubDeploying, setGitHubDeploying] = useState(false);
+  const [githubError, setGitHubError] = useState<string | null>(null);
+  const [githubFeedback, setGitHubFeedback] = useState<string | null>(null);
+  const [githubFieldErrors, setGitHubFieldErrors] = useState<Record<string, string>>(
+    {},
+  );
   const [creatingBackupTarget, setCreatingBackupTarget] = useState<string | null>(
     null,
   );
@@ -297,11 +338,19 @@ export function DomainDetailPage() {
     setBackupDataError(null);
     setBackupDialogOpen(false);
     setComposerDialogOpen(false);
+    setGitHubDialogOpen(false);
     setComposerHasManifest(false);
     setComposerPackages([]);
     setComposerLoading(false);
     setComposerError(null);
     setComposerRunningAction(null);
+    setGitHubForm(initialGitHubForm);
+    setSavedGitHubForm(initialGitHubForm);
+    setGitHubSaving(false);
+    setGitHubDeploying(false);
+    setGitHubError(null);
+    setGitHubFeedback(null);
+    setGitHubFieldErrors({});
     setCreatingBackupTarget(null);
     setCreatedBackupTarget(null);
     setRestoringBackupName(null);
@@ -328,9 +377,14 @@ export function DomainDetailPage() {
         const matchedDomain =
           domainsResult.value.domains.find((record) => record.hostname === hostname) ??
           null;
+        const nextGitHubForm = toGitHubFormState(matchedDomain);
 
         setSitesBasePath(domainsResult.value.sites_base_path);
         setDomain(matchedDomain);
+        setGitHubForm(nextGitHubForm);
+        setSavedGitHubForm(nextGitHubForm);
+        setGitHubError(null);
+        setGitHubFieldErrors({});
         setLoadError(matchedDomain ? null : "The selected domain could not be found.");
       } else {
         setLoadError(getErrorMessage(domainsResult.reason, "Failed to load domain details."));
@@ -526,6 +580,7 @@ export function DomainDetailPage() {
     name: database.name,
     backups: databaseBackups[database.name] ?? [],
   }));
+  const githubDirty = !sameGitHubFormState(githubForm, savedGitHubForm);
 
   async function handleCreateSiteBackup() {
     if (!domain || !showSiteBackups || creatingBackupTarget !== null) {
@@ -679,6 +734,96 @@ export function DomainDetailPage() {
     }
   }
 
+  async function saveGitHubIntegration(nextForm = githubForm) {
+    if (!domain) {
+      return null;
+    }
+
+    setGitHubSaving(true);
+    setGitHubError(null);
+    setGitHubFeedback(null);
+    setGitHubFieldErrors({});
+
+    try {
+      const updatedDomain = await updateDomainGitHubIntegration(domain.hostname, {
+        repository_url: nextForm.repositoryUrl.trim(),
+        auto_deploy_on_push: nextForm.autoDeployOnPush,
+      });
+      const nextGitHubForm = toGitHubFormState(updatedDomain);
+      setDomain(updatedDomain);
+      setGitHubForm(nextGitHubForm);
+      setSavedGitHubForm(nextGitHubForm);
+      toast.success(
+        nextGitHubForm.repositoryUrl
+          ? `GitHub integration updated for ${updatedDomain.hostname}.`
+          : `GitHub integration removed from ${updatedDomain.hostname}.`,
+      );
+      return updatedDomain;
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to save GitHub integration.");
+      setGitHubError(message);
+      setGitHubFieldErrors(
+        typeof error === "object" && error !== null && "fieldErrors" in error
+          ? ((error as { fieldErrors?: Record<string, string> }).fieldErrors ?? {})
+          : {},
+      );
+      toast.error(message);
+      return null;
+    } finally {
+      setGitHubSaving(false);
+    }
+  }
+
+  async function handleDeployFromGitHub() {
+    if (!domain || githubDeploying) {
+      return;
+    }
+
+    setGitHubDeploying(true);
+    setGitHubError(null);
+    setGitHubFeedback(null);
+
+    try {
+      let activeDomain = domain;
+      if (githubDirty || !domain.github_integration) {
+        const savedDomain = await saveGitHubIntegration(githubForm);
+        if (!savedDomain?.github_integration) {
+          return;
+        }
+        activeDomain = savedDomain;
+      }
+
+      const result = await deployDomainGitHubIntegration(activeDomain.hostname);
+      setPreviewRefreshing(true);
+      setPreviewError(false);
+      setPreviewErrorMessage(null);
+      setPreviewRefreshToken(Date.now());
+      const feedback =
+        result.action === "updated"
+          ? `Updated the local repository for ${activeDomain.hostname}.`
+          : `Initialized the local repository for ${activeDomain.hostname}.`;
+      setGitHubFeedback(feedback);
+      toast.success(feedback);
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to deploy from GitHub.");
+      setGitHubError(message);
+      toast.error(message);
+    } finally {
+      setGitHubDeploying(false);
+    }
+  }
+
+  async function handleDisconnectGitHub() {
+    if (!domain || githubSaving) {
+      return;
+    }
+
+    const nextForm = initialGitHubForm;
+    setGitHubForm(nextForm);
+    setGitHubFieldErrors({});
+    await saveGitHubIntegration(nextForm);
+  }
+
   return (
     <>
       <DomainBackupRestoreDialog
@@ -729,6 +874,52 @@ export function DomainDetailPage() {
         }}
         onUpdate={() => {
           void handleComposerAction("update");
+        }}
+      />
+      <DomainGitHubDialog
+        open={githubDialogOpen && domain !== null}
+        onOpenChange={setGitHubDialogOpen}
+        hostname={domain?.hostname ?? hostname}
+        projectPath={domain?.target ?? ""}
+        repositoryUrl={githubForm.repositoryUrl}
+        autoDeployOnPush={githubForm.autoDeployOnPush}
+        defaultBranch={domain?.github_integration?.default_branch ?? ""}
+        hasSavedIntegration={Boolean(domain?.github_integration)}
+        saving={githubSaving}
+        deploying={githubDeploying}
+        fieldErrors={githubFieldErrors}
+        error={githubError}
+        feedback={githubFeedback}
+        dirty={githubDirty}
+        onRepositoryUrlChange={(value) => {
+          setGitHubError(null);
+          setGitHubFeedback(null);
+          setGitHubFieldErrors((current) => {
+            const next = { ...current };
+            delete next.repository_url;
+            return next;
+          });
+          setGitHubForm((current) => ({
+            ...current,
+            repositoryUrl: value,
+          }));
+        }}
+        onAutoDeployOnPushChange={(checked) => {
+          setGitHubError(null);
+          setGitHubFeedback(null);
+          setGitHubForm((current) => ({
+            ...current,
+            autoDeployOnPush: checked,
+          }));
+        }}
+        onSave={() => {
+          void saveGitHubIntegration(githubForm);
+        }}
+        onDeploy={() => {
+          void handleDeployFromGitHub();
+        }}
+        onDisconnect={() => {
+          void handleDisconnectGitHub();
         }}
       />
       <PageHeader
@@ -939,6 +1130,18 @@ export function DomainDetailPage() {
                           to: "/domains/$hostname/logs",
                           params: { hostname: domain.hostname },
                         });
+                        return;
+                      }
+
+                      if (item.title === "Github" && domain !== null) {
+                        if (domain.kind !== "Static site" && domain.kind !== "Php site") {
+                          toast.error(
+                            "GitHub integration is available only for Static site and Php site domains.",
+                          );
+                          return;
+                        }
+
+                        setGitHubDialogOpen(true);
                       }
                     }}
                   />

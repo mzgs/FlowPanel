@@ -28,9 +28,9 @@ func runDomainComposerAction(
 	hostname string,
 	action string,
 ) (domain.Record, error) {
-	record, err := findDomainByHostname(domains, hostname)
-	if err != nil {
-		return domain.Record{}, err
+	record, ok := domains.FindByHostname(hostname)
+	if !ok {
+		return domain.Record{}, domain.ErrNotFound
 	}
 	if record.Kind != domain.KindStaticSite && record.Kind != domain.KindPHP {
 		return domain.Record{}, errComposerUnsupportedDomain
@@ -85,20 +85,4 @@ func runDomainComposerAction(
 	}
 
 	return record, nil
-}
-
-func findDomainByHostname(domains *domain.Service, hostname string) (domain.Record, error) {
-	if domains == nil {
-		return domain.Record{}, domain.ErrNotFound
-	}
-
-	normalizedHostname := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
-	for _, record := range domains.List() {
-		candidate := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(record.Hostname)), ".")
-		if candidate == normalizedHostname {
-			return record, nil
-		}
-	}
-
-	return domain.Record{}, domain.ErrNotFound
 }

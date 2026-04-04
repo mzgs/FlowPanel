@@ -38,13 +38,24 @@ const (
 )
 
 type Record struct {
-	ID           string    `json:"id"`
-	Hostname     string    `json:"hostname"`
-	Kind         Kind      `json:"kind"`
-	Target       string    `json:"target"`
-	Logs         LogPaths  `json:"logs"`
-	CacheEnabled bool      `json:"cache_enabled"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string             `json:"id"`
+	Hostname     string             `json:"hostname"`
+	Kind         Kind               `json:"kind"`
+	Target       string             `json:"target"`
+	Logs         LogPaths           `json:"logs"`
+	GitHub       *GitHubIntegration `json:"github_integration,omitempty"`
+	CacheEnabled bool               `json:"cache_enabled"`
+	CreatedAt    time.Time          `json:"created_at"`
+}
+
+type GitHubIntegration struct {
+	RepositoryURL    string    `json:"repository_url"`
+	AutoDeployOnPush bool      `json:"auto_deploy_on_push"`
+	DefaultBranch    string    `json:"default_branch"`
+	WebhookSecret    string    `json:"-"`
+	WebhookID        int64     `json:"-"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type LogPaths struct {
@@ -84,6 +95,7 @@ type Service struct {
 	mu               sync.RWMutex
 	previewMu        sync.Mutex
 	records          []Record
+	githubByDomainID map[string]GitHubIntegration
 }
 
 func NewService(store *Store) *Service {
@@ -100,6 +112,7 @@ func newService(basePath string, store *Store) *Service {
 		previewGenerator: defaultPreviewGenerator(),
 		now:              time.Now,
 		records:          make([]Record, 0),
+		githubByDomainID: make(map[string]GitHubIntegration),
 	}
 }
 
@@ -138,7 +151,7 @@ func (s *Service) List() []Record {
 
 	records := make([]Record, len(s.records))
 	for i, record := range s.records {
-		records[i] = s.withLogPaths(record)
+		records[i] = s.withTransientFields(record)
 	}
 
 	return records
@@ -153,13 +166,21 @@ func (s *Service) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	githubIntegrations, err := s.store.ListGitHubIntegrations(ctx)
+	if err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.records = make([]Record, len(records))
+	s.githubByDomainID = make(map[string]GitHubIntegration, len(githubIntegrations))
+	for _, integration := range githubIntegrations {
+		s.githubByDomainID[integration.DomainID] = integration.GitHubIntegration
+	}
 	for i, record := range records {
-		s.records[i] = s.withLogPaths(record)
+		s.records[i] = s.withTransientFields(record)
 	}
 
 	return nil
@@ -175,11 +196,15 @@ func (s *Service) Delete(ctx context.Context, id string) (Record, bool, error) {
 		}
 
 		if s.store != nil {
+			if err := s.store.DeleteGitHubIntegration(ctx, record.ID); err != nil {
+				return Record{}, false, err
+			}
 			if err := s.store.Delete(ctx, record.ID); err != nil {
 				return Record{}, false, err
 			}
 		}
 
+		delete(s.githubByDomainID, record.ID)
 		s.records = append(s.records[:i], s.records[i+1:]...)
 		return record, true, nil
 	}
@@ -215,7 +240,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		CacheEnabled: input.CacheEnabled,
 		CreatedAt:    time.Now().UTC(),
 	}
-	record = s.withLogPaths(record)
+	record = s.withTransientFields(record)
 
 	if s.store != nil {
 		if err := s.store.Insert(ctx, record); err != nil {
@@ -257,7 +282,7 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 	updated.Kind = input.Kind
 	updated.Target = resolvedTarget
 	updated.CacheEnabled = input.CacheEnabled
-	updated = s.withLogPaths(updated)
+	updated = s.withTransientFields(updated)
 
 	if s.store != nil {
 		if err := s.store.Update(ctx, updated); err != nil {
@@ -274,7 +299,7 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	record = s.withLogPaths(record)
+	record = s.withTransientFields(record)
 
 	index, _, exists := s.findRecordLocked(record.ID)
 	for _, existing := range s.records {
@@ -293,6 +318,21 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 		if err != nil {
 			return err
 		}
+		if record.GitHub == nil {
+			if err := s.store.DeleteGitHubIntegration(ctx, record.ID); err != nil {
+				return err
+			}
+		} else {
+			if err := s.store.UpsertGitHubIntegration(ctx, record.ID, *record.GitHub); err != nil {
+				return err
+			}
+		}
+	}
+
+	if record.GitHub == nil {
+		delete(s.githubByDomainID, record.ID)
+	} else {
+		s.githubByDomainID[record.ID] = *record.GitHub
 	}
 
 	if exists {
@@ -432,6 +472,18 @@ func (s *Service) insertRecordLocked(record Record) {
 	s.records[index] = record
 }
 
+func (s *Service) withTransientFields(record Record) Record {
+	record = s.withLogPaths(record)
+	if integration, ok := s.githubByDomainID[record.ID]; ok {
+		copyIntegration := integration
+		record.GitHub = &copyIntegration
+	} else {
+		record.GitHub = nil
+	}
+
+	return record
+}
+
 func (s *Service) withLogPaths(record Record) Record {
 	host := normalizeHostname(record.Hostname)
 	if host == "" {
@@ -447,6 +499,73 @@ func (s *Service) withLogPaths(record Record) Record {
 	}
 
 	return record
+}
+
+func (s *Service) UpsertGitHubIntegration(
+	ctx context.Context,
+	hostname string,
+	integration GitHubIntegration,
+) (Record, error) {
+	if s == nil {
+		return Record{}, ErrNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, record, ok := s.findRecordByHostnameLocked(hostname)
+	if !ok {
+		return Record{}, ErrNotFound
+	}
+
+	if s.store != nil {
+		if err := s.store.UpsertGitHubIntegration(ctx, record.ID, integration); err != nil {
+			return Record{}, err
+		}
+	}
+
+	s.githubByDomainID[record.ID] = integration
+	updated := s.withTransientFields(record)
+	s.records[index] = updated
+
+	return updated, nil
+}
+
+func (s *Service) DeleteGitHubIntegration(ctx context.Context, hostname string) (Record, error) {
+	if s == nil {
+		return Record{}, ErrNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, record, ok := s.findRecordByHostnameLocked(hostname)
+	if !ok {
+		return Record{}, ErrNotFound
+	}
+
+	if s.store != nil {
+		if err := s.store.DeleteGitHubIntegration(ctx, record.ID); err != nil {
+			return Record{}, err
+		}
+	}
+
+	delete(s.githubByDomainID, record.ID)
+	updated := s.withTransientFields(record)
+	s.records[index] = updated
+
+	return updated, nil
+}
+
+func (s *Service) findRecordByHostnameLocked(hostname string) (int, Record, bool) {
+	normalizedHostname := normalizeHostname(hostname)
+	for i, record := range s.records {
+		if normalizeHostname(record.Hostname) == normalizedHostname {
+			return i, record, true
+		}
+	}
+
+	return -1, Record{}, false
 }
 
 func (s *Service) deriveTarget(hostname string, kind Kind, target string) (string, error) {

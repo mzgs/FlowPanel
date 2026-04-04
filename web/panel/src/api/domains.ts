@@ -5,8 +5,17 @@ export type DomainRecord = {
   hostname: string;
   kind: DomainKind;
   target: string;
+  github_integration?: DomainGitHubIntegration | null;
   cache_enabled: boolean;
   created_at: string;
+};
+
+export type DomainGitHubIntegration = {
+  repository_url: string;
+  auto_deploy_on_push: boolean;
+  default_branch: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type DomainsPayload = {
@@ -26,6 +35,15 @@ export type UpdateDomainInput = {
   kind: DomainKind;
   target?: string;
   cache_enabled: boolean;
+};
+
+export type UpdateDomainGitHubIntegrationInput = {
+  repository_url: string;
+  auto_deploy_on_push: boolean;
+};
+
+export type DomainGitHubDeployResult = {
+  action: "initialized" | "updated";
 };
 
 export type DomainApiError = Error & {
@@ -82,6 +100,38 @@ export async function deleteDomain(id: string): Promise<void> {
   if (!response.ok) {
     throw await readDomainApiError(response, "delete domain");
   }
+}
+
+export async function updateDomainGitHubIntegration(
+  hostname: string,
+  input: UpdateDomainGitHubIntegrationInput,
+): Promise<DomainRecord> {
+  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/github`, {
+    method: "PUT",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return readDomainMutationResponse(response, "save github integration");
+}
+
+export async function deployDomainGitHubIntegration(
+  hostname: string,
+): Promise<DomainGitHubDeployResult> {
+  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/github/deploy`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "deploy from github");
+  }
+
+  const payload = (await response.json()) as { action: DomainGitHubDeployResult["action"] };
+  return { action: payload.action };
 }
 
 export async function fetchDomainPreview(

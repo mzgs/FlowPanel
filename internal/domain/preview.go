@@ -152,6 +152,10 @@ func (s *Service) SetPreviewGenerator(generator PreviewGenerator) {
 }
 
 func (s *Service) FindByHostname(hostname string) (Record, bool) {
+	if s == nil {
+		return Record{}, false
+	}
+
 	normalizedHostname := normalizeHostname(hostname)
 
 	s.mu.RLock()
@@ -159,7 +163,7 @@ func (s *Service) FindByHostname(hostname string) (Record, bool) {
 
 	for _, record := range s.records {
 		if record.Hostname == normalizedHostname {
-			return record, true
+			return s.withTransientFields(record), true
 		}
 	}
 

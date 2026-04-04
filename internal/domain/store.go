@@ -12,6 +12,11 @@ type Store struct {
 	db *sql.DB
 }
 
+type GitHubIntegrationRecord struct {
+	DomainID string
+	GitHubIntegration
+}
+
 func NewStore(db *sql.DB) *Store {
 	if db == nil {
 		return nil
@@ -43,6 +48,20 @@ CREATE TABLE IF NOT EXISTS domains (
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("ensure domains.cache_enabled column: %w", err)
 		}
+	}
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS domain_github_integrations (
+    domain_id TEXT PRIMARY KEY,
+    repository_url TEXT NOT NULL,
+    auto_deploy_on_push INTEGER NOT NULL DEFAULT 0,
+    default_branch TEXT NOT NULL DEFAULT '',
+    webhook_secret TEXT NOT NULL DEFAULT '',
+    webhook_id INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+`); err != nil {
+		return fmt.Errorf("ensure domain github integrations table: %w", err)
 	}
 
 	return nil
@@ -113,6 +132,57 @@ VALUES (?, ?, ?, ?, ?, ?)
 	return fmt.Errorf("insert domain %q: %w", record.Hostname, err)
 }
 
+func (s *Store) ListGitHubIntegrations(ctx context.Context) ([]GitHubIntegrationRecord, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+SELECT domain_id, repository_url, auto_deploy_on_push, default_branch, webhook_secret, webhook_id, created_at, updated_at
+FROM domain_github_integrations
+`)
+	if err != nil {
+		return nil, fmt.Errorf("list domain github integrations: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]GitHubIntegrationRecord, 0)
+	for rows.Next() {
+		var (
+			record        GitHubIntegrationRecord
+			autoDeployInt int64
+			webhookID     int64
+			createdAtUnix int64
+			updatedAtUnix int64
+		)
+
+		if err := rows.Scan(
+			&record.DomainID,
+			&record.RepositoryURL,
+			&autoDeployInt,
+			&record.DefaultBranch,
+			&record.WebhookSecret,
+			&webhookID,
+			&createdAtUnix,
+			&updatedAtUnix,
+		); err != nil {
+			return nil, fmt.Errorf("scan domain github integration row: %w", err)
+		}
+
+		record.AutoDeployOnPush = autoDeployInt != 0
+		record.WebhookID = webhookID
+		record.CreatedAt = time.Unix(0, createdAtUnix).UTC()
+		record.UpdatedAt = time.Unix(0, updatedAtUnix).UTC()
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate domain github integration rows: %w", err)
+	}
+
+	return records, nil
+}
+
 func (s *Store) Update(ctx context.Context, record Record) error {
 	if s == nil || s.db == nil {
 		return nil
@@ -139,6 +209,55 @@ WHERE id = ?
 	}
 
 	return fmt.Errorf("update domain %q: %w", record.ID, err)
+}
+
+func (s *Store) UpsertGitHubIntegration(
+	ctx context.Context,
+	domainID string,
+	integration GitHubIntegration,
+) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO domain_github_integrations (
+	domain_id,
+	repository_url,
+	auto_deploy_on_push,
+	default_branch,
+	webhook_secret,
+	webhook_id,
+	created_at,
+	updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(domain_id) DO UPDATE SET
+	repository_url = excluded.repository_url,
+	auto_deploy_on_push = excluded.auto_deploy_on_push,
+	default_branch = excluded.default_branch,
+	webhook_secret = excluded.webhook_secret,
+	webhook_id = excluded.webhook_id,
+	created_at = excluded.created_at,
+	updated_at = excluded.updated_at
+`, domainID, integration.RepositoryURL, boolToInt(integration.AutoDeployOnPush), integration.DefaultBranch, integration.WebhookSecret, integration.WebhookID, integration.CreatedAt.UTC().UnixNano(), integration.UpdatedAt.UTC().UnixNano())
+	if err != nil {
+		return fmt.Errorf("upsert domain github integration %q: %w", domainID, err)
+	}
+
+	return nil
+}
+
+func (s *Store) DeleteGitHubIntegration(ctx context.Context, domainID string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM domain_github_integrations WHERE domain_id = ?`, domainID); err != nil {
+		return fmt.Errorf("delete domain github integration %q: %w", domainID, err)
+	}
+
+	return nil
 }
 
 func (s *Store) Delete(ctx context.Context, id string) error {

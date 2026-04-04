@@ -1280,6 +1280,362 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 		}
 
+		domainsGitHubUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostname := chi.URLParam(r, "hostname")
+			record, ok := app.Domains.FindByHostname(hostname)
+			if !ok {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "domain not found",
+				})
+				return
+			}
+			if err := ensureGitHubIntegrationSupported(record); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			var input domainGitHubIntegrationInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			repositoryURL := strings.TrimSpace(input.RepositoryURL)
+			existingIntegration := record.GitHub
+			if repositoryURL == "" {
+				if existingIntegration != nil && existingIntegration.WebhookID > 0 {
+					if token, err := getGitHubToken(r.Context(), app.Settings); err == nil {
+						if ref, refErr := parseGitHubRepositoryURL(existingIntegration.RepositoryURL); refErr == nil {
+							if err := deleteGitHubWebhook(r.Context(), token, ref, existingIntegration.WebhookID); err != nil {
+								app.Logger.Warn("delete github webhook failed",
+									zap.String("hostname", record.Hostname),
+									zap.Error(err),
+								)
+							}
+						}
+					}
+				}
+
+				updatedRecord, err := app.Domains.DeleteGitHubIntegration(r.Context(), hostname)
+				if err != nil {
+					app.Logger.Error("delete github integration failed",
+						zap.String("hostname", hostname),
+						zap.Error(err),
+					)
+					mutationEvent(r.Context(), "domains", "github_disconnect", "domain", record.ID, record.Hostname, "failed", "Failed to remove the GitHub integration.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to remove github integration",
+					})
+					return
+				}
+
+				mutationEvent(r.Context(), "domains", "github_disconnect", "domain", updatedRecord.ID, updatedRecord.Hostname, "succeeded", fmt.Sprintf("Removed the GitHub integration for %q.", updatedRecord.Hostname))
+				writeJSON(w, stdhttp.StatusOK, map[string]any{
+					"domain": updatedRecord,
+				})
+				return
+			}
+
+			token, err := getGitHubToken(r.Context(), app.Settings)
+			if err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": err.Error(),
+					"field_errors": map[string]string{
+						"repository_url": "Add a GitHub token in Settings first.",
+					},
+				})
+				return
+			}
+
+			repoRef, err := parseGitHubRepositoryURL(repositoryURL)
+			if err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": err.Error(),
+					"field_errors": map[string]string{
+						"repository_url": err.Error(),
+					},
+				})
+				return
+			}
+
+			metadata, err := loadGitHubRepositoryMetadata(r.Context(), token, repoRef)
+			if err != nil {
+				app.Logger.Error("load github repository metadata failed",
+					zap.String("hostname", hostname),
+					zap.String("repository", repositoryURL),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusBadGateway, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			now := time.Now().UTC()
+			createdAt := now
+			webhookID := int64(0)
+			webhookSecret := ""
+			if existingIntegration != nil {
+				createdAt = existingIntegration.CreatedAt
+				if createdAt.IsZero() {
+					createdAt = now
+				}
+				webhookID = existingIntegration.WebhookID
+				webhookSecret = existingIntegration.WebhookSecret
+			}
+
+			if existingIntegration != nil && existingIntegration.WebhookID > 0 && !sameGitHubRepository(existingIntegration.RepositoryURL, metadata.CloneURL) {
+				if previousRef, refErr := parseGitHubRepositoryURL(existingIntegration.RepositoryURL); refErr == nil {
+					if err := deleteGitHubWebhook(r.Context(), token, previousRef, existingIntegration.WebhookID); err != nil {
+						app.Logger.Error("delete previous github webhook failed",
+							zap.String("hostname", hostname),
+							zap.Error(err),
+						)
+						writeJSON(w, stdhttp.StatusBadGateway, map[string]any{
+							"error": err.Error(),
+						})
+						return
+					}
+				}
+				webhookID = 0
+				webhookSecret = ""
+			}
+
+			if input.AutoDeployOnPush {
+				if webhookSecret == "" {
+					webhookSecret, err = generateGitHubWebhookSecret()
+					if err != nil {
+						app.Logger.Error("generate github webhook secret failed",
+							zap.String("hostname", hostname),
+							zap.Error(err),
+						)
+						writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+							"error": "failed to generate webhook secret",
+						})
+						return
+					}
+				}
+
+				webhookURL, err := buildGitHubWebhookURL(r, record.Hostname)
+				if err != nil {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": err.Error(),
+					})
+					return
+				}
+
+				webhookID, err = upsertGitHubWebhook(r.Context(), token, repoRef, webhookID, webhookURL, webhookSecret)
+				if err != nil {
+					app.Logger.Error("configure github webhook failed",
+						zap.String("hostname", hostname),
+						zap.String("repository", metadata.CloneURL),
+						zap.Error(err),
+					)
+					writeJSON(w, stdhttp.StatusBadGateway, map[string]any{
+						"error": err.Error(),
+					})
+					return
+				}
+			} else if existingIntegration != nil && existingIntegration.WebhookID > 0 {
+				if existingRef, refErr := parseGitHubRepositoryURL(existingIntegration.RepositoryURL); refErr == nil {
+					if err := deleteGitHubWebhook(r.Context(), token, existingRef, existingIntegration.WebhookID); err != nil {
+						app.Logger.Error("delete github webhook failed",
+							zap.String("hostname", hostname),
+							zap.Error(err),
+						)
+						writeJSON(w, stdhttp.StatusBadGateway, map[string]any{
+							"error": err.Error(),
+						})
+						return
+					}
+				}
+				webhookID = 0
+				webhookSecret = ""
+			}
+
+			integration := domain.GitHubIntegration{
+				RepositoryURL:    strings.TrimSpace(metadata.CloneURL),
+				AutoDeployOnPush: input.AutoDeployOnPush,
+				DefaultBranch:    strings.TrimSpace(metadata.DefaultBranch),
+				WebhookSecret:    webhookSecret,
+				WebhookID:        webhookID,
+				CreatedAt:        createdAt,
+				UpdatedAt:        now,
+			}
+
+			updatedRecord, err := app.Domains.UpsertGitHubIntegration(r.Context(), hostname, integration)
+			if err != nil {
+				app.Logger.Error("save github integration failed",
+					zap.String("hostname", hostname),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "domains", "github_update", "domain", record.ID, record.Hostname, "failed", "Failed to save the GitHub integration.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to save github integration",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "domains", "github_update", "domain", updatedRecord.ID, updatedRecord.Hostname, "succeeded", fmt.Sprintf("Updated the GitHub integration for %q.", updatedRecord.Hostname))
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"domain": updatedRecord,
+			})
+		})
+
+		domainsGitHubDeployHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostname := chi.URLParam(r, "hostname")
+			record, ok := app.Domains.FindByHostname(hostname)
+			if !ok {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "domain not found",
+				})
+				return
+			}
+			if err := ensureGitHubIntegrationSupported(record); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if record.GitHub == nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": errGitHubIntegrationNotConfigured.Error(),
+				})
+				return
+			}
+
+			token, err := getGitHubToken(r.Context(), app.Settings)
+			if err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			result, err := runDomainGitHubDeploy(r.Context(), record, *record.GitHub, token)
+			if err != nil {
+				app.Logger.Error("github deploy failed",
+					zap.String("hostname", hostname),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "domains", "github_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Failed to deploy %q from GitHub.", record.Hostname))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "domains", "github_deploy", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Deployed %q from GitHub.", record.Hostname))
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"ok":     true,
+				"action": result.Action,
+			})
+		})
+
+		domainsGitHubWebhookHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostname := chi.URLParam(r, "hostname")
+			record, ok := app.Domains.FindByHostname(hostname)
+			if !ok || record.GitHub == nil || !record.GitHub.AutoDeployOnPush || strings.TrimSpace(record.GitHub.WebhookSecret) == "" {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "github webhook not configured",
+				})
+				return
+			}
+
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "failed to read webhook payload",
+				})
+				return
+			}
+
+			signature := r.Header.Get("X-Hub-Signature-256")
+			if !verifyGitHubWebhookSignature(record.GitHub.WebhookSecret, body, signature) {
+				writeJSON(w, stdhttp.StatusUnauthorized, map[string]any{
+					"error": errGitHubInvalidWebhookSignature.Error(),
+				})
+				return
+			}
+
+			eventName := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
+			switch eventName {
+			case "ping":
+				writeJSON(w, stdhttp.StatusAccepted, map[string]any{
+					"ok": true,
+				})
+				return
+			case "push":
+			default:
+				writeJSON(w, stdhttp.StatusAccepted, map[string]any{
+					"ok": true,
+				})
+				return
+			}
+
+			var payload gitHubWebhookPushPayload
+			if err := json.Unmarshal(body, &payload); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid webhook payload",
+				})
+				return
+			}
+
+			if payload.Repository.CloneURL != "" && !sameGitHubRepository(payload.Repository.CloneURL, record.GitHub.RepositoryURL) {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "webhook repository does not match this domain integration",
+				})
+				return
+			}
+
+			defaultBranch := strings.TrimSpace(record.GitHub.DefaultBranch)
+			if defaultBranch == "" {
+				defaultBranch = strings.TrimSpace(payload.Repository.DefaultBranch)
+			}
+			if defaultBranch != "" && payload.Ref != "refs/heads/"+defaultBranch {
+				writeJSON(w, stdhttp.StatusAccepted, map[string]any{
+					"ok": true,
+				})
+				return
+			}
+
+			token, err := getGitHubToken(r.Context(), app.Settings)
+			if err != nil {
+				app.Logger.Error("github webhook deploy blocked by missing token",
+					zap.String("hostname", hostname),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", "GitHub webhook was received but no GitHub token is configured.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			result, err := runDomainGitHubDeploy(r.Context(), record, *record.GitHub, token)
+			if err != nil {
+				app.Logger.Error("github webhook deploy failed",
+					zap.String("hostname", hostname),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Push webhook deployment failed for %q.", record.Hostname))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Push webhook deployed %q.", record.Hostname))
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{
+				"ok":     true,
+				"action": result.Action,
+			})
+		})
+
 		domainsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			var input domain.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
@@ -1513,6 +1869,9 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
 		r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/install", domainsComposerActionHandler("install"))
 		r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/update", domainsComposerActionHandler("update"))
+		r.Method(stdhttp.MethodPut, "/domains/{hostname}/github", domainsGitHubUpdateHandler)
+		r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/deploy", domainsGitHubDeployHandler)
+		r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/webhook", domainsGitHubWebhookHandler)
 		r.Method(stdhttp.MethodPost, "/domains", domainsCreateHandler)
 		r.Method(stdhttp.MethodPut, "/domains/{domainID}", domainsUpdateHandler)
 		r.Method(stdhttp.MethodDelete, "/domains/{domainID}", domainsDeleteHandler)
