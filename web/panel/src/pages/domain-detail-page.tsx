@@ -137,7 +137,7 @@ function DomainActionSection({
 }) {
   return (
     <section className="space-y-2">
-      <h2 className="text-base font-semibold text-[var(--app-text)]">{title}</h2>
+      <h2 className="pl-2 text-base font-semibold text-[var(--app-text)]">{title}</h2>
       <div className="grid gap-x-3 gap-y-1.5 md:grid-cols-2 xl:grid-cols-3">
         {items.map(({ title: itemTitle, icon: Icon }) => (
           <button
@@ -460,7 +460,9 @@ export function DomainDetailPage() {
                     });
                   }}
                 />
-                <DomainActionSection title="Dev Tools" items={devToolActions} />
+                <div className="pt-2">
+                  <DomainActionSection title="Dev Tools" items={devToolActions} />
+                </div>
               </div>
             </section>
           ) : null}
