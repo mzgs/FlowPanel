@@ -1,4 +1,4 @@
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState, type ComponentType } from "react";
 import {
   fetchDomainPreview,
@@ -30,6 +30,7 @@ import {
 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
+import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 import { cn } from "@/lib/utils";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -128,9 +129,11 @@ const devToolActions: DomainActionItem[] = [
 function DomainActionSection({
   title,
   items,
+  onItemClick,
 }: {
   title: string;
   items: DomainActionItem[];
+  onItemClick?: (item: DomainActionItem) => void;
 }) {
   return (
     <section className="space-y-2">
@@ -140,6 +143,7 @@ function DomainActionSection({
           <button
             key={itemTitle}
             type="button"
+            onClick={() => onItemClick?.({ title: itemTitle, icon: Icon })}
             className="group flex items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors duration-150 hover:bg-[var(--app-surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"
           >
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)] transition-colors duration-150 group-hover:text-[var(--app-accent)]">
@@ -157,7 +161,9 @@ function DomainActionSection({
 
 export function DomainDetailPage() {
   const { hostname } = useParams({ from: "/domains/$hostname" });
+  const navigate = useNavigate();
   const [domain, setDomain] = useState<DomainRecord | null>(null);
+  const [sitesBasePath, setSitesBasePath] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -173,6 +179,7 @@ export function DomainDetailPage() {
     setLoading(true);
     setLoadError(null);
     setDomain(null);
+    setSitesBasePath("");
     setPreviewUrl("");
     setPreviewLoaded(false);
     setPreviewError(false);
@@ -190,6 +197,7 @@ export function DomainDetailPage() {
         const matchedDomain =
           payload.domains.find((record) => record.hostname === hostname) ?? null;
 
+        setSitesBasePath(payload.sites_base_path);
         setDomain(matchedDomain);
         setLoadError(matchedDomain ? null : "The selected domain could not be found.");
       } catch (error) {
@@ -276,6 +284,10 @@ export function DomainDetailPage() {
       controller.abort();
     };
   }, [domain?.hostname, previewRefreshToken]);
+
+  const filesPath = domain
+    ? getFilesPathFromDomainTarget(domain.kind, sitesBasePath, domain.target)
+    : null;
 
   return (
     <>
@@ -434,7 +446,20 @@ export function DomainDetailPage() {
                 </section>
               </aside>
               <div className="space-y-4">
-                <DomainActionSection title="Files & Databases" items={fileAndDatabaseActions} />
+                <DomainActionSection
+                  title="Files & Databases"
+                  items={fileAndDatabaseActions}
+                  onItemClick={(item) => {
+                    if (item.title !== "Files" || filesPath === null) {
+                      return;
+                    }
+
+                    void navigate({
+                      to: "/files",
+                      search: filesPath ? { path: filesPath } : {},
+                    });
+                  }}
+                />
                 <DomainActionSection title="Dev Tools" items={devToolActions} />
               </div>
             </section>
