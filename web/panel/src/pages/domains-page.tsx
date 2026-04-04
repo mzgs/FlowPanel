@@ -333,6 +333,10 @@ export function DomainsPage() {
   const selectedDomainBackups = backupDialogDomain
     ? siteBackups[backupDialogDomain.hostname] ?? []
     : [];
+  const backupDialogCreating =
+    backupDialogDomain !== null && creatingBackupDomainId === backupDialogDomain.id;
+  const backupDialogCreated =
+    backupDialogDomain !== null && createdBackupDomainId === backupDialogDomain.id;
 
   function resetForm() {
     setForm(initialFormState);
@@ -591,6 +595,30 @@ export function DomainsPage() {
             </DialogDescription>
           </DialogHeader>
 
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                if (backupDialogDomain) {
+                  void handleCreateBackup(backupDialogDomain);
+                }
+              }}
+              disabled={backupDialogDomain === null || creatingBackupDomainId !== null}
+            >
+              {backupDialogCreating ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <HardDrive className="h-4 w-4" />
+              )}
+              {backupDialogCreating
+                ? "Backing up..."
+                : backupDialogCreated
+                  ? "Backup created"
+                  : "Backup now"}
+            </Button>
+          </div>
+
           {selectedDomainBackups.length === 0 ? (
             <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-4 text-[13px] text-[var(--app-text-muted)]">
               No backups found.
@@ -768,77 +796,54 @@ export function DomainsPage() {
                                 >
                                   Unavailable
                                 </span>
-                              ) : backupCount > 0 ? (
+                              ) : (
                                 <button
                                   type="button"
                                   onClick={() => setBackupDialogDomain(domain)}
-                                  className="text-[13px] font-medium text-[var(--app-text)] underline decoration-[var(--app-border-strong)] underline-offset-4 transition hover:text-[var(--app-text-muted)]"
+                                  className={cn(
+                                    "text-[13px] font-medium underline decoration-[var(--app-border-strong)] underline-offset-4 transition",
+                                    backupCount > 0
+                                      ? "text-[var(--app-text)] hover:text-[var(--app-text-muted)]"
+                                      : "text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
+                                  )}
                                 >
-                                  {backupCount} {backupCount === 1 ? "backup" : "backups"}
+                                  {backupCount > 0
+                                    ? `${backupCount} ${backupCount === 1 ? "backup" : "backups"}`
+                                    : "No backups"}
                                 </button>
-                              ) : (
-                                <span className="text-[13px] text-[var(--app-text-muted)]">
-                                  No backups
-                                </span>
                               )}
                             </TableCell>
                             <TableCell className="w-[220px]">
                               <div className="flex items-center justify-end gap-0.5">
                                 {filesPath !== null ? (
-                                  <>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => {
-                                        void handleCreateBackup(domain);
-                                      }}
-                                      disabled={creatingBackupDomainId !== null}
-                                      aria-label={`Create backup for ${domain.hostname}`}
-                                      title={
-                                        creatingBackupDomainId === domain.id
-                                          ? `Creating backup for ${domain.hostname}`
-                                          : `Create backup for ${domain.hostname}`
-                                      }
-                                      className={domainActionButtonClass}
-                                    >
-                                      <ActionFeedbackIcon
-                                        busy={creatingBackupDomainId === domain.id}
-                                        done={createdBackupDomainId === domain.id}
-                                        icon={HardDrive}
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => {
+                                      void handleDownload(domain, filesPath);
+                                    }}
+                                    disabled={downloadingDomainId !== null}
+                                    aria-label={`Download files for ${domain.hostname}`}
+                                    title={
+                                      downloadingDomainId === domain.id
+                                        ? `Downloading files for ${domain.hostname}`
+                                        : `Download files for ${domain.hostname}`
+                                    }
+                                    className={domainActionButtonClass}
+                                  >
+                                    {downloadingDomainId === domain.id ? (
+                                      <LoaderCircle
+                                        className="size-6 animate-spin"
+                                        stroke={domainActionIconStroke}
+                                      />
+                                    ) : (
+                                      <Download
                                         className="size-6"
                                         stroke={domainActionIconStroke}
                                       />
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => {
-                                        void handleDownload(domain, filesPath);
-                                      }}
-                                      disabled={downloadingDomainId !== null}
-                                      aria-label={`Download files for ${domain.hostname}`}
-                                      title={
-                                        downloadingDomainId === domain.id
-                                          ? `Downloading files for ${domain.hostname}`
-                                          : `Download files for ${domain.hostname}`
-                                      }
-                                      className={domainActionButtonClass}
-                                    >
-                                      {downloadingDomainId === domain.id ? (
-                                        <LoaderCircle
-                                          className="size-6 animate-spin"
-                                          stroke={domainActionIconStroke}
-                                        />
-                                      ) : (
-                                        <Download
-                                          className="size-6"
-                                          stroke={domainActionIconStroke}
-                                        />
-                                      )}
-                                    </Button>
-                                  </>
+                                    )}
+                                  </Button>
                                 ) : null}
                                 {filesPath !== null ? (
                                   <Button
