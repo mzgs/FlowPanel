@@ -50,6 +50,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
+import { getSiteHostnameFromBackupRecord } from "@/lib/backup-records";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -88,8 +89,6 @@ const domainActionButtonClass =
 const domainDangerActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
 const domainActionIconStroke = 1.5;
-const siteBackupPrefix = "flowpanel-site-";
-const siteBackupSeparator = "-backup";
 
 const hostnamePattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/i;
@@ -213,22 +212,6 @@ function getErrorMessage(error: unknown, fallback: string) {
   }
 
   return fallback;
-}
-
-function getSiteHostnameFromBackupRecord(record: BackupRecord) {
-  if (!record.name.startsWith(siteBackupPrefix)) {
-    return null;
-  }
-
-  const suffixIndex = record.name.indexOf(
-    siteBackupSeparator,
-    siteBackupPrefix.length,
-  );
-  if (suffixIndex <= siteBackupPrefix.length) {
-    return null;
-  }
-
-  return record.name.slice(siteBackupPrefix.length, suffixIndex);
 }
 
 export function DomainsPage() {

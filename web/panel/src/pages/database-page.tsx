@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { getDatabaseNameFromBackupRecord } from "@/lib/backup-records";
 import { cn, copyTextToClipboard } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -121,8 +122,6 @@ const databaseTableHeaderCellClass = "px-3 py-0.5 font-medium";
 const databaseTableBodyCellClass = "px-3 py-0.5 align-middle";
 const databaseTableActionHeaderCellClass = `${databaseTableHeaderCellClass} text-right`;
 const databaseTableActionBodyCellClass = `${databaseTableBodyCellClass} text-right`;
-const databaseBackupPrefix = "flowpanel-database-";
-const databaseBackupSeparator = "-backup-";
 const databaseActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
 const databaseDangerActionButtonClass =
@@ -235,19 +234,6 @@ function CopyIconButton({
       />
     </button>
   );
-}
-
-function getDatabaseNameFromBackupRecord(record: BackupRecord) {
-  if (!record.name.startsWith(databaseBackupPrefix)) {
-    return null;
-  }
-
-  const suffixIndex = record.name.indexOf(databaseBackupSeparator, databaseBackupPrefix.length);
-  if (suffixIndex <= databaseBackupPrefix.length) {
-    return null;
-  }
-
-  return record.name.slice(databaseBackupPrefix.length, suffixIndex);
 }
 
 export function DatabasePage() {

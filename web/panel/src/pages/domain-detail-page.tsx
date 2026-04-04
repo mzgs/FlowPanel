@@ -1,11 +1,22 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
+import {
+  createBackup,
+  deleteBackup,
+  fetchBackups,
+  restoreBackup,
+  type BackupRecord,
+} from "@/api/backups";
 import {
   fetchDomainPreview,
   fetchDomains,
   getDomainSiteUrl,
   type DomainRecord,
 } from "@/api/domains";
+import {
+  fetchMariaDBDatabases,
+  type MariaDBDatabase,
+} from "@/api/mariadb";
 import {
   Clock,
   Copy,
@@ -28,10 +39,16 @@ import {
   Telescope,
   TerminalSquare,
 } from "@/components/icons/tabler-icons";
+import { DomainBackupRestoreDialog } from "@/components/domain-backup-restore-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
+import {
+  getDatabaseNameFromBackupRecord,
+  getSiteHostnameFromBackupRecord,
+} from "@/lib/backup-records";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {
@@ -126,6 +143,12 @@ const devToolActions: DomainActionItem[] = [
   },
 ];
 
+const siteBackupTargetKey = "__domain_site_backup__";
+
+function isSiteBackedKind(kind: DomainRecord["kind"]) {
+  return kind === "Static site" || kind === "Php site";
+}
+
 function DomainActionSection({
   title,
   items,
@@ -164,14 +187,32 @@ export function DomainDetailPage() {
   const navigate = useNavigate();
   const [domain, setDomain] = useState<DomainRecord | null>(null);
   const [sitesBasePath, setSitesBasePath] = useState("");
+  const [backups, setBackups] = useState<BackupRecord[]>([]);
+  const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [backupDataLoading, setBackupDataLoading] = useState(true);
+  const [backupDataError, setBackupDataError] = useState<string | null>(null);
+  const [backupDialogOpen, setBackupDialogOpen] = useState(false);
+  const [creatingBackupTarget, setCreatingBackupTarget] = useState<string | null>(
+    null,
+  );
+  const [createdBackupTarget, setCreatedBackupTarget] = useState<string | null>(null);
+  const [restoringBackupName, setRestoringBackupName] = useState<string | null>(
+    null,
+  );
+  const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
+  const [deletingBackupName, setDeletingBackupName] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [previewError, setPreviewError] = useState(false);
-  const [previewErrorMessage, setPreviewErrorMessage] = useState<string | null>(null);
+  const [previewErrorMessage, setPreviewErrorMessage] = useState<string | null>(
+    null,
+  );
   const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
+  const createdBackupTimeoutRef = useRef<number | null>(null);
+  const restoredBackupTimeoutRef = useRef<number | null>(null);
   const siteUrl = domain ? getDomainSiteUrl(domain.hostname) : "";
 
   useEffect(() => {
@@ -180,6 +221,16 @@ export function DomainDetailPage() {
     setLoadError(null);
     setDomain(null);
     setSitesBasePath("");
+    setBackups([]);
+    setDatabases([]);
+    setBackupDataLoading(true);
+    setBackupDataError(null);
+    setBackupDialogOpen(false);
+    setCreatingBackupTarget(null);
+    setCreatedBackupTarget(null);
+    setRestoringBackupName(null);
+    setRestoredBackupName(null);
+    setDeletingBackupName(null);
     setPreviewUrl("");
     setPreviewLoaded(false);
     setPreviewError(false);
@@ -188,29 +239,53 @@ export function DomainDetailPage() {
     setPreviewRefreshToken(0);
 
     async function loadDomain() {
-      try {
-        const payload = await fetchDomains();
-        if (!active) {
-          return;
-        }
+      const [domainsResult, backupsResult, databasesResult] = await Promise.allSettled([
+        fetchDomains(),
+        fetchBackups(),
+        fetchMariaDBDatabases(),
+      ]);
+      if (!active) {
+        return;
+      }
 
+      if (domainsResult.status === "fulfilled") {
         const matchedDomain =
-          payload.domains.find((record) => record.hostname === hostname) ?? null;
+          domainsResult.value.domains.find((record) => record.hostname === hostname) ??
+          null;
 
-        setSitesBasePath(payload.sites_base_path);
+        setSitesBasePath(domainsResult.value.sites_base_path);
         setDomain(matchedDomain);
         setLoadError(matchedDomain ? null : "The selected domain could not be found.");
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-
-        setLoadError(getErrorMessage(error, "Failed to load domain details."));
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
+      } else {
+        setLoadError(getErrorMessage(domainsResult.reason, "Failed to load domain details."));
       }
+
+      const backupErrors: string[] = [];
+
+      if (backupsResult.status === "fulfilled") {
+        setBackups(backupsResult.value.backups);
+      } else {
+        setBackups([]);
+        backupErrors.push(
+          getErrorMessage(backupsResult.reason, "Failed to load backups."),
+        );
+      }
+
+      if (databasesResult.status === "fulfilled") {
+        setDatabases(databasesResult.value.databases);
+      } else {
+        setDatabases([]);
+        backupErrors.push(
+          getErrorMessage(
+            databasesResult.reason,
+            "Failed to load databases for backups.",
+          ),
+        );
+      }
+
+      setBackupDataError(backupErrors.length > 0 ? backupErrors.join(" ") : null);
+      setLoading(false);
+      setBackupDataLoading(false);
     }
 
     void loadDomain();
@@ -285,12 +360,214 @@ export function DomainDetailPage() {
     };
   }, [domain?.hostname, previewRefreshToken]);
 
+  useEffect(() => {
+    return () => {
+      if (createdBackupTimeoutRef.current !== null) {
+        window.clearTimeout(createdBackupTimeoutRef.current);
+      }
+      if (restoredBackupTimeoutRef.current !== null) {
+        window.clearTimeout(restoredBackupTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const filesPath = domain
     ? getFilesPathFromDomainTarget(domain.kind, sitesBasePath, domain.target)
     : null;
+  const showSiteBackups = domain ? isSiteBackedKind(domain.kind) : false;
+  const siteBackups = domain
+    ? backups.filter(
+        (backup) => getSiteHostnameFromBackupRecord(backup) === domain.hostname,
+      )
+    : [];
+  const databaseBackups = backups.reduce<Record<string, BackupRecord[]>>(
+    (groups, backup) => {
+      const databaseName = getDatabaseNameFromBackupRecord(backup);
+      if (!databaseName) {
+        return groups;
+      }
+
+      if (!groups[databaseName]) {
+        groups[databaseName] = [];
+      }
+
+      groups[databaseName].push(backup);
+      return groups;
+    },
+    {},
+  );
+  const domainDatabases = domain
+    ? databases.filter((database) => database.domain === domain.hostname)
+    : [];
+  const databaseSections = domainDatabases.map((database) => ({
+    name: database.name,
+    backups: databaseBackups[database.name] ?? [],
+  }));
+
+  async function handleCreateSiteBackup() {
+    if (!domain || !showSiteBackups || creatingBackupTarget !== null) {
+      return;
+    }
+
+    setCreatingBackupTarget(siteBackupTargetKey);
+    setCreatedBackupTarget(null);
+
+    try {
+      const record = await createBackup({
+        include_panel_data: false,
+        include_sites: true,
+        include_databases: false,
+        site_hostnames: [domain.hostname],
+      });
+      setBackups((current) => [
+        record,
+        ...current.filter((item) => item.name !== record.name),
+      ]);
+      setBackupDataError(null);
+      if (createdBackupTimeoutRef.current !== null) {
+        window.clearTimeout(createdBackupTimeoutRef.current);
+      }
+      setCreatedBackupTarget(siteBackupTargetKey);
+      createdBackupTimeoutRef.current = window.setTimeout(() => {
+        setCreatedBackupTarget((current) =>
+          current === siteBackupTargetKey ? null : current,
+        );
+        createdBackupTimeoutRef.current = null;
+      }, 1500);
+      toast.success(`Created backup ${record.name}.`);
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, `Failed to create backup for ${domain.hostname}.`),
+      );
+    } finally {
+      setCreatingBackupTarget(null);
+    }
+  }
+
+  async function handleCreateDatabaseBackup(name: string) {
+    if (creatingBackupTarget !== null) {
+      return;
+    }
+
+    setCreatingBackupTarget(name);
+    setCreatedBackupTarget(null);
+
+    try {
+      const record = await createBackup({
+        include_panel_data: false,
+        include_sites: false,
+        include_databases: true,
+        database_names: [name],
+      });
+      setBackups((current) => [
+        record,
+        ...current.filter((item) => item.name !== record.name),
+      ]);
+      setBackupDataError(null);
+      if (createdBackupTimeoutRef.current !== null) {
+        window.clearTimeout(createdBackupTimeoutRef.current);
+      }
+      setCreatedBackupTarget(name);
+      createdBackupTimeoutRef.current = window.setTimeout(() => {
+        setCreatedBackupTarget((current) => (current === name ? null : current));
+        createdBackupTimeoutRef.current = null;
+      }, 1500);
+      toast.success(`Created local backup ${record.name}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to create local backup for ${name}.`));
+    } finally {
+      setCreatingBackupTarget(null);
+    }
+  }
+
+  async function handleRestoreBackup(name: string) {
+    if (restoringBackupName === name || deletingBackupName === name) {
+      return;
+    }
+
+    setRestoringBackupName(name);
+    setRestoredBackupName(null);
+
+    try {
+      const result = await restoreBackup(name);
+      if (restoredBackupTimeoutRef.current !== null) {
+        window.clearTimeout(restoredBackupTimeoutRef.current);
+      }
+      setRestoredBackupName(name);
+      restoredBackupTimeoutRef.current = window.setTimeout(() => {
+        setRestoredBackupName((current) => (current === name ? null : current));
+        restoredBackupTimeoutRef.current = null;
+      }, 1500);
+
+      if (
+        domain &&
+        result.restored_sites?.some((restoredHostname) => restoredHostname === domain.hostname)
+      ) {
+        setPreviewRefreshing(true);
+        setPreviewError(false);
+        setPreviewErrorMessage(null);
+        setPreviewRefreshToken(Date.now());
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to restore ${name}.`));
+    } finally {
+      setRestoringBackupName(null);
+    }
+  }
+
+  async function handleDeleteBackup(name: string) {
+    if (deletingBackupName === name || restoringBackupName === name) {
+      return;
+    }
+
+    setDeletingBackupName(name);
+
+    try {
+      await deleteBackup(name);
+      setBackups((current) => current.filter((item) => item.name !== name));
+      toast.success(`Deleted backup ${name}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to delete ${name}.`));
+    } finally {
+      setDeletingBackupName(null);
+    }
+  }
 
   return (
     <>
+      <DomainBackupRestoreDialog
+        open={backupDialogOpen && domain !== null}
+        onOpenChange={setBackupDialogOpen}
+        hostname={domain?.hostname ?? hostname}
+        showSiteBackups={showSiteBackups}
+        siteBackups={siteBackups}
+        databaseSections={databaseSections}
+        loading={backupDataLoading}
+        loadError={backupDataError}
+        onCreateSiteBackup={() => {
+          void handleCreateSiteBackup();
+        }}
+        createSiteBackupDisabled={creatingBackupTarget !== null || !showSiteBackups}
+        createSiteBackupBusy={creatingBackupTarget === siteBackupTargetKey}
+        createSiteBackupDone={createdBackupTarget === siteBackupTargetKey}
+        onCreateDatabaseBackup={(name) => {
+          void handleCreateDatabaseBackup(name);
+        }}
+        createDatabaseBackupDisabled={creatingBackupTarget !== null}
+        creatingDatabaseBackupName={creatingBackupTarget}
+        createdDatabaseBackupName={
+          createdBackupTarget === siteBackupTargetKey ? null : createdBackupTarget
+        }
+        onRestoreBackup={(name) => {
+          void handleRestoreBackup(name);
+        }}
+        restoringBackupName={restoringBackupName}
+        restoredBackupName={restoredBackupName}
+        onDeleteBackup={(name) => {
+          void handleDeleteBackup(name);
+        }}
+        deletingBackupName={deletingBackupName}
+      />
       <PageHeader
         title={
           loading ? (
@@ -377,7 +654,9 @@ export function DomainDetailPage() {
                                 Preview
                               </div>
                               <div>
-                                <p className="text-sm font-semibold text-[var(--app-text)]">{domain.hostname}</p>
+                                <p className="text-sm font-semibold text-[var(--app-text)]">
+                                  {domain.hostname}
+                                </p>
                                 <p className="mt-1 text-xs text-[var(--app-text-muted)]">
                                   {previewError
                                     ? previewErrorMessage ?? "Preview is unavailable right now."
@@ -430,11 +709,15 @@ export function DomainDetailPage() {
                   <dl className="mt-4 space-y-4 text-sm">
                     <div>
                       <dt className="text-[var(--app-text-muted)]">Hostname</dt>
-                      <dd className="mt-1 font-medium text-[var(--app-text)]">{domain?.hostname ?? "..."}</dd>
+                      <dd className="mt-1 font-medium text-[var(--app-text)]">
+                        {domain?.hostname ?? "..."}
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-[var(--app-text-muted)]">Type</dt>
-                      <dd className="mt-1 font-medium text-[var(--app-text)]">{domain?.kind ?? "..."}</dd>
+                      <dd className="mt-1 font-medium text-[var(--app-text)]">
+                        {domain?.kind ?? "..."}
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-[var(--app-text-muted)]">Caching</dt>
@@ -463,6 +746,11 @@ export function DomainDetailPage() {
                         to: "/database",
                         search: { domain: domain.hostname },
                       });
+                      return;
+                    }
+
+                    if (item.title === "Backup & Restore" && domain !== null) {
+                      setBackupDialogOpen(true);
                     }
                   }}
                 />
