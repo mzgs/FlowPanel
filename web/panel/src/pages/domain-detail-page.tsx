@@ -48,39 +48,32 @@ type ActionIcon = ComponentType<{
 
 type DomainActionItem = {
   title: string;
-  description: string;
   icon: ActionIcon;
 };
 
 const fileAndDatabaseActions: DomainActionItem[] = [
   {
     title: "Connection Info",
-    description: "FTP and database access details",
     icon: Globe,
   },
   {
     title: "Files",
-    description: "Open the document root",
     icon: Folder,
   },
   {
     title: "Databases",
-    description: "MariaDB and phpMyAdmin",
     icon: Database,
   },
   {
     title: "FTP",
-    description: "Manage transfer users",
     icon: FolderOpen,
   },
   {
     title: "Backup & Restore",
-    description: "Site and database snapshots",
     icon: HardDrive,
   },
   {
     title: "Website Copying",
-    description: "Clone content to another target",
     icon: Copy,
   },
 ];
@@ -88,57 +81,46 @@ const fileAndDatabaseActions: DomainActionItem[] = [
 const devToolActions: DomainActionItem[] = [
   {
     title: "PHP",
-    description: "Runtime and extension settings",
     icon: FileCode2,
   },
   {
     title: "Logs",
-    description: "Access and error logs",
     icon: File,
   },
   {
     title: "SSH Terminal",
-    description: "Shell access placeholder",
     icon: TerminalSquare,
   },
   {
     title: "Monitoring",
-    description: "Domain health overview",
     icon: Monitor,
   },
   {
     title: "PHP Composer",
-    description: "Dependency management",
     icon: Package,
   },
   {
     title: "Scheduled Tasks",
-    description: "Cron-style job scheduling",
     icon: Clock,
   },
   {
     title: "Performance Booster",
-    description: "Caching and speed tools",
     icon: Sparkles,
   },
   {
     title: "Git",
-    description: "Repository deployment tools",
     icon: GitBranch,
   },
   {
     title: "SEO",
-    description: "Search visibility settings",
     icon: Telescope,
   },
   {
     title: "Website Importing",
-    description: "Bring in an existing site",
     icon: Download,
   },
   {
     title: "Docker Proxy Rules",
-    description: "Container routing setup",
     icon: Settings2,
   },
 ];
@@ -151,25 +133,20 @@ function DomainActionSection({
   items: DomainActionItem[];
 }) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-2">
       <h2 className="text-base font-semibold text-[var(--app-text)]">{title}</h2>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {items.map(({ title: itemTitle, description, icon: Icon }) => (
+      <div className="grid gap-x-3 gap-y-1.5 md:grid-cols-2 xl:grid-cols-3">
+        {items.map(({ title: itemTitle, icon: Icon }) => (
           <button
             key={itemTitle}
             type="button"
-            className="group flex min-h-24 items-center gap-4 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-left transition-[background-color,border-color] duration-150 hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"
+            className="group flex items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors duration-150 hover:bg-[var(--app-surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"
           >
-            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)] transition-colors duration-150 group-hover:text-[var(--app-accent)]">
-              <Icon className="h-6 w-6" stroke={1.75} />
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)] transition-colors duration-150 group-hover:text-[var(--app-accent)]">
+              <Icon className="h-5 w-5" stroke={1.75} />
             </span>
-            <span className="min-w-0">
-              <span className="block text-[15px] font-medium leading-5 text-[var(--app-text)]">
-                {itemTitle}
-              </span>
-              <span className="mt-1 block text-sm leading-5 text-[var(--app-text-muted)]">
-                {description}
-              </span>
+            <span className="min-w-0 text-sm font-medium leading-5 text-[var(--app-text)]">
+              {itemTitle}
             </span>
           </button>
         ))}
@@ -335,8 +312,8 @@ export function DomainDetailPage() {
         }
       />
 
-      <div className="px-4 pb-6 sm:px-6 lg:px-8">
-        <div className="space-y-6">
+      <div className="px-4 pb-1 sm:px-6 lg:px-8">
+        <div className="space-y-4">
           {loadError ? (
             <section className="rounded-xl border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-[13px] text-[var(--app-danger)]">
               {loadError}
@@ -344,7 +321,7 @@ export function DomainDetailPage() {
           ) : null}
 
           {!loadError ? (
-            <section className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+            <section className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
               <aside className="space-y-3">
                 <div className="w-[280px] max-w-full overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
                   <div className="relative aspect-[4/3] w-full bg-[var(--app-surface-muted)]">
@@ -456,7 +433,7 @@ export function DomainDetailPage() {
                   </dl>
                 </section>
               </aside>
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <DomainActionSection title="Files & Databases" items={fileAndDatabaseActions} />
                 <DomainActionSection title="Dev Tools" items={devToolActions} />
               </div>
