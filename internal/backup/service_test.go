@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -83,6 +84,9 @@ func TestCreateIncludesDataFilesAndDatabaseSnapshot(t *testing.T) {
 	}
 	if !strings.Contains(record.Name, "full-backup") {
 		t.Fatalf("backup name = %q, want full-backup prefix", record.Name)
+	}
+	if matched := regexp.MustCompile(`^flowpanel-full-backup-\d{8}-\d{6}\.tar\.gz$`).MatchString(record.Name); !matched {
+		t.Fatalf("backup name = %q, want second-precision timestamp without nanoseconds", record.Name)
 	}
 
 	archivePath, _, err := service.DownloadPath(record.Name)

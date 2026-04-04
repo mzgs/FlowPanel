@@ -1276,7 +1276,7 @@ func TestBackupsEndpointsHandleImportedNamesWithSpaces(t *testing.T) {
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	importedName := "flowpanel-database-flowpanel-backup-20260402-165246-000000000 (1).tar.gz"
+	importedName := "flowpanel-database-flowpanel-backup-20260402-165246 (1).tar.gz"
 	part, err := writer.CreateFormFile("backup", importedName)
 	if err != nil {
 		t.Fatalf("create multipart file: %v", err)

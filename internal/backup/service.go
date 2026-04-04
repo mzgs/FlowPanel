@@ -178,7 +178,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 	}
 
 	createdAt := time.Now().UTC()
-	name := fmt.Sprintf("%s-%s%s", backupNamePrefix(input), createdAt.Format("20060102-150405-000000000"), backupExtension)
+	name := fmt.Sprintf("%s-%s%s", backupNamePrefix(input), createdAt.Format("20060102-150405"), backupExtension)
 	targetPath := filepath.Join(s.backupPath, name)
 	tempTargetPath := targetPath + ".tmp"
 
