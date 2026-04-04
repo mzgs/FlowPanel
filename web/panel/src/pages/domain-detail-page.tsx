@@ -131,7 +131,7 @@ const devToolActions: DomainActionItem[] = [
     icon: Sparkles,
   },
   {
-    title: "Git",
+    title: "Github",
     icon: GitBranch,
   },
   {
