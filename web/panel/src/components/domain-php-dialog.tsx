@@ -117,6 +117,27 @@ export function DomainPHPDialog({
           <DialogTitle>{domain.hostname} PHP</DialogTitle>
         </DialogHeader>
 
+        <section className="grid gap-3 border-b border-[var(--app-border)] pb-4 sm:grid-cols-3">
+          <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+            <div className="text-xs text-[var(--app-text-muted)]">PHP version</div>
+            <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
+              {formatPHPVersion(status)}
+            </div>
+          </div>
+          <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+            <div className="text-xs text-[var(--app-text-muted)]">PHP-FPM</div>
+            <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
+              {getPHPServiceLabel(status)}
+            </div>
+          </div>
+          <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+            <div className="text-xs text-[var(--app-text-muted)]">Platform</div>
+            <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
+              {status?.platform || "Unknown"}
+            </div>
+          </div>
+        </section>
+
         <div className="flex flex-wrap items-center gap-2">
           {status?.install_available ? (
             <Button type="button" onClick={onInstall} disabled={installDisabled}>
@@ -315,46 +336,19 @@ export function DomainPHPDialog({
               </div>
             ) : null}
 
-            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
-                <div className="text-xs text-[var(--app-text-muted)]">PHP version</div>
-                <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
-                  {formatPHPVersion(status)}
-                </div>
-              </div>
-              <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
-                <div className="text-xs text-[var(--app-text-muted)]">PHP-FPM</div>
-                <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
-                  {getPHPServiceLabel(status)}
-                </div>
-              </div>
-              <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
-                <div className="text-xs text-[var(--app-text-muted)]">Platform</div>
-                <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
-                  {status?.platform || "Unknown"}
-                </div>
-              </div>
-              <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
-                <div className="text-xs text-[var(--app-text-muted)]">State</div>
-                <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
-                  {status?.message || "Unavailable"}
-                </div>
-              </div>
-            </section>
-
             {(status?.managed_config_file || status?.loaded_config_file) ? (
-              <section className="grid gap-4 lg:grid-cols-2">
-                <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
+              <section className="grid gap-3 lg:grid-cols-2">
+                <div>
                   <div className="text-xs text-[var(--app-text-muted)]">Managed config</div>
-                  <div className="mt-1 break-all text-sm font-medium text-[var(--app-text)]">
+                  <small className="mt-1 block break-all text-[11px] text-[var(--app-text)]">
                     {status?.managed_config_file || "Unavailable"}
-                  </div>
+                  </small>
                 </div>
-                <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
+                <div>
                   <div className="text-xs text-[var(--app-text-muted)]">Loaded config</div>
-                  <div className="mt-1 break-all text-sm font-medium text-[var(--app-text)]">
+                  <small className="mt-1 block break-all text-[11px] text-[var(--app-text)]">
                     {status?.loaded_config_file || "Unavailable"}
-                  </div>
+                  </small>
                 </div>
               </section>
             ) : null}
