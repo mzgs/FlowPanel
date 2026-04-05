@@ -36,6 +36,7 @@ import {
   createFile,
   deleteEntry,
   downloadEntry,
+  downloadEntries,
   fetchFileContent,
   fetchFiles,
   renameEntry,
@@ -384,7 +385,10 @@ export function FilesPage() {
     : null;
   const breadcrumbs = getBreadcrumbs(listing);
   const clipboardReady = clipboardPaths.length > 0 && clipboardMode !== null;
-  const canDownloadSelection = selectedItems.length === 1 && selectedItem?.type !== "symlink";
+  const canDownloadSelection =
+    selectedItems.length > 0 &&
+    selectedItems.length === selectedPaths.length &&
+    selectedItems.every((item) => item.type !== "symlink");
   const canRenameSelection = selectedItems.length === 1;
   const canEditPermissions = selectedItem !== null && selectedItem.type !== "symlink";
   const contextPasteTarget =
@@ -847,15 +851,18 @@ export function FilesPage() {
   async function downloadSelectedEntry() {
     closeContextMenu();
 
-    if (!selectedItem || selectedItem.type === "symlink") {
+    if (!canDownloadSelection) {
       return;
     }
 
     try {
-      const fileName = await downloadEntry(selectedItem.path);
+      const fileName =
+        selectedItems.length === 1 && selectedItem
+          ? await downloadEntry(selectedItem.path)
+          : await downloadEntries(selectedItems.map((item) => item.path));
       setFlash({ tone: "success", text: `${fileName} download started.` });
     } catch (error) {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to download entry.") });
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to download selection.") });
     }
   }
 
@@ -1182,7 +1189,7 @@ export function FilesPage() {
                 onSelect={() => void downloadSelectedEntry()}
               >
                 <Download className="h-4 w-4" />
-                Download
+                {selectedItems.length > 1 ? "Download tar.gz" : "Download"}
               </DropdownMenuItem>
               <DropdownMenuItem disabled={!canRenameSelection} onSelect={() => openDialog("rename")}>
                 <Pencil className="h-4 w-4" />

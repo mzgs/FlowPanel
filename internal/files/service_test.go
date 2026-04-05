@@ -398,6 +398,64 @@ func TestDownloadPathArchivesDirectory(t *testing.T) {
 	}
 }
 
+func TestPrepareDownloadPathsStreamsSelectionArchive(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, "site"), 0o755); err != nil {
+		t.Fatalf("mkdir site: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "site", "index.html"), []byte("<h1>hello</h1>"), 0o644); err != nil {
+		t.Fatalf("write site file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "robots.txt"), []byte("User-agent: *"), 0o644); err != nil {
+		t.Fatalf("write robots file: %v", err)
+	}
+
+	name, writeArchive, err := service.PrepareDownloadPaths([]string{"site", "robots.txt"})
+	if err != nil {
+		t.Fatalf("prepare download paths: %v", err)
+	}
+	if name != "download.tar.gz" {
+		t.Fatalf("archive name = %q, want download.tar.gz", name)
+	}
+
+	var archive bytes.Buffer
+	if err := writeArchive(&archive); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	entries := readArchiveEntriesFromReader(t, bytes.NewReader(archive.Bytes()))
+	if got := string(entries["site/index.html"]); got != "<h1>hello</h1>" {
+		t.Fatalf("site/index.html = %q, want site content", got)
+	}
+	if got := string(entries["robots.txt"]); got != "User-agent: *" {
+		t.Fatalf("robots.txt = %q, want robots content", got)
+	}
+}
+
+func TestPrepareDownloadPathsRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(root, "target.txt"), filepath.Join(root, "link.txt")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	if _, _, err := service.PrepareDownloadPaths([]string{"link.txt"}); err != ErrUnsupportedEntry {
+		t.Fatalf("prepare download error = %v, want %v", err, ErrUnsupportedEntry)
+	}
+}
+
 func readArchiveEntries(t *testing.T, archivePath string) map[string][]byte {
 	t.Helper()
 
@@ -413,7 +471,25 @@ func readArchiveEntries(t *testing.T, archivePath string) map[string][]byte {
 	}
 	defer gzipReader.Close()
 
-	tarReader := tar.NewReader(gzipReader)
+	return readArchiveEntriesFromGzip(t, gzipReader)
+}
+
+func readArchiveEntriesFromReader(t *testing.T, reader io.Reader) map[string][]byte {
+	t.Helper()
+
+	gzipReader, err := gzip.NewReader(reader)
+	if err != nil {
+		t.Fatalf("open gzip archive: %v", err)
+	}
+	defer gzipReader.Close()
+
+	return readArchiveEntriesFromGzip(t, gzipReader)
+}
+
+func readArchiveEntriesFromGzip(t *testing.T, reader io.Reader) map[string][]byte {
+	t.Helper()
+
+	tarReader := tar.NewReader(reader)
 	entries := make(map[string][]byte)
 	for {
 		header, err := tarReader.Next()

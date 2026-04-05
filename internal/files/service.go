@@ -454,6 +454,82 @@ func (s *Service) DownloadPath(relPath string) (string, string, func(), error) {
 	}
 }
 
+func (s *Service) PrepareDownloadPaths(relPaths []string) (string, func(io.Writer) error, error) {
+	sources, archiveRoot, archiveBaseName, err := s.resolveDownloadSources(relPaths)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return archiveBaseName + ".tar.gz", func(writer io.Writer) error {
+		return writeSelectionArchive(writer, sources, archiveRoot, s.rootPath)
+	}, nil
+}
+
+type downloadSource struct {
+	absolutePath   string
+	normalizedPath string
+	entryType      EntryType
+}
+
+func (s *Service) resolveDownloadSources(relPaths []string) ([]downloadSource, string, string, error) {
+	sources := make([]downloadSource, 0, len(relPaths))
+	seen := make(map[string]struct{}, len(relPaths))
+
+	for _, relPath := range relPaths {
+		absolutePath, normalizedPath, entryType, err := s.resolveExisting(relPath)
+		if err != nil {
+			return nil, "", "", err
+		}
+		if normalizedPath == "" || entryType == EntryTypeSymlink {
+			return nil, "", "", ErrUnsupportedEntry
+		}
+		if _, exists := seen[normalizedPath]; exists {
+			continue
+		}
+
+		seen[normalizedPath] = struct{}{}
+		sources = append(sources, downloadSource{
+			absolutePath:   absolutePath,
+			normalizedPath: normalizedPath,
+			entryType:      entryType,
+		})
+	}
+
+	if len(sources) == 0 {
+		return nil, "", "", ErrInvalidPath
+	}
+
+	sort.Slice(sources, func(i int, j int) bool {
+		return sources[i].normalizedPath < sources[j].normalizedPath
+	})
+
+	filtered := make([]downloadSource, 0, len(sources))
+	for _, source := range sources {
+		skip := false
+		for _, existing := range filtered {
+			if existing.entryType != EntryTypeDirectory {
+				continue
+			}
+			if source.normalizedPath == existing.normalizedPath || isArchiveChildPath(source.normalizedPath, existing.normalizedPath) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			filtered = append(filtered, source)
+		}
+	}
+
+	archiveBaseName := "download"
+	if len(filtered) == 1 {
+		archiveBaseName = filepath.Base(filtered[0].normalizedPath)
+	}
+
+	archiveRoot := commonArchiveRoot(filtered)
+
+	return filtered, archiveRoot, archiveBaseName, nil
+}
+
 func createDirectoryArchive(absolutePath, normalizedPath, rootName string) (string, string, error) {
 	archiveBaseName := filepath.Base(normalizedPath)
 	if normalizedPath == "" {
@@ -520,6 +596,62 @@ func createDirectoryArchive(absolutePath, normalizedPath, rootName string) (stri
 	success = true
 
 	return archivePath, archiveBaseName + ".tar.gz", nil
+}
+
+func writeSelectionArchive(writer io.Writer, sources []downloadSource, archiveRoot string, rootPath string) error {
+	gzipWriter := gzip.NewWriter(writer)
+	tarWriter := tar.NewWriter(gzipWriter)
+	archiveRootPath := rootPath
+	if archiveRoot != "" {
+		archiveRootPath = filepath.Join(rootPath, filepath.FromSlash(archiveRoot))
+	}
+	for _, source := range sources {
+		walkErr := filepath.WalkDir(source.absolutePath, func(currentPath string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+
+			info, err := os.Lstat(currentPath)
+			if err != nil {
+				return err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return ErrUnsupportedEntry
+			}
+
+			relativePath, err := filepath.Rel(source.absolutePath, currentPath)
+			if err != nil {
+				return err
+			}
+
+			if source.entryType == EntryTypeDirectory && relativePath == "." {
+				if source.absolutePath == archiveRootPath {
+					return nil
+				}
+			}
+
+			archiveEntryPath, err := filepath.Rel(archiveRootPath, currentPath)
+			if err != nil {
+				return err
+			}
+
+			return writeTarEntry(tarWriter, currentPath, filepath.ToSlash(archiveEntryPath), info)
+		})
+		if walkErr != nil {
+			_ = tarWriter.Close()
+			_ = gzipWriter.Close()
+			return fmt.Errorf("archive selection: %w", walkErr)
+		}
+	}
+
+	if err := tarWriter.Close(); err != nil {
+		return fmt.Errorf("close tar archive: %w", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return fmt.Errorf("close gzip archive: %w", err)
+	}
+
+	return nil
 }
 
 func writeTarEntry(tarWriter *tar.Writer, sourcePath, archivePath string, info fs.FileInfo) error {
@@ -864,4 +996,41 @@ func isNestedPath(childPath string, parentPath string) bool {
 		return false
 	}
 	return relativePath == "." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) == false
+}
+
+func isArchiveChildPath(childPath string, parentPath string) bool {
+	return childPath == parentPath || strings.HasPrefix(childPath, parentPath+"/")
+}
+
+func commonArchiveRoot(sources []downloadSource) string {
+	if len(sources) == 0 {
+		return ""
+	}
+
+	common := splitArchivePath(sources[0].normalizedPath)
+	for _, source := range sources[1:] {
+		parts := splitArchivePath(source.normalizedPath)
+		limit := len(common)
+		if len(parts) < limit {
+			limit = len(parts)
+		}
+		index := 0
+		for index < limit && common[index] == parts[index] {
+			index++
+		}
+		common = common[:index]
+		if len(common) == 0 {
+			return ""
+		}
+	}
+
+	return strings.Join(common, "/")
+}
+
+func splitArchivePath(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	return strings.Split(value, "/")
 }

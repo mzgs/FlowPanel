@@ -2291,6 +2291,37 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			stdhttp.ServeFile(w, r, absolutePath)
 		})
 
+		filesDownloadArchiveHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Paths []string `json:"paths"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			name, writeArchive, err := app.Files.PrepareDownloadPaths(input.Paths)
+			if err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+			w.Header().Set("Content-Type", "application/gzip")
+			if err := writeArchive(w); err != nil {
+				app.Logger.Error("stream file archive failed", zap.Error(err))
+			}
+		})
+
 		filesTransferHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Files == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -2329,6 +2360,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodPut, "/files/permissions", filesUpdatePermissionsHandler)
 		r.Method(stdhttp.MethodPost, "/files/upload", filesUploadHandler)
 		r.Method(stdhttp.MethodGet, "/files/download", filesDownloadHandler)
+		r.Method(stdhttp.MethodPost, "/files/download", filesDownloadArchiveHandler)
 		r.Method(stdhttp.MethodPost, "/files/transfer", filesTransferHandler)
 
 		r.NotFound(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

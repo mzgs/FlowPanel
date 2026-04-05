@@ -146,22 +146,24 @@ export async function downloadEntry(path: string): Promise<string> {
     throw await readFileApiError(response, "download entry");
   }
 
-  const blob = await response.blob();
-  const downloadUrl = window.URL.createObjectURL(blob);
-  const fileName = getDownloadFilename(response.headers.get("Content-Disposition"), path);
-  const anchor = document.createElement("a");
+  return triggerDownload(response, path);
+}
 
-  anchor.href = downloadUrl;
-  anchor.download = fileName;
-  anchor.style.display = "none";
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => {
-    window.URL.revokeObjectURL(downloadUrl);
-  }, 0);
+export async function downloadEntries(paths: string[]): Promise<string> {
+  const response = await fetch("/api/files/download", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ paths }),
+  });
 
-  return fileName;
+  if (!response.ok) {
+    throw await readFileApiError(response, "download selection");
+  }
+
+  return triggerDownload(response, "download.tar.gz");
 }
 
 export async function transferEntries(input: TransferEntriesInput): Promise<void> {
@@ -203,6 +205,25 @@ async function readFileApiError(response: Response, action: string): Promise<Fil
   }
 
   return new Error(message);
+}
+
+async function triggerDownload(response: Response, fallbackPath: string) {
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const fileName = getDownloadFilename(response.headers.get("Content-Disposition"), fallbackPath);
+  const anchor = document.createElement("a");
+
+  anchor.href = downloadUrl;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(downloadUrl);
+  }, 0);
+
+  return fileName;
 }
 
 function getDownloadFilename(contentDisposition: string | null, path: string) {
