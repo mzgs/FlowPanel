@@ -65,6 +65,7 @@ import {
   getSiteHostnameFromBackupRecord,
 } from "@/lib/backup-records";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
+import { setPendingFilesPath } from "@/lib/files-navigation";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -1359,9 +1360,9 @@ export function DomainDetailPage() {
                   items={fileAndDatabaseActions}
                   onItemClick={(item) => {
                     if (item.title === "Files" && filesPath !== null) {
+                      setPendingFilesPath(filesPath);
                       void navigate({
                         to: "/files",
-                        search: filesPath ? { path: filesPath } : {},
                       });
                       return;
                     }

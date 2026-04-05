@@ -7,7 +7,6 @@ import {
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { useLocation } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
@@ -67,6 +66,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { formatBytes, formatDateTime } from "@/lib/format";
+import { consumePendingFilesPath } from "@/lib/files-navigation";
 import { cn } from "@/lib/utils";
 
 type ViewMode = "list" | "grid";
@@ -301,16 +301,11 @@ export function FilesPage() {
   const browserRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const requestedPath = useLocation({
-    select: (location) => {
-      const path = location.search.path;
-      return typeof path === "string" ? path.trim() : "";
-    },
-  });
 
   const [currentPath, setCurrentPath] = useState(() => {
-    if (requestedPath) {
-      return requestedPath;
+    const pendingPath = consumePendingFilesPath();
+    if (pendingPath !== null) {
+      return pendingPath;
     }
 
     const lastPath = readStoredLastPath();
@@ -395,18 +390,6 @@ export function FilesPage() {
   }
 
   useEffect(() => {
-    if (!requestedPath || requestedPath === currentPath) {
-      return;
-    }
-
-    setCurrentPath(requestedPath);
-    setSelectedPaths([]);
-    setAnchorPath(null);
-    setSearch("");
-    setContextMenu(null);
-  }, [currentPath, requestedPath]);
-
-  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -453,7 +436,6 @@ export function FilesPage() {
     if (getErrorMessage(listingQuery.error, "").toLowerCase().includes("not found")) {
       const storedLastPath = readStoredLastPath();
       const storedStartPath = readStoredStartPath();
-      const fromRequestedPath = requestedPath && requestedPath === currentPath;
       const fromLastPath = storedLastPath === currentPath;
       const fromStartPath = storedStartPath === currentPath;
 
@@ -470,10 +452,6 @@ export function FilesPage() {
         setSettings((current) => ({ ...current, startPath: "" }));
       }
 
-      if (requestedPath && requestedPath === currentPath) {
-        return;
-      }
-
       if (fromLastPath && storedStartPath && storedStartPath !== currentPath) {
         setCurrentPath(storedStartPath);
         return;
@@ -487,7 +465,7 @@ export function FilesPage() {
         return;
       }
     }
-  }, [currentPath, listingQuery.error, listingQuery.isError, requestedPath]);
+  }, [currentPath, listingQuery.error, listingQuery.isError]);
 
   useEffect(() => {
     function handleDocumentClick(event: MouseEvent) {
@@ -1773,7 +1751,7 @@ export function FilesPage() {
             <Button
               onClick={() => {
                 setViewMode(settings.preferredView);
-                setCurrentPath(settings.startPath);
+                handleNavigate(settings.startPath);
                 setSettingsOpen(false);
                 setFlash({ tone: "success", text: "File manager settings updated." });
               }}

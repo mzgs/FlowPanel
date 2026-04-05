@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Download,
@@ -54,6 +54,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { getSiteHostnameFromBackupRecord } from "@/lib/backup-records";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
+import { setPendingFilesPath } from "@/lib/files-navigation";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -222,6 +223,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 export function DomainsPage() {
+  const navigate = useNavigate();
   const [domains, setDomains] = useState<DomainRecord[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [sitesBasePath, setSitesBasePath] = useState("");
@@ -872,22 +874,21 @@ export function DomainsPage() {
                                 ) : null}
                                 {filesPath !== null ? (
                                   <Button
-                                    asChild
                                     variant="ghost"
                                     size="icon"
+                                    type="button"
+                                    onClick={() => {
+                                      setPendingFilesPath(filesPath);
+                                      void navigate({ to: "/files" });
+                                    }}
                                     aria-label={`Open site folder for ${domain.hostname}`}
                                     title="Open site folder"
                                     className={domainActionButtonClass}
                                   >
-                                    <Link
-                                      to="/files"
-                                      search={filesPath ? { path: filesPath } : {}}
-                                    >
-                                      <FolderOpen
-                                        className="size-6"
-                                        stroke={domainActionIconStroke}
-                                      />
-                                    </Link>
+                                    <FolderOpen
+                                      className="size-6"
+                                      stroke={domainActionIconStroke}
+                                    />
                                   </Button>
                                 ) : null}
                                 <Button
