@@ -340,6 +340,10 @@ export function FilesPage() {
     );
   });
   const selectedSet = new Set(selectedPaths);
+  const visiblePaths = filteredItems.map((item) => item.path);
+  const visibleSelectedCount = visiblePaths.filter((path) => selectedSet.has(path)).length;
+  const allVisibleSelected = visiblePaths.length > 0 && visibleSelectedCount === visiblePaths.length;
+  const someVisibleSelected = visibleSelectedCount > 0 && !allVisibleSelected;
   const selectedItems = selectedPaths
     .map((path) => itemMap.get(path) ?? null)
     .filter((item): item is FileEntry => item !== null);
@@ -660,6 +664,45 @@ export function FilesPage() {
     setAnchorPath(null);
   }
 
+  function toggleItemSelection(path: string, checked: boolean) {
+    if (checked) {
+      setSelection([...selectedPaths, path], path);
+      return;
+    }
+
+    const next = selectedPaths.filter((selectedPath) => selectedPath !== path);
+    setSelection(next, next.at(-1) ?? null);
+  }
+
+  function selectRangeToItem(path: string) {
+    if (!anchorPath) {
+      setSelection([path], path);
+      return;
+    }
+
+    const start = itemOrder.indexOf(anchorPath);
+    const end = itemOrder.indexOf(path);
+    if (start < 0 || end < 0) {
+      setSelection([path], path);
+      return;
+    }
+
+    const range = itemOrder.slice(Math.min(start, end), Math.max(start, end) + 1);
+    setSelection(range, anchorPath);
+  }
+
+  function toggleVisibleSelection(checked: boolean) {
+    if (checked) {
+      const next = [...selectedPaths, ...visiblePaths];
+      setSelection(next, visiblePaths.at(-1) ?? selectedPaths.at(-1) ?? null);
+      return;
+    }
+
+    const visibleSet = new Set(visiblePaths);
+    const next = selectedPaths.filter((path) => !visibleSet.has(path));
+    setSelection(next, next.at(-1) ?? null);
+  }
+
   function handleNavigate(path: string) {
     setCurrentPath(path);
     setSearch("");
@@ -676,13 +719,8 @@ export function FilesPage() {
     }
 
     if (withShift && anchorPath) {
-      const start = itemOrder.indexOf(anchorPath);
-      const end = itemOrder.indexOf(item.path);
-      if (start >= 0 && end >= 0) {
-        const range = itemOrder.slice(Math.min(start, end), Math.max(start, end) + 1);
-        setSelection(range, anchorPath);
-        return;
-      }
+      selectRangeToItem(item.path);
+      return;
     }
 
     if (withMeta) {
@@ -1180,7 +1218,18 @@ export function FilesPage() {
                     <table className="min-w-full border-collapse text-left">
                       <thead className="bg-[var(--app-surface-muted)] text-[11px] uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
                         <tr>
-                          <th className="px-2.5 py-2 font-medium">Name</th>
+                          <th className="px-2.5 py-2 font-medium">
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                aria-label={allVisibleSelected ? "Unselect visible files" : "Select visible files"}
+                                checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
+                                onCheckedChange={(checked) => toggleVisibleSelection(checked === true)}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={(event) => event.stopPropagation()}
+                              />
+                              <span>Name</span>
+                            </div>
+                          </th>
                           <th className="px-2.5 py-2 font-medium">Type</th>
                           <th className="px-2.5 py-2 font-medium text-right">Size</th>
                           <th className="px-2.5 py-2 font-medium">Modified</th>
@@ -1221,6 +1270,20 @@ export function FilesPage() {
                             >
                               <td className="px-2.5 py-2">
                                 <div className="flex items-center gap-2">
+                                  <Checkbox
+                                    aria-label={`Select ${item.name}`}
+                                    checked={isSelected}
+                                    onCheckedChange={(checked) => toggleItemSelection(item.path, checked === true)}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (event.shiftKey) {
+                                        event.preventDefault();
+                                        selectRangeToItem(item.path);
+                                      }
+                                    }}
+                                    onDoubleClick={(event) => event.stopPropagation()}
+                                  />
                                   <div className="flex h-6 w-6 items-center justify-center rounded-[6px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
                                     <Icon className="h-3.5 w-3.5" />
                                   </div>
