@@ -586,7 +586,6 @@ export function FilesPage() {
       await invalidateCurrentListing();
       setSelectedPaths([]);
       setAnchorPath(null);
-      setFlash({ tone: "success", text: "Selection deleted." });
     },
     onError: (error) => {
       setFlash({ tone: "error", text: getErrorMessage(error, "Failed to delete selection.") });
@@ -1249,6 +1248,7 @@ export function FilesPage() {
                                 onCheckedChange={(checked) => toggleVisibleSelection(checked === true)}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={(event) => event.stopPropagation()}
+                                className="relative after:absolute after:-inset-2 after:content-['']"
                               />
                               <span>Name</span>
                             </div>
@@ -1291,21 +1291,30 @@ export function FilesPage() {
                                 item.type === "directory" ? handleDirectoryDrop(item.path, event) : undefined
                               }
                             >
-                              <td className="px-2.5 py-2">
+                              <td className="relative px-2.5 py-2">
+                                <button
+                                  type="button"
+                                  role="checkbox"
+                                  aria-checked={isSelected}
+                                  aria-label={`Select ${item.name}`}
+                                  className="absolute inset-y-0 left-0 z-10 w-10 cursor-pointer"
+                                  onMouseDown={(event) => event.stopPropagation()}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    if (event.shiftKey) {
+                                      selectRangeToItem(item.path);
+                                      return;
+                                    }
+                                    toggleItemSelection(item.path, !isSelected);
+                                  }}
+                                  onDoubleClick={(event) => event.stopPropagation()}
+                                />
                                 <div className="flex items-center gap-2">
                                   <Checkbox
-                                    aria-label={`Select ${item.name}`}
                                     checked={isSelected}
-                                    onCheckedChange={(checked) => toggleItemSelection(item.path, checked === true)}
-                                    onMouseDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      if (event.shiftKey) {
-                                        event.preventDefault();
-                                        selectRangeToItem(item.path);
-                                      }
-                                    }}
-                                    onDoubleClick={(event) => event.stopPropagation()}
+                                    aria-hidden="true"
+                                    tabIndex={-1}
+                                    className="pointer-events-none"
                                   />
                                   <div className="flex h-6 w-6 items-center justify-center rounded-[6px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
                                     <Icon className="h-3.5 w-3.5" />
