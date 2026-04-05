@@ -20,6 +20,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const phpErrorReportingOptions = [
+  { value: "E_ALL", label: "E_ALL" },
+  { value: "E_ALL & ~E_NOTICE", label: "E_ALL & ~E_NOTICE" },
+  { value: "E_ALL & ~E_DEPRECATED", label: "E_ALL & ~E_DEPRECATED" },
+  {
+    value: "E_ALL & ~E_NOTICE & ~E_DEPRECATED",
+    label: "E_ALL & ~E_NOTICE & ~E_DEPRECATED",
+  },
+] as const;
+
 type DomainPHPDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -261,19 +271,6 @@ export function DomainPHPDialog({
             <FieldError message={fieldErrors.default_socket_timeout} />
           </div>
 
-          <div className="space-y-2 md:col-span-2">
-            <Label htmlFor="php_error_reporting">Error reporting</Label>
-            <Input
-              id="php_error_reporting"
-              value={form.error_reporting ?? ""}
-              onChange={(event) => onFieldChange("error_reporting", event.target.value)}
-              placeholder="E_ALL & ~E_NOTICE"
-              disabled={busy}
-              aria-invalid={fieldErrors.error_reporting ? true : undefined}
-            />
-            <FieldError message={fieldErrors.error_reporting} />
-          </div>
-
           <div className="space-y-2">
             <Label htmlFor="php_display_errors">Display errors</Label>
             <Select
@@ -294,6 +291,31 @@ export function DomainPHPDialog({
               </SelectContent>
             </Select>
             <FieldError message={fieldErrors.display_errors} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_error_reporting">Error reporting</Label>
+            <Select
+              value={form.error_reporting ?? ""}
+              onValueChange={(value) => onFieldChange("error_reporting", value)}
+              disabled={busy}
+            >
+              <SelectTrigger
+                id="php_error_reporting"
+                className="w-full"
+                aria-invalid={fieldErrors.error_reporting ? true : undefined}
+              >
+                <SelectValue placeholder="Select error reporting" />
+              </SelectTrigger>
+              <SelectContent>
+                {phpErrorReportingOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FieldError message={fieldErrors.error_reporting} />
           </div>
         </section>
 

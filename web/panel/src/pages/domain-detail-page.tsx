@@ -86,6 +86,23 @@ const initialGitHubForm: GitHubFormState = {
   autoDeployOnPush: false,
 };
 
+const defaultPHPErrorReporting = "E_ALL & ~E_NOTICE & ~E_DEPRECATED";
+const phpErrorReportingOptions = new Set([
+  "E_ALL",
+  "E_ALL & ~E_NOTICE",
+  "E_ALL & ~E_DEPRECATED",
+  defaultPHPErrorReporting,
+]);
+
+function normalizePHPErrorReporting(value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized || !phpErrorReportingOptions.has(normalized)) {
+    return defaultPHPErrorReporting;
+  }
+
+  return normalized;
+}
+
 function toGitHubFormState(domain: DomainRecord | null): GitHubFormState {
   if (!domain?.github_integration) {
     return initialGitHubForm;
@@ -113,7 +130,7 @@ const initialPHPSettings: PHPSettings = {
   upload_max_filesize: "",
   max_file_uploads: "",
   default_socket_timeout: "",
-  error_reporting: "",
+  error_reporting: defaultPHPErrorReporting,
   display_errors: "Off",
 };
 
@@ -132,7 +149,7 @@ function toPHPSettingsForm(
         upload_max_filesize: statusSettings.upload_max_filesize ?? "",
         max_file_uploads: statusSettings.max_file_uploads ?? "",
         default_socket_timeout: statusSettings.default_socket_timeout ?? "",
-        error_reporting: statusSettings.error_reporting ?? "",
+        error_reporting: normalizePHPErrorReporting(statusSettings.error_reporting),
         display_errors: statusSettings.display_errors ?? "Off",
       }
     : initialPHPSettings;
@@ -151,7 +168,9 @@ function toPHPSettingsForm(
     max_file_uploads: overrides.max_file_uploads || base.max_file_uploads,
     default_socket_timeout:
       overrides.default_socket_timeout || base.default_socket_timeout,
-    error_reporting: overrides.error_reporting || base.error_reporting,
+    error_reporting: normalizePHPErrorReporting(
+      overrides.error_reporting || base.error_reporting,
+    ),
     display_errors: overrides.display_errors || base.display_errors,
   };
 }
