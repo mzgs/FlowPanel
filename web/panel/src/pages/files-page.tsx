@@ -22,6 +22,7 @@ import {
   List,
   RefreshCw,
   Search,
+  Trash2,
   Upload,
 } from "@/components/icons/tabler-icons";
 import {
@@ -1144,6 +1145,28 @@ export function FilesPage() {
                       >
                         <Check className="h-4 w-4" />
                         <span className="sr-only">Paste</span>
+                      </Button>
+                    ) : null}
+                    {selectedPaths.length > 0 ? (
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        className="size-8"
+                        aria-label={
+                          selectedPaths.length > 1
+                            ? `Delete ${selectedPaths.length} selected items`
+                            : "Delete selected item"
+                        }
+                        title={
+                          selectedPaths.length > 1
+                            ? `Delete ${selectedPaths.length} selected items`
+                            : "Delete selected item"
+                        }
+                        onClick={handleDeleteSelection}
+                        disabled={deleteMutation.isPending}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="sr-only">Delete selection</span>
                       </Button>
                     ) : null}
                   </div>
