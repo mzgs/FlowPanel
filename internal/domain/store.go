@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS domains (
     hostname TEXT NOT NULL UNIQUE,
     kind TEXT NOT NULL,
     target TEXT NOT NULL,
+    php_settings TEXT NOT NULL DEFAULT '',
     cache_enabled INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
@@ -47,6 +49,11 @@ CREATE TABLE IF NOT EXISTS domains (
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domains ADD COLUMN cache_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("ensure domains.cache_enabled column: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domains ADD COLUMN php_settings TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("ensure domains.php_settings column: %w", err)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `
@@ -73,7 +80,7 @@ func (s *Store) List(ctx context.Context) ([]Record, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, hostname, kind, target, cache_enabled, created_at
+SELECT id, hostname, kind, target, php_settings, cache_enabled, created_at
 FROM domains
 ORDER BY created_at DESC, id DESC
 `)
@@ -87,11 +94,12 @@ ORDER BY created_at DESC, id DESC
 		var (
 			record          Record
 			kind            string
+			phpSettingsJSON string
 			cacheEnabledInt int64
 			createdAtUnix   int64
 		)
 
-		if err := rows.Scan(&record.ID, &record.Hostname, &kind, &record.Target, &cacheEnabledInt, &createdAtUnix); err != nil {
+		if err := rows.Scan(&record.ID, &record.Hostname, &kind, &record.Target, &phpSettingsJSON, &cacheEnabledInt, &createdAtUnix); err != nil {
 			return nil, fmt.Errorf("scan domain row: %w", err)
 		}
 
@@ -102,6 +110,9 @@ ORDER BY created_at DESC, id DESC
 		}
 
 		record.CreatedAt = time.Unix(0, createdAtUnix).UTC()
+		if err := decodePHPSettings(phpSettingsJSON, &record); err != nil {
+			return nil, fmt.Errorf("decode php settings for %q: %w", record.Hostname, err)
+		}
 		records = append(records, record)
 	}
 
@@ -118,9 +129,9 @@ func (s *Store) Insert(ctx context.Context, record Record) error {
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO domains (id, hostname, kind, target, cache_enabled, created_at)
-VALUES (?, ?, ?, ?, ?, ?)
-`, record.ID, record.Hostname, string(record.Kind), record.Target, boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano())
+INSERT INTO domains (id, hostname, kind, target, php_settings, cache_enabled, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`, record.ID, record.Hostname, string(record.Kind), record.Target, encodePHPSettings(record), boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano())
 	if err == nil {
 		return nil
 	}
@@ -190,9 +201,9 @@ func (s *Store) Update(ctx context.Context, record Record) error {
 
 	result, err := s.db.ExecContext(ctx, `
 UPDATE domains
-SET hostname = ?, kind = ?, target = ?, cache_enabled = ?, created_at = ?
+SET hostname = ?, kind = ?, target = ?, php_settings = ?, cache_enabled = ?, created_at = ?
 WHERE id = ?
-`, record.Hostname, string(record.Kind), record.Target, boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano(), record.ID)
+`, record.Hostname, string(record.Kind), record.Target, encodePHPSettings(record), boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano(), record.ID)
 	if err == nil {
 		rowsAffected, rowsErr := result.RowsAffected()
 		if rowsErr != nil {
@@ -283,4 +294,27 @@ func boolToInt(value bool) int {
 	}
 
 	return 0
+}
+
+func encodePHPSettings(record Record) string {
+	if record.PHPSettings == (Record{}.PHPSettings) {
+		return ""
+	}
+
+	payload, err := json.Marshal(record.PHPSettings)
+	if err != nil {
+		return ""
+	}
+
+	return string(payload)
+}
+
+func decodePHPSettings(raw string, record *Record) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		record.PHPSettings = record.PHPSettings
+		return nil
+	}
+
+	return json.Unmarshal([]byte(raw), &record.PHPSettings)
 }

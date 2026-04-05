@@ -1,0 +1,444 @@
+import { type DomainRecord } from "@/api/domains";
+import { type PHPSettings, type PHPStatus } from "@/api/php";
+import { LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+type DomainPHPDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  domain: DomainRecord;
+  status: PHPStatus | null;
+  form: PHPSettings;
+  fieldErrors: Record<string, string>;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  dirty: boolean;
+  runningAction: "install" | "start" | "refresh" | null;
+  onFieldChange: (field: keyof PHPSettings, value: string) => void;
+  onRefresh: () => void;
+  onInstall: () => void;
+  onStart: () => void;
+  onSave: () => void;
+};
+
+function FieldError({ message }: { message?: string }) {
+  if (!message) {
+    return null;
+  }
+
+  return <p className="text-sm text-destructive">{message}</p>;
+}
+
+function extractVersionNumber(value: string, pattern: RegExp) {
+  const match = value.match(pattern);
+  return match?.[1] ?? null;
+}
+
+function formatPHPVersion(status: PHPStatus | null) {
+  if (!status?.php_installed) {
+    return "Not installed";
+  }
+
+  const version = status.php_version?.trim();
+  if (!version) {
+    return "Installed";
+  }
+
+  return extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version;
+}
+
+function getPHPServiceLabel(status: PHPStatus | null) {
+  if (!status) {
+    return "Unavailable";
+  }
+
+  if (status.service_running) {
+    return "Running";
+  }
+
+  if (status.fpm_installed) {
+    return "Installed";
+  }
+
+  return "Not installed";
+}
+
+export function DomainPHPDialog({
+  open,
+  onOpenChange,
+  domain,
+  status,
+  form,
+  fieldErrors,
+  loading,
+  saving,
+  error,
+  dirty,
+  runningAction,
+  onFieldChange,
+  onRefresh,
+  onInstall,
+  onStart,
+  onSave,
+}: DomainPHPDialogProps) {
+  const busy = saving || runningAction !== null;
+  const installDisabled = busy;
+  const startDisabled = busy || !status?.start_available;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-4 sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{domain.hostname} PHP</DialogTitle>
+          <DialogDescription>
+            Inspect the PHP runtime and apply PHP overrides only to this domain.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onRefresh}
+            disabled={busy}
+          >
+            {runningAction === "refresh" ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Refresh
+          </Button>
+          {status?.install_available ? (
+            <Button type="button" onClick={onInstall} disabled={installDisabled}>
+              {runningAction === "install" ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : null}
+              {status.install_label ?? "Install PHP"}
+            </Button>
+          ) : null}
+          {status?.start_available ? (
+            <Button type="button" onClick={onStart} disabled={startDisabled}>
+              {runningAction === "start" ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : null}
+              {status.start_label ?? "Start PHP-FPM"}
+            </Button>
+            ) : null}
+          </div>
+
+        <section className="grid gap-4 border-b border-[var(--app-border)] pb-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="php_max_execution_time">Max execution time</Label>
+            <Input
+              id="php_max_execution_time"
+              value={form.max_execution_time ?? ""}
+              onChange={(event) => onFieldChange("max_execution_time", event.target.value)}
+              placeholder="60"
+              disabled={busy}
+              aria-invalid={fieldErrors.max_execution_time ? true : undefined}
+            />
+            <p className="text-xs text-[var(--app-text-muted)]">Seconds. Use `0` for unlimited.</p>
+            <FieldError message={fieldErrors.max_execution_time} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_max_input_time">Max input time</Label>
+            <Input
+              id="php_max_input_time"
+              value={form.max_input_time ?? ""}
+              onChange={(event) => onFieldChange("max_input_time", event.target.value)}
+              placeholder="60"
+              disabled={busy}
+              aria-invalid={fieldErrors.max_input_time ? true : undefined}
+            />
+            <p className="text-xs text-[var(--app-text-muted)]">Seconds. Use `-1` for unlimited.</p>
+            <FieldError message={fieldErrors.max_input_time} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_memory_limit">Memory limit</Label>
+            <Input
+              id="php_memory_limit"
+              value={form.memory_limit ?? ""}
+              onChange={(event) => onFieldChange("memory_limit", event.target.value)}
+              placeholder="256M"
+              disabled={busy}
+              aria-invalid={fieldErrors.memory_limit ? true : undefined}
+            />
+            <FieldError message={fieldErrors.memory_limit} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_post_max_size">Post max size</Label>
+            <Input
+              id="php_post_max_size"
+              value={form.post_max_size ?? ""}
+              onChange={(event) => onFieldChange("post_max_size", event.target.value)}
+              placeholder="64M"
+              disabled={busy}
+              aria-invalid={fieldErrors.post_max_size ? true : undefined}
+            />
+            <FieldError message={fieldErrors.post_max_size} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_file_uploads">File uploads</Label>
+            <Select
+              value={form.file_uploads ?? "On"}
+              onValueChange={(value) => onFieldChange("file_uploads", value)}
+              disabled={busy}
+            >
+              <SelectTrigger
+                id="php_file_uploads"
+                className="w-full"
+                aria-invalid={fieldErrors.file_uploads ? true : undefined}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="On">On</SelectItem>
+                <SelectItem value="Off">Off</SelectItem>
+              </SelectContent>
+            </Select>
+            <FieldError message={fieldErrors.file_uploads} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_upload_max_filesize">Upload max filesize</Label>
+            <Input
+              id="php_upload_max_filesize"
+              value={form.upload_max_filesize ?? ""}
+              onChange={(event) => onFieldChange("upload_max_filesize", event.target.value)}
+              placeholder="64M"
+              disabled={busy}
+              aria-invalid={fieldErrors.upload_max_filesize ? true : undefined}
+            />
+            <FieldError message={fieldErrors.upload_max_filesize} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_max_file_uploads">Max file uploads</Label>
+            <Input
+              id="php_max_file_uploads"
+              value={form.max_file_uploads ?? ""}
+              onChange={(event) => onFieldChange("max_file_uploads", event.target.value)}
+              placeholder="20"
+              disabled={busy}
+              aria-invalid={fieldErrors.max_file_uploads ? true : undefined}
+            />
+            <FieldError message={fieldErrors.max_file_uploads} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_default_socket_timeout">Default socket timeout</Label>
+            <Input
+              id="php_default_socket_timeout"
+              value={form.default_socket_timeout ?? ""}
+              onChange={(event) => onFieldChange("default_socket_timeout", event.target.value)}
+              placeholder="60"
+              disabled={busy}
+              aria-invalid={fieldErrors.default_socket_timeout ? true : undefined}
+            />
+            <FieldError message={fieldErrors.default_socket_timeout} />
+          </div>
+
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="php_error_reporting">Error reporting</Label>
+            <Input
+              id="php_error_reporting"
+              value={form.error_reporting ?? ""}
+              onChange={(event) => onFieldChange("error_reporting", event.target.value)}
+              placeholder="E_ALL & ~E_NOTICE"
+              disabled={busy}
+              aria-invalid={fieldErrors.error_reporting ? true : undefined}
+            />
+            <FieldError message={fieldErrors.error_reporting} />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php_display_errors">Display errors</Label>
+            <Select
+              value={form.display_errors ?? "Off"}
+              onValueChange={(value) => onFieldChange("display_errors", value)}
+              disabled={busy}
+            >
+              <SelectTrigger
+                id="php_display_errors"
+                className="w-full"
+                aria-invalid={fieldErrors.display_errors ? true : undefined}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="On">On</SelectItem>
+                <SelectItem value="Off">Off</SelectItem>
+              </SelectContent>
+            </Select>
+            <FieldError message={fieldErrors.display_errors} />
+          </div>
+        </section>
+
+        {loading ? (
+          <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-6 text-sm text-[var(--app-text-muted)]">
+            <div className="flex items-center gap-2">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              Loading PHP settings...
+            </div>
+          </div>
+        ) : (
+          <>
+            {error ? (
+              <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+                {error}
+              </div>
+            ) : null}
+
+            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+                <div className="text-xs text-[var(--app-text-muted)]">PHP version</div>
+                <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
+                  {formatPHPVersion(status)}
+                </div>
+              </div>
+              <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+                <div className="text-xs text-[var(--app-text-muted)]">PHP-FPM</div>
+                <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
+                  {getPHPServiceLabel(status)}
+                </div>
+              </div>
+              <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+                <div className="text-xs text-[var(--app-text-muted)]">Platform</div>
+                <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
+                  {status?.platform || "Unknown"}
+                </div>
+              </div>
+              <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+                <div className="text-xs text-[var(--app-text-muted)]">State</div>
+                <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
+                  {status?.message || "Unavailable"}
+                </div>
+              </div>
+            </section>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+                <div className="border-b border-[var(--app-border)] px-4 py-3">
+                  <h3 className="text-sm font-semibold text-[var(--app-text)]">Runtime</h3>
+                </div>
+                <dl className="space-y-3 px-4 py-4 text-sm">
+                  <div>
+                    <dt className="text-[var(--app-text-muted)]">PHP binary</dt>
+                    <dd className="mt-1 break-all font-medium text-[var(--app-text)]">
+                      {status?.php_path || "Unavailable"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[var(--app-text-muted)]">Package manager</dt>
+                    <dd className="mt-1 font-medium text-[var(--app-text)]">
+                      {status?.package_manager || "Unavailable"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[var(--app-text-muted)]">Domain type</dt>
+                    <dd className="mt-1 font-medium text-[var(--app-text)]">
+                      {domain.kind}
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+                <div className="border-b border-[var(--app-border)] px-4 py-3">
+                  <h3 className="text-sm font-semibold text-[var(--app-text)]">PHP-FPM</h3>
+                </div>
+                <dl className="space-y-3 px-4 py-4 text-sm">
+                  <div>
+                    <dt className="text-[var(--app-text-muted)]">Service status</dt>
+                    <dd className="mt-1 font-medium text-[var(--app-text)]">
+                      {status?.service_running ? "Running" : "Stopped"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[var(--app-text-muted)]">FPM binary</dt>
+                    <dd className="mt-1 break-all font-medium text-[var(--app-text)]">
+                      {status?.fpm_path || "Unavailable"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[var(--app-text-muted)]">Listen address</dt>
+                    <dd className="mt-1 break-all font-medium text-[var(--app-text)]">
+                      {status?.listen_address || "Unavailable"}
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+            </div>
+
+            {(status?.managed_config_file || status?.loaded_config_file) ? (
+              <section className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
+                  <div className="text-xs text-[var(--app-text-muted)]">Managed config</div>
+                  <div className="mt-1 break-all text-sm font-medium text-[var(--app-text)]">
+                    {status?.managed_config_file || "Unavailable"}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
+                  <div className="text-xs text-[var(--app-text-muted)]">Loaded config</div>
+                  <div className="mt-1 break-all text-sm font-medium text-[var(--app-text)]">
+                    {status?.loaded_config_file || "Unavailable"}
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            {status?.issues && status.issues.length > 0 ? (
+              <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
+                <h3 className="text-sm font-semibold text-[var(--app-text)]">Issues</h3>
+                <ul className="mt-3 space-y-2 text-sm text-[var(--app-text-muted)]">
+                  {status.issues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </>
+        )}
+
+        <DialogFooter className="border-t border-[var(--app-border)] pt-4">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Close
+          </Button>
+          <Button type="button" onClick={onSave} disabled={busy || !dirty}>
+            {saving ? (
+              <>
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                Saving
+              </>
+            ) : (
+              "Save settings"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

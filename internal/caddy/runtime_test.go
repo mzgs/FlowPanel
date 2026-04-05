@@ -231,6 +231,33 @@ func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
 	}
 }
 
+func TestBuildConfigIncludesPerDomainPHPValueOverrides(t *testing.T) {
+	cfg, _, err := buildConfig(":8080", ":9080", ":9443", ":32109", []domain.Record{
+		{
+			Hostname: "php.example.com",
+			Kind:     domain.KindPHP,
+			Target:   "/var/www/php.example.com",
+			PHPSettings: phpenv.Settings{
+				MaxExecutionTime: "300",
+				MemoryLimit:      "256M",
+				ErrorReporting:   "E_ALL & ~E_NOTICE",
+			},
+		},
+	}, &phpRouteConfig{fastCGIAddress: "127.0.0.1:9000"}, nil, nil, runtimeSyncModeStandard)
+	if err != nil {
+		t.Fatalf("build config: %v", err)
+	}
+
+	rawConfig, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+
+	if !bytes.Contains(rawConfig, []byte(`"PHP_VALUE":"max_execution_time=300\nmemory_limit=256M\nerror_reporting=E_ALL \u0026 ~E_NOTICE"`)) {
+		t.Fatalf("raw config = %s, want PHP_VALUE fastcgi env", string(rawConfig))
+	}
+}
+
 func TestBuildConfigNormalizesUnixSocketFastCGIAddress(t *testing.T) {
 	cfg, _, err := buildConfig(":8080", ":9080", ":9443", ":32109", []domain.Record{
 		{
@@ -576,6 +603,10 @@ func (fakePHPManager) Install(context.Context) error {
 
 func (fakePHPManager) Start(context.Context) error {
 	return nil
+}
+
+func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
+	return fakePHPManager{}.Status(context.Background()), nil
 }
 
 type fakePHPMyAdminManager struct{}

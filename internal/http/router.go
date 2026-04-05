@@ -29,6 +29,7 @@ import (
 	eventlog "flowpanel/internal/events"
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/phpenv"
 	"flowpanel/internal/settings"
 	"flowpanel/internal/systemstatus"
 	"flowpanel/web"
@@ -1087,10 +1088,63 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		phpSettingsUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime is not configured",
+				})
+				return
+			}
+
+			var input phpenv.UpdateSettingsInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			status, err := app.PHP.UpdateSettings(r.Context(), input)
+			if err != nil {
+				var validation phpenv.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("update php settings failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "update", "php", "php", "PHP", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			if status.Ready {
+				if err := syncDomainsWithCaddy(r.Context()); err != nil {
+					app.Logger.Error("sync domains after php settings update failed", zap.Error(err))
+					mutationEvent(r.Context(), "runtime", "update", "php", "php", "PHP", "failed", "PHP settings saved but failed to republish domains.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "php settings saved but failed to republish domains",
+					})
+					return
+				}
+			}
+
+			mutationEvent(r.Context(), "runtime", "update", "php", "php", "PHP", "succeeded", "Updated PHP settings.")
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": status,
+			})
+		})
+
 		r.Method(stdhttp.MethodGet, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodHead, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodPost, "/php/install", phpInstallHandler)
 		r.Method(stdhttp.MethodPost, "/php/start", phpStartHandler)
+		r.Method(stdhttp.MethodPut, "/php/settings", phpSettingsUpdateHandler)
 
 		phpMyAdminStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHPMyAdmin == nil {
@@ -1677,6 +1731,63 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		domainsPHPSettingsUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostname := chi.URLParam(r, "hostname")
+
+			var input phpenv.UpdateSettingsInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			record, err := app.Domains.UpdatePHPSettings(r.Context(), hostname, input)
+			if err != nil {
+				var validation domain.ValidationErrors
+				switch {
+				case errors.As(err, &validation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				case errors.Is(err, domain.ErrNotFound):
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "domain not found",
+					})
+					return
+				default:
+					app.Logger.Error("update domain php settings failed",
+						zap.String("hostname", hostname),
+						zap.Error(err),
+					)
+					mutationEvent(r.Context(), "domains", "update_php_settings", "domain", hostname, hostname, "failed", "Failed to update domain PHP settings.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to update domain php settings",
+					})
+					return
+				}
+			}
+
+			if err := syncDomainsWithCaddy(r.Context()); err != nil {
+				app.Logger.Error("sync domains after php settings update failed",
+					zap.String("hostname", hostname),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "domains", "update_php_settings", "domain", record.ID, record.Hostname, "failed", "Saved domain PHP settings but failed to republish routes.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "domain php settings saved but routes could not be refreshed",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "domains", "update_php_settings", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Updated PHP settings for %q.", record.Hostname))
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"domain": record,
+			})
+		})
+
 		domainsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			var input domain.CreateInput
 			if err := decodeJSON(r, &input); err != nil {
@@ -1940,6 +2051,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
 		r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/install", domainsComposerActionHandler("install"))
 		r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/update", domainsComposerActionHandler("update"))
+		r.Method(stdhttp.MethodPut, "/domains/{hostname}/php-settings", domainsPHPSettingsUpdateHandler)
 		r.Method(stdhttp.MethodPut, "/domains/{hostname}/github", domainsGitHubUpdateHandler)
 		r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/deploy", domainsGitHubDeployHandler)
 		r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/webhook", domainsGitHubWebhookHandler)

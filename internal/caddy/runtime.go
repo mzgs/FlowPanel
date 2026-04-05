@@ -460,7 +460,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 
 		originHandlers = append(originHandlers,
 			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
-				Routes: phpSubrouteRoutes(record.Target, phpConfig.fastCGIAddress),
+				Routes: phpSubrouteRoutes(record.Target, phpConfig.fastCGIAddress, record.PHPSettings),
 			}, "handler", "subroute", nil),
 		)
 	case domain.KindApp:
@@ -516,7 +516,7 @@ func routeForPHPMyAdmin(config phpMyAdminRouteConfig) caddyhttp.Route {
 	return caddyhttp.Route{
 		HandlersRaw: []json.RawMessage{
 			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
-				Routes: phpSubrouteRoutes(config.root, config.fastCGIAddress),
+				Routes: phpSubrouteRoutes(config.root, config.fastCGIAddress, phpenv.Settings{}),
 			}, "handler", "subroute", nil),
 		},
 		Terminal: true,
@@ -541,7 +541,7 @@ func routeForPanel(config panelRouteConfig) caddyhttp.Route {
 	}
 }
 
-func phpSubrouteRoutes(root, fastCGIAddress string) caddyhttp.RouteList {
+func phpSubrouteRoutes(root, fastCGIAddress string, settings phpenv.Settings) caddyhttp.RouteList {
 	return caddyhttp.RouteList{
 		{
 			MatcherSetsRaw: []caddyv2.ModuleMap{{
@@ -589,6 +589,7 @@ func phpSubrouteRoutes(root, fastCGIAddress string) caddyhttp.RouteList {
 					TransportRaw: caddyconfig.JSONModuleObject(fastcgi.Transport{
 						Root:      root,
 						SplitPath: []string{".php"},
+						EnvVars:   phpFastCGIEnv(settings),
 					}, "protocol", "fastcgi", nil),
 					Upstreams: reverseproxy.UpstreamPool{
 						&reverseproxy.Upstream{
@@ -607,6 +608,41 @@ func phpSubrouteRoutes(root, fastCGIAddress string) caddyhttp.RouteList {
 			Terminal: true,
 		},
 	}
+}
+
+func phpFastCGIEnv(settings phpenv.Settings) map[string]string {
+	phpValue := phpSettingsValue(settings)
+	if phpValue == "" {
+		return nil
+	}
+
+	return map[string]string{
+		"PHP_VALUE": phpValue,
+	}
+}
+
+func phpSettingsValue(settings phpenv.Settings) string {
+	lines := make([]string, 0, 10)
+	appendSetting := func(name, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		lines = append(lines, fmt.Sprintf("%s=%s", name, value))
+	}
+
+	appendSetting("max_execution_time", settings.MaxExecutionTime)
+	appendSetting("max_input_time", settings.MaxInputTime)
+	appendSetting("memory_limit", settings.MemoryLimit)
+	appendSetting("post_max_size", settings.PostMaxSize)
+	appendSetting("file_uploads", settings.FileUploads)
+	appendSetting("upload_max_filesize", settings.UploadMaxFilesize)
+	appendSetting("max_file_uploads", settings.MaxFileUploads)
+	appendSetting("default_socket_timeout", settings.DefaultSocketTimeout)
+	appendSetting("error_reporting", settings.ErrorReporting)
+	appendSetting("display_errors", settings.DisplayErrors)
+
+	return strings.Join(lines, "\n")
 }
 
 func fastCGIDialAddress(address string) string {

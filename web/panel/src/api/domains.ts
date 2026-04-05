@@ -1,3 +1,5 @@
+import { type PHPSettings } from "@/api/php";
+
 export type DomainKind = "Static site" | "Php site" | "App" | "Reverse proxy";
 
 export type DomainRecord = {
@@ -5,6 +7,7 @@ export type DomainRecord = {
   hostname: string;
   kind: DomainKind;
   target: string;
+  php_settings: PHPSettings;
   github_integration?: DomainGitHubIntegration | null;
   cache_enabled: boolean;
   created_at: string;
@@ -40,6 +43,19 @@ export type UpdateDomainInput = {
 export type UpdateDomainGitHubIntegrationInput = {
   repository_url: string;
   auto_deploy_on_push: boolean;
+};
+
+export type UpdateDomainPHPSettingsInput = {
+  max_execution_time: string;
+  max_input_time: string;
+  memory_limit: string;
+  post_max_size: string;
+  file_uploads: string;
+  upload_max_filesize: string;
+  max_file_uploads: string;
+  default_socket_timeout: string;
+  error_reporting: string;
+  display_errors: string;
 };
 
 export type DomainGitHubDeployResult = {
@@ -144,6 +160,22 @@ export async function updateDomainGitHubIntegration(
   });
 
   return readDomainMutationResponse(response, "save github integration");
+}
+
+export async function updateDomainPHPSettings(
+  hostname: string,
+  input: UpdateDomainPHPSettingsInput,
+): Promise<DomainRecord> {
+  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/php-settings`, {
+    method: "PUT",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return readDomainMutationResponse(response, "save php settings");
 }
 
 export async function deployDomainGitHubIntegration(

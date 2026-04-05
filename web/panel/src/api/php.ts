@@ -1,3 +1,16 @@
+export type PHPSettings = {
+  max_execution_time?: string;
+  max_input_time?: string;
+  memory_limit?: string;
+  post_max_size?: string;
+  file_uploads?: string;
+  upload_max_filesize?: string;
+  max_file_uploads?: string;
+  default_socket_timeout?: string;
+  error_reporting?: string;
+  display_errors?: string;
+};
+
 export type PHPStatus = {
   platform: string;
   package_manager?: string;
@@ -16,10 +29,31 @@ export type PHPStatus = {
   install_label?: string;
   start_available: boolean;
   start_label?: string;
+  loaded_config_file?: string;
+  scan_dir?: string;
+  managed_config_file?: string;
+  settings: PHPSettings;
 };
 
 type PHPStatusPayload = {
   php: PHPStatus;
+};
+
+export type UpdatePHPSettingsInput = {
+  max_execution_time: string;
+  max_input_time: string;
+  memory_limit: string;
+  post_max_size: string;
+  file_uploads: string;
+  upload_max_filesize: string;
+  max_file_uploads: string;
+  default_socket_timeout: string;
+  error_reporting: string;
+  display_errors: string;
+};
+
+export type PHPApiError = Error & {
+  fieldErrors?: Record<string, string>;
 };
 
 async function parsePHPResponse(response: Response): Promise<PHPStatus> {
@@ -66,4 +100,43 @@ export async function startPHP(): Promise<PHPStatus> {
   });
 
   return parsePHPResponse(response);
+}
+
+export async function updatePHPSettings(
+  input: UpdatePHPSettingsInput,
+): Promise<PHPStatus> {
+  const response = await fetch("/api/php/settings", {
+    method: "PUT",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (response.ok) {
+    return parsePHPResponse(response);
+  }
+
+  let message = `php settings request failed with status ${response.status}`;
+  let fieldErrors: Record<string, string> | undefined;
+
+  try {
+    const payload = (await response.json()) as {
+      error?: unknown;
+      field_errors?: unknown;
+    };
+    if (typeof payload.error === "string" && payload.error) {
+      message = payload.error;
+    }
+    if (payload.field_errors && typeof payload.field_errors === "object") {
+      fieldErrors = payload.field_errors as Record<string, string>;
+    }
+  } catch {
+    // Keep the default message when the payload is not JSON.
+  }
+
+  const error = new Error(message) as PHPApiError;
+  error.fieldErrors = fieldErrors;
+  throw error;
 }

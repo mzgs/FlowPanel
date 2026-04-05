@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"flowpanel/internal/db"
+	"flowpanel/internal/phpenv"
 )
 
 type previewGeneratorFunc func(ctx context.Context, targetURL string) ([]byte, error)
@@ -375,6 +376,68 @@ func TestLoadHydratesLogPathsForPersistedDomains(t *testing.T) {
 	}
 	if records[0].Logs.Error != filepath.Join(expectedLogDir, "error.log") {
 		t.Fatalf("error log path = %q, want %q", records[0].Logs.Error, filepath.Join(expectedLogDir, "error.log"))
+	}
+}
+
+func TestUpdatePHPSettingsPersistsDomain(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	store := NewStore(conn)
+	if err := store.Ensure(ctx); err != nil {
+		t.Fatalf("ensure store: %v", err)
+	}
+
+	service := newService(t.TempDir(), store)
+	record, err := service.Create(ctx, CreateInput{
+		Hostname: "php.example.com",
+		Kind:     KindPHP,
+	})
+	if err != nil {
+		t.Fatalf("create php domain: %v", err)
+	}
+
+	updated, err := service.UpdatePHPSettings(ctx, record.Hostname, phpenv.UpdateSettingsInput{
+		MaxExecutionTime:     "300",
+		MaxInputTime:         "60",
+		MemoryLimit:          "256M",
+		PostMaxSize:          "64M",
+		FileUploads:          "On",
+		UploadMaxFilesize:    "64M",
+		MaxFileUploads:       "20",
+		DefaultSocketTimeout: "60",
+		ErrorReporting:       "E_ALL & ~E_NOTICE",
+		DisplayErrors:        "Off",
+	})
+	if err != nil {
+		t.Fatalf("update php settings: %v", err)
+	}
+
+	if updated.PHPSettings.MaxExecutionTime != "300" {
+		t.Fatalf("max_execution_time = %q, want 300", updated.PHPSettings.MaxExecutionTime)
+	}
+	if updated.PHPSettings.ErrorReporting != "E_ALL & ~E_NOTICE" {
+		t.Fatalf("error_reporting = %q, want symbolic value", updated.PHPSettings.ErrorReporting)
+	}
+
+	records, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("list store domains: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("persisted domain count = %d, want 1", len(records))
+	}
+	if records[0].PHPSettings.MemoryLimit != "256M" {
+		t.Fatalf("persisted memory_limit = %q, want 256M", records[0].PHPSettings.MemoryLimit)
+	}
+	if records[0].PHPSettings.DisplayErrors != "Off" {
+		t.Fatalf("persisted display_errors = %q, want Off", records[0].PHPSettings.DisplayErrors)
 	}
 }
 

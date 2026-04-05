@@ -12,6 +12,8 @@ import {
   fetchDomainPreview,
   fetchDomains,
   getDomainSiteUrl,
+  updateDomainPHPSettings,
+  type DomainApiError,
   type DomainRecord,
   updateDomainGitHubIntegration,
 } from "@/api/domains";
@@ -20,6 +22,13 @@ import {
   fetchMariaDBDatabases,
   type MariaDBDatabase,
 } from "@/api/mariadb";
+import {
+  fetchPHPStatus,
+  installPHP,
+  startPHP,
+  type PHPSettings,
+  type PHPStatus,
+} from "@/api/php";
 import {
   Clock,
   Copy,
@@ -48,6 +57,7 @@ import {
   type ComposerPackage,
 } from "@/components/domain-composer-dialog";
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
+import { DomainPHPDialog } from "@/components/domain-php-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -91,6 +101,73 @@ function sameGitHubFormState(left: GitHubFormState, right: GitHubFormState) {
   return (
     left.repositoryUrl === right.repositoryUrl &&
     left.autoDeployOnPush === right.autoDeployOnPush
+  );
+}
+
+const initialPHPSettings: PHPSettings = {
+  max_execution_time: "",
+  max_input_time: "",
+  memory_limit: "",
+  post_max_size: "",
+  file_uploads: "On",
+  upload_max_filesize: "",
+  max_file_uploads: "",
+  default_socket_timeout: "",
+  error_reporting: "",
+  display_errors: "Off",
+};
+
+function toPHPSettingsForm(
+  status: PHPStatus | null,
+  overrides?: PHPSettings | null,
+): PHPSettings {
+  const statusSettings = status?.settings ?? {};
+  const base = status
+    ? {
+        max_execution_time: statusSettings.max_execution_time ?? "",
+        max_input_time: statusSettings.max_input_time ?? "",
+        memory_limit: statusSettings.memory_limit ?? "",
+        post_max_size: statusSettings.post_max_size ?? "",
+        file_uploads: statusSettings.file_uploads ?? "On",
+        upload_max_filesize: statusSettings.upload_max_filesize ?? "",
+        max_file_uploads: statusSettings.max_file_uploads ?? "",
+        default_socket_timeout: statusSettings.default_socket_timeout ?? "",
+        error_reporting: statusSettings.error_reporting ?? "",
+        display_errors: statusSettings.display_errors ?? "Off",
+      }
+    : initialPHPSettings;
+
+  if (!overrides) {
+    return base;
+  }
+
+  return {
+    max_execution_time: overrides.max_execution_time || base.max_execution_time,
+    max_input_time: overrides.max_input_time || base.max_input_time,
+    memory_limit: overrides.memory_limit || base.memory_limit,
+    post_max_size: overrides.post_max_size || base.post_max_size,
+    file_uploads: overrides.file_uploads || base.file_uploads,
+    upload_max_filesize: overrides.upload_max_filesize || base.upload_max_filesize,
+    max_file_uploads: overrides.max_file_uploads || base.max_file_uploads,
+    default_socket_timeout:
+      overrides.default_socket_timeout || base.default_socket_timeout,
+    error_reporting: overrides.error_reporting || base.error_reporting,
+    display_errors: overrides.display_errors || base.display_errors,
+  };
+}
+
+function samePHPSettings(left: PHPSettings, right: PHPSettings) {
+  return (
+    left.max_execution_time === right.max_execution_time &&
+    left.max_input_time === right.max_input_time &&
+    left.memory_limit === right.memory_limit &&
+    left.post_max_size === right.post_max_size &&
+    left.file_uploads === right.file_uploads &&
+    left.upload_max_filesize === right.upload_max_filesize &&
+    left.max_file_uploads === right.max_file_uploads &&
+    left.default_socket_timeout === right.default_socket_timeout &&
+    left.error_reporting === right.error_reporting &&
+    left.display_errors === right.display_errors
   );
 }
 
@@ -289,6 +366,7 @@ export function DomainDetailPage() {
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [composerDialogOpen, setComposerDialogOpen] = useState(false);
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
+  const [phpDialogOpen, setPHPDialogOpen] = useState(false);
   const [composerHasManifest, setComposerHasManifest] = useState(false);
   const [composerPackages, setComposerPackages] = useState<ComposerPackage[]>([]);
   const [composerLoading, setComposerLoading] = useState(false);
@@ -322,6 +400,16 @@ export function DomainDetailPage() {
   );
   const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
+  const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
+  const [phpForm, setPHPForm] = useState<PHPSettings>(initialPHPSettings);
+  const [savedPHPForm, setSavedPHPForm] = useState<PHPSettings>(initialPHPSettings);
+  const [phpFieldErrors, setPHPFieldErrors] = useState<Record<string, string>>({});
+  const [phpLoading, setPHPLoading] = useState(false);
+  const [phpSaving, setPHPSaving] = useState(false);
+  const [phpError, setPHPError] = useState<string | null>(null);
+  const [phpRunningAction, setPHPRunningAction] = useState<
+    "install" | "start" | "refresh" | null
+  >(null);
   const createdBackupTimeoutRef = useRef<number | null>(null);
   const restoredBackupTimeoutRef = useRef<number | null>(null);
   const siteUrl = domain ? getDomainSiteUrl(domain.hostname) : "";
@@ -339,6 +427,7 @@ export function DomainDetailPage() {
     setBackupDialogOpen(false);
     setComposerDialogOpen(false);
     setGitHubDialogOpen(false);
+    setPHPDialogOpen(false);
     setComposerHasManifest(false);
     setComposerPackages([]);
     setComposerLoading(false);
@@ -362,6 +451,14 @@ export function DomainDetailPage() {
     setPreviewErrorMessage(null);
     setPreviewRefreshing(false);
     setPreviewRefreshToken(0);
+    setPHPStatus(null);
+    setPHPForm(initialPHPSettings);
+    setSavedPHPForm(initialPHPSettings);
+    setPHPFieldErrors({});
+    setPHPLoading(false);
+    setPHPSaving(false);
+    setPHPError(null);
+    setPHPRunningAction(null);
 
     async function loadDomain() {
       const [domainsResult, backupsResult, databasesResult] = await Promise.allSettled([
@@ -501,6 +598,45 @@ export function DomainDetailPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!phpDialogOpen || domain?.kind !== "Php site") {
+      return;
+    }
+
+    let active = true;
+    setPHPLoading(true);
+    setPHPError(null);
+
+    async function loadPHPStatus() {
+      try {
+        const nextStatus = await fetchPHPStatus();
+        if (!active) {
+          return;
+        }
+        setPHPStatus(nextStatus);
+        const nextForm = toPHPSettingsForm(nextStatus, domain?.php_settings);
+        setPHPForm(nextForm);
+        setSavedPHPForm(nextForm);
+        setPHPFieldErrors({});
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setPHPError(getErrorMessage(error, "Failed to load PHP settings."));
+      } finally {
+        if (active) {
+          setPHPLoading(false);
+        }
+      }
+    }
+
+    void loadPHPStatus();
+
+    return () => {
+      active = false;
+    };
+  }, [domain?.hostname, domain?.kind, domain?.php_settings, phpDialogOpen]);
+
   const filesPath = domain
     ? getFilesPathFromDomainTarget(domain.kind, sitesBasePath, domain.target)
     : null;
@@ -581,6 +717,7 @@ export function DomainDetailPage() {
     backups: databaseBackups[database.name] ?? [],
   }));
   const githubDirty = !sameGitHubFormState(githubForm, savedGitHubForm);
+  const phpDirty = !samePHPSettings(phpForm, savedPHPForm);
 
   async function handleCreateSiteBackup() {
     if (!domain || !showSiteBackups || creatingBackupTarget !== null) {
@@ -824,6 +961,106 @@ export function DomainDetailPage() {
     await saveGitHubIntegration(nextForm);
   }
 
+  async function refreshPHPSettings() {
+    setPHPRunningAction("refresh");
+    setPHPError(null);
+
+    try {
+      const nextStatus = await fetchPHPStatus();
+      setPHPStatus(nextStatus);
+      const nextForm = toPHPSettingsForm(nextStatus, domain?.php_settings);
+      setPHPForm(nextForm);
+      setSavedPHPForm(nextForm);
+      setPHPFieldErrors({});
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to refresh PHP settings.");
+      setPHPError(message);
+      toast.error(message);
+    } finally {
+      setPHPRunningAction(null);
+    }
+  }
+
+  async function handleInstallPHP() {
+    setPHPRunningAction("install");
+    setPHPError(null);
+
+    try {
+      const nextStatus = await installPHP();
+      setPHPStatus(nextStatus);
+      const nextForm = toPHPSettingsForm(nextStatus, domain?.php_settings);
+      setPHPForm(nextForm);
+      setSavedPHPForm(nextForm);
+      setPHPFieldErrors({});
+      toast.success("PHP installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install PHP.");
+      setPHPError(message);
+      toast.error(message);
+    } finally {
+      setPHPRunningAction(null);
+    }
+  }
+
+  async function handleStartPHP() {
+    setPHPRunningAction("start");
+    setPHPError(null);
+
+    try {
+      const nextStatus = await startPHP();
+      setPHPStatus(nextStatus);
+      const nextForm = toPHPSettingsForm(nextStatus, domain?.php_settings);
+      setPHPForm(nextForm);
+      setSavedPHPForm(nextForm);
+      setPHPFieldErrors({});
+      toast.success("PHP-FPM started.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to start PHP-FPM.");
+      setPHPError(message);
+      toast.error(message);
+    } finally {
+      setPHPRunningAction(null);
+    }
+  }
+
+  async function handleSavePHPSettings() {
+    if (!domain) {
+      return;
+    }
+
+    setPHPSaving(true);
+    setPHPError(null);
+    setPHPFieldErrors({});
+
+    try {
+      const updatedDomain = await updateDomainPHPSettings(domain.hostname, {
+        max_execution_time: phpForm.max_execution_time ?? "",
+        max_input_time: phpForm.max_input_time ?? "",
+        memory_limit: phpForm.memory_limit ?? "",
+        post_max_size: phpForm.post_max_size ?? "",
+        file_uploads: phpForm.file_uploads ?? "On",
+        upload_max_filesize: phpForm.upload_max_filesize ?? "",
+        max_file_uploads: phpForm.max_file_uploads ?? "",
+        default_socket_timeout: phpForm.default_socket_timeout ?? "",
+        error_reporting: phpForm.error_reporting ?? "",
+        display_errors: phpForm.display_errors ?? "Off",
+      });
+      const nextForm = toPHPSettingsForm(phpStatus, updatedDomain.php_settings);
+      setDomain(updatedDomain);
+      setPHPForm(nextForm);
+      setSavedPHPForm(nextForm);
+      toast.success("PHP settings saved.");
+    } catch (error) {
+      const phpSettingsError = error as DomainApiError;
+      setPHPFieldErrors(phpSettingsError.fieldErrors ?? {});
+      const message = phpSettingsError.message || "PHP settings could not be saved.";
+      setPHPError(message);
+      toast.error(message);
+    } finally {
+      setPHPSaving(false);
+    }
+  }
+
   return (
     <>
       <DomainBackupRestoreDialog
@@ -920,6 +1157,45 @@ export function DomainDetailPage() {
           void handleDisconnectGitHub();
         }}
       />
+      {domain ? (
+        <DomainPHPDialog
+          open={phpDialogOpen && domain.kind === "Php site"}
+          onOpenChange={setPHPDialogOpen}
+          domain={domain}
+          status={phpStatus}
+          form={phpForm}
+          fieldErrors={phpFieldErrors}
+          loading={phpLoading}
+          saving={phpSaving}
+          error={phpError}
+          dirty={phpDirty}
+          runningAction={phpRunningAction}
+          onFieldChange={(field, value) => {
+            setPHPError(null);
+            setPHPFieldErrors((current) => {
+              const next = { ...current };
+              delete next[field];
+              return next;
+            });
+            setPHPForm((current) => ({
+              ...current,
+              [field]: value,
+            }));
+          }}
+          onRefresh={() => {
+            void refreshPHPSettings();
+          }}
+          onInstall={() => {
+            void handleInstallPHP();
+          }}
+          onStart={() => {
+            void handleStartPHP();
+          }}
+          onSave={() => {
+            void handleSavePHPSettings();
+          }}
+        />
+      ) : null}
       <PageHeader
         title={
           loading ? (
@@ -1111,6 +1387,16 @@ export function DomainDetailPage() {
                     title="Dev Tools"
                     items={devToolActions}
                     onItemClick={(item) => {
+                      if (item.title === "PHP" && domain !== null) {
+                        if (domain.kind !== "Php site") {
+                          toast.error("PHP settings are available only for PHP site domains.");
+                          return;
+                        }
+
+                        setPHPDialogOpen(true);
+                        return;
+                      }
+
                       if (item.title === "PHP Composer" && domain !== null) {
                         if (domain.kind !== "Static site" && domain.kind !== "Php site") {
                           toast.error(

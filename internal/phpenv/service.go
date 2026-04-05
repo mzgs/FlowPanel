@@ -41,26 +41,63 @@ type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
 	Start(context.Context) error
+	UpdateSettings(context.Context, UpdateSettingsInput) (Status, error)
 }
 
 type Status struct {
-	Platform         string   `json:"platform"`
-	PackageManager   string   `json:"package_manager,omitempty"`
-	PHPInstalled     bool     `json:"php_installed"`
-	PHPPath          string   `json:"php_path,omitempty"`
-	PHPVersion       string   `json:"php_version,omitempty"`
-	FPMInstalled     bool     `json:"fpm_installed"`
-	FPMPath          string   `json:"fpm_path,omitempty"`
-	ListenAddress    string   `json:"listen_address,omitempty"`
-	ServiceRunning   bool     `json:"service_running"`
-	Ready            bool     `json:"ready"`
-	State            string   `json:"state"`
-	Message          string   `json:"message"`
-	Issues           []string `json:"issues,omitempty"`
-	InstallAvailable bool     `json:"install_available"`
-	InstallLabel     string   `json:"install_label,omitempty"`
-	StartAvailable   bool     `json:"start_available"`
-	StartLabel       string   `json:"start_label,omitempty"`
+	Platform          string   `json:"platform"`
+	PackageManager    string   `json:"package_manager,omitempty"`
+	PHPInstalled      bool     `json:"php_installed"`
+	PHPPath           string   `json:"php_path,omitempty"`
+	PHPVersion        string   `json:"php_version,omitempty"`
+	FPMInstalled      bool     `json:"fpm_installed"`
+	FPMPath           string   `json:"fpm_path,omitempty"`
+	ListenAddress     string   `json:"listen_address,omitempty"`
+	ServiceRunning    bool     `json:"service_running"`
+	Ready             bool     `json:"ready"`
+	State             string   `json:"state"`
+	Message           string   `json:"message"`
+	Issues            []string `json:"issues,omitempty"`
+	InstallAvailable  bool     `json:"install_available"`
+	InstallLabel      string   `json:"install_label,omitempty"`
+	StartAvailable    bool     `json:"start_available"`
+	StartLabel        string   `json:"start_label,omitempty"`
+	LoadedConfigFile  string   `json:"loaded_config_file,omitempty"`
+	ScanDir           string   `json:"scan_dir,omitempty"`
+	ManagedConfigFile string   `json:"managed_config_file,omitempty"`
+	Settings          Settings `json:"settings"`
+}
+
+type Settings struct {
+	MaxExecutionTime     string `json:"max_execution_time,omitempty"`
+	MaxInputTime         string `json:"max_input_time,omitempty"`
+	MemoryLimit          string `json:"memory_limit,omitempty"`
+	PostMaxSize          string `json:"post_max_size,omitempty"`
+	FileUploads          string `json:"file_uploads,omitempty"`
+	UploadMaxFilesize    string `json:"upload_max_filesize,omitempty"`
+	MaxFileUploads       string `json:"max_file_uploads,omitempty"`
+	DefaultSocketTimeout string `json:"default_socket_timeout,omitempty"`
+	ErrorReporting       string `json:"error_reporting,omitempty"`
+	DisplayErrors        string `json:"display_errors,omitempty"`
+}
+
+type UpdateSettingsInput struct {
+	MaxExecutionTime     string `json:"max_execution_time"`
+	MaxInputTime         string `json:"max_input_time"`
+	MemoryLimit          string `json:"memory_limit"`
+	PostMaxSize          string `json:"post_max_size"`
+	FileUploads          string `json:"file_uploads"`
+	UploadMaxFilesize    string `json:"upload_max_filesize"`
+	MaxFileUploads       string `json:"max_file_uploads"`
+	DefaultSocketTimeout string `json:"default_socket_timeout"`
+	ErrorReporting       string `json:"error_reporting"`
+	DisplayErrors        string `json:"display_errors"`
+}
+
+type ValidationErrors map[string]string
+
+func (v ValidationErrors) Error() string {
+	return "php settings validation failed"
 }
 
 type Service struct {
@@ -99,6 +136,15 @@ func (s *Service) Status(ctx context.Context) Status {
 		status.PHPPath = phpPath
 		if output, err := runInspectCommand(ctx, phpPath, "-v"); err == nil {
 			status.PHPVersion = parsePHPVersion(output)
+		} else {
+			status.Issues = append(status.Issues, err.Error())
+		}
+		configInfo, err := inspectPHPConfig(ctx, phpPath)
+		if err == nil {
+			status.LoadedConfigFile = configInfo.loadedConfigFile
+			status.ScanDir = configInfo.scanDir
+			status.ManagedConfigFile = configInfo.managedConfigFile
+			status.Settings = configInfo.settings
 		} else {
 			status.Issues = append(status.Issues, err.Error())
 		}

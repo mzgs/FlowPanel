@@ -63,3 +63,36 @@ func TestAPTInstallPackages(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizePHPErrorReportingValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "all",
+			input: "32767",
+			want:  "E_ALL",
+		},
+		{
+			name:  "all except strict",
+			input: "30719",
+			want:  "E_ALL & ~E_STRICT",
+		},
+		{
+			name:  "already symbolic",
+			input: "E_ALL & ~E_NOTICE",
+			want:  "E_ALL & ~E_NOTICE",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := normalizePHPErrorReportingValue(test.input)
+			if got != test.want {
+				t.Fatalf("normalizePHPErrorReportingValue(%q) = %q, want %q", test.input, got, test.want)
+			}
+		})
+	}
+}

@@ -76,6 +76,10 @@ func (fakePHPManager) Start(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
+	return fakePHPManager{}.Status(context.Background()), nil
+}
+
 func (fakeMariaDBManager) Status(context.Context) mariadb.Status {
 	return mariadb.Status{
 		Product:          "MariaDB",

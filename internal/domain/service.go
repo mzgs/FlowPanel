@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"flowpanel/internal/config"
+	"flowpanel/internal/phpenv"
 )
 
 const (
@@ -42,6 +43,7 @@ type Record struct {
 	Hostname     string             `json:"hostname"`
 	Kind         Kind               `json:"kind"`
 	Target       string             `json:"target"`
+	PHPSettings  phpenv.Settings    `json:"php_settings"`
 	Logs         LogPaths           `json:"logs"`
 	GitHub       *GitHubIntegration `json:"github_integration,omitempty"`
 	CacheEnabled bool               `json:"cache_enabled"`
@@ -555,6 +557,46 @@ func (s *Service) DeleteGitHubIntegration(ctx context.Context, hostname string) 
 	s.records[index] = updated
 
 	return updated, nil
+}
+
+func (s *Service) UpdatePHPSettings(
+	ctx context.Context,
+	hostname string,
+	input phpenv.UpdateSettingsInput,
+) (Record, error) {
+	if s == nil {
+		return Record{}, ErrNotFound
+	}
+
+	validation := phpenv.ValidateUpdateSettingsInput(input)
+	if len(validation) > 0 {
+		return Record{}, ValidationErrors(validation)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, record, ok := s.findRecordByHostnameLocked(hostname)
+	if !ok {
+		return Record{}, ErrNotFound
+	}
+	if record.Kind != KindPHP {
+		return Record{}, ValidationErrors{
+			"kind": "PHP settings are available only for PHP site domains.",
+		}
+	}
+
+	record.PHPSettings = phpenv.NormalizeUpdateSettingsInput(input)
+	record = s.withTransientFields(record)
+
+	if s.store != nil {
+		if err := s.store.Update(ctx, record); err != nil {
+			return Record{}, err
+		}
+	}
+
+	s.records[index] = record
+	return record, nil
 }
 
 func (s *Service) findRecordByHostnameLocked(hostname string) (int, Record, bool) {
