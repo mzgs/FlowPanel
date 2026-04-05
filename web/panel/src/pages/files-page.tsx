@@ -1041,18 +1041,6 @@ export function FilesPage() {
                       variant="secondary"
                       size="icon"
                       className="size-8"
-                      aria-label="Refresh"
-                      title="Refresh"
-                      onClick={() => listingQuery.refetch()}
-                      disabled={listingQuery.isFetching}
-                    >
-                      <RefreshCw className={cn("h-4 w-4", listingQuery.isFetching && "animate-spin")} />
-                      <span className="sr-only">Refresh</span>
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="icon"
-                      className="size-8"
                       aria-label="Up"
                       title="Up"
                       onClick={() => handleNavigate(listing?.parent_path || "")}
@@ -1060,6 +1048,18 @@ export function FilesPage() {
                     >
                       <ArrowUp className="h-4 w-4" />
                       <span className="sr-only">Up</span>
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Refresh"
+                      title="Refresh"
+                      onClick={() => listingQuery.refetch()}
+                      disabled={listingQuery.isFetching}
+                    >
+                      <RefreshCw className={cn("h-4 w-4", listingQuery.isFetching && "animate-spin")} />
+                      <span className="sr-only">Refresh</span>
                     </Button>
                     <Button
                       variant="secondary"
