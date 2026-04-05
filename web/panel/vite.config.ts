@@ -10,6 +10,12 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    proxy: {
+      "/api": "http://localhost:8080",
+      "/phpmyadmin": "http://localhost:8080",
+    },
+  },
   build: {
     outDir: path.resolve(__dirname, "../dist"),
     emptyOutDir: true,
