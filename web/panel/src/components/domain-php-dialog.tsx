@@ -1,11 +1,10 @@
 import { type DomainRecord } from "@/api/domains";
 import { type PHPSettings, type PHPStatus } from "@/api/php";
-import { LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
+import { LoaderCircle } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -41,9 +40,8 @@ type DomainPHPDialogProps = {
   saving: boolean;
   error: string | null;
   dirty: boolean;
-  runningAction: "install" | "start" | "refresh" | null;
+  runningAction: "install" | "start" | null;
   onFieldChange: (field: keyof PHPSettings, value: string) => void;
-  onRefresh: () => void;
   onInstall: () => void;
   onStart: () => void;
   onSave: () => void;
@@ -104,7 +102,6 @@ export function DomainPHPDialog({
   dirty,
   runningAction,
   onFieldChange,
-  onRefresh,
   onInstall,
   onStart,
   onSave,
@@ -118,25 +115,9 @@ export function DomainPHPDialog({
       <DialogContent className="gap-4 sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{domain.hostname} PHP</DialogTitle>
-          <DialogDescription>
-            Inspect the PHP runtime and apply PHP overrides only to this domain.
-          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onRefresh}
-            disabled={busy}
-          >
-            {runningAction === "refresh" ? (
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            Refresh
-          </Button>
           {status?.install_available ? (
             <Button type="button" onClick={onInstall} disabled={installDisabled}>
               {runningAction === "install" ? (
@@ -360,60 +341,6 @@ export function DomainPHPDialog({
                 </div>
               </div>
             </section>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-                <div className="border-b border-[var(--app-border)] px-4 py-3">
-                  <h3 className="text-sm font-semibold text-[var(--app-text)]">Runtime</h3>
-                </div>
-                <dl className="space-y-3 px-4 py-4 text-sm">
-                  <div>
-                    <dt className="text-[var(--app-text-muted)]">PHP binary</dt>
-                    <dd className="mt-1 break-all font-medium text-[var(--app-text)]">
-                      {status?.php_path || "Unavailable"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[var(--app-text-muted)]">Package manager</dt>
-                    <dd className="mt-1 font-medium text-[var(--app-text)]">
-                      {status?.package_manager || "Unavailable"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[var(--app-text-muted)]">Domain type</dt>
-                    <dd className="mt-1 font-medium text-[var(--app-text)]">
-                      {domain.kind}
-                    </dd>
-                  </div>
-                </dl>
-              </section>
-
-              <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-                <div className="border-b border-[var(--app-border)] px-4 py-3">
-                  <h3 className="text-sm font-semibold text-[var(--app-text)]">PHP-FPM</h3>
-                </div>
-                <dl className="space-y-3 px-4 py-4 text-sm">
-                  <div>
-                    <dt className="text-[var(--app-text-muted)]">Service status</dt>
-                    <dd className="mt-1 font-medium text-[var(--app-text)]">
-                      {status?.service_running ? "Running" : "Stopped"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[var(--app-text-muted)]">FPM binary</dt>
-                    <dd className="mt-1 break-all font-medium text-[var(--app-text)]">
-                      {status?.fpm_path || "Unavailable"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[var(--app-text-muted)]">Listen address</dt>
-                    <dd className="mt-1 break-all font-medium text-[var(--app-text)]">
-                      {status?.listen_address || "Unavailable"}
-                    </dd>
-                  </div>
-                </dl>
-              </section>
-            </div>
 
             {(status?.managed_config_file || status?.loaded_config_file) ? (
               <section className="grid gap-4 lg:grid-cols-2">

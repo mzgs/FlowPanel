@@ -426,9 +426,9 @@ export function DomainDetailPage() {
   const [phpLoading, setPHPLoading] = useState(false);
   const [phpSaving, setPHPSaving] = useState(false);
   const [phpError, setPHPError] = useState<string | null>(null);
-  const [phpRunningAction, setPHPRunningAction] = useState<
-    "install" | "start" | "refresh" | null
-  >(null);
+  const [phpRunningAction, setPHPRunningAction] = useState<"install" | "start" | null>(
+    null,
+  );
   const createdBackupTimeoutRef = useRef<number | null>(null);
   const restoredBackupTimeoutRef = useRef<number | null>(null);
   const siteUrl = domain ? getDomainSiteUrl(domain.hostname) : "";
@@ -980,26 +980,6 @@ export function DomainDetailPage() {
     await saveGitHubIntegration(nextForm);
   }
 
-  async function refreshPHPSettings() {
-    setPHPRunningAction("refresh");
-    setPHPError(null);
-
-    try {
-      const nextStatus = await fetchPHPStatus();
-      setPHPStatus(nextStatus);
-      const nextForm = toPHPSettingsForm(nextStatus, domain?.php_settings);
-      setPHPForm(nextForm);
-      setSavedPHPForm(nextForm);
-      setPHPFieldErrors({});
-    } catch (error) {
-      const message = getErrorMessage(error, "Failed to refresh PHP settings.");
-      setPHPError(message);
-      toast.error(message);
-    } finally {
-      setPHPRunningAction(null);
-    }
-  }
-
   async function handleInstallPHP() {
     setPHPRunningAction("install");
     setPHPError(null);
@@ -1068,6 +1048,7 @@ export function DomainDetailPage() {
       setDomain(updatedDomain);
       setPHPForm(nextForm);
       setSavedPHPForm(nextForm);
+      setPHPDialogOpen(false);
       toast.success("PHP settings saved.");
     } catch (error) {
       const phpSettingsError = error as DomainApiError;
@@ -1200,9 +1181,6 @@ export function DomainDetailPage() {
               ...current,
               [field]: value,
             }));
-          }}
-          onRefresh={() => {
-            void refreshPHPSettings();
           }}
           onInstall={() => {
             void handleInstallPHP();
