@@ -1419,7 +1419,7 @@ export function FilesPage() {
             </div>
 
             {permissionTarget?.type === "directory" ? (
-              <div className="flex items-start gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3">
+              <div className="flex items-start gap-3">
                 <Checkbox
                   id="files-dialog-permissions-recursive"
                   checked={permissionRecursive}
@@ -1437,8 +1437,8 @@ export function FilesPage() {
               </div>
             ) : null}
 
-            <DialogFooter>
-              <div className="min-w-0 truncate text-[12px] text-[var(--app-text-muted)]">
+            <DialogFooter className="sm:items-center sm:justify-between">
+              <div className="min-w-0 truncate text-left text-[12px] text-[var(--app-text-muted)] sm:mr-auto">
                 {permissionTarget?.path ?? ""}
               </div>
               <Button type="submit" disabled={permissionsMutation.isPending || !permissionInputValid}>
