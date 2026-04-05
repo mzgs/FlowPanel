@@ -1329,7 +1329,7 @@ export function FilesPage() {
               </div>
             </div>
 
-            <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_290px] md:p-5">
+            <div className="p-4 md:p-5">
               <div
                 ref={browserRef}
                 className={cn(
@@ -1408,10 +1408,10 @@ export function FilesPage() {
                     <table className="min-w-full border-collapse text-left">
                       <thead className="bg-[var(--app-surface-muted)] text-[11px] uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
                         <tr>
-                          <th className="px-4 py-3 font-medium">Name</th>
-                          <th className="px-4 py-3 font-medium">Type</th>
-                          <th className="px-4 py-3 font-medium text-right">Size</th>
-                          <th className="px-4 py-3 font-medium">Modified</th>
+                          <th className="px-2.5 py-2 font-medium">Name</th>
+                          <th className="px-2.5 py-2 font-medium">Type</th>
+                          <th className="px-2.5 py-2 font-medium text-right">Size</th>
+                          <th className="px-2.5 py-2 font-medium">Modified</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1447,24 +1447,19 @@ export function FilesPage() {
                                 item.type === "directory" ? handleDirectoryDrop(item.path, event) : undefined
                               }
                             >
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-3">
-                                  <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
-                                    <Icon className="h-4 w-4" />
+                              <td className="px-2.5 py-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex h-6 w-6 items-center justify-center rounded-[6px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
+                                    <Icon className="h-3.5 w-3.5" />
                                   </div>
-                                  <div className="min-w-0">
-                                    <div className="truncate font-medium text-[var(--app-text)]">{item.name}</div>
-                                    <div className="truncate text-[12px] text-[var(--app-text-muted)]">
-                                      {item.path}
-                                    </div>
-                                  </div>
+                                  <div className="min-w-0 truncate font-medium text-[var(--app-text)]">{item.name}</div>
                                 </div>
                               </td>
-                              <td className="px-4 py-3 text-[var(--app-text-muted)]">{getItemLabel(item)}</td>
-                              <td className="px-4 py-3 text-right text-[var(--app-text-muted)]">
+                              <td className="px-2.5 py-2 text-[var(--app-text-muted)]">{getItemLabel(item)}</td>
+                              <td className="px-2.5 py-2 text-right text-[var(--app-text-muted)]">
                                 {item.type === "file" ? formatBytes(item.size) : "-"}
                               </td>
-                              <td className="px-4 py-3 text-[var(--app-text-muted)]">
+                              <td className="px-2.5 py-2 text-[var(--app-text-muted)]">
                                 {formatDateTime(item.modified_at)}
                               </td>
                             </tr>
@@ -1578,73 +1573,6 @@ export function FilesPage() {
                   </div>
                 ) : null}
               </div>
-
-              <aside className="rounded-[16px] border border-[var(--app-border)] bg-[var(--app-bg-2)] p-4 shadow-[var(--app-shadow)]">
-                <div className="text-[12px] uppercase tracking-[0.18em] text-[var(--app-text-muted)]">
-                  Details
-                </div>
-
-                {selectedItem ? (
-                  <div className="mt-4 space-y-4">
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
-                        {(() => {
-                          const Icon = getItemIcon(selectedItem);
-                          return <Icon className="h-5 w-5" />;
-                        })()}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="truncate text-[16px] font-medium text-[var(--app-text)]">
-                          {selectedItem.name}
-                        </div>
-                        <div className="mt-1 text-[13px] text-[var(--app-text-muted)]">
-                          {getItemLabel(selectedItem)}
-                        </div>
-                      </div>
-                    </div>
-
-                    <dl className="space-y-3 text-[13px]">
-                      <div>
-                        <dt className="text-[var(--app-text-muted)]">Path</dt>
-                        <dd className="mt-1 break-all text-[var(--app-text)]">{selectedItem.path}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-[var(--app-text-muted)]">Modified</dt>
-                        <dd className="mt-1 text-[var(--app-text)]">{formatDateTime(selectedItem.modified_at)}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-[var(--app-text-muted)]">Size</dt>
-                        <dd className="mt-1 text-[var(--app-text)]">
-                          {selectedItem.type === "file" ? formatBytes(selectedItem.size) : "-"}
-                        </dd>
-                      </div>
-                    </dl>
-                  </div>
-                ) : selectedPaths.length > 1 ? (
-                  <div className="mt-4 space-y-4">
-                    <div className="text-[16px] font-medium text-[var(--app-text)]">
-                      {selectedPaths.length} items selected
-                    </div>
-                    <p className="text-[13px] leading-6 text-[var(--app-text-muted)]">
-                      Use right-click, keyboard shortcuts, drag and drop, or the toolbar actions to work on the selection.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-4 text-[13px] text-[var(--app-text-muted)]">
-                    <p>
-                      Right-click for actions, drag items into folders to move them, or drag files from your desktop here to upload.
-                    </p>
-                    <div className="rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface)] p-4">
-                      <div className="text-[12px] uppercase tracking-[0.16em] text-[var(--app-text-muted)]">
-                        Current folder
-                      </div>
-                      <div className="mt-2 break-all text-[var(--app-text)]">
-                        {listing?.absolute_path || listing?.root_path || "Loading..."}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </aside>
             </div>
           </section>
         </div>
