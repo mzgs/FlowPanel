@@ -27,6 +27,7 @@ export const Bug = pick("IconBug");
 export const Calendar = pick("IconCalendar");
 export const Check = pick("IconCheck");
 export const CheckIcon = pick("IconCheck");
+export const Clipboard = pick("IconClipboard", "IconClipboardText");
 export const Clock = pick("IconClock");
 export const ChevronDownIcon = pick("IconChevronDown");
 export const ChevronLeftIcon = pick("IconChevronLeft");

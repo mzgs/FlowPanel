@@ -11,6 +11,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
   Check,
+  Clipboard,
+  Copy,
+  Download,
   File,
   FileCode2,
   FilePlus2,
@@ -20,8 +23,11 @@ import {
   FolderPlus,
   Grid2X2,
   List,
+  Pencil,
   RefreshCw,
+  Scissors,
   Search,
+  ShieldCheck,
   Trash2,
   Upload,
 } from "@/components/icons/tabler-icons";
@@ -29,6 +35,7 @@ import {
   createDirectory,
   createFile,
   deleteEntry,
+  downloadEntry,
   fetchFileContent,
   fetchFiles,
   renameEntry,
@@ -50,6 +57,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -82,6 +97,13 @@ type MarqueeState = {
   currentY: number;
   hasMoved: boolean;
   baseSelection: string[];
+};
+
+type ContextMenuState = {
+  open: boolean;
+  x: number;
+  y: number;
+  targetPath: string | null;
 };
 
 const VIEW_STORAGE_KEY = "flowpanel.files.view";
@@ -300,6 +322,12 @@ export function FilesPage() {
   const [clipboardPaths, setClipboardPaths] = useState<string[]>([]);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [rootDropActive, setRootDropActive] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    open: false,
+    x: 0,
+    y: 0,
+    targetPath: null,
+  });
   const [marquee, setMarquee] = useState<MarqueeState>({
     active: false,
     startX: 0,
@@ -349,12 +377,18 @@ export function FilesPage() {
     .map((path) => itemMap.get(path) ?? null)
     .filter((item): item is FileEntry => item !== null);
   const selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
+  const contextTargetItem = contextMenu.targetPath ? itemMap.get(contextMenu.targetPath) ?? null : null;
   const confirmDeleteSinglePath = confirmDeletePaths.length === 1 ? confirmDeletePaths[0] : null;
   const confirmDeleteSingleName = confirmDeleteSinglePath
     ? itemMap.get(confirmDeleteSinglePath)?.name ?? confirmDeleteSinglePath
     : null;
   const breadcrumbs = getBreadcrumbs(listing);
   const clipboardReady = clipboardPaths.length > 0 && clipboardMode !== null;
+  const canDownloadSelection = selectedItems.length === 1 && selectedItem?.type !== "symlink";
+  const canRenameSelection = selectedItems.length === 1;
+  const canEditPermissions = selectedItem !== null && selectedItem.type !== "symlink";
+  const contextPasteTarget =
+    contextTargetItem?.type === "directory" ? contextTargetItem.path : currentPath;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -382,6 +416,20 @@ export function FilesPage() {
       }
     }
   }, [anchorPath, itemOrder, selectedPaths]);
+
+  useEffect(() => {
+    setContextMenu((current) => {
+      if (!current.open) {
+        return current;
+      }
+
+      if (current.targetPath && !itemMap.has(current.targetPath)) {
+        return { ...current, open: false, targetPath: null };
+      }
+
+      return current;
+    });
+  }, [itemMap]);
 
   useEffect(() => {
     if (!listingQuery.isError || !currentPath) {
@@ -616,10 +664,8 @@ export function FilesPage() {
       setRootDropActive(false);
       setSelectedPaths([]);
       setAnchorPath(null);
-      if (variables.mode === "move") {
-        setClipboardMode(null);
-        setClipboardPaths([]);
-      }
+      setClipboardMode(null);
+      setClipboardPaths([]);
       setFlash({
         tone: "success",
         text: variables.mode === "copy" ? "Selection copied." : "Selection moved.",
@@ -649,6 +695,10 @@ export function FilesPage() {
 
   async function invalidateCurrentListing() {
     await queryClient.invalidateQueries({ queryKey: ["files", currentPath] });
+  }
+
+  function closeContextMenu() {
+    setContextMenu((current) => ({ ...current, open: false, targetPath: null }));
   }
 
   function setSelection(paths: string[], nextAnchor?: string | null) {
@@ -704,6 +754,7 @@ export function FilesPage() {
   }
 
   function handleNavigate(path: string) {
+    closeContextMenu();
     setCurrentPath(path);
     setSearch("");
     clearSelection();
@@ -751,6 +802,7 @@ export function FilesPage() {
   }
 
   async function openEditor(path: string) {
+    closeContextMenu();
     setEditorOpen(true);
     setEditorBusy(true);
     setEditorPath(path);
@@ -792,12 +844,29 @@ export function FilesPage() {
     }
   }
 
+  async function downloadSelectedEntry() {
+    closeContextMenu();
+
+    if (!selectedItem || selectedItem.type === "symlink") {
+      return;
+    }
+
+    try {
+      const fileName = await downloadEntry(selectedItem.path);
+      setFlash({ tone: "success", text: `${fileName} download started.` });
+    } catch (error) {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to download entry.") });
+    }
+  }
+
   function openDialog(mode: Exclude<DialogMode, null>) {
+    closeContextMenu();
     setDialogMode(mode);
     setDialogValue(mode === "rename" && selectedItem ? selectedItem.name : "");
   }
 
   function openPermissionsDialog(item: FileEntry) {
+    closeContextMenu();
     if (item.type === "symlink") {
       setFlash({ tone: "error", text: "Symlinks are not supported in the panel." });
       return;
@@ -852,6 +921,7 @@ export function FilesPage() {
   }
 
   function handleDeleteSelection() {
+    closeContextMenu();
     if (selectedPaths.length === 0) {
       return;
     }
@@ -872,6 +942,7 @@ export function FilesPage() {
   }
 
   function copySelection(mode: Exclude<ClipboardMode, null>) {
+    closeContextMenu();
     if (selectedPaths.length === 0) {
       return;
     }
@@ -885,6 +956,7 @@ export function FilesPage() {
   }
 
   async function pasteInto(targetPath: string) {
+    closeContextMenu();
     if (!clipboardReady) {
       return;
     }
@@ -897,6 +969,7 @@ export function FilesPage() {
   }
 
   function handleUploadSelection(files: FileList | null, targetPath = currentPath) {
+    closeContextMenu();
     if (!files || files.length === 0) {
       return;
     }
@@ -927,6 +1000,36 @@ export function FilesPage() {
     if (!(event.metaKey || event.ctrlKey)) {
       clearSelection();
     }
+  }
+
+  function openContextMenu(position: { x: number; y: number }, targetPath: string | null) {
+    setContextMenu({
+      open: true,
+      x: position.x,
+      y: position.y,
+      targetPath,
+    });
+  }
+
+  function handleItemContextMenu(item: FileEntry, event: ReactMouseEvent<HTMLElement>) {
+    event.preventDefault();
+
+    if (!selectedSet.has(item.path)) {
+      setSelection([item.path], item.path);
+    }
+
+    openContextMenu({ x: event.clientX, y: event.clientY }, item.path);
+  }
+
+  function handleBrowserContextMenu(event: ReactMouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-selectable='1']")) {
+      return;
+    }
+
+    event.preventDefault();
+    clearSelection();
+    openContextMenu({ x: event.clientX, y: event.clientY }, null);
   }
 
   function handleInternalDragStart(item: FileEntry, event: React.DragEvent<HTMLElement>) {
@@ -1046,6 +1149,111 @@ export function FilesPage() {
         handleConfirm={confirmDeleteSelection}
         className="sm:max-w-md"
       />
+      <DropdownMenu
+        modal={false}
+        open={contextMenu.open}
+        onOpenChange={(open) =>
+          setContextMenu((current) => ({
+            ...current,
+            open,
+            targetPath: open ? current.targetPath : null,
+          }))
+        }
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            className="pointer-events-none fixed h-0 w-0 opacity-0"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          sideOffset={2}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          className="w-52 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
+        >
+          {selectedPaths.length > 0 ? (
+            <>
+              <DropdownMenuItem
+                disabled={!canDownloadSelection}
+                onSelect={() => void downloadSelectedEntry()}
+              >
+                <Download className="h-4 w-4" />
+                Download
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!canRenameSelection} onSelect={() => openDialog("rename")}>
+                <Pencil className="h-4 w-4" />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => copySelection("copy")}>
+                <Copy className="h-4 w-4" />
+                Copy
+                <DropdownMenuShortcut>Ctrl+C</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => copySelection("move")}>
+                <Scissors className="h-4 w-4" />
+                Cut
+                <DropdownMenuShortcut>Ctrl+X</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              {contextTargetItem?.type === "directory" && clipboardReady ? (
+                <DropdownMenuItem onSelect={() => void pasteInto(contextPasteTarget)}>
+                  <Clipboard className="h-4 w-4" />
+                  Paste into folder
+                  <DropdownMenuShortcut>Ctrl+V</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem
+                disabled={!canEditPermissions}
+                onSelect={() => {
+                  if (selectedItem) {
+                    openPermissionsDialog(selectedItem);
+                  }
+                }}
+              >
+                <ShieldCheck className="h-4 w-4" />
+                Permissions
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={handleDeleteSelection}>
+                <Trash2 className="h-4 w-4" />
+                Delete
+                <DropdownMenuShortcut>Del</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            </>
+          ) : (
+            <>
+              <DropdownMenuItem onSelect={() => openDialog("folder")}>
+                <FolderPlus className="h-4 w-4" />
+                New folder
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => openDialog("file")}>
+                <FilePlus2 className="h-4 w-4" />
+                New file
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => uploadInputRef.current?.click()}>
+                <Upload className="h-4 w-4" />
+                Upload
+              </DropdownMenuItem>
+              {clipboardReady ? (
+                <DropdownMenuItem onSelect={() => void pasteInto(contextPasteTarget)}>
+                  <Clipboard className="h-4 w-4" />
+                  Paste
+                  <DropdownMenuShortcut>Ctrl+V</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => void listingQuery.refetch()}>
+                <RefreshCw className="h-4 w-4" />
+                Refresh
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
       <div className="px-4 pb-6 pt-4 sm:px-6 lg:px-8">
         <div className="space-y-4">
           {flash ? <FlashBanner flash={flash} /> : null}
@@ -1142,7 +1350,7 @@ export function FilesPage() {
                           void pasteInto(currentPath);
                         }}
                       >
-                        <Check className="h-4 w-4" />
+                        <Clipboard className="h-4 w-4" />
                         <span className="sr-only">Paste</span>
                       </Button>
                     ) : null}
@@ -1216,6 +1424,7 @@ export function FilesPage() {
                   rootDropActive && "ring-2 ring-[var(--app-accent)]/80",
                 )}
                 onMouseDown={beginMarquee}
+                onContextMenu={handleBrowserContextMenu}
                 onDragOver={handleBrowserDragOver}
                 onDragLeave={(event) => {
                   if (event.currentTarget.contains(event.relatedTarget as Node)) {
@@ -1277,6 +1486,7 @@ export function FilesPage() {
                                 dropTargetPath === item.path && item.type === "directory" && "ring-2 ring-inset ring-[var(--app-accent)]",
                               )}
                               onClick={(event) => handleSelectionClick(item, event)}
+                              onContextMenu={(event) => handleItemContextMenu(item, event)}
                               onDoubleClick={() => handleActivateItem(item)}
                               onDragStart={(event) => handleInternalDragStart(item, event)}
                               onDragOver={(event) =>
@@ -1380,6 +1590,7 @@ export function FilesPage() {
                           )}
                           style={{ minHeight: 152 }}
                           onClick={(event) => handleSelectionClick(item, event)}
+                          onContextMenu={(event) => handleItemContextMenu(item, event)}
                           onDoubleClick={() => handleActivateItem(item)}
                           onDragStart={(event) => handleInternalDragStart(item, event)}
                           onDragOver={(event) =>
