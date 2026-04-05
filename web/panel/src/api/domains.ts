@@ -50,6 +50,15 @@ export type DomainApiError = Error & {
   fieldErrors?: Record<string, string>;
 };
 
+export type DeleteDomainInput = {
+  deleteDatabase?: boolean;
+  deleteDocumentRoot?: boolean;
+};
+
+export type DeleteDomainResult = {
+  warnings: string[];
+};
+
 export async function fetchDomains(): Promise<DomainsPayload> {
   const response = await fetch("/api/domains", {
     credentials: "include",
@@ -91,8 +100,20 @@ export async function updateDomain(
   return readDomainMutationResponse(response, "update domain");
 }
 
-export async function deleteDomain(id: string): Promise<void> {
-  const response = await fetch(`/api/domains/${encodeURIComponent(id)}`, {
+export async function deleteDomain(
+  id: string,
+  input: DeleteDomainInput = {},
+): Promise<DeleteDomainResult> {
+  const params = new URLSearchParams();
+  if (input.deleteDatabase) {
+    params.set("delete_database", "1");
+  }
+  if (input.deleteDocumentRoot) {
+    params.set("delete_document_root", "1");
+  }
+  const suffix = params.size ? `?${params.toString()}` : "";
+
+  const response = await fetch(`/api/domains/${encodeURIComponent(id)}${suffix}`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -100,6 +121,13 @@ export async function deleteDomain(id: string): Promise<void> {
   if (!response.ok) {
     throw await readDomainApiError(response, "delete domain");
   }
+
+  const payload = (await response.json()) as { warnings?: unknown };
+  return {
+    warnings: Array.isArray(payload.warnings)
+      ? payload.warnings.filter((warning): warning is string => typeof warning === "string")
+      : [],
+  };
 }
 
 export async function updateDomainGitHubIntegration(

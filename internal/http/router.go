@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1856,6 +1857,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 		domainsDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			domainID := chi.URLParam(r, "domainID")
+			deleteDatabase := queryEnabled(r, "delete_database")
+			deleteDocumentRoot := queryEnabled(r, "delete_document_root")
 			record, removed, err := app.Domains.Delete(r.Context(), domainID)
 			if err != nil {
 				app.Logger.Error("delete domain failed",
@@ -1894,10 +1897,38 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			mutationEvent(r.Context(), "domains", "delete", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Deleted domain %q.", record.Hostname))
+			warnings := make([]string, 0, 2)
+			if deleteDatabase {
+				cleanupWarnings, cleanupErr := deleteLinkedDomainDatabases(r.Context(), app.MariaDB, record.Hostname)
+				warnings = append(warnings, cleanupWarnings...)
+				if cleanupErr != nil {
+					app.Logger.Warn("delete linked databases failed",
+						zap.String("domain_id", record.ID),
+						zap.String("hostname", record.Hostname),
+						zap.Error(cleanupErr),
+					)
+				}
+			}
+			if deleteDocumentRoot {
+				if warning, cleanupErr := deleteDomainDocumentRoot(record, app.Domains.BasePath()); cleanupErr != nil {
+					warnings = append(warnings, warning)
+					app.Logger.Warn("delete domain document root failed",
+						zap.String("domain_id", record.ID),
+						zap.String("hostname", record.Hostname),
+						zap.Error(cleanupErr),
+					)
+				}
+			}
+
+			message := fmt.Sprintf("Deleted domain %q.", record.Hostname)
+			if len(warnings) > 0 {
+				message = fmt.Sprintf(`Deleted domain %q with cleanup warnings.`, record.Hostname)
+			}
+			mutationEvent(r.Context(), "domains", "delete", "domain", record.ID, record.Hostname, "succeeded", message)
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"domain": record,
+				"domain":   record,
+				"warnings": warnings,
 			})
 		})
 
@@ -2559,6 +2590,83 @@ func tailMatchingLogLines(filePath string, search string, limit int) ([]string, 
 	}
 
 	return lines, totalMatches, totalMatches > limit, nil
+}
+
+func queryEnabled(r *stdhttp.Request, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func deleteLinkedDomainDatabases(ctx context.Context, manager mariadb.Manager, hostname string) ([]string, error) {
+	if manager == nil {
+		err := errors.New("mariadb runtime is not configured")
+		return []string{"MariaDB runtime is not configured, so linked databases were not deleted."}, err
+	}
+
+	databases, err := manager.ListDatabases(ctx)
+	if err != nil {
+		return []string{"Failed to load linked databases for deletion."}, err
+	}
+
+	var warnings []string
+	for _, database := range databases {
+		if strings.TrimSpace(database.Domain) != hostname {
+			continue
+		}
+
+		if err := manager.DeleteDatabase(ctx, database.Name, mariadb.DeleteDatabaseInput{
+			Username: database.Username,
+		}); err != nil {
+			warnings = append(warnings, fmt.Sprintf(`Failed to delete linked database %q.`, database.Name))
+		}
+	}
+
+	if len(warnings) > 0 {
+		return warnings, errors.New(strings.Join(warnings, " "))
+	}
+
+	return nil, nil
+}
+
+func deleteDomainDocumentRoot(record domain.Record, basePath string) (string, error) {
+	if record.Kind != domain.KindStaticSite && record.Kind != domain.KindPHP {
+		return "", nil
+	}
+
+	normalizedBasePath := filepath.Clean(strings.TrimSpace(basePath))
+	if normalizedBasePath == "." || normalizedBasePath == "" {
+		err := errors.New("domain sites base path is not configured")
+		return "The domain document root could not be deleted.", err
+	}
+
+	targetPath := filepath.Clean(strings.TrimSpace(record.Target))
+	if targetPath == "." || targetPath == "" {
+		err := errors.New("domain document root is not configured")
+		return "The domain document root could not be deleted.", err
+	}
+
+	relativePath, err := filepath.Rel(normalizedBasePath, targetPath)
+	if err != nil {
+		return "The domain document root could not be deleted.", err
+	}
+	if relativePath == "." {
+		err := errors.New("refusing to delete the sites base path")
+		return "The domain document root could not be deleted.", err
+	}
+	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		err := fmt.Errorf("document root %q is outside the sites base path", targetPath)
+		return "The domain document root could not be deleted.", err
+	}
+
+	if err := os.RemoveAll(targetPath); err != nil {
+		return fmt.Sprintf(`Failed to delete the document root for %q.`, record.Hostname), err
+	}
+
+	return "", nil
 }
 
 func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.RestoreResult) error {

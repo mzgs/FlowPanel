@@ -32,6 +32,7 @@ import { BackupRecordsDialog } from "@/components/backup-records-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -41,6 +42,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -82,6 +84,11 @@ const initialFormState: FormState = {
   kind: "Static site",
   target: "",
   cacheEnabled: false,
+};
+
+const initialDeleteDomainOptions = {
+  deleteDatabase: false,
+  deleteDocumentRoot: false,
 };
 
 const domainActionButtonClass =
@@ -229,6 +236,7 @@ export function DomainsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null);
   const [deleteDomainCandidate, setDeleteDomainCandidate] = useState<DomainRecord | null>(null);
+  const [deleteDomainOptions, setDeleteDomainOptions] = useState(initialDeleteDomainOptions);
   const [creatingBackupDomainId, setCreatingBackupDomainId] = useState<string | null>(null);
   const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
   const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
@@ -320,6 +328,16 @@ export function DomainsPage() {
     backupDialogDomain !== null && creatingBackupDomainId === backupDialogDomain.id;
   const backupDialogCreated =
     backupDialogDomain !== null && createdBackupDomainId === backupDialogDomain.id;
+  const deleteDocumentRootAvailable =
+    deleteDomainCandidate !== null &&
+    isSiteBackedKind(deleteDomainCandidate.kind) &&
+    getFilesPathFromDomainTarget(
+      deleteDomainCandidate.kind,
+      sitesBasePath,
+      deleteDomainCandidate.target,
+    ) !== null;
+  const deleteDatabaseCheckboxId = "delete-domain-database";
+  const deleteDocumentRootCheckboxId = "delete-domain-document-root";
 
   function resetForm() {
     setForm(initialFormState);
@@ -449,6 +467,7 @@ export function DomainsPage() {
       return;
     }
 
+    setDeleteDomainOptions(initialDeleteDomainOptions);
     setDeleteDomainCandidate(domain);
   }
 
@@ -462,7 +481,7 @@ export function DomainsPage() {
     setLoadError(null);
 
     try {
-      await deleteDomain(domain.id);
+      const result = await deleteDomain(domain.id, deleteDomainOptions);
       setDomains((current) =>
         current.filter((currentDomain) => currentDomain.id !== domain.id),
       );
@@ -471,10 +490,16 @@ export function DomainsPage() {
         setResetOnClose(true);
         setFormOpen(false);
       }
+      if (result.warnings.length > 0) {
+        toast.message(`Deleted ${domain.hostname} with warnings.`, {
+          description: result.warnings.join(" "),
+        });
+      }
     } catch (error) {
       setLoadError(getErrorMessage(error, `Failed to delete ${domain.hostname}.`));
     } finally {
       setDeletingDomainId(null);
+      setDeleteDomainOptions(initialDeleteDomainOptions);
       setDeleteDomainCandidate((current) => (current?.id === domain.id ? null : current));
     }
   }
@@ -615,6 +640,7 @@ export function DomainsPage() {
         open={deleteDomainCandidate !== null}
         onOpenChange={(open) => {
           if (!open && deletingDomainId === null) {
+            setDeleteDomainOptions(initialDeleteDomainOptions);
             setDeleteDomainCandidate(null);
           }
         }}
@@ -630,8 +656,67 @@ export function DomainsPage() {
         handleConfirm={() => {
           void confirmDeleteDomain();
         }}
-        className="sm:max-w-md"
-      />
+        className="sm:max-w-lg"
+      >
+        <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] p-4">
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id={deleteDatabaseCheckboxId}
+              checked={deleteDomainOptions.deleteDatabase}
+              disabled={deletingDomainId !== null}
+              onCheckedChange={(checked) =>
+                setDeleteDomainOptions((current) => ({
+                  ...current,
+                  deleteDatabase: checked === true,
+                }))
+              }
+            />
+            <div className="space-y-1">
+              <Label
+                htmlFor={deleteDatabaseCheckboxId}
+                className="cursor-pointer text-sm font-medium text-[var(--app-text)]"
+              >
+                Delete database
+              </Label>
+              <p className="text-sm text-[var(--app-text-muted)]">
+                Also remove MariaDB databases linked to this domain.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id={deleteDocumentRootCheckboxId}
+              checked={deleteDomainOptions.deleteDocumentRoot}
+              disabled={deletingDomainId !== null || !deleteDocumentRootAvailable}
+              onCheckedChange={(checked) =>
+                setDeleteDomainOptions((current) => ({
+                  ...current,
+                  deleteDocumentRoot: checked === true,
+                }))
+              }
+            />
+            <div className="space-y-1">
+              <Label
+                htmlFor={deleteDocumentRootCheckboxId}
+                className={cn(
+                  "text-sm font-medium",
+                  deleteDocumentRootAvailable
+                    ? "cursor-pointer text-[var(--app-text)]"
+                    : "cursor-not-allowed text-[var(--app-text-muted)]",
+                )}
+              >
+                Delete document root
+              </Label>
+              <p className="text-sm text-[var(--app-text-muted)]">
+                {deleteDocumentRootAvailable
+                  ? "Also remove the site directory for this domain."
+                  : "Available for static and PHP domains with a local site directory."}
+              </p>
+            </div>
+          </div>
+        </div>
+      </ActionConfirmDialog>
 
       <Dialog open={formOpen} onOpenChange={handleOpenChange}>
         <PageHeader

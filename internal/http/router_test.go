@@ -42,6 +42,13 @@ type fakePHPManager struct{}
 
 type fakeMariaDBManager struct{}
 
+type trackingMariaDBManager struct {
+	databases     []mariadb.DatabaseRecord
+	deleted       []string
+	failDeleteFor map[string]bool
+	listErr       error
+}
+
 type fakePHPMyAdminManager struct{}
 
 type installablePHPMyAdminManager struct {
@@ -142,6 +149,57 @@ func (fakeMariaDBManager) UpdateDatabase(context.Context, string, mariadb.Update
 }
 
 func (fakeMariaDBManager) DeleteDatabase(context.Context, string, mariadb.DeleteDatabaseInput) error {
+	return nil
+}
+
+func (m *trackingMariaDBManager) Status(context.Context) mariadb.Status {
+	return fakeMariaDBManager{}.Status(context.Background())
+}
+
+func (m *trackingMariaDBManager) Install(context.Context) error {
+	return nil
+}
+
+func (m *trackingMariaDBManager) RootPassword(context.Context) (string, bool, error) {
+	return "", false, nil
+}
+
+func (m *trackingMariaDBManager) SetRootPassword(context.Context, string) error {
+	return nil
+}
+
+func (m *trackingMariaDBManager) ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+
+	records := make([]mariadb.DatabaseRecord, len(m.databases))
+	copy(records, m.databases)
+	return records, nil
+}
+
+func (m *trackingMariaDBManager) DumpDatabase(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *trackingMariaDBManager) RestoreDatabase(context.Context, string, []byte) error {
+	return nil
+}
+
+func (m *trackingMariaDBManager) CreateDatabase(context.Context, mariadb.CreateDatabaseInput) (mariadb.DatabaseRecord, error) {
+	return mariadb.DatabaseRecord{}, nil
+}
+
+func (m *trackingMariaDBManager) UpdateDatabase(context.Context, string, mariadb.UpdateDatabaseInput) (mariadb.DatabaseRecord, error) {
+	return mariadb.DatabaseRecord{}, nil
+}
+
+func (m *trackingMariaDBManager) DeleteDatabase(_ context.Context, name string, _ mariadb.DeleteDatabaseInput) error {
+	if m.failDeleteFor != nil && m.failDeleteFor[name] {
+		return errors.New("delete failed")
+	}
+
+	m.deleted = append(m.deleted, name)
 	return nil
 }
 
@@ -528,6 +586,91 @@ func TestDeleteDomainRollsBackWhenPublishFails(t *testing.T) {
 		t.Fatalf("persisted domain count after failed delete = %d, want 1", len(persisted))
 	}
 	assertDomainRecordEqual(t, persisted[0], record)
+}
+
+func TestDeleteLinkedDomainDatabasesDeletesOnlyMatchingDomain(t *testing.T) {
+	manager := &trackingMariaDBManager{
+		databases: []mariadb.DatabaseRecord{
+			{Name: "alpha", Username: "alpha_user", Domain: "app.example.com"},
+			{Name: "beta", Username: "beta_user", Domain: "blog.example.com"},
+			{Name: "gamma", Username: "gamma_user", Domain: "app.example.com"},
+		},
+	}
+
+	warnings, err := deleteLinkedDomainDatabases(context.Background(), manager, "app.example.com")
+	if err != nil {
+		t.Fatalf("delete linked databases: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	if got, want := manager.deleted, []string{"alpha", "gamma"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("deleted = %v, want %v", got, want)
+	}
+}
+
+func TestDeleteLinkedDomainDatabasesReturnsWarningsForFailedDeletes(t *testing.T) {
+	manager := &trackingMariaDBManager{
+		databases: []mariadb.DatabaseRecord{
+			{Name: "alpha", Username: "alpha_user", Domain: "app.example.com"},
+		},
+		failDeleteFor: map[string]bool{
+			"alpha": true,
+		},
+	}
+
+	warnings, err := deleteLinkedDomainDatabases(context.Background(), manager, "app.example.com")
+	if err == nil {
+		t.Fatal("expected delete warning error")
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want 1 warning", warnings)
+	}
+	if warnings[0] != `Failed to delete linked database "alpha".` {
+		t.Fatalf("warning = %q, want failed database warning", warnings[0])
+	}
+}
+
+func TestDeleteDomainDocumentRootRemovesSiteDirectory(t *testing.T) {
+	basePath := t.TempDir()
+	targetPath := filepath.Join(basePath, "example.com")
+	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(targetPath, "index.html"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write site file: %v", err)
+	}
+
+	warning, err := deleteDomainDocumentRoot(domain.Record{
+		Hostname: "example.com",
+		Kind:     domain.KindStaticSite,
+		Target:   targetPath,
+	}, basePath)
+	if err != nil {
+		t.Fatalf("delete document root: %v", err)
+	}
+	if warning != "" {
+		t.Fatalf("warning = %q, want empty", warning)
+	}
+	if _, err := os.Stat(targetPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("site root still exists, stat err = %v", err)
+	}
+}
+
+func TestDeleteDomainDocumentRootRejectsBasePathDeletion(t *testing.T) {
+	basePath := t.TempDir()
+
+	warning, err := deleteDomainDocumentRoot(domain.Record{
+		Hostname: "example.com",
+		Kind:     domain.KindStaticSite,
+		Target:   basePath,
+	}, basePath)
+	if err == nil {
+		t.Fatal("expected base path rejection")
+	}
+	if warning != "The domain document root could not be deleted." {
+		t.Fatalf("warning = %q, want generic document root warning", warning)
+	}
 }
 
 func TestDomainPreviewEndpointServesCachedThumbnail(t *testing.T) {
