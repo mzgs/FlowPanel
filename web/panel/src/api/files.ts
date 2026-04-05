@@ -45,6 +45,11 @@ type TransferEntriesInput = {
   target: string;
 };
 
+type CreateArchiveInput = {
+  paths: string[];
+  destination: string;
+};
+
 type UpdatePermissionsInput = {
   path: string;
   permissions: string;
@@ -164,6 +169,21 @@ export async function downloadEntries(paths: string[]): Promise<string> {
   }
 
   return triggerDownload(response, "download.tar.gz");
+}
+
+export async function createArchive(input: CreateArchiveInput): Promise<string> {
+  const response = await sendJSON<{ path: string }>(
+    "/api/files/archive",
+    "POST",
+    input,
+    "create archive",
+  );
+
+  return response.path;
+}
+
+export async function extractArchive(path: string): Promise<void> {
+  await sendJSON("/api/files/extract", "POST", { path }, "extract archive");
 }
 
 export async function transferEntries(input: TransferEntriesInput): Promise<void> {

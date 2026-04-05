@@ -23,6 +23,7 @@ import {
   FolderPlus,
   Grid2X2,
   List,
+  Package,
   Pencil,
   RefreshCw,
   Scissors,
@@ -32,11 +33,13 @@ import {
   Upload,
 } from "@/components/icons/tabler-icons";
 import {
+  createArchive,
   createDirectory,
   createFile,
   deleteEntry,
   downloadEntry,
   downloadEntries,
+  extractArchive,
   fetchFileContent,
   fetchFiles,
   renameEntry,
@@ -258,6 +261,20 @@ function pathLabel(path: string) {
   return path || "/";
 }
 
+function isExtractableArchive(item: FileEntry) {
+  if (item.type !== "file") {
+    return false;
+  }
+
+  const normalizedName = item.name.trim().toLowerCase();
+  return (
+    normalizedName.endsWith(".tar.gz") ||
+    normalizedName.endsWith(".tgz") ||
+    normalizedName.endsWith(".tar") ||
+    normalizedName.endsWith(".zip")
+  );
+}
+
 function isValidPermissionValue(value: string) {
   return /^[0-7]{3,4}$/.test(value.trim());
 }
@@ -389,6 +406,8 @@ export function FilesPage() {
     selectedItems.length > 0 &&
     selectedItems.length === selectedPaths.length &&
     selectedItems.every((item) => item.type !== "symlink");
+  const canCreateArchiveSelection = canDownloadSelection;
+  const canExtractArchiveSelection = selectedItem !== null && isExtractableArchive(selectedItem);
   const canRenameSelection = selectedItems.length === 1;
   const canEditPermissions = selectedItem !== null && selectedItem.type !== "symlink";
   const contextPasteTarget =
@@ -660,6 +679,31 @@ export function FilesPage() {
     },
   });
 
+  const createArchiveMutation = useMutation({
+    mutationFn: ({ paths, destination }: { paths: string[]; destination: string }) =>
+      createArchive({ paths, destination }),
+    onSuccess: async (archivePath) => {
+      await invalidateCurrentListing();
+      setSelectedPaths([archivePath]);
+      setAnchorPath(archivePath);
+      setFlash({ tone: "success", text: "Archive created." });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to create archive.") });
+    },
+  });
+
+  const extractArchiveMutation = useMutation({
+    mutationFn: (path: string) => extractArchive(path),
+    onSuccess: async () => {
+      await invalidateCurrentListing();
+      setFlash({ tone: "success", text: "Archive extracted." });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to extract archive.") });
+    },
+  });
+
   const transferMutation = useMutation({
     mutationFn: transferEntries,
     onSuccess: async (_, variables) => {
@@ -864,6 +908,29 @@ export function FilesPage() {
     } catch (error) {
       setFlash({ tone: "error", text: getErrorMessage(error, "Failed to download selection.") });
     }
+  }
+
+  async function handleCreateArchive() {
+    closeContextMenu();
+
+    if (!canCreateArchiveSelection) {
+      return;
+    }
+
+    await createArchiveMutation.mutateAsync({
+      paths: selectedItems.map((item) => item.path),
+      destination: currentPath,
+    });
+  }
+
+  async function handleExtractArchive() {
+    closeContextMenu();
+
+    if (!selectedItem || !canExtractArchiveSelection) {
+      return;
+    }
+
+    await extractArchiveMutation.mutateAsync(selectedItem.path);
   }
 
   function openDialog(mode: Exclude<DialogMode, null>) {
@@ -1117,6 +1184,8 @@ export function FilesPage() {
     createFileMutation.isPending ||
     renameMutation.isPending ||
     deleteMutation.isPending ||
+    createArchiveMutation.isPending ||
+    extractArchiveMutation.isPending ||
     uploadMutation.isPending ||
     transferMutation.isPending ||
     permissionsMutation.isPending;
@@ -1190,6 +1259,20 @@ export function FilesPage() {
               >
                 <Download className="h-4 w-4" />
                 {selectedItems.length > 1 ? "Download tar.gz" : "Download"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canCreateArchiveSelection}
+                onSelect={() => void handleCreateArchive()}
+              >
+                <Package className="h-4 w-4" />
+                Compress .tar.gz
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canExtractArchiveSelection}
+                onSelect={() => void handleExtractArchive()}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Extract archive
               </DropdownMenuItem>
               <DropdownMenuItem disabled={!canRenameSelection} onSelect={() => openDialog("rename")}>
                 <Pencil className="h-4 w-4" />

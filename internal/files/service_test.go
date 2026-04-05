@@ -2,9 +2,12 @@ package files
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -456,6 +459,128 @@ func TestPrepareDownloadPathsRejectsSymlink(t *testing.T) {
 	}
 }
 
+func TestCreateArchiveCreatesTarballInDestination(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, "site"), 0o755); err != nil {
+		t.Fatalf("mkdir site: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "site", "index.html"), []byte("<h1>hello</h1>"), 0o644); err != nil {
+		t.Fatalf("write site file: %v", err)
+	}
+
+	archivePath, err := service.CreateArchive([]string{"site"}, "")
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	if archivePath != "site.tar.gz" {
+		t.Fatalf("archive path = %q, want site.tar.gz", archivePath)
+	}
+
+	entries := readArchiveEntries(t, filepath.Join(root, archivePath))
+	if got := string(entries["site/index.html"]); got != "<h1>hello</h1>" {
+		t.Fatalf("site/index.html = %q, want site content", got)
+	}
+}
+
+func TestExtractArchiveExtractsTarGzIntoParentDirectory(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	archivePath := filepath.Join(root, "bundle.tar.gz")
+	writeTarGzArchive(t, archivePath, map[string]string{
+		"bundle/index.html": "<h1>hello</h1>",
+	})
+
+	if err := service.ExtractArchive("bundle.tar.gz"); err != nil {
+		t.Fatalf("extract archive: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "bundle", "index.html"))
+	if err != nil {
+		t.Fatalf("read extracted file: %v", err)
+	}
+	if string(data) != "<h1>hello</h1>" {
+		t.Fatalf("extracted content = %q, want site content", string(data))
+	}
+}
+
+func TestExtractArchiveExtractsZipIntoParentDirectory(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	archivePath := filepath.Join(root, "bundle.zip")
+	writeZipArchive(t, archivePath, map[string]string{
+		"bundle/app.js": "console.log('ok')",
+	})
+
+	if err := service.ExtractArchive("bundle.zip"); err != nil {
+		t.Fatalf("extract zip archive: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "bundle", "app.js"))
+	if err != nil {
+		t.Fatalf("read extracted file: %v", err)
+	}
+	if string(data) != "console.log('ok')" {
+		t.Fatalf("extracted content = %q, want zip content", string(data))
+	}
+}
+
+func TestExtractArchiveRejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	archivePath := filepath.Join(root, "bundle.tar.gz")
+	writeTarGzArchive(t, archivePath, map[string]string{
+		"../evil.txt": "nope",
+	})
+
+	if err := service.ExtractArchive("bundle.tar.gz"); err != ErrInvalidArchive {
+		t.Fatalf("extract archive error = %v, want %v", err, ErrInvalidArchive)
+	}
+	if _, err := os.Stat(filepath.Join(root, "evil.txt")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected file extracted: %v", err)
+	}
+}
+
+func TestExtractArchiveRejectsConflictingTopLevelEntry(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, "bundle"), 0o755); err != nil {
+		t.Fatalf("mkdir existing bundle: %v", err)
+	}
+
+	archivePath := filepath.Join(root, "bundle.zip")
+	writeZipArchive(t, archivePath, map[string]string{
+		"bundle/app.js": "console.log('ok')",
+	})
+
+	if err := service.ExtractArchive("bundle.zip"); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("extract archive error = %v, want %v", err, fs.ErrExist)
+	}
+	if _, err := os.Stat(filepath.Join(root, "bundle", "app.js")); !os.IsNotExist(err) {
+		t.Fatalf("archive should not partially extract: %v", err)
+	}
+}
+
 func readArchiveEntries(t *testing.T, archivePath string) map[string][]byte {
 	t.Helper()
 
@@ -511,4 +636,64 @@ func readArchiveEntriesFromGzip(t *testing.T, reader io.Reader) map[string][]byt
 	}
 
 	return entries
+}
+
+func writeTarGzArchive(t *testing.T, archivePath string, files map[string]string) {
+	t.Helper()
+
+	file, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	defer file.Close()
+
+	gzipWriter := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gzipWriter)
+
+	for name, content := range files {
+		header := &tar.Header{
+			Name: name,
+			Mode: 0o644,
+			Size: int64(len(content)),
+		}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			t.Fatalf("write tar header: %v", err)
+		}
+		if _, err := tarWriter.Write([]byte(content)); err != nil {
+			t.Fatalf("write tar payload: %v", err)
+		}
+	}
+
+	if err := tarWriter.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+}
+
+func writeZipArchive(t *testing.T, archivePath string, files map[string]string) {
+	t.Helper()
+
+	file, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("create zip archive: %v", err)
+	}
+	defer file.Close()
+
+	zipWriter := zip.NewWriter(file)
+
+	for name, content := range files {
+		entryWriter, err := zipWriter.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry: %v", err)
+		}
+		if _, err := entryWriter.Write([]byte(content)); err != nil {
+			t.Fatalf("write zip payload: %v", err)
+		}
+	}
+
+	if err := zipWriter.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
 }

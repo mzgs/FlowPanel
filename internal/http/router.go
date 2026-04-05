@@ -2322,6 +2322,62 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 		})
 
+		filesCreateArchiveHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Paths       []string `json:"paths"`
+				Destination string   `json:"destination"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			archivePath, err := app.Files.CreateArchive(input.Paths, input.Destination)
+			if err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{
+				"path": archivePath,
+			})
+		})
+
+		filesExtractArchiveHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Path string `json:"path"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			if err := app.Files.ExtractArchive(input.Path); err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+		})
+
 		filesTransferHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Files == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -2361,6 +2417,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodPost, "/files/upload", filesUploadHandler)
 		r.Method(stdhttp.MethodGet, "/files/download", filesDownloadHandler)
 		r.Method(stdhttp.MethodPost, "/files/download", filesDownloadArchiveHandler)
+		r.Method(stdhttp.MethodPost, "/files/archive", filesCreateArchiveHandler)
+		r.Method(stdhttp.MethodPost, "/files/extract", filesExtractArchiveHandler)
 		r.Method(stdhttp.MethodPost, "/files/transfer", filesTransferHandler)
 
 		r.NotFound(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -2665,6 +2723,14 @@ func writeFileError(w stdhttp.ResponseWriter, err error) {
 	case errors.Is(err, filesvc.ErrInvalidPermissions):
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
 			"error": "invalid permissions value",
+		})
+	case errors.Is(err, filesvc.ErrUnsupportedArchive):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "unsupported archive format",
+		})
+	case errors.Is(err, filesvc.ErrInvalidArchive):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "invalid archive contents",
 		})
 	case errors.Is(err, fs.ErrExist):
 		writeJSON(w, stdhttp.StatusConflict, map[string]any{

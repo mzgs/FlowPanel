@@ -2,6 +2,7 @@ package files
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"errors"
@@ -25,6 +26,8 @@ var (
 	ErrNotFound           = errors.New("file not found")
 	ErrInvalidPath        = errors.New("invalid path")
 	ErrUnsupportedEntry   = errors.New("unsupported file type")
+	ErrUnsupportedArchive = errors.New("unsupported archive")
+	ErrInvalidArchive     = errors.New("invalid archive")
 	ErrFileExpected       = errors.New("file expected")
 	ErrDirectoryExpected  = errors.New("directory expected")
 	ErrBinaryFile         = errors.New("file is not editable as text")
@@ -465,6 +468,112 @@ func (s *Service) PrepareDownloadPaths(relPaths []string) (string, func(io.Write
 	}, nil
 }
 
+func (s *Service) CreateArchive(relPaths []string, destination string) (string, error) {
+	destinationAbsolutePath, destinationNormalizedPath, entryType, err := s.resolveExisting(destination)
+	if err != nil {
+		return "", err
+	}
+	if entryType != EntryTypeDirectory {
+		return "", ErrDirectoryExpected
+	}
+
+	sources, _, archiveBaseName, err := s.resolveDownloadSources(relPaths)
+	if err != nil {
+		return "", err
+	}
+
+	if len(sources) == 1 {
+		archiveBaseName = filepath.Base(sources[0].normalizedPath)
+	} else if archiveBaseName == "download" {
+		archiveBaseName = "archive"
+	}
+
+	archiveFileName, archiveAbsolutePath, err := nextAvailableArchivePath(destinationAbsolutePath, archiveBaseName)
+	if err != nil {
+		return "", err
+	}
+
+	file, err := os.OpenFile(archiveAbsolutePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", err
+	}
+
+	success := false
+	defer func() {
+		if file != nil {
+			if err := file.Close(); err != nil && !success {
+				_ = os.Remove(archiveAbsolutePath)
+			}
+		}
+		if !success {
+			_ = os.Remove(archiveAbsolutePath)
+		}
+	}()
+
+	if err := writeSelectionArchive(file, sources, archiveRootForSources(sources), s.rootPath); err != nil {
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	file = nil
+
+	success = true
+
+	return joinPath(destinationNormalizedPath, archiveFileName), nil
+}
+
+func (s *Service) ExtractArchive(relPath string) error {
+	absolutePath, normalizedPath, entryType, err := s.resolveExisting(relPath)
+	if err != nil {
+		return err
+	}
+	if entryType != EntryTypeFile {
+		if entryType == EntryTypeDirectory {
+			return ErrFileExpected
+		}
+		return ErrUnsupportedEntry
+	}
+
+	destinationAbsolutePath := filepath.Dir(absolutePath)
+	stagingPath, err := os.MkdirTemp(destinationAbsolutePath, ".flowpanel-extract-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stagingPath)
+
+	if err := extractArchiveToDirectory(absolutePath, filepath.Base(normalizedPath), stagingPath); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(stagingPath)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return ErrInvalidArchive
+	}
+
+	for _, entry := range entries {
+		targetPath := filepath.Join(destinationAbsolutePath, entry.Name())
+		if _, err := os.Lstat(targetPath); err == nil {
+			return fs.ErrExist
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+
+	for _, entry := range entries {
+		sourcePath := filepath.Join(stagingPath, entry.Name())
+		targetPath := filepath.Join(destinationAbsolutePath, entry.Name())
+		if err := movePath(sourcePath, targetPath); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 type downloadSource struct {
 	absolutePath   string
 	normalizedPath string
@@ -652,6 +761,17 @@ func writeSelectionArchive(writer io.Writer, sources []downloadSource, archiveRo
 	}
 
 	return nil
+}
+
+func archiveRootForSources(sources []downloadSource) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	if len(sources) == 1 {
+		return parentPath(sources[0].normalizedPath)
+	}
+
+	return commonArchiveRoot(sources)
 }
 
 func writeTarEntry(tarWriter *tar.Writer, sourcePath, archivePath string, info fs.FileInfo) error {
@@ -981,6 +1101,215 @@ func copyFile(sourcePath string, destinationPath string, mode fs.FileMode) error
 
 	if _, err := io.Copy(destinationFile, sourceFile); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func nextAvailableArchivePath(directoryPath string, baseName string) (string, string, error) {
+	baseName = strings.TrimSpace(baseName)
+	if baseName == "" || baseName == "." {
+		baseName = "archive"
+	}
+
+	for index := 0; index < 10_000; index++ {
+		fileName := baseName + ".tar.gz"
+		if index > 0 {
+			fileName = fmt.Sprintf("%s-%d.tar.gz", baseName, index+1)
+		}
+
+		absolutePath := filepath.Join(directoryPath, fileName)
+		if err := ensureWithinRoot(directoryPath, absolutePath); err != nil {
+			return "", "", err
+		}
+		if _, err := os.Lstat(absolutePath); errors.Is(err, fs.ErrNotExist) {
+			return fileName, absolutePath, nil
+		} else if err != nil {
+			return "", "", err
+		}
+	}
+
+	return "", "", fs.ErrExist
+}
+
+func extractArchiveToDirectory(archivePath string, archiveName string, destinationPath string) error {
+	switch detectArchiveFormat(archiveName) {
+	case "tar.gz":
+		file, err := os.Open(archivePath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		gzipReader, err := gzip.NewReader(file)
+		if err != nil {
+			return ErrInvalidArchive
+		}
+		defer gzipReader.Close()
+
+		return extractTarStream(gzipReader, destinationPath)
+	case "tar":
+		file, err := os.Open(archivePath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		return extractTarStream(file, destinationPath)
+	case "zip":
+		reader, err := zip.OpenReader(archivePath)
+		if err != nil {
+			return ErrInvalidArchive
+		}
+		defer reader.Close()
+
+		return extractZipArchive(&reader.Reader, destinationPath)
+	default:
+		return ErrUnsupportedArchive
+	}
+}
+
+func detectArchiveFormat(fileName string) string {
+	normalized := strings.ToLower(strings.TrimSpace(fileName))
+	switch {
+	case strings.HasSuffix(normalized, ".tar.gz"), strings.HasSuffix(normalized, ".tgz"):
+		return "tar.gz"
+	case strings.HasSuffix(normalized, ".tar"):
+		return "tar"
+	case strings.HasSuffix(normalized, ".zip"):
+		return "zip"
+	default:
+		return ""
+	}
+}
+
+func extractTarStream(reader io.Reader, destinationPath string) error {
+	tarReader := tar.NewReader(reader)
+
+	for {
+		header, err := tarReader.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return ErrInvalidArchive
+		}
+
+		targetPath, err := resolveArchiveEntryTarget(destinationPath, header.Name)
+		if err != nil {
+			return err
+		}
+		if targetPath == "" {
+			continue
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := createArchiveDirectory(targetPath, header.FileInfo().Mode()); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := writeArchiveFile(targetPath, tarReader, header.FileInfo().Mode()); err != nil {
+				return err
+			}
+		case tar.TypeXHeader, tar.TypeXGlobalHeader:
+			continue
+		default:
+			return ErrUnsupportedArchive
+		}
+	}
+}
+
+func extractZipArchive(reader *zip.Reader, destinationPath string) error {
+	for _, file := range reader.File {
+		targetPath, err := resolveArchiveEntryTarget(destinationPath, file.Name)
+		if err != nil {
+			return err
+		}
+		if targetPath == "" {
+			continue
+		}
+
+		mode := file.Mode()
+		if mode&os.ModeSymlink != 0 {
+			return ErrUnsupportedArchive
+		}
+
+		if file.FileInfo().IsDir() {
+			if err := createArchiveDirectory(targetPath, mode); err != nil {
+				return err
+			}
+			continue
+		}
+
+		source, err := file.Open()
+		if err != nil {
+			return ErrInvalidArchive
+		}
+
+		writeErr := writeArchiveFile(targetPath, source, mode)
+		closeErr := source.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		if closeErr != nil {
+			return ErrInvalidArchive
+		}
+	}
+
+	return nil
+}
+
+func resolveArchiveEntryTarget(rootPath string, entryName string) (string, error) {
+	normalizedName := strings.TrimSpace(strings.ReplaceAll(entryName, "\\", "/"))
+	if normalizedName == "" {
+		return "", nil
+	}
+
+	targetPath := filepath.Join(rootPath, filepath.FromSlash(normalizedName))
+	if err := ensureWithinRoot(rootPath, targetPath); err != nil {
+		return "", ErrInvalidArchive
+	}
+	targetPath = filepath.Clean(targetPath)
+
+	relativePath, err := filepath.Rel(rootPath, targetPath)
+	if err != nil {
+		return "", ErrInvalidArchive
+	}
+	if relativePath == "." {
+		return "", nil
+	}
+
+	return targetPath, nil
+}
+
+func createArchiveDirectory(targetPath string, mode fs.FileMode) error {
+	permissions := mode.Perm()
+	if permissions == 0 {
+		permissions = 0o755
+	}
+
+	return os.MkdirAll(targetPath, permissions)
+}
+
+func writeArchiveFile(targetPath string, source io.Reader, mode fs.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return err
+	}
+
+	permissions := mode.Perm()
+	if permissions == 0 {
+		permissions = 0o644
+	}
+
+	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, permissions)
+	if err != nil {
+		return err
+	}
+	defer target.Close()
+
+	if _, err := io.Copy(target, source); err != nil {
+		return ErrInvalidArchive
 	}
 
 	return nil
