@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -29,6 +30,7 @@ var (
 	ErrBinaryFile         = errors.New("file is not editable as text")
 	ErrEditableFileTooBig = errors.New("file is too large to edit")
 	ErrInvalidTransfer    = errors.New("invalid transfer request")
+	ErrInvalidPermissions = errors.New("invalid permissions")
 )
 
 type EntryType string
@@ -40,12 +42,13 @@ const (
 )
 
 type Entry struct {
-	Name       string    `json:"name"`
-	Path       string    `json:"path"`
-	Type       EntryType `json:"type"`
-	Extension  string    `json:"extension,omitempty"`
-	Size       int64     `json:"size"`
-	ModifiedAt time.Time `json:"modified_at"`
+	Name        string    `json:"name"`
+	Path        string    `json:"path"`
+	Type        EntryType `json:"type"`
+	Extension   string    `json:"extension,omitempty"`
+	Permissions string    `json:"permissions"`
+	Size        int64     `json:"size"`
+	ModifiedAt  time.Time `json:"modified_at"`
 }
 
 type Listing struct {
@@ -143,10 +146,11 @@ func (s *Service) List(relPath string) (Listing, error) {
 		}
 
 		item := Entry{
-			Name:       entry.Name(),
-			Path:       joinPath(normalizedPath, entry.Name()),
-			Extension:  strings.TrimPrefix(strings.ToLower(filepath.Ext(entry.Name())), "."),
-			ModifiedAt: info.ModTime().UTC(),
+			Name:        entry.Name(),
+			Path:        joinPath(normalizedPath, entry.Name()),
+			Extension:   strings.TrimPrefix(strings.ToLower(filepath.Ext(entry.Name())), "."),
+			Permissions: fmt.Sprintf("%04o", info.Mode().Perm()),
+			ModifiedAt:  info.ModTime().UTC(),
 		}
 
 		switch {
@@ -346,6 +350,48 @@ func (s *Service) WriteTextFile(relPath string, content string) error {
 	}
 
 	return os.WriteFile(absolutePath, []byte(content), 0o644)
+}
+
+func (s *Service) SetPermissions(relPath string, permissions string, recursive bool) error {
+	absolutePath, _, entryType, err := s.resolveExisting(relPath)
+	if err != nil {
+		return err
+	}
+	if entryType == EntryTypeSymlink {
+		return ErrUnsupportedEntry
+	}
+
+	mode, err := parsePermissionMode(permissions)
+	if err != nil {
+		return err
+	}
+
+	if entryType != EntryTypeDirectory || !recursive {
+		return os.Chmod(absolutePath, mode)
+	}
+
+	paths := make([]string, 0, 16)
+	if err := filepath.WalkDir(absolutePath, func(currentPath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+
+		paths = append(paths, currentPath)
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	for index := len(paths) - 1; index >= 0; index-- {
+		if err := os.Chmod(paths[index], mode); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) Upload(relPath string, headers []*multipart.FileHeader) error {
@@ -688,6 +734,25 @@ func isTextContent(data []byte) bool {
 		return false
 	}
 	return utf8.Valid(data)
+}
+
+func parsePermissionMode(value string) (fs.FileMode, error) {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) < 3 || len(trimmed) > 4 {
+		return 0, ErrInvalidPermissions
+	}
+	for _, char := range trimmed {
+		if char < '0' || char > '7' {
+			return 0, ErrInvalidPermissions
+		}
+	}
+
+	parsed, err := strconv.ParseUint(trimmed, 8, 32)
+	if err != nil {
+		return 0, ErrInvalidPermissions
+	}
+
+	return fs.FileMode(parsed), nil
 }
 
 func copyUploadedFile(targetPath string, header *multipart.FileHeader) error {

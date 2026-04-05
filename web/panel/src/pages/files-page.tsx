@@ -33,12 +33,14 @@ import {
   renameEntry,
   saveFileContent,
   transferEntries,
+  updatePermissions,
   uploadFiles,
   type FileEntry,
   type FileListing,
 } from "@/api/files";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -48,6 +50,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Sheet,
   SheetContent,
@@ -231,6 +234,10 @@ function pathLabel(path: string) {
   return path || "/";
 }
 
+function isValidPermissionValue(value: string) {
+  return /^[0-7]{3,4}$/.test(value.trim());
+}
+
 function FlashBanner({ flash }: { flash: FlashMessage }) {
   return (
     <div
@@ -308,6 +315,9 @@ export function FilesPage() {
   const [editorOriginalContent, setEditorOriginalContent] = useState("");
   const [editorMeta, setEditorMeta] = useState<{ size: number; modifiedAt: string } | null>(null);
   const [editorBusy, setEditorBusy] = useState(false);
+  const [permissionTarget, setPermissionTarget] = useState<FileEntry | null>(null);
+  const [permissionValue, setPermissionValue] = useState("");
+  const [permissionRecursive, setPermissionRecursive] = useState(false);
 
   const listingQuery = useQuery({
     queryKey: ["files", currentPath],
@@ -616,6 +626,23 @@ export function FilesPage() {
     },
   });
 
+  const permissionsMutation = useMutation({
+    mutationFn: updatePermissions,
+    onSuccess: async (_, variables) => {
+      await invalidateCurrentListing();
+      setPermissionTarget(null);
+      setPermissionValue("");
+      setPermissionRecursive(false);
+      setFlash({
+        tone: "success",
+        text: variables.recursive ? "Permissions updated recursively." : "Permissions updated.",
+      });
+    },
+    onError: (error) => {
+      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to update permissions.") });
+    },
+  });
+
   async function invalidateCurrentListing() {
     await queryClient.invalidateQueries({ queryKey: ["files", currentPath] });
   }
@@ -732,6 +759,18 @@ export function FilesPage() {
     setDialogValue(mode === "rename" && selectedItem ? selectedItem.name : "");
   }
 
+  function openPermissionsDialog(item: FileEntry) {
+    if (item.type === "symlink") {
+      setFlash({ tone: "error", text: "Symlinks are not supported in the panel." });
+      return;
+    }
+
+    setSelection([item.path], item.path);
+    setPermissionTarget(item);
+    setPermissionValue(item.permissions ?? (item.type === "directory" ? "0755" : "0644"));
+    setPermissionRecursive(item.type === "directory");
+  }
+
   async function submitDialog(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -753,6 +792,25 @@ export function FilesPage() {
     if (dialogMode === "rename" && selectedItem) {
       await renameMutation.mutateAsync({ path: selectedItem.path, name });
     }
+  }
+
+  async function submitPermissionsDialog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!permissionTarget) {
+      return;
+    }
+
+    const permissions = permissionValue.trim();
+    if (!isValidPermissionValue(permissions)) {
+      return;
+    }
+
+    await permissionsMutation.mutateAsync({
+      path: permissionTarget.path,
+      permissions,
+      recursive: permissionTarget.type === "directory" && permissionRecursive,
+    });
   }
 
   function handleDeleteSelection() {
@@ -912,10 +970,12 @@ export function FilesPage() {
     renameMutation.isPending ||
     deleteMutation.isPending ||
     uploadMutation.isPending ||
-    transferMutation.isPending;
+    transferMutation.isPending ||
+    permissionsMutation.isPending;
   const dialogTitle =
     dialogMode === "folder" ? "New Folder" : dialogMode === "file" ? "New File" : "Rename Entry";
   const editorDirty = editorContent !== editorOriginalContent;
+  const permissionInputValid = isValidPermissionValue(permissionValue);
   const marqueeRect = marquee.hasMoved
     ? {
         left: Math.min(marquee.startX, marquee.currentX),
@@ -1124,6 +1184,7 @@ export function FilesPage() {
                           <th className="px-2.5 py-2 font-medium">Type</th>
                           <th className="px-2.5 py-2 font-medium text-right">Size</th>
                           <th className="px-2.5 py-2 font-medium">Modified</th>
+                          <th className="px-2.5 py-2 font-medium">Permissions</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1172,6 +1233,25 @@ export function FilesPage() {
                               </td>
                               <td className="px-2.5 py-2 text-[var(--app-text-muted)]">
                                 {formatDateTime(item.modified_at)}
+                              </td>
+                              <td className="px-2.5 py-2 font-mono text-[12px] text-[var(--app-text-muted)]">
+                                {item.type === "symlink" ? (
+                                  item.permissions ?? "-"
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="transition-colors duration-150 hover:text-[var(--app-text)]"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openPermissionsDialog(item);
+                                    }}
+                                    onDoubleClick={(event) => {
+                                      event.stopPropagation();
+                                    }}
+                                  >
+                                    {item.permissions ?? "-"}
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           );
@@ -1298,6 +1378,71 @@ export function FilesPage() {
               </div>
               <Button type="submit" disabled={isMutating || !dialogValue.trim()}>
                 {dialogMode === "rename" ? "Rename" : "Create"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={permissionTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !permissionsMutation.isPending) {
+            setPermissionTarget(null);
+            setPermissionValue("");
+            setPermissionRecursive(false);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change Permissions</DialogTitle>
+            <DialogDescription>
+              {permissionTarget
+                ? permissionTarget.type === "directory" && permissionRecursive
+                  ? `Update permissions for ${permissionTarget.name} and all nested files and folders.`
+                  : `Update permissions for ${permissionTarget.name}.`
+                : "Update file permissions."}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={(event) => void submitPermissionsDialog(event)}>
+            <div className="space-y-2">
+              <Label htmlFor="files-dialog-permissions">Permissions</Label>
+              <Input
+                id="files-dialog-permissions"
+                value={permissionValue}
+                onChange={(event) => setPermissionValue(event.target.value.replace(/[^0-7]/g, "").slice(0, 4))}
+                placeholder="0755"
+                autoFocus
+              />
+              <p className="text-[12px] text-[var(--app-text-muted)]">Use octal values like `755` or `0644`.</p>
+            </div>
+
+            {permissionTarget?.type === "directory" ? (
+              <div className="flex items-start gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3">
+                <Checkbox
+                  id="files-dialog-permissions-recursive"
+                  checked={permissionRecursive}
+                  onCheckedChange={(checked) => setPermissionRecursive(checked === true)}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="files-dialog-permissions-recursive"
+                    className="cursor-pointer text-[13px] font-medium text-[var(--app-text)]"
+                  >
+                    Apply recursively
+                  </Label>
+                </div>
+              </div>
+            ) : null}
+
+            <DialogFooter>
+              <div className="min-w-0 truncate text-[12px] text-[var(--app-text-muted)]">
+                {permissionTarget?.path ?? ""}
+              </div>
+              <Button type="submit" disabled={permissionsMutation.isPending || !permissionInputValid}>
+                {permissionsMutation.isPending ? "Saving..." : "Save"}
               </Button>
             </DialogFooter>
           </form>

@@ -5,6 +5,7 @@ export type FileEntry = {
   path: string;
   type: FileEntryType;
   extension?: string;
+  permissions?: string;
   size: number;
   modified_at: string;
 };
@@ -42,6 +43,12 @@ type TransferEntriesInput = {
   mode: "copy" | "move";
   paths: string[];
   target: string;
+};
+
+type UpdatePermissionsInput = {
+  path: string;
+  permissions: string;
+  recursive: boolean;
 };
 
 type FileApiError = Error;
@@ -102,6 +109,10 @@ export async function fetchFileContent(path: string): Promise<FileContent> {
 
 export async function saveFileContent(input: SaveFileInput): Promise<void> {
   await sendJSON("/api/files/content", "PUT", input, "save file");
+}
+
+export async function updatePermissions(input: UpdatePermissionsInput): Promise<void> {
+  await sendJSON("/api/files/permissions", "PUT", input, "update permissions");
 }
 
 export async function uploadFiles(path: string, files: File[]): Promise<void> {

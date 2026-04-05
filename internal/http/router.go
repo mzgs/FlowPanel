@@ -2221,6 +2221,34 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
 		})
 
+		filesUpdatePermissionsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Files == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "file manager is not configured",
+				})
+				return
+			}
+
+			var input struct {
+				Path        string `json:"path"`
+				Permissions string `json:"permissions"`
+				Recursive   bool   `json:"recursive"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			if err := app.Files.SetPermissions(input.Path, input.Permissions, input.Recursive); err != nil {
+				writeFileError(w, err)
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+		})
+
 		filesUploadHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Files == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -2298,6 +2326,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodDelete, "/files", filesDeleteHandler)
 		r.Method(stdhttp.MethodGet, "/files/content", filesContentHandler)
 		r.Method(stdhttp.MethodPut, "/files/content", filesUpdateContentHandler)
+		r.Method(stdhttp.MethodPut, "/files/permissions", filesUpdatePermissionsHandler)
 		r.Method(stdhttp.MethodPost, "/files/upload", filesUploadHandler)
 		r.Method(stdhttp.MethodGet, "/files/download", filesDownloadHandler)
 		r.Method(stdhttp.MethodPost, "/files/transfer", filesTransferHandler)
@@ -2600,6 +2629,10 @@ func writeFileError(w stdhttp.ResponseWriter, err error) {
 	case errors.Is(err, filesvc.ErrInvalidTransfer):
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
 			"error": "invalid move or copy operation",
+		})
+	case errors.Is(err, filesvc.ErrInvalidPermissions):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "invalid permissions value",
 		})
 	case errors.Is(err, fs.ErrExist):
 		writeJSON(w, stdhttp.StatusConflict, map[string]any{

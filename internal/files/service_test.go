@@ -52,6 +52,134 @@ func TestListReturnsRootWhenTraversalTargetsMissingPath(t *testing.T) {
 	}
 }
 
+func TestListIncludesPermissions(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	directoryPath := filepath.Join(root, "site")
+	if err := os.Mkdir(directoryPath, 0o755); err != nil {
+		t.Fatalf("mkdir site: %v", err)
+	}
+	if err := os.Chmod(directoryPath, 0o750); err != nil {
+		t.Fatalf("chmod site: %v", err)
+	}
+
+	filePath := filepath.Join(root, "site", "index.html")
+	if err := os.WriteFile(filePath, []byte("<h1>hello</h1>"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := os.Chmod(filePath, 0o640); err != nil {
+		t.Fatalf("chmod file: %v", err)
+	}
+
+	listing, err := service.List("")
+	if err != nil {
+		t.Fatalf("list root: %v", err)
+	}
+
+	if len(listing.Directories) != 1 {
+		t.Fatalf("directories = %d, want 1", len(listing.Directories))
+	}
+	if listing.Directories[0].Permissions != "0750" {
+		t.Fatalf("directory permissions = %q, want 0750", listing.Directories[0].Permissions)
+	}
+
+	listing, err = service.List("site")
+	if err != nil {
+		t.Fatalf("list site: %v", err)
+	}
+
+	if len(listing.Files) != 1 {
+		t.Fatalf("files = %d, want 1", len(listing.Files))
+	}
+	if listing.Files[0].Permissions != "0640" {
+		t.Fatalf("file permissions = %q, want 0640", listing.Files[0].Permissions)
+	}
+}
+
+func TestSetPermissionsUpdatesFile(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	filePath := filepath.Join(root, "index.html")
+	if err := os.WriteFile(filePath, []byte("<h1>hello</h1>"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if err := service.SetPermissions("index.html", "640", false); err != nil {
+		t.Fatalf("set permissions: %v", err)
+	}
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("file mode = %04o, want 0640", got)
+	}
+}
+
+func TestSetPermissionsRecursivelyUpdatesDirectory(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "site", "assets"), 0o755); err != nil {
+		t.Fatalf("mkdir tree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "site", "index.html"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write root file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "site", "assets", "app.js"), []byte("console.log('ok')"), 0o644); err != nil {
+		t.Fatalf("write nested file: %v", err)
+	}
+
+	if err := service.SetPermissions("site", "0750", true); err != nil {
+		t.Fatalf("set permissions recursively: %v", err)
+	}
+
+	paths := []string{
+		filepath.Join(root, "site"),
+		filepath.Join(root, "site", "assets"),
+		filepath.Join(root, "site", "index.html"),
+		filepath.Join(root, "site", "assets", "app.js"),
+	}
+	for _, currentPath := range paths {
+		info, err := os.Stat(currentPath)
+		if err != nil {
+			t.Fatalf("stat %s: %v", currentPath, err)
+		}
+		if got := info.Mode().Perm(); got != 0o750 {
+			t.Fatalf("%s mode = %04o, want 0750", currentPath, got)
+		}
+	}
+}
+
+func TestSetPermissionsRejectsInvalidMode(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	filePath := filepath.Join(root, "index.html")
+	if err := os.WriteFile(filePath, []byte("<h1>hello</h1>"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if err := service.SetPermissions("index.html", "999", false); err != ErrInvalidPermissions {
+		t.Fatalf("set permissions error = %v, want %v", err, ErrInvalidPermissions)
+	}
+}
+
 func TestFileLifecycle(t *testing.T) {
 	root := t.TempDir()
 	service, err := NewService(root)
