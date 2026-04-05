@@ -21,13 +21,11 @@ import {
   FolderOpen,
   FolderPlus,
   Grid2X2,
-  HardDrive,
   List,
   Pencil,
   RefreshCw,
   Scissors,
   Search,
-  Settings2,
   Trash2,
   Upload,
 } from "@/components/icons/tabler-icons";
@@ -46,7 +44,6 @@ import {
   type FileListing,
 } from "@/api/files";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
-import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -96,13 +93,7 @@ type MarqueeState = {
   baseSelection: string[];
 };
 
-type SettingsState = {
-  startPath: string;
-  preferredView: ViewMode;
-};
-
 const VIEW_STORAGE_KEY = "flowpanel.files.view";
-const START_PATH_STORAGE_KEY = "flowpanel.files.start-path";
 const LAST_PATH_STORAGE_KEY = "flowpanel.files.last-path";
 
 const editableExtensions = new Set([
@@ -153,14 +144,6 @@ function readStoredViewMode(): ViewMode {
   }
 
   return window.localStorage.getItem(VIEW_STORAGE_KEY) === "grid" ? "grid" : "list";
-}
-
-function readStoredStartPath() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-
-  return window.localStorage.getItem(START_PATH_STORAGE_KEY) || "";
 }
 
 function readStoredLastPath() {
@@ -309,7 +292,7 @@ export function FilesPage() {
     }
 
     const lastPath = readStoredLastPath();
-    return lastPath ?? readStoredStartPath();
+    return lastPath ?? "";
   });
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [anchorPath, setAnchorPath] = useState<string | null>(null);
@@ -332,11 +315,6 @@ export function FilesPage() {
     currentY: 0,
     hasMoved: false,
     baseSelection: [],
-  });
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState<SettingsState>({
-    startPath: readStoredStartPath(),
-    preferredView: readStoredViewMode(),
   });
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorPath, setEditorPath] = useState("");
@@ -377,17 +355,6 @@ export function FilesPage() {
     : null;
   const breadcrumbs = getBreadcrumbs(listing);
   const clipboardReady = clipboardPaths.length > 0 && clipboardMode !== null;
-  const summaryParts = [
-    `${listing?.directories.length ?? 0} folders`,
-    `${listing?.files.length ?? 0} files`,
-  ];
-
-  if (selectedPaths.length > 0) {
-    summaryParts.push(`${selectedPaths.length} selected`);
-  }
-  if (clipboardReady) {
-    summaryParts.push(`${clipboardMode === "copy" ? "Copy" : "Cut"} ready: ${clipboardPaths.length}`);
-  }
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -404,18 +371,6 @@ export function FilesPage() {
 
     window.localStorage.setItem(LAST_PATH_STORAGE_KEY, listing?.path ?? currentPath);
   }, [currentPath, listing?.path, listingQuery.isSuccess]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    if (settings.startPath) {
-      window.localStorage.setItem(START_PATH_STORAGE_KEY, settings.startPath);
-    } else {
-      window.localStorage.removeItem(START_PATH_STORAGE_KEY);
-    }
-  }, [settings.startPath]);
 
   useEffect(() => {
     const available = new Set(itemOrder);
@@ -435,9 +390,7 @@ export function FilesPage() {
 
     if (getErrorMessage(listingQuery.error, "").toLowerCase().includes("not found")) {
       const storedLastPath = readStoredLastPath();
-      const storedStartPath = readStoredStartPath();
       const fromLastPath = storedLastPath === currentPath;
-      const fromStartPath = storedStartPath === currentPath;
 
       if (typeof window !== "undefined" && fromLastPath) {
         window.localStorage.removeItem(LAST_PATH_STORAGE_KEY);
@@ -448,20 +401,7 @@ export function FilesPage() {
       setContextMenu(null);
       clearSelection();
 
-      if (fromStartPath) {
-        setSettings((current) => ({ ...current, startPath: "" }));
-      }
-
-      if (fromLastPath && storedStartPath && storedStartPath !== currentPath) {
-        setCurrentPath(storedStartPath);
-        return;
-      }
-
-      if (fromLastPath && !fromStartPath) {
-        return;
-      }
-
-      if (fromStartPath) {
+      if (fromLastPath) {
         return;
       }
     }
@@ -1184,105 +1124,24 @@ export function FilesPage() {
         handleConfirm={confirmDeleteSelection}
         className="sm:max-w-md"
       />
-      <PageHeader
-        title="Files"
-        meta={
-          listing
-            ? `Root ${listing.root_path}`
-            : "Browse, multi-select, drag, copy, move, and edit files in the panel."
-        }
-      />
-
-      <div className="px-4 py-6 sm:px-6 lg:px-8">
+      <div className="px-4 pb-6 pt-4 sm:px-6 lg:px-8">
         <div className="space-y-4">
           {flash ? <FlashBanner flash={flash} /> : null}
 
           <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-            <div className="flex flex-col gap-4 border-b border-[var(--app-border)] px-4 py-4 md:px-5">
+            <div className="border-b border-[var(--app-border)] px-4 pb-4 pt-3 md:px-5">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.2em] text-[var(--app-text-muted)]">
-                    <HardDrive className="h-4 w-4" />
-                    File root
-                  </div>
-                  <div className="text-[15px] font-medium text-[var(--app-text)]">
-                    {listing?.absolute_path || listing?.root_path || "Loading..."}
-                  </div>
-                  <div className="text-[12px] text-[var(--app-text-muted)]">{summaryParts.join(" / ")}</div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => listingQuery.refetch()}
-                    disabled={listingQuery.isFetching}
-                  >
-                    <RefreshCw className={cn("h-4 w-4", listingQuery.isFetching && "animate-spin")} />
-                    Refresh
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleNavigate(listing?.parent_path || "")}
-                    disabled={!listing?.parent_path}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                    Up
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => openDialog("folder")}>
-                    <FolderPlus className="h-4 w-4" />
-                    New Folder
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => openDialog("file")}>
-                    <FilePlus2 className="h-4 w-4" />
-                    New File
-                  </Button>
-                  <Button size="sm" onClick={() => uploadInputRef.current?.click()}>
-                    <Upload className="h-4 w-4" />
-                    Upload
-                  </Button>
-                  {clipboardReady ? (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        void pasteInto(currentPath);
-                      }}
-                    >
-                      <Check className="h-4 w-4" />
-                      Paste
-                    </Button>
-                  ) : null}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setSettings({
-                        startPath: currentPath,
-                        preferredView: viewMode,
-                      });
-                      setSettingsOpen(true);
-                    }}
-                  >
-                    <Settings2 className="h-4 w-4" />
-                    Settings
-                  </Button>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--app-text-muted)]">
+                <div className="flex min-w-0 flex-wrap items-center gap-1 text-[13px] text-[var(--app-text-muted)]">
                   {breadcrumbs.map((crumb, index) => (
-                    <div key={crumb.path || "root"} className="flex items-center gap-2">
-                      {index > 0 ? <span className="text-[var(--app-border-strong)]">/</span> : null}
+                    <div key={crumb.path || "root"} className="flex items-center gap-1">
+                      {index > 0 ? <span className="text-[var(--app-text-muted)]">/</span> : null}
                       <button
                         type="button"
                         className={cn(
-                          "rounded-[8px] px-2 py-1 transition-colors duration-150",
+                          "transition-colors duration-150",
                           crumb.path === currentPath
-                            ? "bg-[var(--app-accent-soft)] text-[var(--app-text)]"
-                            : "hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]",
+                            ? "font-medium text-[var(--app-text)]"
+                            : "hover:text-[var(--app-text)]",
                         )}
                         onClick={() => handleNavigate(crumb.path)}
                       >
@@ -1292,38 +1151,190 @@ export function FilesPage() {
                   ))}
                 </div>
 
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <div className="relative min-w-[220px]">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-text-muted)]" />
-                    <Input
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search current folder"
-                      className="pl-9"
-                    />
-                  </div>
+                <div className="flex flex-col items-end gap-3 xl:flex-row xl:flex-wrap xl:justify-end xl:items-center">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="size-8"
+                    aria-label="Refresh"
+                    title="Refresh"
+                    onClick={() => listingQuery.refetch()}
+                    disabled={listingQuery.isFetching}
+                  >
+                    <RefreshCw className={cn("h-4 w-4", listingQuery.isFetching && "animate-spin")} />
+                    <span className="sr-only">Refresh</span>
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="size-8"
+                    aria-label="Up"
+                    title="Up"
+                    onClick={() => handleNavigate(listing?.parent_path || "")}
+                    disabled={!listing?.parent_path}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                    <span className="sr-only">Up</span>
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="size-8"
+                    aria-label="New folder"
+                    title="New folder"
+                    onClick={() => openDialog("folder")}
+                  >
+                    <FolderPlus className="h-4 w-4" />
+                    <span className="sr-only">New folder</span>
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="size-8"
+                    aria-label="New file"
+                    title="New file"
+                    onClick={() => openDialog("file")}
+                  >
+                    <FilePlus2 className="h-4 w-4" />
+                    <span className="sr-only">New file</span>
+                  </Button>
+                  <Button
+                    size="icon"
+                    className="size-8"
+                    aria-label="Upload"
+                    title="Upload"
+                    onClick={() => uploadInputRef.current?.click()}
+                  >
+                    <Upload className="h-4 w-4" />
+                    <span className="sr-only">Upload</span>
+                  </Button>
+                  {clipboardReady ? (
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Paste"
+                      title="Paste"
+                      onClick={() => {
+                        void pasteInto(currentPath);
+                      }}
+                    >
+                      <Check className="h-4 w-4" />
+                      <span className="sr-only">Paste</span>
+                    </Button>
+                  ) : null}
+                  {selectedPaths.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-2 md:ml-2 md:border-l md:border-[var(--app-border)] md:pl-2">
+                      <Button
+                        variant="secondary"
+                        size="icon"
+                        className="size-8"
+                        aria-label="Copy"
+                        title="Copy"
+                        onClick={() => copySelection("copy")}
+                      >
+                        <Copy className="h-4 w-4" />
+                        <span className="sr-only">Copy</span>
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="icon"
+                        className="size-8"
+                        aria-label="Cut"
+                        title="Cut"
+                        onClick={() => copySelection("move")}
+                      >
+                        <Scissors className="h-4 w-4" />
+                        <span className="sr-only">Cut</span>
+                      </Button>
+                      {selectedItem?.type === "file" ? (
+                        <>
+                          <Button
+                            variant="secondary"
+                            size="icon"
+                            className="size-8"
+                            aria-label="Edit"
+                            title="Edit"
+                            onClick={() => void openEditor(selectedItem.path)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                            <span className="sr-only">Edit</span>
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="icon"
+                            className="size-8"
+                            aria-label="Download"
+                            title="Download"
+                            onClick={handleDownloadSelection}
+                          >
+                            <Download className="h-4 w-4" />
+                            <span className="sr-only">Download</span>
+                          </Button>
+                        </>
+                      ) : null}
+                      {selectedItem ? (
+                        <Button
+                          variant="secondary"
+                          size="icon"
+                          className="size-8"
+                          aria-label="Rename"
+                          title="Rename"
+                          onClick={() => openDialog("rename")}
+                        >
+                          <Pencil className="h-4 w-4" />
+                          <span className="sr-only">Rename</span>
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="secondary"
+                        size="icon"
+                        className="size-8"
+                        aria-label="Delete"
+                        title="Delete"
+                        onClick={handleDeleteSelection}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="sr-only">Delete</span>
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
 
-                  <div className="flex items-center gap-1 rounded-[12px] border border-[var(--app-border)] bg-[var(--app-surface)] p-1">
-                    <button
-                      type="button"
-                      className={cn(
-                        "inline-flex h-8 w-8 items-center justify-center rounded-[8px] text-[var(--app-text-muted)] transition-colors duration-150",
-                        viewMode === "list" && "bg-[var(--app-accent)] text-[#f7fbff]",
-                      )}
-                      onClick={() => setViewMode("list")}
-                    >
-                      <List className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      className={cn(
-                        "inline-flex h-8 w-8 items-center justify-center rounded-[8px] text-[var(--app-text-muted)] transition-colors duration-150",
-                        viewMode === "grid" && "bg-[var(--app-accent)] text-[#f7fbff]",
-                      )}
-                      onClick={() => setViewMode("grid")}
-                    >
-                      <Grid2X2 className="h-4 w-4" />
-                    </button>
+                  <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
+                    <div className="relative min-w-[220px]">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-text-muted)]" />
+                      <Input
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Search current folder"
+                        className="pl-9"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1 rounded-[12px] border border-[var(--app-border)] bg-[var(--app-surface)] p-1">
+                      <button
+                        type="button"
+                        className={cn(
+                          "inline-flex h-8 w-8 items-center justify-center rounded-[8px] text-[var(--app-text-muted)] transition-colors duration-150",
+                          viewMode === "list" && "bg-[var(--app-accent)] text-[#f7fbff]",
+                        )}
+                        onClick={() => setViewMode("list")}
+                      >
+                        <List className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className={cn(
+                          "inline-flex h-8 w-8 items-center justify-center rounded-[8px] text-[var(--app-text-muted)] transition-colors duration-150",
+                          viewMode === "grid" && "bg-[var(--app-accent)] text-[#f7fbff]",
+                        )}
+                        onClick={() => setViewMode("grid")}
+                      >
+                        <Grid2X2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1347,52 +1358,6 @@ export function FilesPage() {
                 }}
                 onDrop={handleBrowserDrop}
               >
-                <div className="flex items-center justify-between border-b border-[var(--app-border)] px-4 py-3">
-                  <div>
-                    <div className="text-[15px] font-medium text-[var(--app-text)]">Directory</div>
-                    <div className="text-[12px] text-[var(--app-text-muted)]">
-                      {normalizedSearch
-                        ? `${filteredItems.length} matching item${filteredItems.length === 1 ? "" : "s"}`
-                        : `${allItems.length} item${allItems.length === 1 ? "" : "s"}`}
-                    </div>
-                  </div>
-
-                  {selectedPaths.length > 0 ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => copySelection("copy")}>
-                        <Copy className="h-4 w-4" />
-                        Copy
-                      </Button>
-                      <Button variant="secondary" size="sm" onClick={() => copySelection("move")}>
-                        <Scissors className="h-4 w-4" />
-                        Cut
-                      </Button>
-                      {selectedItem?.type === "file" ? (
-                        <>
-                          <Button variant="secondary" size="sm" onClick={() => void openEditor(selectedItem.path)}>
-                            <Pencil className="h-4 w-4" />
-                            Edit
-                          </Button>
-                          <Button variant="secondary" size="sm" onClick={handleDownloadSelection}>
-                            <Download className="h-4 w-4" />
-                            Download
-                          </Button>
-                        </>
-                      ) : null}
-                      {selectedItem ? (
-                        <Button variant="secondary" size="sm" onClick={() => openDialog("rename")}>
-                          <Pencil className="h-4 w-4" />
-                          Rename
-                        </Button>
-                      ) : null}
-                      <Button variant="secondary" size="sm" onClick={handleDeleteSelection}>
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-
                 {listingQuery.isLoading ? (
                   <div className="flex min-h-[260px] items-center justify-center text-[13px] text-[var(--app-text-muted)]">
                     Loading directory...
@@ -1621,72 +1586,6 @@ export function FilesPage() {
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>File Manager Settings</DialogTitle>
-            <DialogDescription>
-              Resume the last opened folder automatically, with an optional fallback start folder and preferred view.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-[13px] font-medium text-[var(--app-text)]" htmlFor="files-settings-path">
-                Start folder
-              </label>
-              <Input
-                id="files-settings-path"
-                value={settings.startPath}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, startPath: event.target.value.trim() }))
-                }
-                placeholder="Leave blank for the root"
-              />
-              <p className="text-[12px] text-[var(--app-text-muted)]">
-                Current root: {listing?.root_path || "Loading..."} Leave blank to use the last opened folder or root.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <div className="text-[13px] font-medium text-[var(--app-text)]">Preferred view</div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={settings.preferredView === "list" ? "default" : "secondary"}
-                  size="sm"
-                  onClick={() => setSettings((current) => ({ ...current, preferredView: "list" }))}
-                >
-                  <List className="h-4 w-4" />
-                  List
-                </Button>
-                <Button
-                  variant={settings.preferredView === "grid" ? "default" : "secondary"}
-                  size="sm"
-                  onClick={() => setSettings((current) => ({ ...current, preferredView: "grid" }))}
-                >
-                  <Grid2X2 className="h-4 w-4" />
-                  Grid
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <div className="text-[12px] text-[var(--app-text-muted)]">Saved locally in the browser.</div>
-            <Button
-              onClick={() => {
-                setViewMode(settings.preferredView);
-                handleNavigate(settings.startPath);
-                setSettingsOpen(false);
-                setFlash({ tone: "success", text: "File manager settings updated." });
-              }}
-            >
-              Save Settings
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
