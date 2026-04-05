@@ -1,5 +1,5 @@
-import { Link } from "@tanstack/react-router";
-import { GitBranch, LoaderCircle, RefreshCw, Trash2 } from "@/components/icons/tabler-icons";
+import { LoaderCircle, RefreshCw, Trash2 } from "@/components/icons/tabler-icons";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,10 +17,8 @@ type DomainGitHubDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   hostname: string;
-  projectPath: string;
   repositoryUrl: string;
   autoDeployOnPush: boolean;
-  defaultBranch: string;
   hasSavedIntegration: boolean;
   saving: boolean;
   deploying: boolean;
@@ -47,10 +45,8 @@ export function DomainGitHubDialog({
   open,
   onOpenChange,
   hostname,
-  projectPath,
   repositoryUrl,
   autoDeployOnPush,
-  defaultBranch,
   hasSavedIntegration,
   saving,
   deploying,
@@ -89,38 +85,18 @@ export function DomainGitHubDialog({
           </div>
         ) : null}
 
-        <section className="grid gap-4 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4 md:grid-cols-[minmax(0,1fr)_220px]">
-          <div className="space-y-1.5">
-            <p className="text-sm font-semibold text-[var(--app-text)]">Deployment target</p>
-            <p className="break-all font-mono text-xs text-[var(--app-text-muted)]">
-              {projectPath}
-            </p>
-            <p className="text-xs leading-5 text-[var(--app-text-muted)]">
-              The panel uses the GitHub token stored in{" "}
-              <Link
-                to="/settings"
-                className="font-medium text-[var(--app-text)] underline underline-offset-2"
-              >
-                Settings
-              </Link>{" "}
-              for repository access and webhook setup.
-            </p>
-          </div>
-          <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--app-text)]">
-              <GitBranch className="h-4 w-4 text-[var(--app-text-muted)]" stroke={1.8} />
-              GitHub state
-            </div>
-            <div className="mt-3 space-y-2 text-xs text-[var(--app-text-muted)]">
-              <p>{hasSavedIntegration ? "Repository connected" : "No repository connected"}</p>
-              <p>
-                {autoDeployOnPush
-                  ? `Pushes to ${defaultBranch || "the default branch"} deploy automatically.`
-                  : "Auto update is off. Use Deploy now when you want to pull changes."}
-              </p>
-            </div>
-          </div>
-        </section>
+        <div className="flex items-center">
+          <Badge
+            variant="outline"
+            className={
+              hasSavedIntegration
+                ? "border-[var(--app-ok)]/30 bg-[var(--app-ok-soft)] text-[var(--app-ok)]"
+                : "border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] text-[var(--app-danger)]"
+            }
+          >
+            GitHub {hasSavedIntegration ? "connected" : "not connected"}
+          </Badge>
+        </div>
 
         <div className="space-y-4">
           <div className="space-y-2">

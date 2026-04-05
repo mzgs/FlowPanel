@@ -880,10 +880,8 @@ export function DomainDetailPage() {
         open={githubDialogOpen && domain !== null}
         onOpenChange={setGitHubDialogOpen}
         hostname={domain?.hostname ?? hostname}
-        projectPath={domain?.target ?? ""}
         repositoryUrl={githubForm.repositoryUrl}
         autoDeployOnPush={githubForm.autoDeployOnPush}
-        defaultBranch={domain?.github_integration?.default_branch ?? ""}
         hasSavedIntegration={Boolean(domain?.github_integration)}
         saving={githubSaving}
         deploying={githubDeploying}
