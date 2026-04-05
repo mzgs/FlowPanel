@@ -1129,7 +1129,7 @@ export function FilesPage() {
           {flash ? <FlashBanner flash={flash} /> : null}
 
           <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-            <div className="border-b border-[var(--app-border)] px-4 pb-4 pt-3 md:px-5">
+            <div className="px-4 pb-4 pt-3 md:px-5">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div className="flex min-w-0 flex-wrap items-center gap-1 text-[13px] text-[var(--app-text-muted)]">
                   {breadcrumbs.map((crumb, index) => (
@@ -1340,11 +1340,11 @@ export function FilesPage() {
               </div>
             </div>
 
-            <div className="p-4 md:p-5">
+            <div className="px-4 pb-4 md:px-5 md:pb-5">
               <div
                 ref={browserRef}
                 className={cn(
-                  "relative overflow-hidden rounded-[16px] border border-[var(--app-border)] bg-[var(--app-bg-2)] select-none shadow-[var(--app-shadow)]",
+                  "relative overflow-hidden select-none",
                   rootDropActive && "ring-2 ring-[var(--app-accent)]/80",
                 )}
                 onMouseDown={beginMarquee}
