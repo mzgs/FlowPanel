@@ -11,8 +11,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
   Check,
-  Copy,
-  Download,
   File,
   FileCode2,
   FilePlus2,
@@ -22,11 +20,8 @@ import {
   FolderPlus,
   Grid2X2,
   List,
-  Pencil,
   RefreshCw,
-  Scissors,
   Search,
-  Trash2,
   Upload,
 } from "@/components/icons/tabler-icons";
 import {
@@ -35,7 +30,6 @@ import {
   deleteEntry,
   fetchFileContent,
   fetchFiles,
-  getDownloadUrl,
   renameEntry,
   saveFileContent,
   transferEntries,
@@ -74,13 +68,6 @@ type FlashTone = "success" | "error";
 type FlashMessage = {
   tone: FlashTone;
   text: string;
-};
-
-type ContextMenuState = {
-  x: number;
-  y: number;
-  scope: "item" | "background";
-  path: string | null;
 };
 
 type MarqueeState = {
@@ -283,7 +270,6 @@ export function FilesPage() {
   const queryClient = useQueryClient();
   const browserRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [currentPath, setCurrentPath] = useState(() => {
     const pendingPath = consumePendingFilesPath();
@@ -302,7 +288,6 @@ export function FilesPage() {
   const [dialogValue, setDialogValue] = useState("");
   const [confirmDeletePaths, setConfirmDeletePaths] = useState<string[]>([]);
   const [flash, setFlash] = useState<FlashMessage | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [clipboardMode, setClipboardMode] = useState<ClipboardMode>(null);
   const [clipboardPaths, setClipboardPaths] = useState<string[]>([]);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -398,7 +383,6 @@ export function FilesPage() {
 
       setCurrentPath("");
       setSearch("");
-      setContextMenu(null);
       clearSelection();
 
       if (fromLastPath) {
@@ -408,22 +392,9 @@ export function FilesPage() {
   }, [currentPath, listingQuery.error, listingQuery.isError]);
 
   useEffect(() => {
-    function handleDocumentClick(event: MouseEvent) {
-      if (!contextMenuRef.current || !contextMenu) {
-        return;
-      }
-
-      if (!contextMenuRef.current.contains(event.target as Node)) {
-        setContextMenu(null);
-      }
-    }
-
     function handleEscape(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) {
-        if (event.key === "Escape") {
-          setContextMenu(null);
-        }
         return;
       }
 
@@ -432,10 +403,6 @@ export function FilesPage() {
       if (event.key === "Escape") {
         if (marquee.active) {
           setMarquee((current) => ({ ...current, active: false, hasMoved: false }));
-          return;
-        }
-        if (contextMenu) {
-          setContextMenu(null);
           return;
         }
         setSelectedPaths([]);
@@ -480,14 +447,12 @@ export function FilesPage() {
       }
     }
 
-    document.addEventListener("click", handleDocumentClick);
     document.addEventListener("keydown", handleEscape);
 
     return () => {
-      document.removeEventListener("click", handleDocumentClick);
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [clipboardReady, contextMenu, currentPath, itemOrder, marquee.active, selectedPaths]);
+  }, [clipboardReady, currentPath, itemOrder, marquee.active, selectedPaths]);
 
   useEffect(() => {
     if (!marquee.active) {
@@ -606,7 +571,6 @@ export function FilesPage() {
       await invalidateCurrentListing();
       setSelectedPaths([]);
       setAnchorPath(null);
-      setContextMenu(null);
       setFlash({ tone: "success", text: "Selection deleted." });
     },
     onError: (error) => {
@@ -636,7 +600,6 @@ export function FilesPage() {
       await invalidateCurrentListing();
       setDropTargetPath(null);
       setRootDropActive(false);
-      setContextMenu(null);
       setSelectedPaths([]);
       setAnchorPath(null);
       if (variables.mode === "move") {
@@ -673,7 +636,6 @@ export function FilesPage() {
   function handleNavigate(path: string) {
     setCurrentPath(path);
     setSearch("");
-    setContextMenu(null);
     clearSelection();
   }
 
@@ -768,7 +730,6 @@ export function FilesPage() {
   function openDialog(mode: Exclude<DialogMode, null>) {
     setDialogMode(mode);
     setDialogValue(mode === "rename" && selectedItem ? selectedItem.name : "");
-    setContextMenu(null);
   }
 
   async function submitDialog(event: FormEvent<HTMLFormElement>) {
@@ -821,7 +782,6 @@ export function FilesPage() {
 
     setClipboardMode(mode);
     setClipboardPaths(selectedPaths);
-    setContextMenu(null);
     setFlash({
       tone: "success",
       text: mode === "copy" ? `Copied ${selectedPaths.length} item(s).` : `Cut ${selectedPaths.length} item(s).`,
@@ -840,14 +800,6 @@ export function FilesPage() {
     });
   }
 
-  function handleDownloadSelection() {
-    if (selectedItem?.type !== "file") {
-      return;
-    }
-
-    window.location.assign(getDownloadUrl(selectedItem.path));
-  }
-
   function handleUploadSelection(files: FileList | null, targetPath = currentPath) {
     if (!files || files.length === 0) {
       return;
@@ -862,11 +814,10 @@ export function FilesPage() {
     }
 
     const target = event.target as HTMLElement;
-    if (target.closest("[data-selectable='1']") || target.closest("[data-context-menu='1']")) {
+    if (target.closest("[data-selectable='1']")) {
       return;
     }
 
-    setContextMenu(null);
     setMarquee({
       active: true,
       startX: event.clientX,
@@ -882,36 +833,6 @@ export function FilesPage() {
     }
   }
 
-  function handleItemContextMenu(event: ReactMouseEvent<HTMLElement>, item: FileEntry) {
-    event.preventDefault();
-
-    if (!selectedSet.has(item.path)) {
-      setSelection([item.path], item.path);
-    }
-
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      scope: "item",
-      path: item.path,
-    });
-  }
-
-  function handleBackgroundContextMenu(event: ReactMouseEvent<HTMLDivElement>) {
-    const target = event.target as HTMLElement;
-    if (target.closest("[data-selectable='1']")) {
-      return;
-    }
-
-    event.preventDefault();
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      scope: "background",
-      path: null,
-    });
-  }
-
   function handleInternalDragStart(item: FileEntry, event: React.DragEvent<HTMLElement>) {
     if (!selectedSet.has(item.path)) {
       setSelection([item.path], item.path);
@@ -919,7 +840,6 @@ export function FilesPage() {
 
     event.dataTransfer.setData("application/x-flowpanel-paths", JSON.stringify(selectedSet.has(item.path) ? selectedPaths : [item.path]));
     event.dataTransfer.effectAllowed = "move";
-    setContextMenu(null);
   }
 
   function handleDirectoryDragOver(path: string, event: React.DragEvent<HTMLElement>) {
@@ -986,90 +906,6 @@ export function FilesPage() {
     }
   }
 
-  function buildContextMenuItems() {
-    const targetItem = contextMenu?.path ? itemMap.get(contextMenu.path) ?? null : null;
-    const items: Array<{
-      key: string;
-      label: string;
-      icon: React.ComponentType<{ className?: string }>;
-      disabled?: boolean;
-      handler: () => void;
-    }> = [];
-
-    if (contextMenu?.scope === "item" && targetItem && selectedPaths.length === 1) {
-      if (targetItem.type === "directory") {
-        items.push({
-          key: "open",
-          label: "Open",
-          icon: FolderOpen,
-          handler: () => handleNavigate(targetItem.path),
-        });
-      }
-
-      if (targetItem.type === "file") {
-        items.push({
-          key: "edit",
-          label: isEditableFile(targetItem) ? "Open in Editor" : "Try Open",
-          icon: Pencil,
-          handler: () => void openEditor(targetItem.path),
-        });
-        items.push({
-          key: "download",
-          label: "Download",
-          icon: Download,
-          handler: handleDownloadSelection,
-        });
-      }
-    }
-
-    if (selectedPaths.length > 0) {
-      items.push({
-        key: "copy",
-        label: selectedPaths.length === 1 ? "Copy" : `Copy ${selectedPaths.length} Items`,
-        icon: Copy,
-        handler: () => copySelection("copy"),
-      });
-      items.push({
-        key: "cut",
-        label: selectedPaths.length === 1 ? "Cut" : `Cut ${selectedPaths.length} Items`,
-        icon: Scissors,
-        handler: () => copySelection("move"),
-      });
-
-      if (selectedPaths.length === 1) {
-        items.push({
-          key: "rename",
-          label: "Rename",
-          icon: Pencil,
-          handler: () => openDialog("rename"),
-        });
-      }
-
-      items.push({
-        key: "delete",
-        label: selectedPaths.length === 1 ? "Delete" : `Delete ${selectedPaths.length} Items`,
-        icon: Trash2,
-        handler: handleDeleteSelection,
-      });
-    }
-
-    if (clipboardReady) {
-      const pasteTarget =
-        contextMenu?.scope === "item" && targetItem?.type === "directory" ? targetItem.path : currentPath;
-      items.push({
-        key: "paste",
-        label: clipboardMode === "copy" ? "Paste Copy" : "Paste Move",
-        icon: Check,
-        handler: () => {
-          void pasteInto(pasteTarget);
-        },
-      });
-    }
-
-    return items;
-  }
-
-  const contextMenuItems = buildContextMenuItems();
   const isMutating =
     createDirectoryMutation.isPending ||
     createFileMutation.isPending ||
@@ -1086,18 +922,6 @@ export function FilesPage() {
         top: Math.min(marquee.startY, marquee.currentY),
         width: Math.abs(marquee.currentX - marquee.startX),
         height: Math.abs(marquee.currentY - marquee.startY),
-      }
-    : null;
-  const contextMenuStyle = contextMenu
-    ? {
-        left:
-          typeof window === "undefined"
-            ? contextMenu.x
-            : Math.max(12, Math.min(contextMenu.x, window.innerWidth - 252)),
-        top:
-          typeof window === "undefined"
-            ? contextMenu.y
-            : Math.max(12, Math.min(contextMenu.y, window.innerHeight - 260)),
       }
     : null;
 
@@ -1153,154 +977,78 @@ export function FilesPage() {
 
                 <div className="flex flex-col items-end gap-3 xl:flex-row xl:flex-wrap xl:justify-end xl:items-center">
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    className="size-8"
-                    aria-label="Refresh"
-                    title="Refresh"
-                    onClick={() => listingQuery.refetch()}
-                    disabled={listingQuery.isFetching}
-                  >
-                    <RefreshCw className={cn("h-4 w-4", listingQuery.isFetching && "animate-spin")} />
-                    <span className="sr-only">Refresh</span>
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    className="size-8"
-                    aria-label="Up"
-                    title="Up"
-                    onClick={() => handleNavigate(listing?.parent_path || "")}
-                    disabled={!listing?.parent_path}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                    <span className="sr-only">Up</span>
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    className="size-8"
-                    aria-label="New folder"
-                    title="New folder"
-                    onClick={() => openDialog("folder")}
-                  >
-                    <FolderPlus className="h-4 w-4" />
-                    <span className="sr-only">New folder</span>
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    className="size-8"
-                    aria-label="New file"
-                    title="New file"
-                    onClick={() => openDialog("file")}
-                  >
-                    <FilePlus2 className="h-4 w-4" />
-                    <span className="sr-only">New file</span>
-                  </Button>
-                  <Button
-                    size="icon"
-                    className="size-8"
-                    aria-label="Upload"
-                    title="Upload"
-                    onClick={() => uploadInputRef.current?.click()}
-                  >
-                    <Upload className="h-4 w-4" />
-                    <span className="sr-only">Upload</span>
-                  </Button>
-                  {clipboardReady ? (
                     <Button
                       variant="secondary"
                       size="icon"
                       className="size-8"
-                      aria-label="Paste"
-                      title="Paste"
-                      onClick={() => {
-                        void pasteInto(currentPath);
-                      }}
+                      aria-label="Refresh"
+                      title="Refresh"
+                      onClick={() => listingQuery.refetch()}
+                      disabled={listingQuery.isFetching}
                     >
-                      <Check className="h-4 w-4" />
-                      <span className="sr-only">Paste</span>
+                      <RefreshCw className={cn("h-4 w-4", listingQuery.isFetching && "animate-spin")} />
+                      <span className="sr-only">Refresh</span>
                     </Button>
-                  ) : null}
-                  {selectedPaths.length > 0 ? (
-                    <div className="flex flex-wrap items-center gap-2 md:ml-2 md:border-l md:border-[var(--app-border)] md:pl-2">
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Up"
+                      title="Up"
+                      onClick={() => handleNavigate(listing?.parent_path || "")}
+                      disabled={!listing?.parent_path}
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                      <span className="sr-only">Up</span>
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="size-8"
+                      aria-label="New folder"
+                      title="New folder"
+                      onClick={() => openDialog("folder")}
+                    >
+                      <FolderPlus className="h-4 w-4" />
+                      <span className="sr-only">New folder</span>
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="size-8"
+                      aria-label="New file"
+                      title="New file"
+                      onClick={() => openDialog("file")}
+                    >
+                      <FilePlus2 className="h-4 w-4" />
+                      <span className="sr-only">New file</span>
+                    </Button>
+                    <Button
+                      size="icon"
+                      className="size-8"
+                      aria-label="Upload"
+                      title="Upload"
+                      onClick={() => uploadInputRef.current?.click()}
+                    >
+                      <Upload className="h-4 w-4" />
+                      <span className="sr-only">Upload</span>
+                    </Button>
+                    {clipboardReady ? (
                       <Button
                         variant="secondary"
                         size="icon"
                         className="size-8"
-                        aria-label="Copy"
-                        title="Copy"
-                        onClick={() => copySelection("copy")}
+                        aria-label="Paste"
+                        title="Paste"
+                        onClick={() => {
+                          void pasteInto(currentPath);
+                        }}
                       >
-                        <Copy className="h-4 w-4" />
-                        <span className="sr-only">Copy</span>
+                        <Check className="h-4 w-4" />
+                        <span className="sr-only">Paste</span>
                       </Button>
-                      <Button
-                        variant="secondary"
-                        size="icon"
-                        className="size-8"
-                        aria-label="Cut"
-                        title="Cut"
-                        onClick={() => copySelection("move")}
-                      >
-                        <Scissors className="h-4 w-4" />
-                        <span className="sr-only">Cut</span>
-                      </Button>
-                      {selectedItem?.type === "file" ? (
-                        <>
-                          <Button
-                            variant="secondary"
-                            size="icon"
-                            className="size-8"
-                            aria-label="Edit"
-                            title="Edit"
-                            onClick={() => void openEditor(selectedItem.path)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                            <span className="sr-only">Edit</span>
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            size="icon"
-                            className="size-8"
-                            aria-label="Download"
-                            title="Download"
-                            onClick={handleDownloadSelection}
-                          >
-                            <Download className="h-4 w-4" />
-                            <span className="sr-only">Download</span>
-                          </Button>
-                        </>
-                      ) : null}
-                      {selectedItem ? (
-                        <Button
-                          variant="secondary"
-                          size="icon"
-                          className="size-8"
-                          aria-label="Rename"
-                          title="Rename"
-                          onClick={() => openDialog("rename")}
-                        >
-                          <Pencil className="h-4 w-4" />
-                          <span className="sr-only">Rename</span>
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="secondary"
-                        size="icon"
-                        className="size-8"
-                        aria-label="Delete"
-                        title="Delete"
-                        onClick={handleDeleteSelection}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        <span className="sr-only">Delete</span>
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
+                    ) : null}
+                  </div>
 
                   <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
                     <div className="relative min-w-[220px]">
@@ -1348,7 +1096,6 @@ export function FilesPage() {
                   rootDropActive && "ring-2 ring-[var(--app-accent)]/80",
                 )}
                 onMouseDown={beginMarquee}
-                onContextMenu={handleBackgroundContextMenu}
                 onDragOver={handleBrowserDragOver}
                 onDragLeave={(event) => {
                   if (event.currentTarget.contains(event.relatedTarget as Node)) {
@@ -1398,7 +1145,6 @@ export function FilesPage() {
                               )}
                               onClick={(event) => handleSelectionClick(item, event)}
                               onDoubleClick={() => handleActivateItem(item)}
-                              onContextMenu={(event) => handleItemContextMenu(event, item)}
                               onDragStart={(event) => handleInternalDragStart(item, event)}
                               onDragOver={(event) =>
                                 item.type === "directory" ? handleDirectoryDragOver(item.path, event) : undefined
@@ -1460,7 +1206,6 @@ export function FilesPage() {
                           style={{ minHeight: 152 }}
                           onClick={(event) => handleSelectionClick(item, event)}
                           onDoubleClick={() => handleActivateItem(item)}
-                          onContextMenu={(event) => handleItemContextMenu(event, item)}
                           onDragStart={(event) => handleInternalDragStart(item, event)}
                           onDragOver={(event) =>
                             item.type === "directory" ? handleDirectoryDragOver(item.path, event) : undefined
@@ -1506,36 +1251,6 @@ export function FilesPage() {
                     className="pointer-events-none fixed z-40 rounded-[8px] border border-[var(--app-accent)] bg-blue-100/60"
                     style={marqueeRect}
                   />
-                ) : null}
-
-                {contextMenu && contextMenuItems.length > 0 ? (
-                  <div
-                    ref={contextMenuRef}
-                    data-context-menu="1"
-                    className="fixed z-50 min-w-[240px] rounded-[14px] border border-[var(--app-border)] bg-[var(--app-surface-elev)] p-2.5 shadow-[0_18px_35px_rgba(15,23,42,0.16)] backdrop-blur-sm select-none"
-                    style={contextMenuStyle ?? undefined}
-                  >
-                    <div className="space-y-1">
-                      {contextMenuItems.map((item) => {
-                        const Icon = item.icon;
-
-                        return (
-                          <button
-                            key={item.key}
-                            type="button"
-                            className="flex w-full items-center gap-3 rounded-[10px] px-3.5 py-2.5 text-left text-[15px] text-[var(--app-text)] transition-colors duration-150 hover:bg-[var(--app-accent-soft)]"
-                            onClick={() => {
-                              setContextMenu(null);
-                              item.handler();
-                            }}
-                          >
-                            <Icon className="h-[18px] w-[18px] text-[var(--app-text-muted)]" />
-                            {item.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
                 ) : null}
               </div>
             </div>
