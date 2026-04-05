@@ -471,42 +471,21 @@ export function FilesPage() {
       }
 
       if (requestedPath && requestedPath === currentPath) {
-        setFlash({
-          tone: "error",
-          text: "The requested folder no longer exists. FlowPanel returned to the root.",
-        });
         return;
       }
 
       if (fromLastPath && storedStartPath && storedStartPath !== currentPath) {
         setCurrentPath(storedStartPath);
-        setFlash({
-          tone: "error",
-          text: "The last opened folder no longer exists. FlowPanel returned to your saved start folder.",
-        });
         return;
       }
 
       if (fromLastPath && !fromStartPath) {
-        setFlash({
-          tone: "error",
-          text: "The last opened folder no longer exists. FlowPanel returned to the root.",
-        });
         return;
       }
 
       if (fromStartPath) {
-        setFlash({
-          tone: "error",
-          text: "The saved start folder no longer exists. FlowPanel returned to the root.",
-        });
         return;
       }
-
-      setFlash({
-        tone: "error",
-        text: "The folder no longer exists. FlowPanel returned to the root.",
-      });
     }
   }, [currentPath, listingQuery.error, listingQuery.isError, requestedPath]);
 
