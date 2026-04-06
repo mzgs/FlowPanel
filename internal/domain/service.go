@@ -54,6 +54,7 @@ type GitHubIntegration struct {
 	RepositoryURL    string    `json:"repository_url"`
 	AutoDeployOnPush bool      `json:"auto_deploy_on_push"`
 	DefaultBranch    string    `json:"default_branch"`
+	PostFetchScript  string    `json:"post_fetch_script"`
 	WebhookSecret    string    `json:"-"`
 	WebhookID        int64     `json:"-"`
 	CreatedAt        time.Time `json:"created_at"`

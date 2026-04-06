@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ var githubAPIBaseURL = "https://api.github.com"
 type domainGitHubIntegrationInput struct {
 	RepositoryURL    string `json:"repository_url"`
 	AutoDeployOnPush bool   `json:"auto_deploy_on_push"`
+	PostFetchScript  string `json:"post_fetch_script"`
 }
 
 type gitHubRepositoryRef struct {
@@ -479,7 +481,7 @@ func runDomainGitHubDeploy(
 
 	gitDir := filepath.Join(targetPath, ".git")
 	if _, err := os.Stat(gitDir); errors.Is(err, os.ErrNotExist) {
-		if err := initializeGitRepositoryInPlace(runCtx, gitPath, targetPath, integration.RepositoryURL, branch, token); err != nil {
+		if err := initializeGitRepositoryInPlace(runCtx, gitPath, targetPath, integration.RepositoryURL, branch, token, integration.PostFetchScript); err != nil {
 			return domainGitHubDeployResult{}, err
 		}
 		return domainGitHubDeployResult{Action: "initialized"}, nil
@@ -516,6 +518,9 @@ func runDomainGitHubDeploy(
 	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "clean", "-fd"); err != nil {
 		return domainGitHubDeployResult{}, err
 	}
+	if err := runGitHubPostFetchScript(runCtx, targetPath, integration.PostFetchScript); err != nil {
+		return domainGitHubDeployResult{}, err
+	}
 
 	return domainGitHubDeployResult{Action: "updated"}, nil
 }
@@ -531,6 +536,7 @@ func initializeGitRepositoryInPlace(
 	repositoryURL string,
 	branch string,
 	token string,
+	postFetchScript string,
 ) error {
 	if err := clearDirectoryContents(targetPath); err != nil {
 		return err
@@ -563,8 +569,50 @@ func initializeGitRepositoryInPlace(
 	if _, err := runGitCommand(ctx, gitPath, targetPath, token, "clean", "-fd"); err != nil {
 		return err
 	}
+	if err := runGitHubPostFetchScript(ctx, targetPath, postFetchScript); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func runGitHubPostFetchScript(ctx context.Context, targetPath string, script string) error {
+	script = strings.TrimSpace(script)
+	if script == "" {
+		return nil
+	}
+
+	commandName, commandArgs := gitHubShellCommand(script)
+	cmd := exec.CommandContext(ctx, commandName, commandArgs...)
+	cmd.Dir = targetPath
+
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(output.String())
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			return errors.New("after fetch script timed out")
+		case errors.Is(ctx.Err(), context.Canceled):
+			return errors.New("after fetch script was canceled")
+		case message != "":
+			return fmt.Errorf("after fetch script failed: %s", message)
+		default:
+			return fmt.Errorf("after fetch script failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func gitHubShellCommand(command string) (string, []string) {
+	if runtime.GOOS == "windows" {
+		return "cmd.exe", []string{"/C", command}
+	}
+
+	return "/bin/sh", []string{"-lc", command}
 }
 
 func clearDirectoryContents(targetPath string) error {

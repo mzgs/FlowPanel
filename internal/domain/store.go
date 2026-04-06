@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS domain_github_integrations (
     repository_url TEXT NOT NULL,
     auto_deploy_on_push INTEGER NOT NULL DEFAULT 0,
     default_branch TEXT NOT NULL DEFAULT '',
+    post_fetch_script TEXT NOT NULL DEFAULT '',
     webhook_secret TEXT NOT NULL DEFAULT '',
     webhook_id INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
@@ -69,6 +70,11 @@ CREATE TABLE IF NOT EXISTS domain_github_integrations (
 );
 `); err != nil {
 		return fmt.Errorf("ensure domain github integrations table: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domain_github_integrations ADD COLUMN post_fetch_script TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("ensure domain_github_integrations.post_fetch_script column: %w", err)
+		}
 	}
 
 	return nil
@@ -149,7 +155,7 @@ func (s *Store) ListGitHubIntegrations(ctx context.Context) ([]GitHubIntegration
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT domain_id, repository_url, auto_deploy_on_push, default_branch, webhook_secret, webhook_id, created_at, updated_at
+SELECT domain_id, repository_url, auto_deploy_on_push, default_branch, post_fetch_script, webhook_secret, webhook_id, created_at, updated_at
 FROM domain_github_integrations
 `)
 	if err != nil {
@@ -172,6 +178,7 @@ FROM domain_github_integrations
 			&record.RepositoryURL,
 			&autoDeployInt,
 			&record.DefaultBranch,
+			&record.PostFetchScript,
 			&record.WebhookSecret,
 			&webhookID,
 			&createdAtUnix,
@@ -237,21 +244,23 @@ INSERT INTO domain_github_integrations (
 	repository_url,
 	auto_deploy_on_push,
 	default_branch,
+	post_fetch_script,
 	webhook_secret,
 	webhook_id,
 	created_at,
 	updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(domain_id) DO UPDATE SET
 	repository_url = excluded.repository_url,
 	auto_deploy_on_push = excluded.auto_deploy_on_push,
 	default_branch = excluded.default_branch,
+	post_fetch_script = excluded.post_fetch_script,
 	webhook_secret = excluded.webhook_secret,
 	webhook_id = excluded.webhook_id,
 	created_at = excluded.created_at,
 	updated_at = excluded.updated_at
-`, domainID, integration.RepositoryURL, boolToInt(integration.AutoDeployOnPush), integration.DefaultBranch, integration.WebhookSecret, integration.WebhookID, integration.CreatedAt.UTC().UnixNano(), integration.UpdatedAt.UTC().UnixNano())
+`, domainID, integration.RepositoryURL, boolToInt(integration.AutoDeployOnPush), integration.DefaultBranch, integration.PostFetchScript, integration.WebhookSecret, integration.WebhookID, integration.CreatedAt.UTC().UnixNano(), integration.UpdatedAt.UTC().UnixNano())
 	if err != nil {
 		return fmt.Errorf("upsert domain github integration %q: %w", domainID, err)
 	}

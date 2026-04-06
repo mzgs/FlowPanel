@@ -887,7 +887,7 @@ func TestDomainGitHubIntegrationSaveHandlerConfiguresWebhook(t *testing.T) {
 	}()
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPut, "/api/domains/example.com/github", strings.NewReader(`{"repository_url":"https://github.com/test-owner/test-repo","auto_deploy_on_push":true}`))
+	request := httptest.NewRequest(http.MethodPut, "/api/domains/example.com/github", strings.NewReader(`{"repository_url":"https://github.com/test-owner/test-repo","auto_deploy_on_push":true,"post_fetch_script":"composer install --no-dev"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Host = "panel.example.test"
 	request.Header.Set("X-Forwarded-Proto", "https")
@@ -906,6 +906,7 @@ func TestDomainGitHubIntegrationSaveHandlerConfiguresWebhook(t *testing.T) {
 				RepositoryURL    string `json:"repository_url"`
 				AutoDeployOnPush bool   `json:"auto_deploy_on_push"`
 				DefaultBranch    string `json:"default_branch"`
+				PostFetchScript  string `json:"post_fetch_script"`
 			} `json:"github_integration"`
 		} `json:"domain"`
 	}
@@ -923,6 +924,9 @@ func TestDomainGitHubIntegrationSaveHandlerConfiguresWebhook(t *testing.T) {
 	}
 	if payload.Domain.GitHubIntegration.DefaultBranch != "main" {
 		t.Fatalf("default_branch = %q, want %q", payload.Domain.GitHubIntegration.DefaultBranch, "main")
+	}
+	if payload.Domain.GitHubIntegration.PostFetchScript != "composer install --no-dev" {
+		t.Fatalf("post_fetch_script = %q, want %q", payload.Domain.GitHubIntegration.PostFetchScript, "composer install --no-dev")
 	}
 }
 
@@ -1224,13 +1228,16 @@ func TestDomainGitHubDeployHandlerClearsTargetBeforeInitialDeploy(t *testing.T) 
 	}
 
 	logPath := filepath.Join(t.TempDir(), "git.log")
+	postFetchLogPath := filepath.Join(t.TempDir(), "post-fetch.log")
 	installFakeGit(t, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FLOWPANEL_GIT_LOG\"\nexit 0\n")
 	t.Setenv("FLOWPANEL_GIT_LOG", logPath)
+	t.Setenv("FLOWPANEL_POST_FETCH_LOG", postFetchLogPath)
 
 	integration := domain.GitHubIntegration{
 		RepositoryURL:    "https://github.com/test-owner/test-repo.git",
 		AutoDeployOnPush: false,
 		DefaultBranch:    "main",
+		PostFetchScript:  "printf 'after-fetch\\n' >> \"$FLOWPANEL_POST_FETCH_LOG\"",
 		CreatedAt:        time.Now().UTC(),
 		UpdatedAt:        time.Now().UTC(),
 	}
@@ -1272,6 +1279,14 @@ func TestDomainGitHubDeployHandlerClearsTargetBeforeInitialDeploy(t *testing.T) 
 	}
 	if !strings.Contains(logText, "checkout --force -B main origin/main") {
 		t.Fatalf("git log missing checkout command: %s", logText)
+	}
+
+	postFetchLog, err := os.ReadFile(postFetchLogPath)
+	if err != nil {
+		t.Fatalf("read post-fetch log: %v", err)
+	}
+	if string(postFetchLog) != "after-fetch\n" {
+		t.Fatalf("post-fetch log = %q, want %q", string(postFetchLog), "after-fetch\n")
 	}
 }
 

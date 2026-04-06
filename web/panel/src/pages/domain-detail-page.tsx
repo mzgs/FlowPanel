@@ -80,11 +80,13 @@ function getErrorMessage(error: unknown, fallback: string) {
 type GitHubFormState = {
   repositoryUrl: string;
   autoDeployOnPush: boolean;
+  postFetchScript: string;
 };
 
 const initialGitHubForm: GitHubFormState = {
   repositoryUrl: "",
   autoDeployOnPush: false,
+  postFetchScript: "",
 };
 
 const defaultPHPErrorReporting = "E_ALL & ~E_NOTICE & ~E_DEPRECATED";
@@ -112,13 +114,15 @@ function toGitHubFormState(domain: DomainRecord | null): GitHubFormState {
   return {
     repositoryUrl: domain.github_integration.repository_url,
     autoDeployOnPush: domain.github_integration.auto_deploy_on_push,
+    postFetchScript: domain.github_integration.post_fetch_script,
   };
 }
 
 function sameGitHubFormState(left: GitHubFormState, right: GitHubFormState) {
   return (
     left.repositoryUrl === right.repositoryUrl &&
-    left.autoDeployOnPush === right.autoDeployOnPush
+    left.autoDeployOnPush === right.autoDeployOnPush &&
+    left.postFetchScript === right.postFetchScript
   );
 }
 
@@ -905,6 +909,7 @@ export function DomainDetailPage() {
       const updatedDomain = await updateDomainGitHubIntegration(domain.hostname, {
         repository_url: nextForm.repositoryUrl.trim(),
         auto_deploy_on_push: nextForm.autoDeployOnPush,
+        post_fetch_script: nextForm.postFetchScript.trim(),
       });
       const nextGitHubForm = toGitHubFormState(updatedDomain);
       setDomain(updatedDomain);
@@ -1120,6 +1125,7 @@ export function DomainDetailPage() {
         hostname={domain?.hostname ?? hostname}
         repositoryUrl={githubForm.repositoryUrl}
         autoDeployOnPush={githubForm.autoDeployOnPush}
+        postFetchScript={githubForm.postFetchScript}
         hasSavedIntegration={Boolean(domain?.github_integration)}
         saving={githubSaving}
         deploying={githubDeploying}
@@ -1146,6 +1152,19 @@ export function DomainDetailPage() {
           setGitHubForm((current) => ({
             ...current,
             autoDeployOnPush: checked,
+          }));
+        }}
+        onPostFetchScriptChange={(value) => {
+          setGitHubError(null);
+          setGitHubFeedback(null);
+          setGitHubFieldErrors((current) => {
+            const next = { ...current };
+            delete next.post_fetch_script;
+            return next;
+          });
+          setGitHubForm((current) => ({
+            ...current,
+            postFetchScript: value,
           }));
         }}
         onSave={() => {

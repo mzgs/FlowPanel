@@ -17,6 +17,7 @@ export type DomainGitHubIntegration = {
   repository_url: string;
   auto_deploy_on_push: boolean;
   default_branch: string;
+  post_fetch_script: string;
   created_at: string;
   updated_at: string;
 };
@@ -43,6 +44,7 @@ export type UpdateDomainInput = {
 export type UpdateDomainGitHubIntegrationInput = {
   repository_url: string;
   auto_deploy_on_push: boolean;
+  post_fetch_script: string;
 };
 
 export type UpdateDomainPHPSettingsInput = {

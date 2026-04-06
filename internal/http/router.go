@@ -1767,6 +1767,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			repositoryURL := strings.TrimSpace(input.RepositoryURL)
+			postFetchScript := strings.TrimSpace(input.PostFetchScript)
 			existingIntegration := record.GitHub
 			if repositoryURL == "" {
 				if existingIntegration != nil && existingIntegration.WebhookID > 0 {
@@ -1935,6 +1936,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				RepositoryURL:    strings.TrimSpace(metadata.CloneURL),
 				AutoDeployOnPush: input.AutoDeployOnPush,
 				DefaultBranch:    strings.TrimSpace(metadata.DefaultBranch),
+				PostFetchScript:  postFetchScript,
 				WebhookSecret:    webhookSecret,
 				WebhookID:        webhookID,
 				CreatedAt:        createdAt,

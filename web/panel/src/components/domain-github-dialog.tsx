@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 
 type DomainGitHubDialogProps = {
   open: boolean;
@@ -19,6 +20,7 @@ type DomainGitHubDialogProps = {
   hostname: string;
   repositoryUrl: string;
   autoDeployOnPush: boolean;
+  postFetchScript: string;
   hasSavedIntegration: boolean;
   saving: boolean;
   deploying: boolean;
@@ -28,6 +30,7 @@ type DomainGitHubDialogProps = {
   dirty: boolean;
   onRepositoryUrlChange: (value: string) => void;
   onAutoDeployOnPushChange: (checked: boolean) => void;
+  onPostFetchScriptChange: (value: string) => void;
   onSave: () => void;
   onDeploy: () => void;
   onDisconnect: () => void;
@@ -47,6 +50,7 @@ export function DomainGitHubDialog({
   hostname,
   repositoryUrl,
   autoDeployOnPush,
+  postFetchScript,
   hasSavedIntegration,
   saving,
   deploying,
@@ -56,6 +60,7 @@ export function DomainGitHubDialog({
   dirty,
   onRepositoryUrlChange,
   onAutoDeployOnPushChange,
+  onPostFetchScriptChange,
   onSave,
   onDeploy,
   onDisconnect,
@@ -113,16 +118,30 @@ export function DomainGitHubDialog({
             <FieldError message={fieldErrors.repository_url} />
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="github_post_fetch_script">After fetch script</Label>
+            <Textarea
+              id="github_post_fetch_script"
+              value={postFetchScript}
+              onChange={(event) => onPostFetchScriptChange(event.target.value)}
+              placeholder="composer install --no-dev"
+              className="min-h-28 resize-y"
+              spellCheck={false}
+              aria-invalid={fieldErrors.post_fetch_script ? true : undefined}
+            />
+            <p className="text-xs leading-5 text-[var(--app-text-muted)]">
+              Runs inside the domain target directory after FlowPanel fetches and resets the
+              repository.
+            </p>
+            <FieldError message={fieldErrors.post_fetch_script} />
+          </div>
+
           <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
                 <Label htmlFor="github_auto_deploy" className="text-sm font-medium">
                   Auto update on push
                 </Label>
-                <p className="text-xs leading-5 text-[var(--app-text-muted)]">
-                  When enabled, FlowPanel registers a GitHub webhook and deploys pushes from the
-                  default branch automatically.
-                </p>
               </div>
               <Switch
                 id="github_auto_deploy"
