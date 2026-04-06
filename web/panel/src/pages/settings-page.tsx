@@ -381,31 +381,12 @@ export function SettingsPage() {
                 Google Drive
               </h2>
               <p className="mt-1 text-sm text-[var(--app-text-muted)]">
-                Connect a Google account to let backups upload directly to a
-                Drive folder named{" "}
-                <span className="font-medium text-[var(--app-text)]">
-                  FlowPanel Backups
-                </span>
-                .
+                Connect Google Drive for backups.
               </p>
             </div>
 
             <div className="flex flex-col gap-4 px-6 py-5 md:flex-row md:items-center md:justify-between">
               <div className="space-y-4">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-[var(--app-text)]">
-                    OAuth client credentials
-                  </p>
-                  <p className="text-sm text-[var(--app-text-muted)]">
-                    Upload the JSON file downloaded from Google Cloud Console to
-                    store the OAuth client in{" "}
-                    <span className="font-medium text-[var(--app-text)]">
-                      flowpanel/data
-                    </span>
-                    .
-                  </p>
-                </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="google_drive_redirect_url">
                     Authorized redirect URI
@@ -417,38 +398,22 @@ export function SettingsPage() {
                     spellCheck={false}
                   />
                   <p className="text-sm text-[var(--app-text-muted)]">
-                    Add this exact URL in Google Cloud Console for the OAuth
-                    client.
-                  </p>
-                  <p className="text-sm text-[var(--app-text-muted)]">
-                    Use a Google OAuth{" "}
-                    <span className="font-medium text-[var(--app-text)]">
-                      Web application
-                    </span>{" "}
-                    client. If the consent screen is still in{" "}
-                    <span className="font-medium text-[var(--app-text)]">
-                      Testing
-                    </span>
-                    , add the Google account you want to connect as a{" "}
-                    <span className="font-medium text-[var(--app-text)]">
-                      Test user
-                    </span>{" "}
-                    or publish the app before signing in.
+                    Add this exact URL to your Google OAuth client.
                   </p>
                 </div>
 
-                <p className="text-sm font-medium text-[var(--app-text)]">
-                  {googleDriveConnected
-                    ? `Connected as ${googleDriveEmail || "Google account"}`
-                    : googleDriveReady
-                      ? "OAuth credentials ready"
-                      : "No Google OAuth credentials configured"}
-                </p>
-                <p className="text-sm text-[var(--app-text-muted)]">
-                  {googleDriveReady
-                    ? "Backups can be sent to either local storage or Google Drive."
-                    : "Upload the OAuth client JSON here or set FLOWPANEL_GOOGLE_DRIVE_CLIENT_ID and FLOWPANEL_GOOGLE_DRIVE_CLIENT_SECRET."}
-                </p>
+                {googleDriveConnected ? (
+                  <p className="text-sm font-medium text-[var(--app-text)]">
+                    Connected as {googleDriveEmail || "Google account"}
+                  </p>
+                ) : null}
+                {!googleDriveReady ? (
+                  <p className="text-sm text-[var(--app-text-muted)]">
+                    Upload the OAuth client JSON here or set
+                    FLOWPANEL_GOOGLE_DRIVE_CLIENT_ID and
+                    FLOWPANEL_GOOGLE_DRIVE_CLIENT_SECRET.
+                  </p>
+                ) : null}
               </div>
 
               <div className="flex items-center gap-3">
@@ -477,7 +442,7 @@ export function SettingsPage() {
                   ) : (
                     <>
                       <Upload className="h-4 w-4" />
-                      {googleDriveReady ? "Replace JSON" : "Upload JSON"}
+                      Upload OAuth Credential JSON
                     </>
                   )}
                 </Button>
