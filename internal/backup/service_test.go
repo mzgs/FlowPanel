@@ -2,9 +2,11 @@ package backup
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -266,6 +268,60 @@ func TestImportRejectsInvalidArchive(t *testing.T) {
 
 	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{}, nil, nil)
 	_, err := service.Import(context.Background(), "flowpanel-database-invalid-backup.tar.gz", strings.NewReader("not a gzip archive"))
+	if !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("import error = %v, want %v", err, ErrInvalidArchive)
+	}
+}
+
+func TestImportRejectsArchiveWithoutManifest(t *testing.T) {
+	t.Helper()
+
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	dbPath := filepath.Join(dataPath, "flowpanel.db")
+	dbConn := openTestDB(t, dbPath)
+
+	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{}, nil, nil)
+	archive := buildTestArchive(t, []testArchiveEntry{
+		{
+			name:     "databases/app.sql",
+			typeflag: tar.TypeReg,
+			mode:     0o644,
+			body:     []byte("CREATE DATABASE app;"),
+		},
+	})
+
+	_, err := service.Import(context.Background(), "flowpanel-database-missing-manifest.tar.gz", bytes.NewReader(archive))
+	if !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("import error = %v, want %v", err, ErrInvalidArchive)
+	}
+}
+
+func TestImportRejectsArchiveWithUnsafePath(t *testing.T) {
+	t.Helper()
+
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	dbPath := filepath.Join(dataPath, "flowpanel.db")
+	dbConn := openTestDB(t, dbPath)
+
+	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{}, nil, nil)
+	archive := buildTestArchive(t, []testArchiveEntry{
+		{
+			name:     "manifest.json",
+			typeflag: tar.TypeReg,
+			mode:     0o644,
+			body:     mustMarshalJSON(t, manifest{Format: backupFormat}),
+		},
+		{
+			name:     "../escape.txt",
+			typeflag: tar.TypeReg,
+			mode:     0o644,
+			body:     []byte("nope"),
+		},
+	})
+
+	_, err := service.Import(context.Background(), "flowpanel-database-unsafe-path.tar.gz", bytes.NewReader(archive))
 	if !errors.Is(err, ErrInvalidArchive) {
 		t.Fatalf("import error = %v, want %v", err, ErrInvalidArchive)
 	}
@@ -739,6 +795,63 @@ func mustReadFile(t *testing.T, path string) []byte {
 	}
 
 	return content
+}
+
+type testArchiveEntry struct {
+	name     string
+	typeflag byte
+	mode     int64
+	body     []byte
+}
+
+func buildTestArchive(t *testing.T, entries []testArchiveEntry) []byte {
+	t.Helper()
+
+	var buffer bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buffer)
+	tarWriter := tar.NewWriter(gzipWriter)
+
+	for _, entry := range entries {
+		header := &tar.Header{
+			Name:     entry.name,
+			Typeflag: entry.typeflag,
+			Mode:     entry.mode,
+			ModTime:  time.Unix(0, 0).UTC(),
+		}
+		if entry.typeflag == tar.TypeReg || entry.typeflag == tar.TypeRegA {
+			header.Size = int64(len(entry.body))
+		}
+
+		if err := tarWriter.WriteHeader(header); err != nil {
+			t.Fatalf("write tar header for %q: %v", entry.name, err)
+		}
+		if header.Size == 0 {
+			continue
+		}
+		if _, err := tarWriter.Write(entry.body); err != nil {
+			t.Fatalf("write tar body for %q: %v", entry.name, err)
+		}
+	}
+
+	if err := tarWriter.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+
+	return buffer.Bytes()
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal json: %v", err)
+	}
+
+	return payload
 }
 
 type fakeDomainSource struct {

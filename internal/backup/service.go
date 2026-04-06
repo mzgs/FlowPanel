@@ -29,6 +29,7 @@ const (
 	backupExtension     = ".tar.gz"
 	LocationLocal       = "local"
 	LocationGoogleDrive = "google_drive"
+	maxManifestSize     = 1 << 20
 )
 
 var (
@@ -1160,29 +1161,67 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 }
 
 func validateImportedArchive(archivePath string) error {
-	stagingPath, err := os.MkdirTemp("", "flowpanel-import-validate-*")
+	file, err := os.Open(archivePath)
 	if err != nil {
-		return fmt.Errorf("create backup validation staging directory: %w", err)
+		return fmt.Errorf("open backup archive: %w", err)
 	}
-	defer os.RemoveAll(stagingPath)
+	defer file.Close()
 
-	if err := extractBackupArchive(archivePath, stagingPath); err != nil {
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
 		return ErrInvalidArchive
 	}
+	defer gzipReader.Close()
 
-	manifestPayload, err := os.ReadFile(filepath.Join(stagingPath, "manifest.json"))
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+	tarReader := tar.NewReader(gzipReader)
+	manifestFound := false
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
 			return ErrInvalidArchive
 		}
-		return fmt.Errorf("read backup manifest: %w", err)
+
+		relativePath, ok := sanitizeArchivePath(header.Name)
+		if !ok {
+			return ErrInvalidArchive
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir, tar.TypeReg, tar.TypeRegA, tar.TypeSymlink:
+		default:
+			return ErrInvalidArchive
+		}
+
+		if relativePath != "manifest.json" {
+			continue
+		}
+		if manifestFound || header.Typeflag == tar.TypeDir || header.Size < 0 || header.Size > maxManifestSize {
+			return ErrInvalidArchive
+		}
+
+		manifestPayload, err := io.ReadAll(io.LimitReader(tarReader, maxManifestSize+1))
+		if err != nil {
+			return ErrInvalidArchive
+		}
+		if int64(len(manifestPayload)) != header.Size {
+			return ErrInvalidArchive
+		}
+
+		var snapshot manifest
+		if err := json.Unmarshal(manifestPayload, &snapshot); err != nil {
+			return ErrInvalidArchive
+		}
+		if snapshot.Format != backupFormat {
+			return ErrInvalidArchive
+		}
+
+		manifestFound = true
 	}
 
-	var snapshot manifest
-	if err := json.Unmarshal(manifestPayload, &snapshot); err != nil {
-		return ErrInvalidArchive
-	}
-	if snapshot.Format != backupFormat {
+	if !manifestFound {
 		return ErrInvalidArchive
 	}
 
