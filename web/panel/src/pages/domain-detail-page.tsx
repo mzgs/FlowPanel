@@ -243,7 +243,7 @@ const devToolActions: DomainActionItem[] = [
     icon: File,
   },
   {
-    title: "SSH Terminal",
+    title: "Terminal",
     icon: TerminalSquare,
   },
   {

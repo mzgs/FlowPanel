@@ -49,7 +49,7 @@ import { DomainsPage } from "@/pages/domains-page";
 import { FilesPage } from "@/pages/files-page";
 import { LogsPage } from "@/pages/logs-page";
 import { SettingsPage } from "@/pages/settings-page";
-import { SshPage } from "@/pages/ssh-page";
+import { TerminalPage } from "@/pages/terminal-page";
 
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
@@ -59,7 +59,7 @@ const navigationItems = [
   { to: "/backups", label: "Backups", icon: HardDrive },
   { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/cron", label: "Cron", icon: Clock },
-  { to: "/ssh", label: "SSH", icon: TerminalSquare },
+  { to: "/terminal", label: "Terminal", icon: TerminalSquare },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -335,10 +335,10 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
-const sshRoute = createRoute({
+const terminalRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/ssh",
-  component: SshPage,
+  path: "/terminal",
+  component: TerminalPage,
 });
 
 const routeTree = rootRoute.addChildren([
@@ -353,7 +353,7 @@ const routeTree = rootRoute.addChildren([
   legacyFileManagerRoute,
   cronRoute,
   legacyJobsRoute,
-  sshRoute,
+  terminalRoute,
   settingsRoute,
 ]);
 
