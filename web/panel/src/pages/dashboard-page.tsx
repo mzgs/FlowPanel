@@ -1,10 +1,11 @@
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
-import { fetchMariaDBStatus, installMariaDB, type MariaDBStatus } from "@/api/mariadb";
+import { fetchDomains } from "@/api/domains";
+import { fetchMariaDBDatabases, fetchMariaDBStatus, installMariaDB, type MariaDBStatus } from "@/api/mariadb";
 import { fetchPHPStatus, installPHP, type PHPStatus } from "@/api/php";
 import { fetchPHPMyAdminStatus, installPHPMyAdmin, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { DiskUsageCard } from "@/components/disk-usage-card";
-import { Database, LayoutDashboard, LoaderCircle, TerminalSquare } from "@/components/icons/tabler-icons";
+import { Database, Globe, LayoutDashboard, LoaderCircle, TerminalSquare } from "@/components/icons/tabler-icons";
 import { SystemStatusCard } from "@/components/system-status-card";
 import { Button } from "@/components/ui/button";
 
@@ -17,15 +18,19 @@ function getActionError(error: unknown, fallback: string) {
 }
 
 type OverviewData = {
+  databaseCount: number | null;
   mariadbStatus: MariaDBStatus | null;
   phpError: string | null;
   phpMyAdminStatus: PHPMyAdminStatus | null;
   phpStatus: PHPStatus | null;
+  siteCount: number | null;
   systemStatus: SystemStatus | null;
 };
 
 async function fetchOverviewData(): Promise<OverviewData> {
-  const [mariadbResult, phpResult, phpMyAdminResult, systemResult] = await Promise.allSettled([
+  const [databaseResult, domainsResult, mariadbResult, phpResult, phpMyAdminResult, systemResult] = await Promise.allSettled([
+    fetchMariaDBDatabases(),
+    fetchDomains(),
     fetchMariaDBStatus(),
     fetchPHPStatus(),
     fetchPHPMyAdminStatus(),
@@ -33,6 +38,7 @@ async function fetchOverviewData(): Promise<OverviewData> {
   ]);
 
   return {
+    databaseCount: databaseResult.status === "fulfilled" ? databaseResult.value.databases.length : null,
     mariadbStatus: mariadbResult.status === "fulfilled" ? mariadbResult.value : null,
     phpMyAdminStatus: phpMyAdminResult.status === "fulfilled" ? phpMyAdminResult.value : null,
     phpStatus: phpResult.status === "fulfilled" ? phpResult.value : null,
@@ -40,8 +46,31 @@ async function fetchOverviewData(): Promise<OverviewData> {
       phpResult.status === "rejected"
         ? getActionError(phpResult.reason, "Failed to inspect the PHP runtime.")
         : null,
+    siteCount: domainsResult.status === "fulfilled" ? domainsResult.value.domains.length : null,
     systemStatus: systemResult.status === "fulfilled" ? systemResult.value : null,
   };
+}
+
+function OverviewCard({
+  databaseCount,
+  siteCount,
+}: {
+  databaseCount: number | null;
+  siteCount: number | null;
+}) {
+  return (
+    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
+      <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Overview</div>
+      <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-border)] sm:grid-cols-2">
+        <OverviewStat icon={<Globe className="h-4 w-4" />} label="Total sites" value={formatTotalCount(siteCount)} />
+        <OverviewStat
+          icon={<Database className="h-4 w-4" />}
+          label="Total databases"
+          value={formatTotalCount(databaseCount)}
+        />
+      </div>
+    </section>
+  );
 }
 
 function ApplicationsCard({
@@ -173,6 +202,28 @@ function SoftwareRow({
         <div className="text-[14px] font-medium text-[var(--app-text)]">{label}</div>
       </div>
       {value}
+    </div>
+  );
+}
+
+function OverviewStat({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 bg-[var(--app-surface-muted)] px-4 py-4">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)]">
+          {icon}
+        </div>
+        <div className="text-[14px] font-medium text-[var(--app-text)]">{label}</div>
+      </div>
+      <div className="text-[22px] font-semibold tracking-tight text-[var(--app-text)]">{value}</div>
     </div>
   );
 }
@@ -310,10 +361,20 @@ function formatTimezone(status: SystemStatus | null) {
   return `${sign}${Number(hours)}`;
 }
 
+function formatTotalCount(value: number | null) {
+  if (value === null) {
+    return "Unavailable";
+  }
+
+  return String(value);
+}
+
 export function DashboardPage() {
+  const [databaseCount, setDatabaseCount] = useState<number | null>(null);
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
+  const [siteCount, setSiteCount] = useState<number | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [phpError, setPHPError] = useState<string | null>(null);
@@ -342,8 +403,10 @@ export function DashboardPage() {
 
       setPHPStatus(nextOverview.phpStatus);
       setPHPMyAdminStatus(nextOverview.phpMyAdminStatus);
+      setDatabaseCount(nextOverview.databaseCount);
       setMariaDBStatus(nextOverview.mariadbStatus);
       setPHPError(nextOverview.phpError);
+      setSiteCount(nextOverview.siteCount);
       setSystemStatus(nextOverview.systemStatus);
       setLoading(false);
     }
@@ -409,7 +472,8 @@ export function DashboardPage() {
   }
 
   const hasApplications = Boolean(phpStatus || mariadbStatus || phpMyAdminStatus);
-  const showOverview = Boolean(systemStatus || hasApplications);
+  const hasTotals = siteCount !== null || databaseCount !== null;
+  const showOverview = Boolean(systemStatus || hasApplications || hasTotals);
 
   return (
     <>
@@ -454,6 +518,8 @@ export function DashboardPage() {
 
             {showOverview ? (
               <div className="space-y-5">
+                {hasTotals ? <OverviewCard databaseCount={databaseCount} siteCount={siteCount} /> : null}
+
                 {systemStatus ? (
                   <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
                     <SystemStatusCard status={systemStatus} />
