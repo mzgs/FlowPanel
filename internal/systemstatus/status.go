@@ -13,18 +13,25 @@ import (
 const cpuSampleWindow = 200 * time.Millisecond
 
 type Status struct {
-	Cores            int      `json:"cores"`
-	CPUUsagePercent  *float64 `json:"cpu_usage_percent,omitempty"`
-	Load1            *float64 `json:"load_1,omitempty"`
-	Load5            *float64 `json:"load_5,omitempty"`
-	Load15           *float64 `json:"load_15,omitempty"`
-	MemoryTotalBytes *uint64  `json:"memory_total_bytes,omitempty"`
-	MemoryUsedBytes  *uint64  `json:"memory_used_bytes,omitempty"`
+	Cores             int      `json:"cores"`
+	CPUUsagePercent   *float64 `json:"cpu_usage_percent,omitempty"`
+	Load1             *float64 `json:"load_1,omitempty"`
+	Load5             *float64 `json:"load_5,omitempty"`
+	Load15            *float64 `json:"load_15,omitempty"`
+	MemoryTotalBytes  *uint64  `json:"memory_total_bytes,omitempty"`
+	MemoryUsedBytes   *uint64  `json:"memory_used_bytes,omitempty"`
+	ServerTime        string   `json:"server_time"`
+	ServerTimeDisplay string   `json:"server_time_display"`
+	Timezone          string   `json:"timezone"`
 }
 
 func Inspect(ctx context.Context) Status {
+	now := time.Now()
 	status := Status{
-		Cores: runtime.NumCPU(),
+		Cores:             runtime.NumCPU(),
+		ServerTime:        now.Format(time.RFC3339),
+		ServerTimeDisplay: now.Format("Jan 2, 2006 15:04:05"),
+		Timezone:          now.Format("MST"),
 	}
 
 	if avg, err := load.AvgWithContext(ctx); err == nil {

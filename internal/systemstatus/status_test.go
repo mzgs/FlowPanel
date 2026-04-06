@@ -17,6 +17,18 @@ func TestInspectReturnsHostMetrics(t *testing.T) {
 		t.Fatal("memory total is empty")
 	}
 
+	if status.ServerTime == "" {
+		t.Fatal("server time is empty")
+	}
+
+	if status.ServerTimeDisplay == "" {
+		t.Fatal("server time display is empty")
+	}
+
+	if status.Timezone == "" {
+		t.Fatal("timezone is empty")
+	}
+
 	switch runtime.GOOS {
 	case "darwin", "linux", "freebsd":
 		if status.Load1 == nil || status.Load5 == nil || status.Load15 == nil {

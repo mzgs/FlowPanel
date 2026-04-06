@@ -1882,6 +1882,99 @@ func TestBackupsImportEndpoint(t *testing.T) {
 	}
 }
 
+func TestBackupScheduleEndpoints(t *testing.T) {
+	router, scheduler, _ := newTestCronRouter(t, false)
+
+	createRecorder := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/backups/schedules",
+		strings.NewReader(`{"name":"Nightly backup","schedule":"0 3 * * *","include_panel_data":true,"include_sites":false,"include_databases":true}`),
+	)
+	router.ServeHTTP(createRecorder, createRequest)
+
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body = %s", createRecorder.Code, http.StatusCreated, createRecorder.Body.String())
+	}
+
+	var createPayload struct {
+		Schedule struct {
+			ID               string    `json:"id"`
+			Name             string    `json:"name"`
+			Schedule         string    `json:"schedule"`
+			CreatedAt        time.Time `json:"created_at"`
+			IncludePanelData bool      `json:"include_panel_data"`
+			IncludeSites     bool      `json:"include_sites"`
+			IncludeDatabases bool      `json:"include_databases"`
+		} `json:"schedule"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create schedule response: %v", err)
+	}
+	if createPayload.Schedule.ID == "" {
+		t.Fatal("schedule id is empty")
+	}
+	if !createPayload.Schedule.IncludePanelData || createPayload.Schedule.IncludeSites || !createPayload.Schedule.IncludeDatabases {
+		t.Fatalf("create scope = %#v, want panel+database only", createPayload.Schedule)
+	}
+
+	jobs := scheduler.List()
+	if len(jobs) != 1 {
+		t.Fatalf("cron job count = %d, want 1", len(jobs))
+	}
+	if !strings.Contains(jobs[0].Command, backup.ScheduledCommandMarker) {
+		t.Fatalf("cron command = %q, want scheduled backup marker", jobs[0].Command)
+	}
+
+	listRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/backups/schedules", nil))
+
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d, body = %s", listRecorder.Code, http.StatusOK, listRecorder.Body.String())
+	}
+
+	var listPayload struct {
+		Enabled   bool `json:"enabled"`
+		Started   bool `json:"started"`
+		Schedules []struct {
+			ID               string `json:"id"`
+			Name             string `json:"name"`
+			Schedule         string `json:"schedule"`
+			IncludePanelData bool   `json:"include_panel_data"`
+			IncludeSites     bool   `json:"include_sites"`
+			IncludeDatabases bool   `json:"include_databases"`
+		} `json:"schedules"`
+	}
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode list schedule response: %v", err)
+	}
+	if listPayload.Enabled {
+		t.Fatal("enabled = true, want false")
+	}
+	if listPayload.Started {
+		t.Fatal("started = true, want false")
+	}
+	if len(listPayload.Schedules) != 1 {
+		t.Fatalf("schedule count = %d, want 1", len(listPayload.Schedules))
+	}
+	if listPayload.Schedules[0].ID != createPayload.Schedule.ID {
+		t.Fatalf("listed id = %q, want %q", listPayload.Schedules[0].ID, createPayload.Schedule.ID)
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(
+		deleteRecorder,
+		httptest.NewRequest(http.MethodDelete, "/api/backups/schedules/"+url.PathEscape(createPayload.Schedule.ID), nil),
+	)
+	if deleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d, body = %s", deleteRecorder.Code, http.StatusNoContent, deleteRecorder.Body.String())
+	}
+
+	if len(scheduler.List()) != 0 {
+		t.Fatalf("cron job count after delete = %d, want 0", len(scheduler.List()))
+	}
+}
+
 func TestBackupsEndpointsHandleImportedNamesWithSpaces(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 

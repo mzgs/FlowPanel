@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	stdhttp "net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,13 +33,118 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "flowpanel: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(args []string) error {
+	if len(args) > 0 {
+		return runCommand(args)
+	}
+
+	return runServer()
+}
+
+func runCommand(args []string) error {
+	if len(args) >= 2 && args[0] == "backup" && args[1] == "create" {
+		return runBackupCreateCommand(args[2:])
+	}
+
+	return fmt.Errorf("unknown command: %s", strings.Join(args, " "))
+}
+
+func runBackupCreateCommand(args []string) error {
+	flagSet := flag.NewFlagSet("backup create", flag.ContinueOnError)
+	flagSet.SetOutput(os.Stderr)
+
+	includePanelData := flagSet.Bool("panel-data", false, "include FlowPanel data files and SQLite database")
+	includeSites := flagSet.Bool("sites", false, "include managed site files")
+	includeDatabases := flagSet.Bool("databases", false, "include MariaDB dumps")
+	if err := flagSet.Parse(args); err != nil {
+		return err
+	}
+	if flagSet.NArg() > 0 {
+		return fmt.Errorf("unexpected arguments: %s", strings.Join(flagSet.Args(), " "))
+	}
+
+	input := backup.CreateInput{
+		IncludePanelData: *includePanelData,
+		IncludeSites:     *includeSites,
+		IncludeDatabases: *includeDatabases,
+	}
+	if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
+		return fmt.Errorf("select at least one backup scope")
+	}
+
+	if err := config.EnsureFlowPanelDataPath(); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	logger, err := logging.New(cfg.Env)
+	if err != nil {
+		return fmt.Errorf("build logger: %w", err)
+	}
+	defer func() {
+		_ = logger.Sync()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	dbConn, err := db.Open(ctx, cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() {
+		_ = dbConn.Close()
+	}()
+
+	domainStore := domain.NewStore(dbConn)
+	if err := domainStore.Ensure(ctx); err != nil {
+		return fmt.Errorf("ensure domain storage: %w", err)
+	}
+	mariaDBStore := mariadb.NewStore(dbConn)
+	if err := mariaDBStore.Ensure(ctx); err != nil {
+		return fmt.Errorf("ensure mariadb storage: %w", err)
+	}
+
+	domainService := domain.NewService(domainStore)
+	if err := domainService.Load(ctx); err != nil {
+		return fmt.Errorf("load persisted domains: %w", err)
+	}
+	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
+	backupService := backup.NewService(
+		logger.Named("backup"),
+		config.FlowPanelDataPath(),
+		config.BackupsPath(),
+		cfg.Database.Path,
+		dbConn,
+		domainService,
+		mariadbManager,
+	)
+
+	record, err := backupService.Create(ctx, input)
+	if err != nil {
+		var validation backup.ValidationErrors
+		if errors.As(err, &validation) {
+			return fmt.Errorf("backup validation failed: %v", map[string]string(validation))
+		}
+		return err
+	}
+
+	_, _ = fmt.Fprintln(os.Stdout, record.Name)
+
+	return nil
+}
+
+func runServer() error {
 	if err := config.EnsureFlowPanelDataPath(); err != nil {
 		return err
 	}

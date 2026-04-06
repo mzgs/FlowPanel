@@ -302,6 +302,203 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodPost, "/backups", backupsCreateHandler)
 
+		backupsScheduleListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Cron == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "cron scheduler is not configured",
+				})
+				return
+			}
+
+			snapshot := app.Cron.Snapshot()
+			schedules := make([]map[string]any, 0, len(snapshot.Jobs))
+			for _, job := range snapshot.Jobs {
+				scope, ok := backup.ParseScheduledCommand(job.Command)
+				if !ok {
+					continue
+				}
+
+				schedules = append(schedules, map[string]any{
+					"id":                 job.ID,
+					"name":               job.Name,
+					"schedule":           job.Schedule,
+					"created_at":         job.CreatedAt,
+					"include_panel_data": scope.IncludePanelData,
+					"include_sites":      scope.IncludeSites,
+					"include_databases":  scope.IncludeDatabases,
+				})
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"enabled":   snapshot.Enabled,
+				"started":   snapshot.Started,
+				"schedules": schedules,
+			})
+		})
+		r.Method(stdhttp.MethodGet, "/backups/schedules", backupsScheduleListHandler)
+		r.Method(stdhttp.MethodHead, "/backups/schedules", backupsScheduleListHandler)
+
+		backupsScheduleCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Cron == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "cron scheduler is not configured",
+				})
+				return
+			}
+
+			input := backup.CreateInput{
+				IncludePanelData: true,
+				IncludeSites:     true,
+				IncludeDatabases: true,
+			}
+			var payload struct {
+				Name             string `json:"name"`
+				Schedule         string `json:"schedule"`
+				IncludePanelData *bool  `json:"include_panel_data"`
+				IncludeSites     *bool  `json:"include_sites"`
+				IncludeDatabases *bool  `json:"include_databases"`
+			}
+			if err := decodeJSON(r, &payload); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+			if payload.IncludePanelData != nil {
+				input.IncludePanelData = *payload.IncludePanelData
+			}
+			if payload.IncludeSites != nil {
+				input.IncludeSites = *payload.IncludeSites
+			}
+			if payload.IncludeDatabases != nil {
+				input.IncludeDatabases = *payload.IncludeDatabases
+			}
+
+			if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
+				validation := backup.ValidationErrors{}
+				validation["scope"] = "Select at least one backup source."
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error":        "validation failed",
+					"field_errors": map[string]string(validation),
+				})
+				return
+			}
+
+			executablePath, err := os.Executable()
+			if err != nil {
+				app.Logger.Error("resolve executable path failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to resolve flowpanel executable",
+				})
+				return
+			}
+
+			command, err := backup.BuildScheduledCommand(executablePath, input)
+			if err != nil {
+				app.Logger.Error("build scheduled backup command failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to create scheduled backup command",
+				})
+				return
+			}
+
+			record, err := app.Cron.Create(r.Context(), flowcron.CreateInput{
+				Name:     payload.Name,
+				Schedule: payload.Schedule,
+				Command:  command,
+			})
+			if err != nil {
+				var validation flowcron.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+				app.Logger.Error("create scheduled backup failed", zap.Error(err))
+				mutationEvent(r.Context(), "backups", "schedule", "backup_schedule", "backup_schedule", strings.TrimSpace(payload.Name), "failed", "Failed to create scheduled backup.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to create scheduled backup",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "backups", "schedule", "backup_schedule", record.ID, record.Name, "succeeded", fmt.Sprintf("Created scheduled backup %q.", record.Name))
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{
+				"schedule": map[string]any{
+					"id":                 record.ID,
+					"name":               record.Name,
+					"schedule":           record.Schedule,
+					"created_at":         record.CreatedAt,
+					"include_panel_data": input.IncludePanelData,
+					"include_sites":      input.IncludeSites,
+					"include_databases":  input.IncludeDatabases,
+				},
+			})
+		})
+		r.Method(stdhttp.MethodPost, "/backups/schedules", backupsScheduleCreateHandler)
+
+		backupsScheduleDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.Cron == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "cron scheduler is not configured",
+				})
+				return
+			}
+
+			jobID := strings.TrimSpace(chi.URLParam(r, "jobID"))
+			if jobID == "" {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "backup schedule id is required",
+				})
+				return
+			}
+
+			job := flowcron.Record{}
+			found := false
+			for _, candidate := range app.Cron.List() {
+				if candidate.ID != jobID {
+					continue
+				}
+				job = candidate
+				found = true
+				break
+			}
+			if !found {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "backup schedule not found",
+				})
+				return
+			}
+			if _, ok := backup.ParseScheduledCommand(job.Command); !ok {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "backup schedule not found",
+				})
+				return
+			}
+
+			record, deleted, err := app.Cron.Delete(r.Context(), jobID)
+			if err != nil {
+				app.Logger.Error("delete scheduled backup failed", zap.Error(err))
+				mutationEvent(r.Context(), "backups", "delete_schedule", "backup_schedule", jobID, job.Name, "failed", "Failed to delete scheduled backup.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to delete scheduled backup",
+				})
+				return
+			}
+			if !deleted {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "backup schedule not found",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "backups", "delete_schedule", "backup_schedule", record.ID, record.Name, "succeeded", fmt.Sprintf("Deleted scheduled backup %q.", record.Name))
+			w.WriteHeader(stdhttp.StatusNoContent)
+		})
+		r.Method(stdhttp.MethodDelete, "/backups/schedules/{jobID}", backupsScheduleDeleteHandler)
+
 		backupsImportHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Backups == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{

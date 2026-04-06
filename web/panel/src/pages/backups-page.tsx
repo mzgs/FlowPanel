@@ -1,15 +1,21 @@
+import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
+  createScheduledBackup,
   createBackup,
+  deleteScheduledBackup,
   deleteBackup,
   fetchBackups,
+  fetchScheduledBackups,
   getBackupDownloadUrl,
   importBackup,
   restoreBackup,
-  type CreateBackupInput,
   type BackupRecord,
+  type CreateBackupInput,
+  type ScheduledBackupRecord,
 } from "@/api/backups";
 import {
+  Clock,
   Database,
   Download,
   FolderOpen,
@@ -32,6 +38,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Table,
@@ -52,7 +59,30 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function FieldError({ message }: { message?: string }) {
+  if (!message) {
+    return null;
+  }
+
+  return <p className="text-sm text-destructive">{message}</p>;
+}
+
 const initialScope: CreateBackupInput = {
+  include_panel_data: true,
+  include_sites: true,
+  include_databases: true,
+};
+type ScheduleFormState = {
+  name: string;
+  schedule: string;
+  include_panel_data: boolean;
+  include_sites: boolean;
+  include_databases: boolean;
+};
+
+const initialScheduleForm: ScheduleFormState = {
+  name: "Nightly backup",
+  schedule: "0 3 * * *",
   include_panel_data: true,
   include_sites: true,
   include_databases: true,
@@ -64,27 +94,62 @@ function isBackupArchiveFileName(name: string) {
   return normalizedName.endsWith(backupArchiveExtension);
 }
 
+function formatScheduledBackupScope(record: ScheduledBackupRecord) {
+  const parts: string[] = [];
+  if (record.include_panel_data) {
+    parts.push("Panel data");
+  }
+  if (record.include_sites) {
+    parts.push("Site files");
+  }
+  if (record.include_databases) {
+    parts.push("Database dumps");
+  }
+
+  return parts.join(", ");
+}
+
 export function BackupsPage() {
   const [backups, setBackups] = useState<BackupRecord[]>([]);
+  const [scheduledBackups, setScheduledBackups] = useState<ScheduledBackupRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [scheduledLoading, setScheduledLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
   const [deletingName, setDeletingName] = useState<string | null>(null);
+  const [deletingScheduleId, setDeletingScheduleId] = useState<string | null>(null);
   const [confirmDeleteName, setConfirmDeleteName] = useState<string | null>(null);
+  const [confirmDeleteSchedule, setConfirmDeleteSchedule] = useState<ScheduledBackupRecord | null>(null);
   const [confirmRestoreName, setConfirmRestoreName] = useState<string | null>(null);
   const [restoringName, setRestoringName] = useState<string | null>(null);
   const [restoredName, setRestoredName] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [scheduledLoadError, setScheduledLoadError] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
   const [scope, setScope] = useState<CreateBackupInput>(initialScope);
+  const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(initialScheduleForm);
+  const [scheduleFieldErrors, setScheduleFieldErrors] = useState<Record<string, string>>({});
+  const [schedulerEnabled, setSchedulerEnabled] = useState(false);
+  const [schedulerStarted, setSchedulerStarted] = useState(false);
   const restoredTimeoutRef = useRef<number | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasSelectedScope =
     scope.include_panel_data || scope.include_sites || scope.include_databases;
+  const hasScheduledScope =
+    scheduleForm.include_panel_data ||
+    scheduleForm.include_sites ||
+    scheduleForm.include_databases;
   const panelDataCheckboxId = "backup-scope-panel-data";
   const siteFilesCheckboxId = "backup-scope-site-files";
   const databaseDumpsCheckboxId = "backup-scope-database-dumps";
+  const scheduleNameInputId = "scheduled-backup-name";
+  const scheduleInputId = "scheduled-backup-schedule";
+  const schedulePanelDataCheckboxId = "scheduled-backup-scope-panel-data";
+  const scheduleSiteFilesCheckboxId = "scheduled-backup-scope-site-files";
+  const scheduleDatabaseDumpsCheckboxId = "scheduled-backup-scope-database-dumps";
 
   async function loadBackups() {
     try {
@@ -100,6 +165,24 @@ export function BackupsPage() {
 
   useEffect(() => {
     void loadBackups();
+  }, []);
+
+  async function loadScheduledBackups() {
+    try {
+      const payload = await fetchScheduledBackups();
+      setScheduledBackups(payload.schedules);
+      setSchedulerEnabled(payload.enabled);
+      setSchedulerStarted(payload.started);
+      setScheduledLoadError(null);
+    } catch (error) {
+      setScheduledLoadError(getErrorMessage(error, "Failed to load scheduled backups."));
+    } finally {
+      setScheduledLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadScheduledBackups();
   }, []);
 
   useEffect(() => {
@@ -131,12 +214,45 @@ export function BackupsPage() {
     }
   }
 
+  async function handleCreateScheduledBackup() {
+    if (!hasScheduledScope) {
+      setScheduleFieldErrors({ scope: "Select at least one backup source." });
+      return;
+    }
+
+    setScheduling(true);
+    setScheduleFieldErrors({});
+
+    try {
+      const record = await createScheduledBackup(scheduleForm);
+      setScheduledBackups((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+      setScheduledLoadError(null);
+      setScheduleDialogOpen(false);
+      setScheduleForm(initialScheduleForm);
+      toast.success(`Scheduled backup ${record.name}.`);
+    } catch (error) {
+      const backupError = error as Error & { fieldErrors?: Record<string, string> };
+      setScheduleFieldErrors(backupError.fieldErrors ?? {});
+      toast.error(getErrorMessage(error, "Failed to schedule backup."));
+    } finally {
+      setScheduling(false);
+    }
+  }
+
   function handleDeleteBackup(name: string) {
     if (deletingName !== null) {
       return;
     }
 
     setConfirmDeleteName(name);
+  }
+
+  function handleDeleteScheduledBackup(schedule: ScheduledBackupRecord) {
+    if (deletingScheduleId !== null) {
+      return;
+    }
+
+    setConfirmDeleteSchedule(schedule);
   }
 
   async function confirmDeleteBackup() {
@@ -157,6 +273,27 @@ export function BackupsPage() {
     } finally {
       setDeletingName(null);
       setConfirmDeleteName((current) => (current === name ? null : current));
+    }
+  }
+
+  async function confirmDeleteScheduledBackup() {
+    if (!confirmDeleteSchedule) {
+      return;
+    }
+
+    const schedule = confirmDeleteSchedule;
+
+    setDeletingScheduleId(schedule.id);
+
+    try {
+      await deleteScheduledBackup(schedule.id);
+      setScheduledBackups((current) => current.filter((item) => item.id !== schedule.id));
+      toast.success(`Deleted scheduled backup ${schedule.name}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to delete scheduled backup."));
+    } finally {
+      setDeletingScheduleId(null);
+      setConfirmDeleteSchedule((current) => (current?.id === schedule.id ? null : current));
     }
   }
 
@@ -243,6 +380,10 @@ export function BackupsPage() {
               {importing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               Import backup
             </Button>
+            <Button type="button" variant="outline" onClick={() => setScheduleDialogOpen(true)}>
+              <Clock className="h-4 w-4" />
+              Schedule backup
+            </Button>
             <Button type="button" onClick={() => setCreateDialogOpen(true)}>
               <HardDrive className="h-4 w-4" />
               Create backup
@@ -292,9 +433,6 @@ export function BackupsPage() {
                   <HardDrive className="h-4 w-4" />
                   Panel data
                 </Label>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  FlowPanel data files, runtime secrets, and the SQLite panel snapshot.
-                </p>
               </div>
             </label>
 
@@ -318,9 +456,6 @@ export function BackupsPage() {
                   <FolderOpen className="h-4 w-4" />
                   Site files
                 </Label>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  Local document roots for static and PHP domains managed by the panel.
-                </p>
               </div>
             </label>
 
@@ -344,9 +479,6 @@ export function BackupsPage() {
                   <Database className="h-4 w-4" />
                   Database dumps
                 </Label>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  SQL exports for MariaDB databases tracked by FlowPanel.
-                </p>
               </div>
             </label>
           </div>
@@ -373,6 +505,154 @@ export function BackupsPage() {
             >
               {creating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
               Create backup
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={scheduleDialogOpen}
+        onOpenChange={(open) => {
+          setScheduleDialogOpen(open);
+          if (!open) {
+            setScheduleFieldErrors({});
+            setScheduleForm(initialScheduleForm);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Schedule backup</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid gap-5">
+            <div className="grid gap-2">
+              <Label htmlFor={scheduleNameInputId}>Name</Label>
+              <Input
+                id={scheduleNameInputId}
+                value={scheduleForm.name}
+                onChange={(event) =>
+                  setScheduleForm((current) => ({
+                    ...current,
+                    name: event.target.value,
+                  }))
+                }
+                aria-invalid={scheduleFieldErrors.name ? true : undefined}
+              />
+              <FieldError message={scheduleFieldErrors.name} />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor={scheduleInputId}>Schedule</Label>
+              <Input
+                id={scheduleInputId}
+                value={scheduleForm.schedule}
+                onChange={(event) =>
+                  setScheduleForm((current) => ({
+                    ...current,
+                    schedule: event.target.value,
+                  }))
+                }
+                placeholder="0 3 * * *"
+                spellCheck={false}
+                aria-invalid={scheduleFieldErrors.schedule ? true : undefined}
+              />
+              <p className="text-sm text-muted-foreground">
+                Uses a standard 5-field cron expression or a descriptor like <span className="font-medium text-foreground">@daily</span>.
+              </p>
+              <FieldError message={scheduleFieldErrors.schedule} />
+            </div>
+
+            <div className="grid gap-3">
+              <label
+                htmlFor={schedulePanelDataCheckboxId}
+                className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--app-border)] px-3 py-3"
+              >
+                <Checkbox
+                  id={schedulePanelDataCheckboxId}
+                  checked={scheduleForm.include_panel_data}
+                  onCheckedChange={(checked) =>
+                    setScheduleForm((current) => ({
+                      ...current,
+                      include_panel_data: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="min-w-0">
+                  <Label htmlFor={schedulePanelDataCheckboxId} className="cursor-pointer text-sm text-foreground">
+                    <HardDrive className="h-4 w-4" />
+                    Panel data
+                  </Label>
+                </div>
+              </label>
+
+              <label
+                htmlFor={scheduleSiteFilesCheckboxId}
+                className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--app-border)] px-3 py-3"
+              >
+                <Checkbox
+                  id={scheduleSiteFilesCheckboxId}
+                  checked={scheduleForm.include_sites}
+                  onCheckedChange={(checked) =>
+                    setScheduleForm((current) => ({
+                      ...current,
+                      include_sites: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="min-w-0">
+                  <Label htmlFor={scheduleSiteFilesCheckboxId} className="cursor-pointer text-sm text-foreground">
+                    <FolderOpen className="h-4 w-4" />
+                    Site files
+                  </Label>
+                </div>
+              </label>
+
+              <label
+                htmlFor={scheduleDatabaseDumpsCheckboxId}
+                className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--app-border)] px-3 py-3"
+              >
+                <Checkbox
+                  id={scheduleDatabaseDumpsCheckboxId}
+                  checked={scheduleForm.include_databases}
+                  onCheckedChange={(checked) =>
+                    setScheduleForm((current) => ({
+                      ...current,
+                      include_databases: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="min-w-0">
+                  <Label htmlFor={scheduleDatabaseDumpsCheckboxId} className="cursor-pointer text-sm text-foreground">
+                    <Database className="h-4 w-4" />
+                    Database dumps
+                  </Label>
+                </div>
+              </label>
+            </div>
+
+            <FieldError message={scheduleFieldErrors.scope} />
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setScheduleDialogOpen(false)}
+              disabled={scheduling}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleCreateScheduledBackup()}
+              disabled={scheduling || !hasScheduledScope}
+            >
+              {scheduling ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Clock className="h-4 w-4" />}
+              Schedule backup
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -413,6 +693,30 @@ export function BackupsPage() {
         isLoading={confirmDeleteName !== null && deletingName === confirmDeleteName}
         handleConfirm={() => {
           void confirmDeleteBackup();
+        }}
+        className="sm:max-w-md"
+      />
+
+      <ActionConfirmDialog
+        open={confirmDeleteSchedule !== null}
+        onOpenChange={(open) => {
+          if (!open && deletingScheduleId === null) {
+            setConfirmDeleteSchedule(null);
+          }
+        }}
+        title="Delete scheduled backup"
+        desc={
+          confirmDeleteSchedule
+            ? `Delete scheduled backup "${confirmDeleteSchedule.name}"?`
+            : "Delete this scheduled backup?"
+        }
+        confirmText="Delete schedule"
+        destructive
+        isLoading={
+          confirmDeleteSchedule !== null && deletingScheduleId === confirmDeleteSchedule.id
+        }
+        handleConfirm={() => {
+          void confirmDeleteScheduledBackup();
         }}
         className="sm:max-w-md"
       />
@@ -505,6 +809,97 @@ export function BackupsPage() {
                     </TableRow>
                   );
                 })
+              )}
+            </TableBody>
+          </Table>
+        </section>
+
+        <section className="mt-6 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+          <div className="flex flex-col gap-3 border-b border-[var(--app-border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-foreground">Scheduled backups</h2>
+              <p className="text-sm text-muted-foreground">
+                Recurring backup jobs created from this page.
+              </p>
+            </div>
+            <Button type="button" variant="outline" asChild>
+              <Link to="/cron">Open cron</Link>
+            </Button>
+          </div>
+
+          {scheduledLoadError ? (
+            <div className="border-b border-[var(--app-border)] px-4 py-3 text-sm text-[var(--app-danger)]">
+              {scheduledLoadError}
+            </div>
+          ) : !scheduledLoading && !schedulerEnabled ? (
+            <div className="border-b border-[var(--app-border)] px-4 py-3 text-sm text-muted-foreground">
+              Cron scheduling is disabled. Saved backup schedules will not run until{" "}
+              <span className="font-medium text-foreground">FLOWPANEL_CRON_ENABLED</span>{" "}
+              is enabled.
+            </div>
+          ) : !scheduledLoading && !schedulerStarted ? (
+            <div className="border-b border-[var(--app-border)] px-4 py-3 text-sm text-muted-foreground">
+              Cron scheduling is enabled but the scheduler has not started yet.
+            </div>
+          ) : null}
+
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead className="w-[180px]">Schedule</TableHead>
+                <TableHead>Scope</TableHead>
+                <TableHead className="w-[180px]">Created</TableHead>
+                <TableHead className="w-[120px] text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {scheduledLoading ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-32 text-center text-sm text-muted-foreground">
+                    Loading scheduled backups...
+                  </TableCell>
+                </TableRow>
+              ) : scheduledBackups.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-32 text-center text-sm text-muted-foreground">
+                    No scheduled backups yet.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                scheduledBackups.map((backupSchedule) => (
+                  <TableRow key={backupSchedule.id}>
+                    <TableCell className="font-medium text-foreground">{backupSchedule.name}</TableCell>
+                    <TableCell className="font-mono text-sm text-muted-foreground">
+                      {backupSchedule.schedule}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {formatScheduledBackupScope(backupSchedule)}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {formatDateTime(backupSchedule.created_at)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="icon"
+                          onClick={() => handleDeleteScheduledBackup(backupSchedule)}
+                          disabled={deletingScheduleId === backupSchedule.id}
+                          aria-label={`Delete ${backupSchedule.name}`}
+                          title={`Delete ${backupSchedule.name}`}
+                        >
+                          {deletingScheduleId === backupSchedule.id ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
               )}
             </TableBody>
           </Table>

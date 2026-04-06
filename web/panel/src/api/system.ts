@@ -6,6 +6,9 @@ export type SystemStatus = {
   load_15?: number;
   memory_total_bytes?: number;
   memory_used_bytes?: number;
+  server_time: string;
+  server_time_display: string;
+  timezone: string;
 };
 
 type SystemStatusPayload = {

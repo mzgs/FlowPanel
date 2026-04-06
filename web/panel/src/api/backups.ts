@@ -4,6 +4,16 @@ export type BackupRecord = {
   created_at: string;
 };
 
+export type ScheduledBackupRecord = {
+  id: string;
+  name: string;
+  schedule: string;
+  created_at: string;
+  include_panel_data: boolean;
+  include_sites: boolean;
+  include_databases: boolean;
+};
+
 export type CreateBackupInput = {
   include_panel_data: boolean;
   include_sites: boolean;
@@ -19,19 +29,39 @@ export type RestoreBackupResult = {
   restored_databases?: string[];
 };
 
+export type CreateScheduledBackupInput = {
+  name: string;
+  schedule: string;
+  include_panel_data: boolean;
+  include_sites: boolean;
+  include_databases: boolean;
+};
+
 type BackupsPayload = {
   backups: BackupRecord[];
+};
+
+type ScheduledBackupsPayload = {
+  enabled: boolean;
+  started: boolean;
+  schedules: ScheduledBackupRecord[];
 };
 
 type BackupPayload = {
   backup: BackupRecord;
 };
 
+type ScheduledBackupPayload = {
+  schedule: ScheduledBackupRecord;
+};
+
 type RestoreBackupPayload = {
   restore: RestoreBackupResult;
 };
 
-type BackupApiError = Error;
+type BackupApiError = Error & {
+  fieldErrors?: Record<string, string>;
+};
 
 export async function fetchBackups(): Promise<BackupsPayload> {
   const response = await fetch("/api/backups", {
@@ -61,6 +91,49 @@ export async function createBackup(input: CreateBackupInput): Promise<BackupReco
 
   const payload = (await response.json()) as BackupPayload;
   return payload.backup;
+}
+
+export async function fetchScheduledBackups(): Promise<ScheduledBackupsPayload> {
+  const response = await fetch("/api/backups/schedules", {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await readBackupApiError(response, "list scheduled backups");
+  }
+
+  return (await response.json()) as ScheduledBackupsPayload;
+}
+
+export async function createScheduledBackup(
+  input: CreateScheduledBackupInput,
+): Promise<ScheduledBackupRecord> {
+  const response = await fetch("/api/backups/schedules", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw await readBackupApiError(response, "create scheduled backup");
+  }
+
+  const payload = (await response.json()) as ScheduledBackupPayload;
+  return payload.schedule;
+}
+
+export async function deleteScheduledBackup(id: string): Promise<void> {
+  const response = await fetch(`/api/backups/schedules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await readBackupApiError(response, "delete scheduled backup");
+  }
 }
 
 export async function importBackup(file: File): Promise<BackupRecord> {
@@ -115,15 +188,24 @@ async function readBackupApiError(
   action: string,
 ): Promise<BackupApiError> {
   let message = `${action} request failed with status ${response.status}`;
+  let fieldErrors: Record<string, string> | undefined;
 
   try {
-    const payload = (await response.json()) as { error?: unknown };
+    const payload = (await response.json()) as {
+      error?: unknown;
+      field_errors?: unknown;
+    };
     if (typeof payload.error === "string" && payload.error) {
       message = payload.error;
+    }
+    if (payload.field_errors && typeof payload.field_errors === "object") {
+      fieldErrors = payload.field_errors as Record<string, string>;
     }
   } catch {
     // Keep default message when the response is not JSON.
   }
 
-  return new Error(message);
+  const error = new Error(message) as BackupApiError;
+  error.fieldErrors = fieldErrors;
+  return error;
 }

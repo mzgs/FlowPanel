@@ -54,6 +54,20 @@ function formatMegabytes(bytes: number) {
   return Math.round(bytes / (1024 * 1024)).toString();
 }
 
+function formatServerTime(status: SystemStatus) {
+  const displayValue = status.server_time_display?.trim();
+  if (displayValue) {
+    return displayValue;
+  }
+
+  const rawValue = status.server_time?.trim();
+  if (!rawValue) {
+    return "Unavailable";
+  }
+
+  return rawValue;
+}
+
 function getLoadPercent(status: SystemStatus) {
   if (status.load_1 == null || status.cores <= 0) {
     return null;
@@ -184,6 +198,13 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
     <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
       <div className="space-y-4">
         <h2 className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">System status</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
+          <div>
+            <div className="text-[12px] text-[var(--app-text-muted)]">Server time</div>
+            <div className="text-[14px] font-medium text-[var(--app-text)]">{formatServerTime(status)}</div>
+          </div>
+          <div className="font-mono text-[12px] text-[var(--app-text-muted)]">{status.timezone || "Local"}</div>
+        </div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <GaugePanel
             caption="Load average"
