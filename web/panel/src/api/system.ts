@@ -1,6 +1,10 @@
 export type SystemStatus = {
   cores: number;
   cpu_usage_percent?: number;
+  disk_free_bytes?: number;
+  disk_mount_path?: string;
+  disk_total_bytes?: number;
+  disk_used_bytes?: number;
   load_1?: number;
   load_5?: number;
   load_15?: number;

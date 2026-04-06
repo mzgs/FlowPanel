@@ -3,6 +3,7 @@ import { fetchMariaDBStatus, installMariaDB, type MariaDBStatus } from "@/api/ma
 import { fetchPHPStatus, installPHP, type PHPStatus } from "@/api/php";
 import { fetchPHPMyAdminStatus, installPHPMyAdmin, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
+import { DiskUsageCard } from "@/components/disk-usage-card";
 import { Database, LayoutDashboard, LoaderCircle, TerminalSquare } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { SystemStatusCard } from "@/components/system-status-card";
@@ -44,7 +45,7 @@ async function fetchOverviewData(): Promise<OverviewData> {
   };
 }
 
-function SoftwareCard({
+function ApplicationsCard({
   mariadbStatus,
   phpMyAdminStatus,
   phpStatus,
@@ -68,7 +69,7 @@ function SoftwareCard({
   return (
     <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
       <div className="space-y-4">
-        <h2 className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Software</h2>
+        <h2 className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Applications</h2>
         <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
           <SoftwareRow
             icon={<TerminalSquare className="h-4 w-4" />}
@@ -344,6 +345,9 @@ export function DashboardPage() {
     }
   }
 
+  const hasApplications = Boolean(phpStatus || mariadbStatus || phpMyAdminStatus);
+  const showOverview = Boolean(systemStatus || hasApplications);
+
   return (
     <>
       <PageHeader title="Overview" />
@@ -361,20 +365,26 @@ export function DashboardPage() {
               </section>
             ) : null}
 
-            {systemStatus || phpStatus || mariadbStatus ? (
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
+            {showOverview ? (
+              <div className="space-y-5">
                 {systemStatus ? (
-                  <SystemStatusCard status={systemStatus} />
+                  <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
+                    <SystemStatusCard status={systemStatus} />
+                    <DiskUsageCard status={systemStatus} />
+                  </div>
                 ) : null}
-                <SoftwareCard
-                  mariadbStatus={mariadbStatus}
-                  phpMyAdminStatus={phpMyAdminStatus}
-                  phpStatus={phpStatus}
-                  runningAction={runningAction}
-                  onInstallMariaDB={handleMariaDBInstall}
-                  onInstallPHP={handlePHPInstall}
-                  onInstallPHPMyAdmin={handlePHPMyAdminInstall}
-                />
+
+                {hasApplications ? (
+                  <ApplicationsCard
+                    mariadbStatus={mariadbStatus}
+                    phpMyAdminStatus={phpMyAdminStatus}
+                    phpStatus={phpStatus}
+                    runningAction={runningAction}
+                    onInstallMariaDB={handleMariaDBInstall}
+                    onInstallPHP={handlePHPInstall}
+                    onInstallPHPMyAdmin={handlePHPMyAdminInstall}
+                  />
+                ) : null}
               </div>
             ) : null}
 
