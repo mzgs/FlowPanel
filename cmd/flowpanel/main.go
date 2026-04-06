@@ -22,6 +22,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
+	"flowpanel/internal/googledrive"
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/logging"
 	"flowpanel/internal/mariadb"
@@ -62,6 +63,7 @@ func runBackupCreateCommand(args []string) error {
 	includePanelData := flagSet.Bool("panel-data", false, "include FlowPanel data files and SQLite database")
 	includeSites := flagSet.Bool("sites", false, "include managed site files")
 	includeDatabases := flagSet.Bool("databases", false, "include MariaDB dumps")
+	location := flagSet.String("location", backup.LocationLocal, "backup destination: local or google_drive")
 	if err := flagSet.Parse(args); err != nil {
 		return err
 	}
@@ -73,6 +75,7 @@ func runBackupCreateCommand(args []string) error {
 		IncludePanelData: *includePanelData,
 		IncludeSites:     *includeSites,
 		IncludeDatabases: *includeDatabases,
+		Location:         *location,
 	}
 	if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
 		return fmt.Errorf("select at least one backup scope")
@@ -120,6 +123,12 @@ func runBackupCreateCommand(args []string) error {
 		return fmt.Errorf("load persisted domains: %w", err)
 	}
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
+	settingsStore := settings.NewStore(dbConn)
+	if err := settingsStore.Ensure(ctx); err != nil {
+		return fmt.Errorf("ensure settings storage: %w", err)
+	}
+	settingsService := settings.NewService(settingsStore)
+	googleDriveService := googledrive.NewService(cfg.GoogleDrive)
 	backupService := backup.NewService(
 		logger.Named("backup"),
 		config.FlowPanelDataPath(),
@@ -128,6 +137,8 @@ func runBackupCreateCommand(args []string) error {
 		dbConn,
 		domainService,
 		mariadbManager,
+		settingsService,
+		googleDriveService,
 	)
 
 	record, err := backupService.Create(ctx, input)
@@ -218,6 +229,7 @@ func runServer() error {
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
 	settingsService := settings.NewService(settingsStore)
+	googleDriveService := googledrive.NewService(cfg.GoogleDrive)
 	backupService := backup.NewService(
 		logger.Named("backup"),
 		config.FlowPanelDataPath(),
@@ -226,6 +238,8 @@ func runServer() error {
 		dbConn,
 		domainService,
 		mariadbManager,
+		settingsService,
+		googleDriveService,
 	)
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
@@ -256,6 +270,7 @@ func runServer() error {
 		eventService,
 		backupService,
 		settingsService,
+		googleDriveService,
 	)
 
 	router, err := httpx.NewRouter(appContainer)

@@ -1,7 +1,9 @@
 export type BackupRecord = {
+  id: string;
   name: string;
   size: number;
   created_at: string;
+  location: "local" | "google_drive";
 };
 
 export type ScheduledBackupRecord = {
@@ -12,6 +14,7 @@ export type ScheduledBackupRecord = {
   include_panel_data: boolean;
   include_sites: boolean;
   include_databases: boolean;
+  location: "local" | "google_drive";
 };
 
 export type CreateBackupInput = {
@@ -20,6 +23,7 @@ export type CreateBackupInput = {
   include_databases: boolean;
   site_hostnames?: string[];
   database_names?: string[];
+  location?: "local" | "google_drive";
 };
 
 export type RestoreBackupResult = {
@@ -35,6 +39,7 @@ export type CreateScheduledBackupInput = {
   include_panel_data: boolean;
   include_sites: boolean;
   include_databases: boolean;
+  location?: "local" | "google_drive";
 };
 
 type BackupsPayload = {
@@ -154,22 +159,31 @@ export async function importBackup(file: File): Promise<BackupRecord> {
   return payload.backup;
 }
 
-export async function deleteBackup(name: string): Promise<void> {
-  const response = await fetch(`/api/backups/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+export async function deleteBackup(id: string, location: BackupRecord["location"]): Promise<void> {
+  const response = await fetch(
+    `/api/backups/${encodeURIComponent(id)}?location=${encodeURIComponent(location)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
 
   if (!response.ok) {
     throw await readBackupApiError(response, "delete backup");
   }
 }
 
-export async function restoreBackup(name: string): Promise<RestoreBackupResult> {
-  const response = await fetch(`/api/backups/${encodeURIComponent(name)}/restore`, {
-    method: "POST",
-    credentials: "include",
-  });
+export async function restoreBackup(
+  id: string,
+  location: BackupRecord["location"],
+): Promise<RestoreBackupResult> {
+  const response = await fetch(
+    `/api/backups/${encodeURIComponent(id)}/restore?location=${encodeURIComponent(location)}`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
 
   if (!response.ok) {
     throw await readBackupApiError(response, "restore backup");
@@ -179,8 +193,8 @@ export async function restoreBackup(name: string): Promise<RestoreBackupResult> 
   return payload.restore;
 }
 
-export function getBackupDownloadUrl(name: string) {
-  return `/api/backups/${encodeURIComponent(name)}/download`;
+export function getBackupDownloadUrl(id: string, location: BackupRecord["location"]) {
+  return `/api/backups/${encodeURIComponent(id)}/download?location=${encodeURIComponent(location)}`;
 }
 
 async function readBackupApiError(

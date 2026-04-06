@@ -153,7 +153,7 @@ export function BackupRecordsTable({
                     aria-label={`Download ${backup.name}`}
                     title={`Download ${backup.name}`}
                   >
-                    <a href={getBackupDownloadUrl(backup.name)}>
+                    <a href={getBackupDownloadUrl(backup.id, backup.location)}>
                       <Download className="size-6" stroke={actionIconStroke} />
                     </a>
                   </Button>

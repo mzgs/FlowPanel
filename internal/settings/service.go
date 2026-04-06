@@ -17,9 +17,12 @@ const (
 )
 
 type Record struct {
-	PanelName   string `json:"panel_name"`
-	PanelURL    string `json:"panel_url"`
-	GitHubToken string `json:"github_token"`
+	PanelName               string `json:"panel_name"`
+	PanelURL                string `json:"panel_url"`
+	GitHubToken             string `json:"github_token"`
+	GoogleDriveEmail        string `json:"google_drive_email"`
+	GoogleDriveConnected    bool   `json:"google_drive_connected"`
+	GoogleDriveRefreshToken string `json:"-"`
 }
 
 type UpdateInput struct {
@@ -74,6 +77,58 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 		return record, nil
 	}
 
+	current, err := s.Get(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	record.GoogleDriveEmail = current.GoogleDriveEmail
+	record.GoogleDriveRefreshToken = current.GoogleDriveRefreshToken
+	record.GoogleDriveConnected = strings.TrimSpace(record.GoogleDriveRefreshToken) != ""
+
+	if err := s.store.Upsert(ctx, record); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
+func (s *Service) SetGoogleDriveConnection(ctx context.Context, email string, refreshToken string) (Record, error) {
+	email = normalizeOptionalSingleLine(email, 320)
+	refreshToken = normalizeOptionalSingleLine(refreshToken, 4096)
+	if refreshToken == "" {
+		return Record{}, errors.New("google drive refresh token is required")
+	}
+
+	record, err := s.Get(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	record.GoogleDriveEmail = email
+	record.GoogleDriveRefreshToken = refreshToken
+	record.GoogleDriveConnected = true
+
+	if s == nil || s.store == nil {
+		return record, nil
+	}
+	if err := s.store.Upsert(ctx, record); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
+func (s *Service) ClearGoogleDriveConnection(ctx context.Context) (Record, error) {
+	record, err := s.Get(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	record.GoogleDriveEmail = ""
+	record.GoogleDriveRefreshToken = ""
+	record.GoogleDriveConnected = false
+
+	if s == nil || s.store == nil {
+		return record, nil
+	}
 	if err := s.store.Upsert(ctx, record); err != nil {
 		return Record{}, err
 	}
@@ -83,9 +138,11 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 
 func defaultRecord() Record {
 	return Record{
-		PanelName:   defaultPanelName,
-		PanelURL:    "",
-		GitHubToken: "",
+		PanelName:            defaultPanelName,
+		PanelURL:             "",
+		GitHubToken:          "",
+		GoogleDriveEmail:     "",
+		GoogleDriveConnected: false,
 	}
 }
 

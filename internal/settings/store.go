@@ -15,12 +15,16 @@ const (
 	panelNameKey             = panelSettingsKeyPrefix + "panel_name"
 	panelURLKey              = panelSettingsKeyPrefix + "panel_url"
 	gitHubTokenKey           = panelSettingsKeyPrefix + "github_token"
+	googleDriveEmailKey      = panelSettingsKeyPrefix + "google_drive_email"
+	googleDriveRefreshKey    = panelSettingsKeyPrefix + "google_drive_refresh_token"
 )
 
 var panelSettingKeys = []string{
 	panelNameKey,
 	panelURLKey,
 	gitHubTokenKey,
+	googleDriveEmailKey,
+	googleDriveRefreshKey,
 }
 
 type Store struct {
@@ -70,10 +74,18 @@ func (s *Store) Get(ctx context.Context) (Record, error) {
 	query := fmt.Sprintf(`
 SELECT key, value
 FROM %s
-WHERE key IN (?, ?, ?)
+WHERE key IN (?, ?, ?, ?, ?)
 `, settingsTableName)
 
-	rows, err := s.db.QueryContext(ctx, query, panelNameKey, panelURLKey, gitHubTokenKey)
+	rows, err := s.db.QueryContext(
+		ctx,
+		query,
+		panelNameKey,
+		panelURLKey,
+		gitHubTokenKey,
+		googleDriveEmailKey,
+		googleDriveRefreshKey,
+	)
 	if err != nil {
 		return Record{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -98,6 +110,10 @@ WHERE key IN (?, ?, ?)
 			record.PanelURL = strings.TrimSpace(value)
 		case gitHubTokenKey:
 			record.GitHubToken = strings.TrimSpace(value)
+		case googleDriveEmailKey:
+			record.GoogleDriveEmail = strings.TrimSpace(value)
+		case googleDriveRefreshKey:
+			record.GoogleDriveRefreshToken = strings.TrimSpace(value)
 		}
 	}
 
@@ -107,6 +123,7 @@ WHERE key IN (?, ?, ?)
 	if !found {
 		return Record{}, sql.ErrNoRows
 	}
+	record.GoogleDriveConnected = strings.TrimSpace(record.GoogleDriveRefreshToken) != ""
 
 	return record, nil
 }
@@ -133,9 +150,11 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 `, settingsTableName)
 
 	values := map[string]string{
-		panelNameKey:   record.PanelName,
-		panelURLKey:    record.PanelURL,
-		gitHubTokenKey: record.GitHubToken,
+		panelNameKey:          record.PanelName,
+		panelURLKey:           record.PanelURL,
+		gitHubTokenKey:        record.GitHubToken,
+		googleDriveEmailKey:   record.GoogleDriveEmail,
+		googleDriveRefreshKey: record.GoogleDriveRefreshToken,
 	}
 
 	for _, key := range panelSettingKeys {
@@ -210,9 +229,11 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 `, settingsTableName)
 
 	values := map[string]string{
-		panelNameKey:   record.PanelName,
-		panelURLKey:    record.PanelURL,
-		gitHubTokenKey: record.GitHubToken,
+		panelNameKey:          record.PanelName,
+		panelURLKey:           record.PanelURL,
+		gitHubTokenKey:        record.GitHubToken,
+		googleDriveEmailKey:   record.GoogleDriveEmail,
+		googleDriveRefreshKey: record.GoogleDriveRefreshToken,
 	}
 
 	for _, key := range panelSettingKeys {

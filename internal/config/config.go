@@ -21,6 +21,7 @@ type Config struct {
 	Database        DatabaseConfig
 	Session         SessionConfig
 	Cron            CronConfig
+	GoogleDrive     GoogleDriveConfig
 }
 
 type DatabaseConfig struct {
@@ -35,6 +36,12 @@ type SessionConfig struct {
 
 type CronConfig struct {
 	Enabled bool
+}
+
+type GoogleDriveConfig struct {
+	ClientID        string
+	ClientSecret    string
+	CredentialsPath string
 }
 
 func Load() (Config, error) {
@@ -70,6 +77,11 @@ func Load() (Config, error) {
 		},
 		Cron: CronConfig{
 			Enabled: cronEnabled,
+		},
+		GoogleDrive: GoogleDriveConfig{
+			ClientID:        getEnv("FLOWPANEL_GOOGLE_DRIVE_CLIENT_ID", ""),
+			ClientSecret:    getEnv("FLOWPANEL_GOOGLE_DRIVE_CLIENT_SECRET", ""),
+			CredentialsPath: getEnv("FLOWPANEL_GOOGLE_DRIVE_CREDENTIALS_PATH", GoogleDriveOAuthCredentialsPath()),
 		},
 	}
 
@@ -122,6 +134,9 @@ func (c Config) validate() error {
 	}
 	if c.IsProduction() && c.Session.Secret == defaultDevelopmentSessionSecret {
 		problems = append(problems, "FLOWPANEL_SESSION_SECRET must be set explicitly in production")
+	}
+	if (strings.TrimSpace(c.GoogleDrive.ClientID) == "") != (strings.TrimSpace(c.GoogleDrive.ClientSecret) == "") {
+		problems = append(problems, "FLOWPANEL_GOOGLE_DRIVE_CLIENT_ID and FLOWPANEL_GOOGLE_DRIVE_CLIENT_SECRET must be set together")
 	}
 
 	if len(problems) > 0 {

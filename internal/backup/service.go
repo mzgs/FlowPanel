@@ -18,18 +18,25 @@ import (
 	"time"
 
 	"flowpanel/internal/domain"
+	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/settings"
 
 	"go.uber.org/zap"
 )
 
-const backupExtension = ".tar.gz"
+const (
+	backupExtension     = ".tar.gz"
+	LocationLocal       = "local"
+	LocationGoogleDrive = "google_drive"
+)
 
 var (
-	ErrNotFound       = errors.New("backup not found")
-	ErrInvalidName    = errors.New("invalid backup name")
-	ErrAlreadyExists  = errors.New("backup already exists")
-	ErrInvalidArchive = errors.New("invalid backup archive")
+	ErrNotFound        = errors.New("backup not found")
+	ErrInvalidName     = errors.New("invalid backup name")
+	ErrAlreadyExists   = errors.New("backup already exists")
+	ErrInvalidArchive  = errors.New("invalid backup archive")
+	ErrInvalidLocation = errors.New("invalid backup location")
 )
 
 const backupFormat = "flowpanel-backup-v1"
@@ -38,15 +45,17 @@ type Manager interface {
 	List(context.Context) ([]Record, error)
 	Create(context.Context, CreateInput) (Record, error)
 	Import(context.Context, string, io.Reader) (Record, error)
-	Restore(context.Context, string) (RestoreResult, error)
-	Delete(context.Context, string) error
-	DownloadPath(string) (string, string, error)
+	Restore(context.Context, string, string) (RestoreResult, error)
+	Delete(context.Context, string, string) error
+	OpenDownload(context.Context, string, string) (DownloadResult, error)
 }
 
 type Record struct {
+	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Size      int64     `json:"size"`
 	CreatedAt time.Time `json:"created_at"`
+	Location  string    `json:"location"`
 }
 
 type CreateInput struct {
@@ -55,6 +64,7 @@ type CreateInput struct {
 	IncludeDatabases bool     `json:"include_databases"`
 	SiteHostnames    []string `json:"site_hostnames,omitempty"`
 	DatabaseNames    []string `json:"database_names,omitempty"`
+	Location         string   `json:"location,omitempty"`
 }
 
 type ValidationErrors map[string]string
@@ -70,14 +80,23 @@ type RestoreResult struct {
 	RestoredDatabases     []string `json:"restored_databases,omitempty"`
 }
 
+type DownloadResult struct {
+	Name   string
+	Size   int64
+	Reader io.ReadCloser
+}
+
 type Service struct {
 	logger       *zap.Logger
 	dataPath     string
 	backupPath   string
 	databasePath string
 	db           *sql.DB
+	store        *Store
 	domains      DomainSource
 	mariaDB      DatabaseSource
+	settings     *settings.Service
+	googleDrive  *googledrive.Service
 }
 
 type manifest struct {
@@ -104,7 +123,17 @@ type siteArchive struct {
 	RootPath string
 }
 
-func NewService(logger *zap.Logger, dataPath, backupPath, databasePath string, db *sql.DB, domains DomainSource, mariaDB DatabaseSource) *Service {
+func NewService(
+	logger *zap.Logger,
+	dataPath string,
+	backupPath string,
+	databasePath string,
+	db *sql.DB,
+	domains DomainSource,
+	mariaDB DatabaseSource,
+	settingsService *settings.Service,
+	googleDriveService *googledrive.Service,
+) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -124,12 +153,49 @@ func NewService(logger *zap.Logger, dataPath, backupPath, databasePath string, d
 		backupPath:   backupPath,
 		databasePath: filepath.Clean(strings.TrimSpace(databasePath)),
 		db:           db,
+		store:        NewStore(db),
 		domains:      domains,
 		mariaDB:      mariaDB,
+		settings:     settingsService,
+		googleDrive:  googleDriveService,
 	}
 }
 
-func (s *Service) List(context.Context) ([]Record, error) {
+func (s *Service) List(ctx context.Context) ([]Record, error) {
+	localBackups, err := s.listLocalBackups()
+	if err != nil {
+		return nil, err
+	}
+
+	driveBackups, err := s.listPersistedGoogleDriveBackups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	records := append(localBackups, driveBackups...)
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].CreatedAt.Equal(records[j].CreatedAt) {
+			return records[i].Name > records[j].Name
+		}
+		return records[i].CreatedAt.After(records[j].CreatedAt)
+	})
+
+	return records, nil
+}
+
+func (s *Service) listPersistedGoogleDriveBackups(ctx context.Context) ([]Record, error) {
+	if s.store == nil {
+		return []Record{}, nil
+	}
+
+	records, err := s.store.ListGoogleDrive(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list persisted google drive backups: %w", err)
+	}
+
+	return records, nil
+}
+
+func (s *Service) listLocalBackups() ([]Record, error) {
 	if err := s.ensureBackupPath(); err != nil {
 		return nil, err
 	}
@@ -150,11 +216,7 @@ func (s *Service) List(context.Context) ([]Record, error) {
 			return nil, fmt.Errorf("stat backup %q: %w", entry.Name(), err)
 		}
 
-		backups = append(backups, Record{
-			Name:      entry.Name(),
-			Size:      info.Size(),
-			CreatedAt: info.ModTime().UTC(),
-		})
+		backups = append(backups, localRecord(entry.Name(), info.Size(), info.ModTime().UTC()))
 	}
 
 	sort.Slice(backups, func(i, j int) bool {
@@ -168,18 +230,38 @@ func (s *Service) List(context.Context) ([]Record, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
-	if err := s.ensureBackupPath(); err != nil {
-		return Record{}, err
-	}
+	input.Location = normalizeLocation(input.Location)
 	input.SiteHostnames = normalizeSiteHostnames(input.SiteHostnames)
 	input.DatabaseNames = normalizeDatabaseNames(input.DatabaseNames)
 	if validation := validateCreateInput(input); len(validation) > 0 {
 		return Record{}, validation
 	}
 
+	switch input.Location {
+	case LocationLocal:
+		if err := s.ensureBackupPath(); err != nil {
+			return Record{}, err
+		}
+	case LocationGoogleDrive:
+		refreshToken, ok, err := s.googleDriveRefreshToken(ctx)
+		if err != nil {
+			return Record{}, err
+		}
+		if !ok {
+			return Record{}, fmt.Errorf("google drive is not connected")
+		}
+		return s.createGoogleDriveBackup(ctx, input, refreshToken)
+	default:
+		return Record{}, ErrInvalidLocation
+	}
+
 	createdAt := time.Now().UTC()
 	name := fmt.Sprintf("%s-%s%s", backupNamePrefix(input), createdAt.Format("20060102-150405"), backupExtension)
 	targetPath := filepath.Join(s.backupPath, name)
+	return s.createLocalArchive(ctx, input, name, targetPath, createdAt)
+}
+
+func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, name string, targetPath string, createdAt time.Time) (Record, error) {
 	tempTargetPath := targetPath + ".tmp"
 
 	stagingPath, err := os.MkdirTemp("", "flowpanel-backup-*")
@@ -306,11 +388,52 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		zap.Int64("size", info.Size()),
 	)
 
-	return Record{
-		Name:      name,
-		Size:      info.Size(),
-		CreatedAt: info.ModTime().UTC(),
-	}, nil
+	return localRecord(name, info.Size(), info.ModTime().UTC()), nil
+}
+
+func (s *Service) createGoogleDriveBackup(ctx context.Context, input CreateInput, refreshToken string) (Record, error) {
+	stagingPath, err := os.MkdirTemp("", "flowpanel-drive-backup-*")
+	if err != nil {
+		return Record{}, fmt.Errorf("create google drive backup staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingPath)
+
+	createdAt := time.Now().UTC()
+	name := fmt.Sprintf("%s-%s%s", backupNamePrefix(input), createdAt.Format("20060102-150405"), backupExtension)
+	targetPath := filepath.Join(stagingPath, name)
+	if _, err := s.createLocalArchive(ctx, input, name, targetPath, createdAt); err != nil {
+		return Record{}, err
+	}
+
+	archive, err := os.Open(targetPath)
+	if err != nil {
+		return Record{}, fmt.Errorf("open google drive backup staging archive: %w", err)
+	}
+	defer archive.Close()
+
+	uploaded, err := s.googleDrive.UploadBackup(ctx, refreshToken, name, archive)
+	if err != nil {
+		return Record{}, err
+	}
+
+	record := Record{
+		ID:        uploaded.ID,
+		Name:      uploaded.Name,
+		Size:      uploaded.Size,
+		CreatedAt: uploaded.CreatedAt,
+		Location:  LocationGoogleDrive,
+	}
+	if err := s.persistGoogleDriveBackup(ctx, record); err != nil {
+		if cleanupErr := s.googleDrive.DeleteBackup(ctx, refreshToken, uploaded.ID); cleanupErr != nil {
+			s.logger.Error("delete google drive backup after metadata persistence failure failed",
+				zap.String("id", uploaded.ID),
+				zap.Error(cleanupErr),
+			)
+		}
+		return Record{}, err
+	}
+
+	return record, nil
 }
 
 func (s *Service) Import(_ context.Context, name string, archive io.Reader) (Record, error) {
@@ -371,7 +494,18 @@ func (s *Service) Import(_ context.Context, name string, archive io.Reader) (Rec
 	}, nil
 }
 
-func (s *Service) Restore(ctx context.Context, name string) (RestoreResult, error) {
+func (s *Service) Restore(ctx context.Context, id string, location string) (RestoreResult, error) {
+	switch normalizeLocation(location) {
+	case LocationLocal:
+		return s.restoreLocalBackup(ctx, id)
+	case LocationGoogleDrive:
+		return s.restoreGoogleDriveBackup(ctx, id)
+	default:
+		return RestoreResult{}, ErrInvalidLocation
+	}
+}
+
+func (s *Service) restoreLocalBackup(ctx context.Context, name string) (RestoreResult, error) {
 	backupPath, err := s.resolveBackupPath(name)
 	if err != nil {
 		return RestoreResult{}, err
@@ -382,6 +516,11 @@ func (s *Service) Restore(ctx context.Context, name string) (RestoreResult, erro
 		}
 		return RestoreResult{}, fmt.Errorf("stat backup %q: %w", name, err)
 	}
+
+	return s.restoreArchive(ctx, backupPath)
+}
+
+func (s *Service) restoreArchive(ctx context.Context, backupPath string) (RestoreResult, error) {
 
 	stagingPath, err := os.MkdirTemp("", "flowpanel-restore-*")
 	if err != nil {
@@ -432,7 +571,18 @@ func (s *Service) Restore(ctx context.Context, name string) (RestoreResult, erro
 	return result, nil
 }
 
-func (s *Service) Delete(_ context.Context, name string) error {
+func (s *Service) Delete(ctx context.Context, id string, location string) error {
+	switch normalizeLocation(location) {
+	case LocationLocal:
+		return s.deleteLocalBackup(id)
+	case LocationGoogleDrive:
+		return s.deleteGoogleDriveBackup(ctx, id)
+	default:
+		return ErrInvalidLocation
+	}
+}
+
+func (s *Service) deleteLocalBackup(name string) error {
 	backupPath, err := s.resolveBackupPath(name)
 	if err != nil {
 		return err
@@ -446,6 +596,43 @@ func (s *Service) Delete(_ context.Context, name string) error {
 	}
 
 	return nil
+}
+
+func (s *Service) OpenDownload(ctx context.Context, id string, location string) (DownloadResult, error) {
+	switch normalizeLocation(location) {
+	case LocationLocal:
+		return s.openLocalDownload(id)
+	case LocationGoogleDrive:
+		return s.openGoogleDriveDownload(ctx, id)
+	default:
+		return DownloadResult{}, ErrInvalidLocation
+	}
+}
+
+func (s *Service) openLocalDownload(name string) (DownloadResult, error) {
+	backupPath, err := s.resolveBackupPath(name)
+	if err != nil {
+		return DownloadResult{}, err
+	}
+
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return DownloadResult{}, ErrNotFound
+		}
+		return DownloadResult{}, fmt.Errorf("stat backup %q: %w", name, err)
+	}
+
+	file, err := os.Open(backupPath)
+	if err != nil {
+		return DownloadResult{}, fmt.Errorf("open backup %q: %w", name, err)
+	}
+
+	return DownloadResult{
+		Name:   name,
+		Size:   info.Size(),
+		Reader: file,
+	}, nil
 }
 
 func (s *Service) DownloadPath(name string) (string, string, error) {
@@ -462,6 +649,135 @@ func (s *Service) DownloadPath(name string) (string, string, error) {
 	}
 
 	return backupPath, name, nil
+}
+
+func (s *Service) restoreGoogleDriveBackup(ctx context.Context, id string) (RestoreResult, error) {
+	download, err := s.openGoogleDriveDownload(ctx, id)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	defer download.Reader.Close()
+
+	stagingPath, err := os.MkdirTemp("", "flowpanel-drive-restore-*")
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("create google drive restore staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingPath)
+
+	targetPath := filepath.Join(stagingPath, download.Name)
+	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("create google drive restore archive: %w", err)
+	}
+	if _, err := io.Copy(file, download.Reader); err != nil {
+		_ = file.Close()
+		return RestoreResult{}, fmt.Errorf("write google drive restore archive: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return RestoreResult{}, fmt.Errorf("close google drive restore archive: %w", err)
+	}
+
+	return s.restoreArchive(ctx, targetPath)
+}
+
+func (s *Service) deleteGoogleDriveBackup(ctx context.Context, id string) error {
+	refreshToken, ok, err := s.googleDriveRefreshToken(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	if err := s.googleDrive.DeleteBackup(ctx, refreshToken, id); err != nil {
+		if errors.Is(err, googledrive.ErrNotFound) {
+			return s.deletePersistedGoogleDriveBackup(ctx, id)
+		}
+		return err
+	}
+
+	return s.deletePersistedGoogleDriveBackup(ctx, id)
+}
+
+func (s *Service) openGoogleDriveDownload(ctx context.Context, id string) (DownloadResult, error) {
+	refreshToken, ok, err := s.googleDriveRefreshToken(ctx)
+	if err != nil {
+		return DownloadResult{}, err
+	}
+	if !ok {
+		return DownloadResult{}, ErrNotFound
+	}
+
+	reader, file, err := s.googleDrive.DownloadBackup(ctx, refreshToken, id)
+	if err != nil {
+		if errors.Is(err, googledrive.ErrNotFound) {
+			if purgeErr := s.deletePersistedGoogleDriveBackup(ctx, id); purgeErr != nil {
+				s.logger.Error("delete stale google drive backup metadata failed",
+					zap.String("id", id),
+					zap.Error(purgeErr),
+				)
+			}
+			return DownloadResult{}, ErrNotFound
+		}
+		return DownloadResult{}, err
+	}
+
+	return DownloadResult{
+		Name:   file.Name,
+		Size:   file.Size,
+		Reader: reader,
+	}, nil
+}
+
+func (s *Service) persistGoogleDriveBackup(ctx context.Context, record Record) error {
+	if s.store == nil {
+		return nil
+	}
+
+	if err := s.store.UpsertGoogleDrive(ctx, record); err != nil {
+		return fmt.Errorf("persist google drive backup metadata: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) deletePersistedGoogleDriveBackup(ctx context.Context, id string) error {
+	if s.store == nil {
+		return nil
+	}
+
+	if err := s.store.DeleteGoogleDrive(ctx, id); err != nil {
+		return fmt.Errorf("delete google drive backup metadata: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) googleDriveRefreshToken(ctx context.Context) (string, bool, error) {
+	if s.googleDrive == nil || !s.googleDrive.Enabled() || s.settings == nil {
+		return "", false, nil
+	}
+
+	record, err := s.settings.Get(ctx)
+	if err != nil {
+		return "", false, err
+	}
+
+	refreshToken := strings.TrimSpace(record.GoogleDriveRefreshToken)
+	if refreshToken == "" {
+		return "", false, nil
+	}
+
+	return refreshToken, true, nil
+}
+
+func localRecord(name string, size int64, createdAt time.Time) Record {
+	return Record{
+		ID:        name,
+		Name:      name,
+		Size:      size,
+		CreatedAt: createdAt.UTC(),
+		Location:  LocationLocal,
+	}
 }
 
 func (s *Service) ensureBackupPath() error {
@@ -1420,6 +1736,11 @@ func databaseDumpNames(dumps []databaseDump) []string {
 }
 
 func validateCreateInput(input CreateInput) ValidationErrors {
+	if input.Location != LocationLocal && input.Location != LocationGoogleDrive {
+		return ValidationErrors{
+			"location": "Select a valid backup location.",
+		}
+	}
 	if len(input.SiteHostnames) > 0 && !input.IncludeSites {
 		return ValidationErrors{
 			"site_hostnames": "Select site files before choosing specific domains.",
@@ -1480,6 +1801,15 @@ func normalizeDatabaseNames(names []string) []string {
 
 func normalizeSiteHostnames(hostnames []string) []string {
 	return normalizeNames(hostnames)
+}
+
+func normalizeLocation(location string) string {
+	location = strings.TrimSpace(strings.ToLower(location))
+	if location == "" {
+		return LocationLocal
+	}
+
+	return location
 }
 
 func normalizeNames(names []string) []string {

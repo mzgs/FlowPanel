@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"flowpanel/internal/db"
 	"flowpanel/internal/domain"
@@ -73,6 +74,8 @@ func TestCreateIncludesDataFilesAndDatabaseSnapshot(t *testing.T) {
 				"appdb": []byte("CREATE DATABASE `appdb`;\nUSE `appdb`;\n"),
 			},
 		},
+		nil,
+		nil,
 	)
 	record, err := service.Create(context.Background(), CreateInput{
 		IncludePanelData: true,
@@ -151,7 +154,7 @@ func TestListDeleteAndDownloadPath(t *testing.T) {
 	dbPath := filepath.Join(dataPath, "flowpanel.db")
 	dbConn := openTestDB(t, dbPath)
 
-	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{})
+	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{}, nil, nil)
 	record, err := service.Create(context.Background(), CreateInput{
 		IncludePanelData: true,
 		IncludeSites:     true,
@@ -183,7 +186,7 @@ func TestListDeleteAndDownloadPath(t *testing.T) {
 		t.Fatalf("stat download path: %v", err)
 	}
 
-	if err := service.Delete(context.Background(), record.Name); err != nil {
+	if err := service.Delete(context.Background(), record.Name, LocationLocal); err != nil {
 		t.Fatalf("delete backup: %v", err)
 	}
 	if _, _, err := service.DownloadPath(record.Name); err != ErrNotFound {
@@ -204,7 +207,7 @@ func TestImportStoresValidatedArchive(t *testing.T) {
 		dumps: map[string][]byte{
 			"flowpanel": []byte("dump"),
 		},
-	})
+	}, nil, nil)
 
 	created, err := sourceService.Create(context.Background(), CreateInput{
 		IncludeDatabases: true,
@@ -229,7 +232,7 @@ func TestImportStoresValidatedArchive(t *testing.T) {
 	targetBackupPath := filepath.Join(t.TempDir(), "target-backups")
 	targetDBPath := filepath.Join(targetDataPath, "flowpanel.db")
 	targetDBConn := openTestDB(t, targetDBPath)
-	targetService := NewService(zap.NewNop(), targetDataPath, targetBackupPath, targetDBPath, targetDBConn, fakeDomainSource{}, fakeDatabaseSource{})
+	targetService := NewService(zap.NewNop(), targetDataPath, targetBackupPath, targetDBPath, targetDBConn, fakeDomainSource{}, fakeDatabaseSource{}, nil, nil)
 
 	importedName := "flowpanel-database-flowpanel-backup-imported.tar.gz"
 	record, err := targetService.Import(context.Background(), importedName, archive)
@@ -261,7 +264,7 @@ func TestImportRejectsInvalidArchive(t *testing.T) {
 	dbPath := filepath.Join(dataPath, "flowpanel.db")
 	dbConn := openTestDB(t, dbPath)
 
-	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{})
+	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{}, nil, nil)
 	_, err := service.Import(context.Background(), "flowpanel-database-invalid-backup.tar.gz", strings.NewReader("not a gzip archive"))
 	if !errors.Is(err, ErrInvalidArchive) {
 		t.Fatalf("import error = %v, want %v", err, ErrInvalidArchive)
@@ -304,6 +307,8 @@ func TestCreateCanLimitScope(t *testing.T) {
 				"appdb": []byte("dump"),
 			},
 		},
+		nil,
+		nil,
 	)
 
 	record, err := service.Create(context.Background(), CreateInput{
@@ -336,6 +341,45 @@ func TestCreateCanLimitScope(t *testing.T) {
 	}
 }
 
+func TestListIncludesPersistedGoogleDriveBackups(t *testing.T) {
+	t.Helper()
+
+	dataPath := t.TempDir()
+	backupPath := filepath.Join(t.TempDir(), "backups")
+	dbPath := filepath.Join(dataPath, "flowpanel.db")
+	dbConn := openTestDB(t, dbPath)
+
+	service := NewService(zap.NewNop(), dataPath, backupPath, dbPath, dbConn, fakeDomainSource{}, fakeDatabaseSource{}, nil, nil)
+
+	createdAt := time.Date(2026, time.April, 6, 10, 30, 0, 0, time.UTC)
+	if err := service.store.UpsertGoogleDrive(context.Background(), Record{
+		ID:        "drive-backup-1",
+		Name:      "flowpanel-full-backup-20260406-103000.tar.gz",
+		Size:      1024,
+		CreatedAt: createdAt,
+		Location:  LocationGoogleDrive,
+	}); err != nil {
+		t.Fatalf("upsert persisted google drive backup: %v", err)
+	}
+
+	list, err := service.List(context.Background())
+	if err != nil {
+		t.Fatalf("list backups: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("backup count = %d, want 1", len(list))
+	}
+	if list[0].ID != "drive-backup-1" {
+		t.Fatalf("backup id = %q, want drive-backup-1", list[0].ID)
+	}
+	if list[0].Location != LocationGoogleDrive {
+		t.Fatalf("backup location = %q, want %q", list[0].Location, LocationGoogleDrive)
+	}
+	if !list[0].CreatedAt.Equal(createdAt) {
+		t.Fatalf("backup created_at = %v, want %v", list[0].CreatedAt, createdAt)
+	}
+}
+
 func TestCreateCanLimitBackupToSingleDatabase(t *testing.T) {
 	t.Helper()
 
@@ -358,6 +402,8 @@ func TestCreateCanLimitBackupToSingleDatabase(t *testing.T) {
 				"logsdb": []byte("logs dump"),
 			},
 		},
+		nil,
+		nil,
 	)
 
 	record, err := service.Create(context.Background(), CreateInput{
@@ -422,6 +468,8 @@ func TestCreateCanLimitBackupToSingleSite(t *testing.T) {
 			},
 		},
 		fakeDatabaseSource{},
+		nil,
+		nil,
 	)
 
 	record, err := service.Create(context.Background(), CreateInput{
@@ -469,6 +517,8 @@ func TestCreateRejectsUnknownSiteHostnames(t *testing.T) {
 			},
 		},
 		fakeDatabaseSource{},
+		nil,
+		nil,
 	)
 
 	_, err := service.Create(context.Background(), CreateInput{
@@ -493,7 +543,7 @@ func TestCreateRequiresAtLeastOneSelection(t *testing.T) {
 
 	dataPath := t.TempDir()
 	backupPath := filepath.Join(t.TempDir(), "backups")
-	service := NewService(zap.NewNop(), dataPath, backupPath, "", nil, fakeDomainSource{}, fakeDatabaseSource{})
+	service := NewService(zap.NewNop(), dataPath, backupPath, "", nil, fakeDomainSource{}, fakeDatabaseSource{}, nil, nil)
 	if _, err := service.Create(context.Background(), CreateInput{}); err == nil {
 		t.Fatal("create backup error = nil, want validation error")
 	}
@@ -549,6 +599,8 @@ func TestRestoreAppliesPanelDataSitesAndDatabases(t *testing.T) {
 			},
 		},
 		databaseSource,
+		nil,
+		nil,
 	)
 
 	record, err := service.Create(context.Background(), CreateInput{
@@ -579,7 +631,7 @@ func TestRestoreAppliesPanelDataSitesAndDatabases(t *testing.T) {
 		t.Fatalf("write extra site file: %v", err)
 	}
 
-	result, err := service.Restore(context.Background(), record.Name)
+	result, err := service.Restore(context.Background(), record.Name, LocationLocal)
 	if err != nil {
 		t.Fatalf("restore backup: %v", err)
 	}

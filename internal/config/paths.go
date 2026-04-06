@@ -16,6 +16,10 @@ func DefaultDatabasePath() string {
 	return filepath.Join(FlowPanelDataPath(), "flowpanel.db")
 }
 
+func GoogleDriveOAuthCredentialsPath() string {
+	return filepath.Join(FlowPanelDataPath(), "google-drive-oauth-client.json")
+}
+
 func BackupsPath() string {
 	return filepath.Join(FLOWPANEL_PATH, "backups")
 }

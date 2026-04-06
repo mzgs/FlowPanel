@@ -569,7 +569,7 @@ export function DomainsPage() {
     setRestoredBackupName(null);
 
     try {
-      await restoreBackup(name);
+      await restoreBackup(name, "local");
       if (restoredBackupTimeoutRef.current !== null) {
         window.clearTimeout(restoredBackupTimeoutRef.current);
       }
@@ -593,7 +593,7 @@ export function DomainsPage() {
     setDeletingBackupName(name);
 
     try {
-      await deleteBackup(name);
+      await deleteBackup(name, "local");
       setBackups((current) => current.filter((item) => item.name !== name));
       toast.success(`Deleted backup ${name}.`);
     } catch (error) {

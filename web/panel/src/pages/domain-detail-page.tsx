@@ -824,7 +824,7 @@ export function DomainDetailPage() {
     setRestoredBackupName(null);
 
     try {
-      const result = await restoreBackup(name);
+      const result = await restoreBackup(name, "local");
       if (restoredBackupTimeoutRef.current !== null) {
         window.clearTimeout(restoredBackupTimeoutRef.current);
       }
@@ -858,7 +858,7 @@ export function DomainDetailPage() {
     setDeletingBackupName(name);
 
     try {
-      await deleteBackup(name);
+      await deleteBackup(name, "local");
       setBackups((current) => current.filter((item) => item.name !== name));
       toast.success(`Deleted backup ${name}.`);
     } catch (error) {

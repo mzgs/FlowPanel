@@ -10,6 +10,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
+	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
@@ -20,20 +21,21 @@ import (
 )
 
 type App struct {
-	Config     config.Config
-	Logger     *zap.Logger
-	DB         *sql.DB
-	Domains    *domain.Service
-	Sessions   *scs.SessionManager
-	Cron       *cron.Scheduler
-	Caddy      *caddy.Runtime
-	MariaDB    mariadb.Manager
-	PHP        phpenv.Manager
-	PHPMyAdmin phpmyadmin.Manager
-	Files      *files.Service
-	Events     *events.Service
-	Backups    backup.Manager
-	Settings   *settings.Service
+	Config      config.Config
+	Logger      *zap.Logger
+	DB          *sql.DB
+	Domains     *domain.Service
+	Sessions    *scs.SessionManager
+	Cron        *cron.Scheduler
+	Caddy       *caddy.Runtime
+	MariaDB     mariadb.Manager
+	PHP         phpenv.Manager
+	PHPMyAdmin  phpmyadmin.Manager
+	Files       *files.Service
+	Events      *events.Service
+	Backups     backup.Manager
+	Settings    *settings.Service
+	GoogleDrive *googledrive.Service
 }
 
 func New(
@@ -51,21 +53,23 @@ func New(
 	eventService *events.Service,
 	backupManager backup.Manager,
 	settingsService *settings.Service,
+	googleDriveService *googledrive.Service,
 ) *App {
 	return &App{
-		Config:     cfg,
-		Logger:     logger,
-		DB:         db,
-		Domains:    domains,
-		Sessions:   sessions,
-		Cron:       scheduler,
-		Caddy:      caddyRuntime,
-		MariaDB:    mariadbManager,
-		PHP:        phpManager,
-		PHPMyAdmin: phpMyAdminManager,
-		Files:      fileManager,
-		Events:     eventService,
-		Backups:    backupManager,
-		Settings:   settingsService,
+		Config:      cfg,
+		Logger:      logger,
+		DB:          db,
+		Domains:     domains,
+		Sessions:    sessions,
+		Cron:        scheduler,
+		Caddy:       caddyRuntime,
+		MariaDB:     mariadbManager,
+		PHP:         phpManager,
+		PHPMyAdmin:  phpMyAdminManager,
+		Files:       fileManager,
+		Events:      eventService,
+		Backups:     backupManager,
+		Settings:    settingsService,
+		GoogleDrive: googleDriveService,
 	}
 }

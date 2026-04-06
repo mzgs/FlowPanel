@@ -1,11 +1,25 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
+import {
+  disconnectGoogleDrive,
   fetchSettings,
+  uploadGoogleDriveOAuthCredentials,
   updateSettings,
   type PanelSettings,
   type SettingsApiError,
 } from "@/api/settings";
-import { LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
+import {
+  GoogleDrive,
+  LoaderCircle,
+  RefreshCw,
+  Upload,
+} from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +37,7 @@ const initialForm: SettingsFormState = {
   panel_url: "",
   github_token: "",
 };
+const googleDrivePopupMessageType = "flowpanel-google-drive-oauth";
 
 function toFormState(settings: PanelSettings): SettingsFormState {
   return {
@@ -51,20 +66,32 @@ function FieldError({ message }: { message?: string }) {
 export function SettingsPage() {
   const [form, setForm] = useState<SettingsFormState>(initialForm);
   const [savedForm, setSavedForm] = useState<SettingsFormState | null>(null);
+  const [settings, setSettings] = useState<PanelSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingGoogleDriveCredentials, setUploadingGoogleDriveCredentials] =
+    useState(false);
+  const [connectingGoogleDrive, setConnectingGoogleDrive] = useState(false);
+  const [disconnectingGoogleDrive, setDisconnectingGoogleDrive] =
+    useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const googleDriveCredentialsInputRef = useRef<HTMLInputElement | null>(null);
+
+  function applySettings(nextSettings: PanelSettings) {
+    const nextForm = toFormState(nextSettings);
+    setSettings(nextSettings);
+    setForm(nextForm);
+    setSavedForm(nextForm);
+  }
 
   async function loadSettings() {
     setLoading(true);
     setLoadError(null);
 
     try {
-      const settings = await fetchSettings();
-      const nextForm = toFormState(settings);
-      setForm(nextForm);
-      setSavedForm(nextForm);
+      const nextSettings = await fetchSettings();
+      applySettings(nextSettings);
       setFieldErrors({});
     } catch (error) {
       const message =
@@ -77,6 +104,37 @@ export function SettingsPage() {
 
   useEffect(() => {
     void loadSettings();
+  }, []);
+
+  useEffect(() => {
+    function handleGoogleDrivePopupMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      const payload = event.data as {
+        type?: string;
+        status?: "success" | "error";
+        message?: string;
+      };
+      if (payload.type !== googleDrivePopupMessageType) {
+        return;
+      }
+
+      setConnectingGoogleDrive(false);
+      if (payload.status === "success") {
+        toast.success(payload.message || "Google Drive connected.");
+        void loadSettings();
+        return;
+      }
+
+      toast.error(payload.message || "Google Drive connection failed.");
+    }
+
+    window.addEventListener("message", handleGoogleDrivePopupMessage);
+    return () => {
+      window.removeEventListener("message", handleGoogleDrivePopupMessage);
+    };
   }, []);
 
   const isDirty = useMemo(
@@ -95,20 +153,91 @@ export function SettingsPage() {
         panel_url: form.panel_url,
         github_token: form.github_token,
       });
-      const nextForm = toFormState(settings);
-      setForm(nextForm);
-      setSavedForm(nextForm);
+      applySettings(settings);
       toast.success("Settings saved.");
     } catch (error) {
       const settingsError = error as SettingsApiError;
       setFieldErrors(settingsError.fieldErrors ?? {});
-      toast.error(
-        settingsError.message || "Settings could not be saved.",
-      );
+      toast.error(settingsError.message || "Settings could not be saved.");
     } finally {
       setSaving(false);
     }
   }
+
+  async function handleGoogleDriveCredentialsSelection(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    setUploadingGoogleDriveCredentials(true);
+
+    try {
+      const nextSettings = await uploadGoogleDriveOAuthCredentials(file);
+      applySettings(nextSettings);
+      toast.success("Google Drive OAuth credentials saved.");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to upload Google Drive OAuth credentials.";
+      toast.error(message);
+    } finally {
+      setUploadingGoogleDriveCredentials(false);
+    }
+  }
+
+  function handleGoogleDriveConnect() {
+    const popup = window.open(
+      "/api/settings/google-drive/connect",
+      "flowpanel-google-drive",
+      "popup=yes,width=560,height=720",
+    );
+    if (!popup) {
+      toast.error("Allow pop-ups to connect Google Drive.");
+      return;
+    }
+
+    setConnectingGoogleDrive(true);
+    popup.focus();
+    const interval = window.setInterval(() => {
+      if (!popup.closed) {
+        return;
+      }
+
+      window.clearInterval(interval);
+      setConnectingGoogleDrive(false);
+    }, 400);
+  }
+
+  async function handleGoogleDriveDisconnect() {
+    setDisconnectingGoogleDrive(true);
+
+    try {
+      const nextSettings = await disconnectGoogleDrive();
+      applySettings(nextSettings);
+      toast.success("Google Drive disconnected.");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to disconnect Google Drive.";
+      toast.error(message);
+    } finally {
+      setDisconnectingGoogleDrive(false);
+    }
+  }
+
+  const googleDriveReady = settings?.google_drive_available ?? false;
+  const googleDriveConnected = settings?.google_drive_connected ?? false;
+  const googleDriveEmail = settings?.google_drive_email ?? "";
+  const googleDriveRedirectURL =
+    typeof window === "undefined"
+      ? "/api/settings/google-drive/callback"
+      : `${window.location.origin}/api/settings/google-drive/callback`;
 
   return (
     <>
@@ -131,10 +260,16 @@ export function SettingsPage() {
               <h2 className="text-base font-semibold text-[var(--app-text)]">
                 Settings unavailable
               </h2>
-              <p className="text-sm text-[var(--app-text-muted)]">{loadError}</p>
+              <p className="text-sm text-[var(--app-text-muted)]">
+                {loadError}
+              </p>
             </div>
             <div>
-              <Button type="button" variant="outline" onClick={() => void loadSettings()}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void loadSettings()}
+              >
                 <RefreshCw className="h-4 w-4" />
                 Retry
               </Button>
@@ -150,7 +285,8 @@ export function SettingsPage() {
                 General
               </h2>
               <p className="mt-1 text-sm text-[var(--app-text-muted)]">
-                Basic identity, public routing, and integration credentials for the panel.
+                Basic identity, public routing, and integration credentials for
+                the panel.
               </p>
             </div>
 
@@ -188,7 +324,10 @@ export function SettingsPage() {
                   aria-invalid={fieldErrors.panel_url ? true : undefined}
                 />
                 <p className="text-sm text-[var(--app-text-muted)]">
-                  Optional public hostname or URL for the panel. Example: <span className="font-medium text-[var(--app-text)]">panel.com</span>
+                  Optional public hostname or URL for the panel. Example:{" "}
+                  <span className="font-medium text-[var(--app-text)]">
+                    panel.com
+                  </span>
                 </p>
                 <FieldError message={fieldErrors.panel_url} />
               </div>
@@ -233,6 +372,154 @@ export function SettingsPage() {
             </div>
           </form>
         )}
+
+        {!loading && !loadError ? (
+          <section className="mt-6 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)]">
+            <div className="border-b border-[var(--app-border)] px-6 py-4">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--app-text)]">
+                <GoogleDrive className="h-4 w-4" />
+                Google Drive
+              </h2>
+              <p className="mt-1 text-sm text-[var(--app-text-muted)]">
+                Connect a Google account to let backups upload directly to a
+                Drive folder named{" "}
+                <span className="font-medium text-[var(--app-text)]">
+                  FlowPanel Backups
+                </span>
+                .
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-4 px-6 py-5 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-[var(--app-text)]">
+                    OAuth client credentials
+                  </p>
+                  <p className="text-sm text-[var(--app-text-muted)]">
+                    Upload the JSON file downloaded from Google Cloud Console to
+                    store the OAuth client in{" "}
+                    <span className="font-medium text-[var(--app-text)]">
+                      flowpanel/data
+                    </span>
+                    .
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="google_drive_redirect_url">
+                    Authorized redirect URI
+                  </Label>
+                  <Input
+                    id="google_drive_redirect_url"
+                    value={googleDriveRedirectURL}
+                    readOnly
+                    spellCheck={false}
+                  />
+                  <p className="text-sm text-[var(--app-text-muted)]">
+                    Add this exact URL in Google Cloud Console for the OAuth
+                    client.
+                  </p>
+                  <p className="text-sm text-[var(--app-text-muted)]">
+                    Use a Google OAuth{" "}
+                    <span className="font-medium text-[var(--app-text)]">
+                      Web application
+                    </span>{" "}
+                    client. If the consent screen is still in{" "}
+                    <span className="font-medium text-[var(--app-text)]">
+                      Testing
+                    </span>
+                    , add the Google account you want to connect as a{" "}
+                    <span className="font-medium text-[var(--app-text)]">
+                      Test user
+                    </span>{" "}
+                    or publish the app before signing in.
+                  </p>
+                </div>
+
+                <p className="text-sm font-medium text-[var(--app-text)]">
+                  {googleDriveConnected
+                    ? `Connected as ${googleDriveEmail || "Google account"}`
+                    : googleDriveReady
+                      ? "OAuth credentials ready"
+                      : "No Google OAuth credentials configured"}
+                </p>
+                <p className="text-sm text-[var(--app-text-muted)]">
+                  {googleDriveReady
+                    ? "Backups can be sent to either local storage or Google Drive."
+                    : "Upload the OAuth client JSON here or set FLOWPANEL_GOOGLE_DRIVE_CLIENT_ID and FLOWPANEL_GOOGLE_DRIVE_CLIENT_SECRET."}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  ref={googleDriveCredentialsInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(event) =>
+                    void handleGoogleDriveCredentialsSelection(event)
+                  }
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    googleDriveCredentialsInputRef.current?.click()
+                  }
+                  disabled={uploadingGoogleDriveCredentials}
+                >
+                  {uploadingGoogleDriveCredentials ? (
+                    <>
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                      Uploading
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4" />
+                      {googleDriveReady ? "Replace JSON" : "Upload JSON"}
+                    </>
+                  )}
+                </Button>
+
+                {googleDriveConnected ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleGoogleDriveDisconnect()}
+                    disabled={disconnectingGoogleDrive}
+                  >
+                    {disconnectingGoogleDrive ? (
+                      <>
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                        Disconnecting
+                      </>
+                    ) : (
+                      "Disconnect"
+                    )}
+                  </Button>
+                ) : null}
+
+                <Button
+                  type="button"
+                  onClick={handleGoogleDriveConnect}
+                  disabled={!googleDriveReady || connectingGoogleDrive}
+                >
+                  {connectingGoogleDrive ? (
+                    <>
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                      Waiting for Google
+                    </>
+                  ) : googleDriveConnected ? (
+                    "Reconnect account"
+                  ) : (
+                    "Connect Google account"
+                  )}
+                </Button>
+              </div>
+            </div>
+          </section>
+        ) : null}
       </div>
     </>
   );

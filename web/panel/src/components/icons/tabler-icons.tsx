@@ -58,6 +58,7 @@ export const FileX = pick("IconFileX");
 export const Folder = pick("IconFolder");
 export const FolderOpen = pick("IconFolderOpen");
 export const FolderPlus = pick("IconFolderPlus");
+export const GoogleDrive = pick("IconBrandGoogleDrive", "IconBrandGoogle");
 export const GalleryVerticalEnd = pick("IconLayoutSidebarRightCollapse", "IconLayoutColumns");
 export const Globe = pick("IconGlobe");
 export const GitBranch = pick("IconGitBranch", "IconBrandGit");

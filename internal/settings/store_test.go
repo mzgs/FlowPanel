@@ -24,9 +24,12 @@ func TestStoreRoundTripUsesKeyValueTable(t *testing.T) {
 	}
 
 	initial := Record{
-		PanelName:   "Ops",
-		PanelURL:    "https://panel.example.com",
-		GitHubToken: "github_pat_test_token",
+		PanelName:               "Ops",
+		PanelURL:                "https://panel.example.com",
+		GitHubToken:             "github_pat_test_token",
+		GoogleDriveEmail:        "ops@example.com",
+		GoogleDriveConnected:    true,
+		GoogleDriveRefreshToken: "refresh-token",
 	}
 	if err := store.Upsert(ctx, initial); err != nil {
 		t.Fatalf("upsert record: %v", err)
@@ -98,6 +101,9 @@ VALUES (1, ?)
 	}
 	if got.PanelURL != "" {
 		t.Fatalf("panel url = %q, want empty string", got.PanelURL)
+	}
+	if got.GoogleDriveEmail != "" {
+		t.Fatalf("google drive email = %q, want empty string", got.GoogleDriveEmail)
 	}
 
 	var legacyCount int

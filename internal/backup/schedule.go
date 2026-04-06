@@ -24,6 +24,7 @@ func BuildScheduledCommand(executablePath string, input CreateInput) (string, er
 	if input.IncludeDatabases {
 		args = append(args, "--databases")
 	}
+	args = append(args, "--location", quoteCommandArg(normalizeLocation(input.Location)))
 
 	return ScheduledCommandMarker + " " + strings.Join(args, " "), nil
 }
@@ -38,6 +39,7 @@ func ParseScheduledCommand(command string) (CreateInput, bool) {
 		IncludePanelData: strings.Contains(normalized, "--panel-data"),
 		IncludeSites:     strings.Contains(normalized, "--sites"),
 		IncludeDatabases: strings.Contains(normalized, "--databases"),
+		Location:         parseScheduledLocation(normalized),
 	}
 	if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
 		return CreateInput{}, false
@@ -52,4 +54,17 @@ func quoteCommandArg(value string) string {
 	}
 
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func parseScheduledLocation(command string) string {
+	fields := strings.Fields(command)
+	for index := 0; index < len(fields); index++ {
+		if fields[index] != "--location" || index+1 >= len(fields) {
+			continue
+		}
+
+		return normalizeLocation(strings.Trim(fields[index+1], `"'`))
+	}
+
+	return LocationLocal
 }

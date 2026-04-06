@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +30,7 @@ import (
 	"flowpanel/internal/domain"
 	eventlog "flowpanel/internal/events"
 	filesvc "flowpanel/internal/files"
+	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/settings"
@@ -38,6 +41,8 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 )
+
+const googleDriveOAuthStateSessionKey = "google_drive_oauth_state"
 
 func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	panelHandler, err := newPanelHandler()
@@ -107,9 +112,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"settings": record,
-			})
+			writeSettingsResponse(w, stdhttp.StatusOK, app, record)
 		})
 		r.Method(stdhttp.MethodGet, "/settings", settingsGetHandler)
 		r.Method(stdhttp.MethodHead, "/settings", settingsGetHandler)
@@ -170,11 +173,153 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "succeeded", "Updated panel settings.")
-			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"settings": record,
-			})
+			writeSettingsResponse(w, stdhttp.StatusOK, app, record)
 		})
 		r.Method(stdhttp.MethodPut, "/settings", settingsUpdateHandler)
+
+		settingsGoogleDriveOAuthCredentialsUploadHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.GoogleDrive == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "google drive integration is unavailable",
+				})
+				return
+			}
+
+			r.Body = stdhttp.MaxBytesReader(w, r.Body, 2<<20)
+			if err := r.ParseMultipartForm(2 << 20); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "upload a valid Google OAuth credentials JSON file",
+				})
+				return
+			}
+
+			file, _, err := r.FormFile("credentials")
+			if err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "upload a Google OAuth credentials JSON file in the credentials field",
+				})
+				return
+			}
+			defer file.Close()
+
+			if err := app.GoogleDrive.SaveOAuthCredentialsJSON(file); err != nil {
+				if errors.Is(err, googledrive.ErrInvalidOAuthConfigJSON) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": err.Error(),
+					})
+					return
+				}
+
+				app.Logger.Error("save google drive oauth credentials failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to save google drive oauth credentials",
+				})
+				return
+			}
+
+			record, err := app.Settings.ClearGoogleDriveConnection(r.Context())
+			if err != nil {
+				app.Logger.Error("clear google drive connection after credentials upload failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "google drive credentials were saved but the existing connection could not be cleared",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "settings", "upload_google_drive_oauth_credentials", "settings", "google_drive", "Google Drive", "succeeded", "Uploaded Google Drive OAuth credentials.")
+			writeSettingsResponse(w, stdhttp.StatusOK, app, record)
+		})
+		r.Method(stdhttp.MethodPost, "/settings/google-drive/oauth-client", settingsGoogleDriveOAuthCredentialsUploadHandler)
+
+		settingsGoogleDriveConnectHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.GoogleDrive == nil || !app.GoogleDrive.Enabled() {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "google drive integration is not configured",
+				})
+				return
+			}
+
+			state, err := randomOAuthState()
+			if err != nil {
+				app.Logger.Error("generate google drive oauth state failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to start google drive sign-in",
+				})
+				return
+			}
+
+			app.Sessions.Put(r.Context(), googleDriveOAuthStateSessionKey, state)
+			redirectURL, err := app.GoogleDrive.AuthURL(state, buildGoogleDriveRedirectURL(r))
+			if err != nil {
+				app.Logger.Error("build google drive auth url failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to start google drive sign-in",
+				})
+				return
+			}
+
+			stdhttp.Redirect(w, r, redirectURL, stdhttp.StatusFound)
+		})
+		r.Method(stdhttp.MethodGet, "/settings/google-drive/connect", settingsGoogleDriveConnectHandler)
+
+		settingsGoogleDriveCallbackHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.GoogleDrive == nil || !app.GoogleDrive.Enabled() {
+				writeOAuthPopupPage(w, stdhttp.StatusServiceUnavailable, "error", "Google Drive integration is not configured.")
+				return
+			}
+
+			if errValue := strings.TrimSpace(r.URL.Query().Get("error")); errValue != "" {
+				message := "Google sign-in was cancelled."
+				if errValue == "access_denied" {
+					message = "Google denied access. If the OAuth consent screen is in testing, add this account as a test user or publish the app."
+				}
+				if description := strings.TrimSpace(r.URL.Query().Get("error_description")); description != "" {
+					message = fmt.Sprintf("%s (%s)", message, description)
+				}
+				writeOAuthPopupPage(w, stdhttp.StatusBadRequest, "error", message)
+				return
+			}
+
+			expectedState := app.Sessions.GetString(r.Context(), googleDriveOAuthStateSessionKey)
+			app.Sessions.Remove(r.Context(), googleDriveOAuthStateSessionKey)
+			if expectedState == "" || expectedState != strings.TrimSpace(r.URL.Query().Get("state")) {
+				writeOAuthPopupPage(w, stdhttp.StatusBadRequest, "error", "Google sign-in could not be verified.")
+				return
+			}
+
+			connection, err := app.GoogleDrive.Exchange(r.Context(), buildGoogleDriveRedirectURL(r), strings.TrimSpace(r.URL.Query().Get("code")))
+			if err != nil {
+				app.Logger.Error("exchange google drive oauth code failed", zap.Error(err))
+				writeOAuthPopupPage(w, stdhttp.StatusInternalServerError, "error", "Google Drive connection failed.")
+				return
+			}
+
+			record, err := app.Settings.SetGoogleDriveConnection(r.Context(), connection.Email, connection.RefreshToken)
+			if err != nil {
+				app.Logger.Error("persist google drive connection failed", zap.Error(err))
+				writeOAuthPopupPage(w, stdhttp.StatusInternalServerError, "error", "Google Drive connection could not be saved.")
+				return
+			}
+
+			mutationEvent(r.Context(), "settings", "connect_google_drive", "settings", "google_drive", record.GoogleDriveEmail, "succeeded", "Connected a Google Drive account.")
+			writeOAuthPopupPage(w, stdhttp.StatusOK, "success", "Google Drive connected.")
+		})
+		r.Method(stdhttp.MethodGet, "/settings/google-drive/callback", settingsGoogleDriveCallbackHandler)
+
+		settingsGoogleDriveDisconnectHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			record, err := app.Settings.ClearGoogleDriveConnection(r.Context())
+			if err != nil {
+				app.Logger.Error("clear google drive connection failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to disconnect google drive",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "settings", "disconnect_google_drive", "settings", "google_drive", "Google Drive", "succeeded", "Disconnected the Google Drive account.")
+			writeSettingsResponse(w, stdhttp.StatusOK, app, record)
+		})
+		r.Method(stdhttp.MethodDelete, "/settings/google-drive", settingsGoogleDriveDisconnectHandler)
 
 		eventsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Events == nil {
@@ -255,6 +400,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				IncludeDatabases *bool    `json:"include_databases"`
 				SiteHostnames    []string `json:"site_hostnames"`
 				DatabaseNames    []string `json:"database_names"`
+				Location         string   `json:"location"`
 			}
 			if r.Body != nil {
 				if err := decodeJSON(r, &payload); err != nil && !errors.Is(err, io.EOF) {
@@ -275,6 +421,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 			input.SiteHostnames = payload.SiteHostnames
 			input.DatabaseNames = payload.DatabaseNames
+			input.Location = payload.Location
 
 			record, err := app.Backups.Create(r.Context(), input)
 			if err != nil {
@@ -289,7 +436,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				app.Logger.Error("create backup failed", zap.Error(err))
 				mutationEvent(r.Context(), "backups", "create", "backup", "backup", "FlowPanel backup", "failed", "Failed to create a backup archive.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
-					"error": "failed to create backup",
+					"error": err.Error(),
 				})
 				return
 			}
@@ -326,6 +473,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					"include_panel_data": scope.IncludePanelData,
 					"include_sites":      scope.IncludeSites,
 					"include_databases":  scope.IncludeDatabases,
+					"location":           scope.Location,
 				})
 			}
 
@@ -357,6 +505,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				IncludePanelData *bool  `json:"include_panel_data"`
 				IncludeSites     *bool  `json:"include_sites"`
 				IncludeDatabases *bool  `json:"include_databases"`
+				Location         string `json:"location"`
 			}
 			if err := decodeJSON(r, &payload); err != nil {
 				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
@@ -373,6 +522,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			if payload.IncludeDatabases != nil {
 				input.IncludeDatabases = *payload.IncludeDatabases
 			}
+			input.Location = payload.Location
 
 			if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
 				validation := backup.ValidationErrors{}
@@ -434,6 +584,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					"include_panel_data": input.IncludePanelData,
 					"include_sites":      input.IncludeSites,
 					"include_databases":  input.IncludeDatabases,
+					"location":           input.Location,
 				},
 			})
 		})
@@ -569,11 +720,17 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				writeBackupError(w, err)
 				return
 			}
-			if err := app.Backups.Delete(r.Context(), name); err != nil {
+			location := readBackupLocation(r)
+			if err := app.Backups.Delete(r.Context(), name, location); err != nil {
 				switch {
 				case errors.Is(err, backup.ErrInvalidName):
 					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
 						"error": "invalid backup name",
+					})
+					return
+				case errors.Is(err, backup.ErrInvalidLocation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "invalid backup location",
 					})
 					return
 				case errors.Is(err, backup.ErrNotFound):
@@ -615,15 +772,32 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				writeBackupError(w, err)
 				return
 			}
-
-			absolutePath, name, err := app.Backups.DownloadPath(name)
+			location := readBackupLocation(r)
+			download, err := app.Backups.OpenDownload(r.Context(), name, location)
 			if err != nil {
-				writeBackupError(w, err)
+				switch {
+				case errors.Is(err, backup.ErrInvalidLocation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "invalid backup location",
+					})
+				default:
+					writeBackupError(w, err)
+				}
 				return
 			}
+			defer download.Reader.Close()
 
-			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
-			stdhttp.ServeFile(w, r, absolutePath)
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", download.Name))
+			w.Header().Set("Content-Type", "application/gzip")
+			if download.Size > 0 {
+				w.Header().Set("Content-Length", strconv.FormatInt(download.Size, 10))
+			}
+			if _, err := io.Copy(w, download.Reader); err != nil {
+				app.Logger.Error("stream backup download failed",
+					zap.String("backup_name", name),
+					zap.Error(err),
+				)
+			}
 		})
 		r.Method(stdhttp.MethodGet, "/backups/{backupName}/download", backupsDownloadHandler)
 
@@ -640,9 +814,17 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				writeBackupError(w, err)
 				return
 			}
-			result, err := app.Backups.Restore(r.Context(), name)
+			location := readBackupLocation(r)
+			result, err := app.Backups.Restore(r.Context(), name, location)
 			if err != nil {
-				writeBackupError(w, err)
+				switch {
+				case errors.Is(err, backup.ErrInvalidLocation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "invalid backup location",
+					})
+				default:
+					writeBackupError(w, err)
+				}
 				app.Logger.Error("restore backup failed",
 					zap.String("backup_name", name),
 					zap.Error(err),
@@ -3162,11 +3344,30 @@ func writeBackupError(w stdhttp.ResponseWriter, err error) {
 		writeJSON(w, stdhttp.StatusConflict, map[string]any{
 			"error": "backup already exists",
 		})
+	case errors.Is(err, backup.ErrInvalidLocation):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+			"error": "invalid backup location",
+		})
 	default:
 		writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
 		})
 	}
+}
+
+func writeSettingsResponse(w stdhttp.ResponseWriter, statusCode int, app *app.App, record settings.Record) {
+	settingsPayload := map[string]any{
+		"panel_name":             record.PanelName,
+		"panel_url":              record.PanelURL,
+		"github_token":           record.GitHubToken,
+		"google_drive_email":     record.GoogleDriveEmail,
+		"google_drive_connected": record.GoogleDriveConnected,
+		"google_drive_available": app != nil && app.GoogleDrive != nil && app.GoogleDrive.Enabled(),
+	}
+
+	writeJSON(w, statusCode, map[string]any{
+		"settings": settingsPayload,
+	})
 }
 
 func decodeBackupNameParam(r *stdhttp.Request) (string, error) {
@@ -3176,4 +3377,44 @@ func decodeBackupNameParam(r *stdhttp.Request) (string, error) {
 	}
 
 	return name, nil
+}
+
+func readBackupLocation(r *stdhttp.Request) string {
+	if r == nil {
+		return backup.LocationLocal
+	}
+
+	return strings.TrimSpace(r.URL.Query().Get("location"))
+}
+
+func randomOAuthState() (string, error) {
+	buffer := make([]byte, 24)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", fmt.Errorf("generate oauth state: %w", err)
+	}
+
+	return base64.RawURLEncoding.EncodeToString(buffer), nil
+}
+
+func buildGoogleDriveRedirectURL(r *stdhttp.Request) string {
+	return strings.TrimRight(requestBaseURL(r), "/") + "/api/settings/google-drive/callback"
+}
+
+func writeOAuthPopupPage(w stdhttp.ResponseWriter, statusCode int, status string, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(statusCode)
+	_, _ = fmt.Fprintf(
+		w,
+		`<!doctype html>
+<html>
+<body>
+<script>
+window.opener && window.opener.postMessage({ type: "flowpanel-google-drive-oauth", status: %q, message: %q }, window.location.origin);
+window.close();
+</script>
+</body>
+</html>`,
+		status,
+		message,
+	)
 }
