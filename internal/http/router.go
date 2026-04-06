@@ -264,7 +264,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 		settingsGoogleDriveCallbackHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.GoogleDrive == nil || !app.GoogleDrive.Enabled() {
-				writeOAuthPopupPage(w, stdhttp.StatusServiceUnavailable, "error", "Google Drive integration is not configured.")
+				writeOAuthPopupPage(w, stdhttp.StatusServiceUnavailable, "error", "Google Drive integration is not configured.", "")
 				return
 			}
 
@@ -276,33 +276,33 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				if description := strings.TrimSpace(r.URL.Query().Get("error_description")); description != "" {
 					message = fmt.Sprintf("%s (%s)", message, description)
 				}
-				writeOAuthPopupPage(w, stdhttp.StatusBadRequest, "error", message)
+				writeOAuthPopupPage(w, stdhttp.StatusBadRequest, "error", message, "")
 				return
 			}
 
 			expectedState := app.Sessions.GetString(r.Context(), googleDriveOAuthStateSessionKey)
 			app.Sessions.Remove(r.Context(), googleDriveOAuthStateSessionKey)
 			if expectedState == "" || expectedState != strings.TrimSpace(r.URL.Query().Get("state")) {
-				writeOAuthPopupPage(w, stdhttp.StatusBadRequest, "error", "Google sign-in could not be verified.")
+				writeOAuthPopupPage(w, stdhttp.StatusBadRequest, "error", "Google sign-in could not be verified.", "")
 				return
 			}
 
 			connection, err := app.GoogleDrive.Exchange(r.Context(), buildGoogleDriveRedirectURL(r), strings.TrimSpace(r.URL.Query().Get("code")))
 			if err != nil {
 				app.Logger.Error("exchange google drive oauth code failed", zap.Error(err))
-				writeOAuthPopupPage(w, stdhttp.StatusInternalServerError, "error", "Google Drive connection failed.")
+				writeOAuthPopupPage(w, stdhttp.StatusInternalServerError, "error", "Google Drive connection failed.", "")
 				return
 			}
 
 			record, err := app.Settings.SetGoogleDriveConnection(r.Context(), connection.Email, connection.RefreshToken)
 			if err != nil {
 				app.Logger.Error("persist google drive connection failed", zap.Error(err))
-				writeOAuthPopupPage(w, stdhttp.StatusInternalServerError, "error", "Google Drive connection could not be saved.")
+				writeOAuthPopupPage(w, stdhttp.StatusInternalServerError, "error", "Google Drive connection could not be saved.", "")
 				return
 			}
 
 			mutationEvent(r.Context(), "settings", "connect_google_drive", "settings", "google_drive", record.GoogleDriveEmail, "succeeded", "Connected a Google Drive account.")
-			writeOAuthPopupPage(w, stdhttp.StatusOK, "success", "Google Drive connected.")
+			writeOAuthPopupPage(w, stdhttp.StatusOK, "success", "Google Drive connected.", record.GoogleDriveEmail)
 		})
 		r.Method(stdhttp.MethodGet, "/settings/google-drive/callback", settingsGoogleDriveCallbackHandler)
 
@@ -3356,6 +3356,7 @@ func writeBackupError(w stdhttp.ResponseWriter, err error) {
 }
 
 func writeSettingsResponse(w stdhttp.ResponseWriter, statusCode int, app *app.App, record settings.Record) {
+	w.Header().Set("Cache-Control", "no-store")
 	settingsPayload := map[string]any{
 		"panel_name":             record.PanelName,
 		"panel_url":              record.PanelURL,
@@ -3400,7 +3401,7 @@ func buildGoogleDriveRedirectURL(r *stdhttp.Request) string {
 	return strings.TrimRight(requestBaseURL(r), "/") + "/api/settings/google-drive/callback"
 }
 
-func writeOAuthPopupPage(w stdhttp.ResponseWriter, statusCode int, status string, message string) {
+func writeOAuthPopupPage(w stdhttp.ResponseWriter, statusCode int, status string, message string, email string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(statusCode)
 	_, _ = fmt.Fprintf(
@@ -3409,12 +3410,13 @@ func writeOAuthPopupPage(w stdhttp.ResponseWriter, statusCode int, status string
 <html>
 <body>
 <script>
-window.opener && window.opener.postMessage({ type: "flowpanel-google-drive-oauth", status: %q, message: %q }, window.location.origin);
+window.opener && window.opener.postMessage({ type: "flowpanel-google-drive-oauth", status: %q, message: %q, email: %q }, window.location.origin);
 window.close();
 </script>
 </body>
 </html>`,
 		status,
 		message,
+		email,
 	)
 }

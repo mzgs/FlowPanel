@@ -77,6 +77,7 @@ export function SettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const googleDriveCredentialsInputRef = useRef<HTMLInputElement | null>(null);
+  const googleDriveConnectResolvedRef = useRef(false);
 
   function applySettings(nextSettings: PanelSettings) {
     const nextForm = toFormState(nextSettings);
@@ -85,20 +86,27 @@ export function SettingsPage() {
     setSavedForm(nextForm);
   }
 
-  async function loadSettings() {
-    setLoading(true);
-    setLoadError(null);
+  async function loadSettings(options?: { showLoading?: boolean }) {
+    const showLoading = options?.showLoading ?? true;
+    if (showLoading) {
+      setLoading(true);
+      setLoadError(null);
+    }
 
     try {
       const nextSettings = await fetchSettings();
       applySettings(nextSettings);
       setFieldErrors({});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to load settings.";
-      setLoadError(message);
+      if (showLoading) {
+        const message =
+          error instanceof Error ? error.message : "Failed to load settings.";
+        setLoadError(message);
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 
@@ -116,15 +124,16 @@ export function SettingsPage() {
         type?: string;
         status?: "success" | "error";
         message?: string;
+        email?: string;
       };
       if (payload.type !== googleDrivePopupMessageType) {
         return;
       }
 
+      googleDriveConnectResolvedRef.current = true;
       setConnectingGoogleDrive(false);
       if (payload.status === "success") {
-        toast.success(payload.message || "Google Drive connected.");
-        void loadSettings();
+        window.location.reload();
         return;
       }
 
@@ -191,6 +200,7 @@ export function SettingsPage() {
   }
 
   function handleGoogleDriveConnect() {
+    googleDriveConnectResolvedRef.current = false;
     const popup = window.open(
       "/api/settings/google-drive/connect",
       "flowpanel-google-drive",
@@ -210,6 +220,9 @@ export function SettingsPage() {
 
       window.clearInterval(interval);
       setConnectingGoogleDrive(false);
+      if (!googleDriveConnectResolvedRef.current) {
+        window.location.reload();
+      }
     }, 400);
   }
 

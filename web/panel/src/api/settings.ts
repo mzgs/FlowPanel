@@ -22,6 +22,7 @@ type SettingsPayload = {
 
 export async function fetchSettings(): Promise<PanelSettings> {
   const response = await fetch("/api/settings", {
+    cache: "no-store",
     credentials: "include",
   });
 
