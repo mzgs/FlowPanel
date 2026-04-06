@@ -576,54 +576,37 @@ export function BackupsPage() {
                   })
                 }
               >
-                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--app-border)] px-3 py-3">
-                  <RadioGroupItem
-                    value="local"
-                    id="backup-location-local"
-                    className="mt-1"
-                  />
-                  <div className="space-y-1">
+                <div className="overflow-hidden rounded-lg border border-[var(--app-border)]">
+                  <label className="flex cursor-pointer items-center gap-3 px-3 py-3">
+                    <RadioGroupItem value="local" id="backup-location-local" />
                     <Label
                       htmlFor="backup-location-local"
                       className="cursor-pointer text-sm text-foreground"
                     >
                       Local
                     </Label>
-                    <p className="text-sm text-muted-foreground">
-                      Store the archive on this server and keep it in the
-                      backups list.
-                    </p>
-                  </div>
-                </label>
+                  </label>
 
-                <label
-                  className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${
-                    googleDriveAvailable
-                      ? "cursor-pointer border-[var(--app-border)]"
-                      : "cursor-not-allowed border-[var(--app-border)] opacity-60"
-                  }`}
-                >
-                  <RadioGroupItem
-                    value="google_drive"
-                    id="backup-location-google-drive"
-                    className="mt-1"
-                    disabled={!googleDriveAvailable}
-                  />
-                  <div className="space-y-1">
+                  <label
+                    className={`flex items-center gap-3 border-t px-3 py-3 ${
+                      googleDriveAvailable
+                        ? "cursor-pointer border-[var(--app-border)]"
+                        : "cursor-not-allowed border-[var(--app-border)] opacity-60"
+                    }`}
+                  >
+                    <RadioGroupItem
+                      value="google_drive"
+                      id="backup-location-google-drive"
+                      disabled={!googleDriveAvailable}
+                    />
                     <Label
                       htmlFor="backup-location-google-drive"
                       className="cursor-pointer text-sm text-foreground"
                     >
                       Google Drive
                     </Label>
-                    <p className="text-sm text-muted-foreground">
-                      Upload the archive to the connected Drive account.
-                      {!googleDriveConnected && googleDriveAvailable
-                        ? " Connect Google Drive in Settings first."
-                        : ""}
-                    </p>
-                  </div>
-                </label>
+                  </label>
+                </div>
               </RadioGroup>
             </div>
 
