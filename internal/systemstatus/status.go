@@ -4,10 +4,13 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/load"
 	"github.com/shirou/gopsutil/v4/mem"
 )
@@ -21,11 +24,15 @@ type Status struct {
 	DiskMountPath     string   `json:"disk_mount_path,omitempty"`
 	DiskTotalBytes    *uint64  `json:"disk_total_bytes,omitempty"`
 	DiskUsedBytes     *uint64  `json:"disk_used_bytes,omitempty"`
+	Hostname          string   `json:"hostname,omitempty"`
 	Load1             *float64 `json:"load_1,omitempty"`
 	Load5             *float64 `json:"load_5,omitempty"`
 	Load15            *float64 `json:"load_15,omitempty"`
 	MemoryTotalBytes  *uint64  `json:"memory_total_bytes,omitempty"`
 	MemoryUsedBytes   *uint64  `json:"memory_used_bytes,omitempty"`
+	Platform          string   `json:"platform"`
+	PlatformName      string   `json:"platform_name"`
+	PlatformVersion   string   `json:"platform_version,omitempty"`
 	ServerTime        string   `json:"server_time"`
 	ServerTimeDisplay string   `json:"server_time_display"`
 	Timezone          string   `json:"timezone"`
@@ -35,9 +42,27 @@ func Inspect(ctx context.Context) Status {
 	now := time.Now()
 	status := Status{
 		Cores:             runtime.NumCPU(),
+		Platform:          runtime.GOOS,
+		PlatformName:      defaultPlatformName(runtime.GOOS),
 		ServerTime:        now.Format(time.RFC3339),
 		ServerTimeDisplay: now.Format("Jan 2, 2006 15:04:05"),
 		Timezone:          now.Format("MST"),
+	}
+
+	if hostname, err := os.Hostname(); err == nil {
+		status.Hostname = hostname
+	}
+
+	if info, err := host.InfoWithContext(ctx); err == nil {
+		if hostname := strings.TrimSpace(info.Hostname); hostname != "" {
+			status.Hostname = hostname
+		}
+		if platform := formatPlatformName(info.Platform); platform != "" {
+			status.PlatformName = platform
+		}
+		if version := strings.TrimSpace(info.PlatformVersion); version != "" {
+			status.PlatformVersion = version
+		}
 	}
 
 	if avg, err := load.AvgWithContext(ctx); err == nil {
@@ -83,4 +108,60 @@ func float64Ptr(value float64) *float64 {
 
 func uint64Ptr(value uint64) *uint64 {
 	return &value
+}
+
+func defaultPlatformName(goos string) string {
+	switch goos {
+	case "darwin":
+		return "macOS"
+	case "linux":
+		return "Linux"
+	case "windows":
+		return "Windows"
+	case "freebsd":
+		return "FreeBSD"
+	default:
+		return strings.TrimSpace(goos)
+	}
+}
+
+func formatPlatformName(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "":
+		return ""
+	case "macos", "mac os", "mac os x", "darwin":
+		return "macOS"
+	case "ubuntu":
+		return "Ubuntu"
+	case "debian":
+		return "Debian"
+	case "centos":
+		return "CentOS"
+	case "rhel":
+		return "RHEL"
+	case "rocky":
+		return "Rocky Linux"
+	case "almalinux":
+		return "AlmaLinux"
+	case "amzn":
+		return "Amazon Linux"
+	case "opensuse":
+		return "openSUSE"
+	default:
+		return titleWords(strings.ReplaceAll(value, "-", " "))
+	}
+}
+
+func titleWords(value string) string {
+	parts := strings.Fields(strings.TrimSpace(strings.ToLower(value)))
+	for index, part := range parts {
+		runes := []rune(part)
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		parts[index] = string(runes)
+	}
+
+	return strings.Join(parts, " ")
 }

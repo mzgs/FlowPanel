@@ -2154,7 +2154,11 @@ func TestSystemStatusEndpoint(t *testing.T) {
 
 	var payload struct {
 		System struct {
-			Cores int `json:"cores"`
+			Cores           int    `json:"cores"`
+			Hostname        string `json:"hostname"`
+			Platform        string `json:"platform"`
+			PlatformName    string `json:"platform_name"`
+			PlatformVersion string `json:"platform_version"`
 		} `json:"system"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
@@ -2162,6 +2166,15 @@ func TestSystemStatusEndpoint(t *testing.T) {
 	}
 	if payload.System.Cores <= 0 {
 		t.Fatalf("cores = %d, want positive value", payload.System.Cores)
+	}
+	if payload.System.Hostname == "" {
+		t.Fatal("hostname is empty")
+	}
+	if payload.System.Platform == "" {
+		t.Fatal("platform is empty")
+	}
+	if payload.System.PlatformName == "" {
+		t.Fatal("platform name is empty")
 	}
 }
 

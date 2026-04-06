@@ -5,7 +5,6 @@ import { fetchPHPMyAdminStatus, installPHPMyAdmin, type PHPMyAdminStatus } from 
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { DiskUsageCard } from "@/components/disk-usage-card";
 import { Database, LayoutDashboard, LoaderCircle, TerminalSquare } from "@/components/icons/tabler-icons";
-import { PageHeader } from "@/components/page-header";
 import { SystemStatusCard } from "@/components/system-status-card";
 import { Button } from "@/components/ui/button";
 
@@ -247,6 +246,70 @@ function extractVersionNumber(value: string, pattern: RegExp) {
   return match?.[1] ?? null;
 }
 
+function formatHostname(status: SystemStatus | null) {
+  const hostname = status?.hostname?.trim();
+  return hostname || "Unavailable";
+}
+
+function formatPlatform(status: SystemStatus | null) {
+  const name = status?.platform_name?.trim();
+  const version = status?.platform_version?.trim();
+
+  if (name && version) {
+    return `${name} ${version}`;
+  }
+
+  if (name) {
+    return name;
+  }
+
+  switch (status?.platform) {
+    case "darwin":
+      return "macOS";
+    case "linux":
+      return "Linux";
+    case "windows":
+      return "Windows";
+    case "freebsd":
+      return "FreeBSD";
+    default:
+      return status?.platform?.trim() || "Unavailable";
+  }
+}
+
+function formatServerTime(status: SystemStatus | null) {
+  const displayValue = status?.server_time_display?.trim();
+  if (displayValue) {
+    return displayValue;
+  }
+
+  const rawValue = status?.server_time?.trim();
+  if (!rawValue) {
+    return "Unavailable";
+  }
+
+  return rawValue;
+}
+
+function formatTimezone(status: SystemStatus | null) {
+  const value = status?.timezone?.trim();
+  if (!value) {
+    return "Local";
+  }
+
+  const match = value.match(/^([+-])0?(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) {
+    return value;
+  }
+
+  const [, sign, hours, minutes] = match;
+  if (minutes && minutes !== "00") {
+    return `${sign}${Number(hours)}:${minutes}`;
+  }
+
+  return `${sign}${Number(hours)}`;
+}
+
 export function DashboardPage() {
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
@@ -350,7 +413,31 @@ export function DashboardPage() {
 
   return (
     <>
-      <PageHeader title="Overview" />
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
+        <div className="grid gap-3 sm:grid-cols-2 xl:max-w-5xl xl:grid-cols-3">
+          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3 shadow-[var(--app-shadow)]">
+            <div className="text-[12px] text-[var(--app-text-muted)]">Operating system</div>
+            <div className="mt-1 text-[15px] font-semibold tracking-tight text-[var(--app-text)]">
+              {formatPlatform(systemStatus)}
+            </div>
+          </section>
+          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3 shadow-[var(--app-shadow)]">
+            <div className="text-[12px] text-[var(--app-text-muted)]">Hostname</div>
+            <div className="mt-1 font-mono text-[13px] text-[var(--app-text)]">{formatHostname(systemStatus)}</div>
+          </section>
+          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3 shadow-[var(--app-shadow)]">
+            <div className="text-[12px] text-[var(--app-text-muted)]">Server time</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">
+                {formatServerTime(systemStatus)}
+              </div>
+              <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
+                {formatTimezone(systemStatus)}
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
 
       <div className="px-4 py-6 sm:px-6 lg:px-8">
         {loading ? (

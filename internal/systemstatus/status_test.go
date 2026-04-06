@@ -13,6 +13,18 @@ func TestInspectReturnsHostMetrics(t *testing.T) {
 		t.Fatalf("cores = %d, want positive value", status.Cores)
 	}
 
+	if status.Platform != runtime.GOOS {
+		t.Fatalf("platform = %q, want %q", status.Platform, runtime.GOOS)
+	}
+
+	if status.PlatformName == "" {
+		t.Fatal("platform name is empty")
+	}
+
+	if status.Hostname == "" {
+		t.Fatal("hostname is empty")
+	}
+
 	if status.MemoryTotalBytes == nil || *status.MemoryTotalBytes == 0 {
 		t.Fatal("memory total is empty")
 	}
