@@ -95,6 +95,7 @@ export type DeleteDomainResult = {
 export type UpdateDomainFTPInput = {
   username: string;
   enabled: boolean;
+  password?: string;
 };
 
 export async function fetchDomains(): Promise<DomainsPayload> {

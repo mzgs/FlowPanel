@@ -36,6 +36,7 @@ type DomainStatus struct {
 type UpdateInput struct {
 	Username string `json:"username"`
 	Enabled  bool   `json:"enabled"`
+	Password string `json:"password"`
 }
 
 type ValidationErrors map[string]string
@@ -125,17 +126,27 @@ func (s *Service) UpdateDomain(ctx context.Context, domainID string, input Updat
 	}
 
 	username := NormalizeUsername(input.Username)
+	password := input.Password
+	passwordProvided := strings.TrimSpace(password) != ""
 	validation := ValidationErrors{}
 	if username == "" {
 		validation["username"] = "FTP username is required."
 	} else if len(username) > maxUsernameLength || !usernamePattern.MatchString(username) {
 		validation["username"] = "FTP username must start with a letter or number and use only lowercase letters, numbers, dots, underscores, or hyphens."
 	}
-	if input.Enabled && strings.TrimSpace(account.PasswordHash) == "" {
-		validation["enabled"] = "Generate a password before enabling FTP."
+	if input.Enabled && strings.TrimSpace(account.PasswordHash) == "" && !passwordProvided {
+		validation["password"] = "Enter a password or generate one before enabling FTP."
 	}
 	if len(validation) > 0 {
 		return DomainStatus{}, validation
+	}
+
+	if passwordProvided {
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return DomainStatus{}, fmt.Errorf("hash ftp password: %w", err)
+		}
+		account.PasswordHash = string(hash)
 	}
 
 	account.Username = username

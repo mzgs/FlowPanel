@@ -92,6 +92,105 @@ func TestServiceProvisionResetAndAuthenticate(t *testing.T) {
 	}
 }
 
+func TestServiceUpdateDomainSetsPasswordOnSave(t *testing.T) {
+	ctx := context.Background()
+	sqliteDB, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() {
+		_ = sqliteDB.Close()
+	}()
+
+	domainStore := domain.NewStore(sqliteDB)
+	if err := domainStore.Ensure(ctx); err != nil {
+		t.Fatalf("ensure domain store: %v", err)
+	}
+	ftpStore := NewStore(sqliteDB)
+	if err := ftpStore.Ensure(ctx); err != nil {
+		t.Fatalf("ensure ftp store: %v", err)
+	}
+
+	domains := domain.NewServiceWithBasePath(t.TempDir(), domainStore)
+	record, err := domains.Create(ctx, domain.CreateInput{
+		Hostname: "example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	service := NewService(ftpStore, domains)
+	status, err := service.UpdateDomain(ctx, record.ID, UpdateInput{
+		Username: "example.com",
+		Enabled:  true,
+		Password: "MyCustomFTPPassword1",
+	})
+	if err != nil {
+		t.Fatalf("update domain ftp account: %v", err)
+	}
+	if !status.Enabled {
+		t.Fatal("ftp should be enabled")
+	}
+	if !status.HasPassword {
+		t.Fatal("ftp password should be stored after save")
+	}
+
+	_, ok, err := service.Authenticate(ctx, "example.com", "MyCustomFTPPassword1")
+	if err != nil {
+		t.Fatalf("authenticate ftp account: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected authentication to succeed with saved password")
+	}
+}
+
+func TestServiceUpdateDomainRequiresPasswordWhenEnablingWithoutOne(t *testing.T) {
+	ctx := context.Background()
+	sqliteDB, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() {
+		_ = sqliteDB.Close()
+	}()
+
+	domainStore := domain.NewStore(sqliteDB)
+	if err := domainStore.Ensure(ctx); err != nil {
+		t.Fatalf("ensure domain store: %v", err)
+	}
+	ftpStore := NewStore(sqliteDB)
+	if err := ftpStore.Ensure(ctx); err != nil {
+		t.Fatalf("ensure ftp store: %v", err)
+	}
+
+	domains := domain.NewServiceWithBasePath(t.TempDir(), domainStore)
+	record, err := domains.Create(ctx, domain.CreateInput{
+		Hostname: "example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	service := NewService(ftpStore, domains)
+	_, err = service.UpdateDomain(ctx, record.ID, UpdateInput{
+		Username: "example.com",
+		Enabled:  true,
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	validation, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("error type = %T, want ValidationErrors", err)
+	}
+	if validation["password"] == "" {
+		t.Fatal("missing password validation error")
+	}
+}
+
 func TestServiceReturnsUnsupportedForNonSiteDomains(t *testing.T) {
 	ctx := context.Background()
 	sqliteDB, err := db.Open(ctx, ":memory:")

@@ -2548,6 +2548,72 @@ func TestDomainFTPEndpointUsesPanelURLHostOrRequestHost(t *testing.T) {
 	}
 }
 
+func TestDomainFTPEndpointSetsPasswordOnSave(t *testing.T) {
+	router, domains, _ := newTestDomainRouterWithFTP(t)
+
+	record, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "site.example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"username": "site.example.com",
+		"enabled":  true,
+		"password": "GeneratedPassword42",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	updateRequest := httptest.NewRequest(http.MethodPut, "/api/domains/"+record.ID+"/ftp", bytes.NewReader(body))
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, updateRequest)
+
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want %d, body = %s", updateRecorder.Code, http.StatusOK, updateRecorder.Body.String())
+	}
+
+	var updatePayload struct {
+		FTP struct {
+			Enabled     bool `json:"enabled"`
+			HasPassword bool `json:"has_password"`
+		} `json:"ftp"`
+	}
+	if err := json.Unmarshal(updateRecorder.Body.Bytes(), &updatePayload); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if !updatePayload.FTP.Enabled {
+		t.Fatal("ftp should be enabled after saving")
+	}
+	if !updatePayload.FTP.HasPassword {
+		t.Fatal("ftp password should be marked as set after saving")
+	}
+
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/domains/"+record.ID+"/ftp", nil)
+	getRecorder := httptest.NewRecorder()
+	router.ServeHTTP(getRecorder, getRequest)
+
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d, body = %s", getRecorder.Code, http.StatusOK, getRecorder.Body.String())
+	}
+
+	var getPayload struct {
+		FTP struct {
+			HasPassword bool `json:"has_password"`
+		} `json:"ftp"`
+	}
+	if err := json.Unmarshal(getRecorder.Body.Bytes(), &getPayload); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if !getPayload.FTP.HasPassword {
+		t.Fatal("ftp password should remain stored after save")
+	}
+}
+
 func TestMariaDBStatusEndpoint(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 
