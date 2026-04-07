@@ -59,7 +59,15 @@ import {
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { DomainPHPDialog } from "@/components/domain-php-dialog";
 import { PageHeader } from "@/components/page-header";
+import { TerminalWindow } from "@/components/terminal-window";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   getDatabaseNameFromBackupRecord,
   getSiteHostnameFromBackupRecord,
@@ -391,6 +399,7 @@ export function DomainDetailPage() {
   const [composerDialogOpen, setComposerDialogOpen] = useState(false);
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
   const [phpDialogOpen, setPHPDialogOpen] = useState(false);
+  const [terminalDialogOpen, setTerminalDialogOpen] = useState(false);
   const [composerHasManifest, setComposerHasManifest] = useState(false);
   const [composerPackages, setComposerPackages] = useState<ComposerPackage[]>([]);
   const [composerLoading, setComposerLoading] = useState(false);
@@ -452,6 +461,7 @@ export function DomainDetailPage() {
     setComposerDialogOpen(false);
     setGitHubDialogOpen(false);
     setPHPDialogOpen(false);
+    setTerminalDialogOpen(false);
     setComposerHasManifest(false);
     setComposerPackages([]);
     setComposerLoading(false);
@@ -664,6 +674,7 @@ export function DomainDetailPage() {
   const filesPath = domain
     ? getFilesPathFromDomainTarget(domain.kind, sitesBasePath, domain.target)
     : null;
+  const terminalPathLabel = filesPath || "/";
   const composerManifestPath = getComposerManifestPath(filesPath);
 
   useEffect(() => {
@@ -1213,6 +1224,21 @@ export function DomainDetailPage() {
           }}
         />
       ) : null}
+      <Dialog open={terminalDialogOpen} onOpenChange={setTerminalDialogOpen}>
+        <DialogContent className="max-w-6xl gap-0 overflow-hidden p-0 sm:max-w-6xl">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Terminal</DialogTitle>
+            <DialogDescription>{terminalPathLabel}</DialogDescription>
+          </DialogHeader>
+          <TerminalWindow
+            cwd={filesPath || ""}
+            cwdLabel={terminalPathLabel}
+            title={domain ? `${domain.hostname} terminal` : "Terminal"}
+            className="rounded-none border-0 shadow-none"
+            heightClassName="h-[24rem] sm:h-[32rem]"
+          />
+        </DialogContent>
+      </Dialog>
       <PageHeader
         title={
           loading ? (
@@ -1431,6 +1457,16 @@ export function DomainDetailPage() {
                           to: "/domains/$hostname/logs",
                           params: { hostname: domain.hostname },
                         });
+                        return;
+                      }
+
+                      if (item.title === "Terminal" && domain !== null) {
+                        if (filesPath === null) {
+                          toast.error("Terminal is unavailable for this domain.");
+                          return;
+                        }
+
+                        setTerminalDialogOpen(true);
                         return;
                       }
 
