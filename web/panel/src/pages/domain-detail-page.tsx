@@ -30,7 +30,6 @@ import {
   type PHPStatus,
 } from "@/api/php";
 import {
-  Clock,
   Copy,
   Database,
   Download,
@@ -46,9 +45,6 @@ import {
   Monitor,
   Package,
   RefreshCw,
-  Settings2,
-  Sparkles,
-  Telescope,
   TerminalSquare,
 } from "@/components/icons/tabler-icons";
 import { DomainBackupRestoreDialog } from "@/components/domain-backup-restore-dialog";
@@ -263,28 +259,12 @@ const devToolActions: DomainActionItem[] = [
     icon: Package,
   },
   {
-    title: "Scheduled Tasks",
-    icon: Clock,
-  },
-  {
-    title: "Performance Booster",
-    icon: Sparkles,
-  },
-  {
     title: "Github",
     icon: GitBranch,
   },
   {
-    title: "SEO",
-    icon: Telescope,
-  },
-  {
     title: "Website Importing",
     icon: Download,
-  },
-  {
-    title: "Docker Proxy Rules",
-    icon: Settings2,
   },
 ];
 
