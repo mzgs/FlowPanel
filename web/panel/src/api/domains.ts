@@ -217,6 +217,14 @@ export async function updateDomainFTP(
   domainID: string,
   input: UpdateDomainFTPInput,
 ): Promise<DomainFTPStatus> {
+  const requestBody: UpdateDomainFTPInput = {
+    username: input.username,
+    enabled: input.enabled,
+  };
+  if (typeof input.password === "string" && input.password.trim() !== "") {
+    requestBody.password = input.password;
+  }
+
   const response = await fetch(
     `/api/domains/${encodeURIComponent(domainID)}/ftp`,
     {
@@ -225,7 +233,7 @@ export async function updateDomainFTP(
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify(requestBody),
     },
   );
 

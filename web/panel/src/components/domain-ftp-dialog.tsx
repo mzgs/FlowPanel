@@ -169,6 +169,7 @@ export function DomainFTPDialog({
         enabled: status.enabled,
       });
       toast.success(`Saved FTP settings for ${domain.hostname}.`);
+      onOpenChange(false);
     } catch (error) {
       const domainError = error as DomainApiError;
       setFTPErrors({
