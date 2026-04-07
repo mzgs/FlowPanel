@@ -278,7 +278,7 @@ export function TerminalPage() {
           <div className="bg-black px-3 py-3 sm:px-4">
             <div
               ref={hostRef}
-              className="h-[26rem] overflow-hidden rounded-md border border-zinc-800 bg-black sm:h-[32rem]"
+              className="h-[26rem] overflow-hidden rounded-md bg-black sm:h-[32rem]"
               onClick={() => terminalRef.current?.focus()}
             />
           </div>
