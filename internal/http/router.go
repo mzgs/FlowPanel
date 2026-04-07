@@ -30,6 +30,7 @@ import (
 	"flowpanel/internal/domain"
 	eventlog "flowpanel/internal/events"
 	filesvc "flowpanel/internal/files"
+	"flowpanel/internal/ftp"
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
@@ -155,13 +156,22 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
+			if app.FTP != nil {
+				if err := app.FTP.Apply(r.Context(), ftpConfigFromSettings(record)); err != nil {
+					app.Logger.Error("apply ftp settings failed", zap.Error(err))
+					mutationEvent(r.Context(), "settings", "update", "settings", "ftp", "FTP settings", "failed", "Saved settings but could not apply FTP runtime changes.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "settings saved but ftp runtime could not be updated",
+					})
+					return
+				}
+			}
+
 			if previousPanelURL != record.PanelURL {
 				if err := syncDomainsWithPanelURL(r.Context(), app, record.PanelURL); err != nil {
 					if errors.Is(err, caddy.ErrRuntimeNotStarted) {
 						mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "succeeded", "Updated panel settings.")
-						writeJSON(w, stdhttp.StatusOK, map[string]any{
-							"settings": record,
-						})
+						writeSettingsResponse(w, stdhttp.StatusOK, app, record)
 						return
 					}
 					app.Logger.Error("sync caddy runtime after settings update failed", zap.Error(err))
@@ -2346,6 +2356,30 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 			}
 
+			if app.FTPAccounts != nil {
+				if err := app.FTPAccounts.ReconcileDomain(r.Context(), record); err != nil {
+					_, removed, rollbackErr := app.Domains.Delete(r.Context(), record.ID)
+					if rollbackErr != nil {
+						app.Logger.Error("rollback created domain after ftp setup failed",
+							zap.String("domain_id", record.ID),
+							zap.Error(rollbackErr),
+						)
+					} else if !removed {
+						app.Logger.Error("rollback created domain after ftp setup missing", zap.String("domain_id", record.ID))
+					}
+					app.Logger.Error("create default ftp account failed",
+						zap.String("domain_id", record.ID),
+						zap.String("hostname", record.Hostname),
+						zap.Error(err),
+					)
+					mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "failed", "Created domain record but failed to provision its FTP account.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to provision ftp account",
+					})
+					return
+				}
+			}
+
 			if err := syncDomainsWithCaddy(r.Context()); err != nil {
 				_, removed, rollbackErr := app.Domains.Delete(r.Context(), record.ID)
 				if rollbackErr != nil {
@@ -2355,6 +2389,15 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					)
 				} else if !removed {
 					app.Logger.Error("rollback created domain missing", zap.String("domain_id", record.ID))
+				}
+				if app.FTPAccounts != nil {
+					if cleanupErr := app.FTPAccounts.DeleteDomain(r.Context(), record.ID); cleanupErr != nil {
+						app.Logger.Warn("cleanup ftp account after domain publish failure failed",
+							zap.String("domain_id", record.ID),
+							zap.String("hostname", record.Hostname),
+							zap.Error(cleanupErr),
+						)
+					}
 				}
 				app.Logger.Error("publish domain failed",
 					zap.String("domain_id", record.ID),
@@ -2460,8 +2503,21 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			mutationEvent(r.Context(), "domains", "update", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Updated domain %q.", record.Hostname))
+			if app.FTPAccounts != nil {
+				if err := app.FTPAccounts.ReconcileDomain(r.Context(), record); err != nil {
+					app.Logger.Error("reconcile ftp account after domain update failed",
+						zap.String("domain_id", record.ID),
+						zap.String("hostname", record.Hostname),
+						zap.Error(err),
+					)
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "domain updated but ftp account could not be reconciled",
+					})
+					return
+				}
+			}
 
+			mutationEvent(r.Context(), "domains", "update", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Updated domain %q.", record.Hostname))
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"domain": record,
 			})
@@ -2532,6 +2588,17 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 			}
 
+			if app.FTPAccounts != nil {
+				if cleanupErr := app.FTPAccounts.DeleteDomain(r.Context(), record.ID); cleanupErr != nil {
+					warnings = append(warnings, "The FTP account could not be removed.")
+					app.Logger.Warn("delete domain ftp account failed",
+						zap.String("domain_id", record.ID),
+						zap.String("hostname", record.Hostname),
+						zap.Error(cleanupErr),
+					)
+				}
+			}
+
 			message := fmt.Sprintf("Deleted domain %q.", record.Hostname)
 			if len(warnings) > 0 {
 				message = fmt.Sprintf(`Deleted domain %q with cleanup warnings.`, record.Hostname)
@@ -2542,6 +2609,159 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				"domain":   record,
 				"warnings": warnings,
 			})
+		})
+
+		domainFTPGetHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.FTPAccounts == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "ftp accounts are not configured",
+				})
+				return
+			}
+
+			domainID := chi.URLParam(r, "domainID")
+			status, err := app.FTPAccounts.GetDomainStatus(r.Context(), domainID)
+			if err != nil {
+				if errors.Is(err, domain.ErrNotFound) {
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "domain not found",
+					})
+					return
+				}
+
+				app.Logger.Error("load domain ftp status failed",
+					zap.String("domain_id", domainID),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to load ftp account",
+				})
+				return
+			}
+
+			if err := writeDomainFTPResponse(w, stdhttp.StatusOK, app, r, status); err != nil {
+				app.Logger.Error("load ftp connection settings failed",
+					zap.String("domain_id", domainID),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to load ftp connection settings",
+				})
+				return
+			}
+		})
+
+		domainFTPUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.FTPAccounts == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "ftp accounts are not configured",
+				})
+				return
+			}
+
+			var input ftp.UpdateInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			domainID := chi.URLParam(r, "domainID")
+			status, err := app.FTPAccounts.UpdateDomain(r.Context(), domainID, input)
+			if err != nil {
+				if errors.Is(err, domain.ErrNotFound) {
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "domain not found",
+					})
+					return
+				}
+
+				var validation ftp.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("update domain ftp account failed",
+					zap.String("domain_id", domainID),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "domains", "update_ftp", "domain", domainID, domainID, "failed", "Failed to update the domain FTP account.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to update ftp account",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "domains", "update_ftp", "domain", domainID, status.Username, "succeeded", "Updated the domain FTP account.")
+			if err := writeDomainFTPResponse(w, stdhttp.StatusOK, app, r, status); err != nil {
+				app.Logger.Error("load ftp connection settings after update failed",
+					zap.String("domain_id", domainID),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "ftp account updated but connection settings could not be loaded",
+				})
+				return
+			}
+		})
+
+		domainFTPResetPasswordHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.FTPAccounts == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "ftp accounts are not configured",
+				})
+				return
+			}
+
+			domainID := chi.URLParam(r, "domainID")
+			status, password, err := app.FTPAccounts.ResetPassword(r.Context(), domainID)
+			if err != nil {
+				if errors.Is(err, domain.ErrNotFound) {
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "domain not found",
+					})
+					return
+				}
+
+				var validation ftp.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("reset domain ftp password failed",
+					zap.String("domain_id", domainID),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "domains", "reset_ftp_password", "domain", domainID, domainID, "failed", "Failed to reset the domain FTP password.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to reset ftp password",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "domains", "reset_ftp_password", "domain", domainID, status.Username, "succeeded", "Reset the domain FTP password.")
+			payload, err := domainFTPResponsePayload(r, app, status)
+			if err != nil {
+				app.Logger.Error("load ftp connection settings after password reset failed",
+					zap.String("domain_id", domainID),
+					zap.Error(err),
+				)
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "ftp password reset but connection settings could not be loaded",
+				})
+				return
+			}
+			payload["password"] = password
+			writeJSON(w, stdhttp.StatusOK, payload)
 		})
 
 		r.Method(stdhttp.MethodGet, "/domains", domainsListHandler)
@@ -2560,6 +2780,9 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodPost, "/domains", domainsCreateHandler)
 		r.Method(stdhttp.MethodPut, "/domains/{domainID}", domainsUpdateHandler)
 		r.Method(stdhttp.MethodDelete, "/domains/{domainID}", domainsDeleteHandler)
+		r.Method(stdhttp.MethodGet, "/domains/{domainID}/ftp", domainFTPGetHandler)
+		r.Method(stdhttp.MethodPut, "/domains/{domainID}/ftp", domainFTPUpdateHandler)
+		r.Method(stdhttp.MethodPost, "/domains/{domainID}/ftp/reset-password", domainFTPResetPasswordHandler)
 
 		filesListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Files == nil {
@@ -3570,6 +3793,9 @@ func writeSettingsResponse(w stdhttp.ResponseWriter, statusCode int, app *app.Ap
 		"panel_name":             record.PanelName,
 		"panel_url":              record.PanelURL,
 		"github_token":           record.GitHubToken,
+		"ftp_enabled":            record.FTPEnabled,
+		"ftp_port":               record.FTPPort,
+		"ftp_passive_ports":      record.FTPPassivePorts,
 		"google_drive_email":     record.GoogleDriveEmail,
 		"google_drive_connected": record.GoogleDriveConnected,
 		"google_drive_available": app != nil && app.GoogleDrive != nil && app.GoogleDrive.Enabled(),
@@ -3578,6 +3804,71 @@ func writeSettingsResponse(w stdhttp.ResponseWriter, statusCode int, app *app.Ap
 	writeJSON(w, statusCode, map[string]any{
 		"settings": settingsPayload,
 	})
+}
+
+func ftpConfigFromSettings(record settings.Record) ftp.Config {
+	return ftp.Config{
+		Enabled:      record.FTPEnabled,
+		Host:         record.FTPHost,
+		Port:         record.FTPPort,
+		PublicIP:     "",
+		PassivePorts: record.FTPPassivePorts,
+	}
+}
+
+func writeDomainFTPResponse(w stdhttp.ResponseWriter, statusCode int, app *app.App, r *stdhttp.Request, ftpStatus ftp.DomainStatus) error {
+	payload, err := domainFTPResponsePayload(r, app, ftpStatus)
+	if err != nil {
+		return err
+	}
+
+	writeJSON(w, statusCode, payload)
+	return nil
+}
+
+func domainFTPResponsePayload(r *stdhttp.Request, app *app.App, ftpStatus ftp.DomainStatus) (map[string]any, error) {
+	record := settings.Record{
+		FTPPort: ftp.DefaultPort(),
+	}
+	if app != nil && app.Settings != nil {
+		var err error
+		record, err = app.Settings.Get(r.Context())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return map[string]any{
+		"ftp": map[string]any{
+			"supported":    ftpStatus.Supported,
+			"enabled":      ftpStatus.Enabled,
+			"username":     ftpStatus.Username,
+			"root_path":    ftpStatus.RootPath,
+			"has_password": ftpStatus.HasPassword,
+			"host":         ftpConnectionHost(r, record),
+			"port":         record.FTPPort,
+		},
+	}, nil
+}
+
+func ftpConnectionHost(r *stdhttp.Request, record settings.Record) string {
+	if host := hostNameFromURL(record.PanelURL); host != "" {
+		return host
+	}
+	if r == nil {
+		return ""
+	}
+
+	return hostNameFromURL(requestBaseURL(r))
+}
+
+func hostNameFromURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(parsed.Hostname())
 }
 
 func decodeBackupNameParam(r *stdhttp.Request) (string, error) {

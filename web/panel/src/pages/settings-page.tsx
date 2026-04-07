@@ -19,6 +19,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Upload,
+  Wrench,
 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -30,12 +31,18 @@ type SettingsFormState = {
   panel_name: string;
   panel_url: string;
   github_token: string;
+  ftp_enabled: boolean;
+  ftp_port: string;
+  ftp_passive_ports: string;
 };
 
 const initialForm: SettingsFormState = {
   panel_name: "",
   panel_url: "",
   github_token: "",
+  ftp_enabled: false,
+  ftp_port: "",
+  ftp_passive_ports: "",
 };
 const googleDrivePopupMessageType = "flowpanel-google-drive-oauth";
 
@@ -44,6 +51,9 @@ function toFormState(settings: PanelSettings): SettingsFormState {
     panel_name: settings.panel_name,
     panel_url: settings.panel_url,
     github_token: settings.github_token,
+    ftp_enabled: settings.ftp_enabled,
+    ftp_port: String(settings.ftp_port),
+    ftp_passive_ports: settings.ftp_passive_ports,
   };
 }
 
@@ -51,7 +61,10 @@ function sameFormState(left: SettingsFormState, right: SettingsFormState) {
   return (
     left.panel_name === right.panel_name &&
     left.panel_url === right.panel_url &&
-    left.github_token === right.github_token
+    left.github_token === right.github_token &&
+    left.ftp_enabled === right.ftp_enabled &&
+    left.ftp_port === right.ftp_port &&
+    left.ftp_passive_ports === right.ftp_passive_ports
   );
 }
 
@@ -161,6 +174,9 @@ export function SettingsPage() {
         panel_name: form.panel_name,
         panel_url: form.panel_url,
         github_token: form.github_token,
+        ftp_enabled: form.ftp_enabled,
+        ftp_port: Number.parseInt(form.ftp_port, 10) || 0,
+        ftp_passive_ports: form.ftp_passive_ports,
       });
       applySettings(settings);
       toast.success("Settings saved.");
@@ -256,7 +272,30 @@ export function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        meta="Store panel identity, the optional public panel URL, and GitHub credentials in SQLite. These values persist across restarts."
+        meta="Store panel identity, routing, credentials, and service settings in SQLite."
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {isDirty ? (
+              <span className="text-sm text-[var(--app-text-muted)]">
+                You have unsaved changes.
+              </span>
+            ) : null}
+            <Button
+              type="submit"
+              form="settings-form"
+              disabled={loading || Boolean(loadError) || saving || !isDirty}
+            >
+              {saving ? (
+                <>
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Saving
+                </>
+              ) : (
+                "Save changes"
+              )}
+            </Button>
+          </div>
+        }
       />
 
       <div className="px-4 pb-8 sm:px-6 lg:px-8">
@@ -289,100 +328,168 @@ export function SettingsPage() {
             </div>
           </section>
         ) : (
-          <form
-            onSubmit={handleSubmit}
-            className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)]"
-          >
-            <div className="border-b border-[var(--app-border)] px-6 py-4">
-              <h2 className="text-base font-semibold text-[var(--app-text)]">
-                General
-              </h2>
-              <p className="mt-1 text-sm text-[var(--app-text-muted)]">
-                Basic identity, public routing, and integration credentials for
-                the panel.
-              </p>
-            </div>
-
-            <div className="grid gap-5 px-6 py-5 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="panel_name">Panel name</Label>
-                <Input
-                  id="panel_name"
-                  value={form.panel_name}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      panel_name: event.target.value,
-                    }))
-                  }
-                  aria-invalid={fieldErrors.panel_name ? true : undefined}
-                />
-                <FieldError message={fieldErrors.panel_name} />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="panel_url">Panel URL</Label>
-                <Input
-                  id="panel_url"
-                  value={form.panel_url}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      panel_url: event.target.value,
-                    }))
-                  }
-                  placeholder="panel.example.com"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-invalid={fieldErrors.panel_url ? true : undefined}
-                />
-                <p className="text-sm text-[var(--app-text-muted)]">
-                  Optional public hostname or URL for the panel. Example:{" "}
-                  <span className="font-medium text-[var(--app-text)]">
-                    panel.com
-                  </span>
+          <form id="settings-form" onSubmit={handleSubmit} className="space-y-6">
+            <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)]">
+              <div className="border-b border-[var(--app-border)] px-6 py-4">
+                <h2 className="text-base font-semibold text-[var(--app-text)]">
+                  General
+                </h2>
+                <p className="mt-1 text-sm text-[var(--app-text-muted)]">
+                  Basic identity, public routing, and integration credentials.
                 </p>
-                <FieldError message={fieldErrors.panel_url} />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="github_token">GitHub token</Label>
-                <Input
-                  id="github_token"
-                  type="password"
-                  value={form.github_token}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      github_token: event.target.value,
-                    }))
-                  }
-                  placeholder="github_pat_..."
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-invalid={fieldErrors.github_token ? true : undefined}
-                />
-                <FieldError message={fieldErrors.github_token} />
-              </div>
-            </div>
+              <div className="grid gap-5 px-6 py-5 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="panel_name">Panel name</Label>
+                  <Input
+                    id="panel_name"
+                    value={form.panel_name}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        panel_name: event.target.value,
+                      }))
+                    }
+                    aria-invalid={fieldErrors.panel_name ? true : undefined}
+                  />
+                  <FieldError message={fieldErrors.panel_name} />
+                </div>
 
-            <div className="flex items-center justify-between gap-4 border-t border-[var(--app-border)] px-6 py-4">
-              <div className="text-sm text-[var(--app-text-muted)]">
-                {isDirty ? "You have unsaved changes." : ""}
+                <div className="space-y-2">
+                  <Label htmlFor="panel_url">Panel URL</Label>
+                  <Input
+                    id="panel_url"
+                    value={form.panel_url}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        panel_url: event.target.value,
+                      }))
+                    }
+                    placeholder="panel.example.com"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={fieldErrors.panel_url ? true : undefined}
+                  />
+                  <p className="text-sm text-[var(--app-text-muted)]">
+                    Optional public hostname or URL for the panel. Example:{" "}
+                    <span className="font-medium text-[var(--app-text)]">
+                      panel.com
+                    </span>
+                  </p>
+                  <FieldError message={fieldErrors.panel_url} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="github_token">GitHub token</Label>
+                  <Input
+                    id="github_token"
+                    type="password"
+                    value={form.github_token}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        github_token: event.target.value,
+                      }))
+                    }
+                    placeholder="github_pat_..."
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={fieldErrors.github_token ? true : undefined}
+                  />
+                  <FieldError message={fieldErrors.github_token} />
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <Button type="submit" disabled={saving || !isDirty}>
-                  {saving ? (
-                    <>
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                      Saving
-                    </>
-                  ) : (
-                    "Save changes"
-                  )}
-                </Button>
+            </section>
+
+            <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)]">
+              <div className="border-b border-[var(--app-border)] px-6 py-4">
+                <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--app-text)]">
+                  <Wrench className="h-4 w-4" />
+                  FTP
+                </h2>
+                <p className="mt-1 text-sm text-[var(--app-text-muted)]">
+                  Configure the shared FTP listener used by eligible domain
+                  accounts.
+                </p>
               </div>
-            </div>
+
+              <div className="grid gap-5 px-6 py-5 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="ftp_port">FTP port</Label>
+                  <Input
+                    id="ftp_port"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    value={form.ftp_port}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        ftp_port: event.target.value,
+                      }))
+                    }
+                    placeholder="2121"
+                    aria-invalid={fieldErrors.ftp_port ? true : undefined}
+                  />
+                  <p className="text-sm text-[var(--app-text-muted)]">
+                    The listener binds on all interfaces. Clients connect by the
+                    panel URL host when set, otherwise by this panel host.
+                  </p>
+                  <FieldError message={fieldErrors.ftp_port} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ftp_passive_ports">Passive port range</Label>
+                  <Input
+                    id="ftp_passive_ports"
+                    value={form.ftp_passive_ports}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        ftp_passive_ports: event.target.value,
+                      }))
+                    }
+                    placeholder="30000-30100"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={fieldErrors.ftp_passive_ports ? true : undefined}
+                  />
+                  <p className="text-sm text-[var(--app-text-muted)]">
+                    Use a single inclusive range for passive data connections.
+                  </p>
+                  <FieldError message={fieldErrors.ftp_passive_ports} />
+                </div>
+              </div>
+
+              <div className="border-t border-[var(--app-border)] px-6 py-5">
+                <div className="flex flex-col gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-1">
+                    <Label htmlFor="ftp_enabled">Enable FTP server</Label>
+                    <p className="text-sm text-[var(--app-text-muted)]">
+                      This listener serves each eligible domain through its own
+                      FTP account. Plain FTP is not encrypted.
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-3 text-sm text-[var(--app-text)]">
+                    <input
+                      id="ftp_enabled"
+                      type="checkbox"
+                      checked={form.ftp_enabled}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          ftp_enabled: event.target.checked,
+                        }))
+                      }
+                      className="h-4 w-4 rounded border-[var(--app-border)]"
+                    />
+                    FTP enabled
+                  </label>
+                </div>
+              </div>
+            </section>
           </form>
         )}
 

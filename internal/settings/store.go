@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -15,6 +16,11 @@ const (
 	panelNameKey             = panelSettingsKeyPrefix + "panel_name"
 	panelURLKey              = panelSettingsKeyPrefix + "panel_url"
 	gitHubTokenKey           = panelSettingsKeyPrefix + "github_token"
+	ftpEnabledKey            = panelSettingsKeyPrefix + "ftp_enabled"
+	ftpHostKey               = panelSettingsKeyPrefix + "ftp_host"
+	ftpPortKey               = panelSettingsKeyPrefix + "ftp_port"
+	ftpPublicIPKey           = panelSettingsKeyPrefix + "ftp_public_ip"
+	ftpPassivePortsKey       = panelSettingsKeyPrefix + "ftp_passive_ports"
 	googleDriveEmailKey      = panelSettingsKeyPrefix + "google_drive_email"
 	googleDriveRefreshKey    = panelSettingsKeyPrefix + "google_drive_refresh_token"
 )
@@ -23,6 +29,11 @@ var panelSettingKeys = []string{
 	panelNameKey,
 	panelURLKey,
 	gitHubTokenKey,
+	ftpEnabledKey,
+	ftpHostKey,
+	ftpPortKey,
+	ftpPublicIPKey,
+	ftpPassivePortsKey,
 	googleDriveEmailKey,
 	googleDriveRefreshKey,
 }
@@ -74,7 +85,7 @@ func (s *Store) Get(ctx context.Context) (Record, error) {
 	query := fmt.Sprintf(`
 SELECT key, value
 FROM %s
-WHERE key IN (?, ?, ?, ?, ?)
+WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, settingsTableName)
 
 	rows, err := s.db.QueryContext(
@@ -83,6 +94,11 @@ WHERE key IN (?, ?, ?, ?, ?)
 		panelNameKey,
 		panelURLKey,
 		gitHubTokenKey,
+		ftpEnabledKey,
+		ftpHostKey,
+		ftpPortKey,
+		ftpPublicIPKey,
+		ftpPassivePortsKey,
 		googleDriveEmailKey,
 		googleDriveRefreshKey,
 	)
@@ -110,6 +126,20 @@ WHERE key IN (?, ?, ?, ?, ?)
 			record.PanelURL = strings.TrimSpace(value)
 		case gitHubTokenKey:
 			record.GitHubToken = strings.TrimSpace(value)
+		case ftpEnabledKey:
+			record.FTPEnabled = strings.TrimSpace(value) == "1"
+		case ftpHostKey:
+			record.FTPHost = strings.TrimSpace(value)
+		case ftpPortKey:
+			if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+				record.FTPPort = parsed
+			}
+		case ftpPublicIPKey:
+			record.FTPPublicIP = strings.TrimSpace(value)
+		case ftpPassivePortsKey:
+			if strings.TrimSpace(value) != "" {
+				record.FTPPassivePorts = strings.TrimSpace(value)
+			}
 		case googleDriveEmailKey:
 			record.GoogleDriveEmail = strings.TrimSpace(value)
 		case googleDriveRefreshKey:
@@ -153,6 +183,11 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 		panelNameKey:          record.PanelName,
 		panelURLKey:           record.PanelURL,
 		gitHubTokenKey:        record.GitHubToken,
+		ftpEnabledKey:         boolString(record.FTPEnabled),
+		ftpHostKey:            record.FTPHost,
+		ftpPortKey:            strconv.Itoa(record.FTPPort),
+		ftpPublicIPKey:        record.FTPPublicIP,
+		ftpPassivePortsKey:    record.FTPPassivePorts,
 		googleDriveEmailKey:   record.GoogleDriveEmail,
 		googleDriveRefreshKey: record.GoogleDriveRefreshToken,
 	}
@@ -232,6 +267,11 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 		panelNameKey:          record.PanelName,
 		panelURLKey:           record.PanelURL,
 		gitHubTokenKey:        record.GitHubToken,
+		ftpEnabledKey:         boolString(record.FTPEnabled),
+		ftpHostKey:            record.FTPHost,
+		ftpPortKey:            strconv.Itoa(record.FTPPort),
+		ftpPublicIPKey:        record.FTPPublicIP,
+		ftpPassivePortsKey:    record.FTPPassivePorts,
 		googleDriveEmailKey:   record.GoogleDriveEmail,
 		googleDriveRefreshKey: record.GoogleDriveRefreshToken,
 	}
@@ -257,4 +297,12 @@ WHERE type = 'table' AND name = ?
 	}
 
 	return count > 0, nil
+}
+
+func boolString(value bool) string {
+	if value {
+		return "1"
+	}
+
+	return "0"
 }

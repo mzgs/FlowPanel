@@ -10,6 +10,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
+	"flowpanel/internal/ftp"
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
@@ -32,6 +33,8 @@ type App struct {
 	PHP         phpenv.Manager
 	PHPMyAdmin  phpmyadmin.Manager
 	Files       *files.Service
+	FTP         *ftp.Runtime
+	FTPAccounts *ftp.Service
 	Events      *events.Service
 	Backups     backup.Manager
 	Settings    *settings.Service
@@ -50,6 +53,8 @@ func New(
 	phpManager phpenv.Manager,
 	phpMyAdminManager phpmyadmin.Manager,
 	fileManager *files.Service,
+	ftpRuntime *ftp.Runtime,
+	ftpAccounts *ftp.Service,
 	eventService *events.Service,
 	backupManager backup.Manager,
 	settingsService *settings.Service,
@@ -67,6 +72,8 @@ func New(
 		PHP:         phpManager,
 		PHPMyAdmin:  phpMyAdminManager,
 		Files:       fileManager,
+		FTP:         ftpRuntime,
+		FTPAccounts: ftpAccounts,
 		Events:      eventService,
 		Backups:     backupManager,
 		Settings:    settingsService,

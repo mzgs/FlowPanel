@@ -22,6 +22,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
+	"flowpanel/internal/ftp"
 	"flowpanel/internal/googledrive"
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/logging"
@@ -213,6 +214,10 @@ func runServer() error {
 	if err := settingsStore.Ensure(startupCtx); err != nil {
 		return fmt.Errorf("ensure settings storage: %w", err)
 	}
+	ftpStore := ftp.NewStore(dbConn)
+	if err := ftpStore.Ensure(startupCtx); err != nil {
+		return fmt.Errorf("ensure ftp storage: %w", err)
+	}
 
 	domainService := domain.NewService(domainStore)
 	if err := domainService.Load(startupCtx); err != nil {
@@ -229,6 +234,8 @@ func runServer() error {
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
 	settingsService := settings.NewService(settingsStore)
+	ftpService := ftp.NewService(ftpStore, domainService)
+	ftpRuntime := ftp.NewRuntime(logger.Named("ftp"), ftpService)
 	googleDriveService := googledrive.NewService(cfg.GoogleDrive)
 	backupService := backup.NewService(
 		logger.Named("backup"),
@@ -267,6 +274,8 @@ func runServer() error {
 		phpManager,
 		phpMyAdminManager,
 		fileManager,
+		ftpRuntime,
+		ftpService,
 		eventService,
 		backupService,
 		settingsService,
@@ -287,6 +296,15 @@ func runServer() error {
 	}
 	if err := caddyRuntime.Sync(context.Background(), domainService.List(), settingsRecord.PanelURL); err != nil {
 		return fmt.Errorf("sync embedded caddy runtime: %w", err)
+	}
+	if err := ftpRuntime.Apply(context.Background(), ftp.Config{
+		Enabled:      settingsRecord.FTPEnabled,
+		Host:         settingsRecord.FTPHost,
+		Port:         settingsRecord.FTPPort,
+		PublicIP:     settingsRecord.FTPPublicIP,
+		PassivePorts: settingsRecord.FTPPassivePorts,
+	}); err != nil {
+		return fmt.Errorf("start ftp runtime: %w", err)
 	}
 	scheduler.Start()
 
@@ -328,6 +346,10 @@ func runServer() error {
 
 	if err := caddyRuntime.Stop(shutdownCtx); err != nil {
 		logger.Error("embedded caddy runtime shutdown failed", zap.Error(err))
+	}
+
+	if err := ftpRuntime.Stop(); err != nil {
+		logger.Error("ftp runtime shutdown failed", zap.Error(err))
 	}
 
 	logger.Info("flowpanel stopped")

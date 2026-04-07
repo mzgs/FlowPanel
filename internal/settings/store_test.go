@@ -27,6 +27,7 @@ func TestStoreRoundTripUsesKeyValueTable(t *testing.T) {
 		PanelName:               "Ops",
 		PanelURL:                "https://panel.example.com",
 		GitHubToken:             "github_pat_test_token",
+		FTPPassivePorts:         "30000-30100",
 		GoogleDriveEmail:        "ops@example.com",
 		GoogleDriveConnected:    true,
 		GoogleDriveRefreshToken: "refresh-token",

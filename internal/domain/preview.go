@@ -170,6 +170,28 @@ func (s *Service) FindByHostname(hostname string) (Record, bool) {
 	return Record{}, false
 }
 
+func (s *Service) FindByID(id string) (Record, bool) {
+	if s == nil {
+		return Record{}, false
+	}
+
+	trimmedID := strings.TrimSpace(id)
+	if trimmedID == "" {
+		return Record{}, false
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, record := range s.records {
+		if record.ID == trimmedID {
+			return s.withTransientFields(record), true
+		}
+	}
+
+	return Record{}, false
+}
+
 func (s *Service) EnsurePreview(ctx context.Context, hostname string) (string, error) {
 	return s.ensurePreview(ctx, hostname, false)
 }

@@ -30,6 +30,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
+	"flowpanel/internal/ftp"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
@@ -2344,9 +2345,10 @@ func TestSettingsEndpointReturnsDefaults(t *testing.T) {
 
 	var payload struct {
 		Settings struct {
-			PanelName   string `json:"panel_name"`
-			PanelURL    string `json:"panel_url"`
-			GitHubToken string `json:"github_token"`
+			PanelName       string `json:"panel_name"`
+			PanelURL        string `json:"panel_url"`
+			GitHubToken     string `json:"github_token"`
+			FTPPassivePorts string `json:"ftp_passive_ports"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
@@ -2361,6 +2363,9 @@ func TestSettingsEndpointReturnsDefaults(t *testing.T) {
 	}
 	if payload.Settings.PanelURL != "" {
 		t.Fatalf("panel_url = %q, want empty string", payload.Settings.PanelURL)
+	}
+	if payload.Settings.FTPPassivePorts != "30000-30100" {
+		t.Fatalf("ftp_passive_ports = %q, want 30000-30100", payload.Settings.FTPPassivePorts)
 	}
 }
 
@@ -2383,9 +2388,10 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 
 	var payload struct {
 		Settings struct {
-			PanelName   string `json:"panel_name"`
-			PanelURL    string `json:"panel_url"`
-			GitHubToken string `json:"github_token"`
+			PanelName       string `json:"panel_name"`
+			PanelURL        string `json:"panel_url"`
+			GitHubToken     string `json:"github_token"`
+			FTPPassivePorts string `json:"ftp_passive_ports"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
@@ -2401,6 +2407,9 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 	if payload.Settings.GitHubToken != "github_pat_1234567890" {
 		t.Fatalf("github_token = %q, want github_pat_1234567890", payload.Settings.GitHubToken)
 	}
+	if payload.Settings.FTPPassivePorts != "30000-30100" {
+		t.Fatalf("ftp_passive_ports = %q, want 30000-30100", payload.Settings.FTPPassivePorts)
+	}
 
 	getRecorder := httptest.NewRecorder()
 	router.ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
@@ -2410,9 +2419,10 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 
 	var getPayload struct {
 		Settings struct {
-			PanelName   string `json:"panel_name"`
-			PanelURL    string `json:"panel_url"`
-			GitHubToken string `json:"github_token"`
+			PanelName       string `json:"panel_name"`
+			PanelURL        string `json:"panel_url"`
+			GitHubToken     string `json:"github_token"`
+			FTPPassivePorts string `json:"ftp_passive_ports"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(getRecorder.Body.Bytes(), &getPayload); err != nil {
@@ -2426,6 +2436,9 @@ func TestSettingsUpdateEndpoint(t *testing.T) {
 	}
 	if getPayload.Settings.GitHubToken != "github_pat_1234567890" {
 		t.Fatalf("persisted github_token = %q, want github_pat_1234567890", getPayload.Settings.GitHubToken)
+	}
+	if getPayload.Settings.FTPPassivePorts != "30000-30100" {
+		t.Fatalf("persisted ftp_passive_ports = %q, want 30000-30100", getPayload.Settings.FTPPassivePorts)
 	}
 }
 
@@ -2460,6 +2473,78 @@ func TestSettingsUpdateEndpointValidatesInput(t *testing.T) {
 	}
 	if payload.FieldErrors["github_token"] == "" {
 		t.Fatal("missing github_token validation error")
+	}
+}
+
+func TestDomainFTPEndpointUsesPanelURLHostOrRequestHost(t *testing.T) {
+	router, domains, settingsService := newTestDomainRouterWithFTP(t)
+
+	record, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "site.example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	if _, err := settingsService.Update(context.Background(), settings.UpdateInput{
+		PanelName: "FlowPanel",
+		PanelURL:  "https://panel.example.com",
+	}); err != nil {
+		t.Fatalf("update settings with panel url: %v", err)
+	}
+
+	panelURLRequest := httptest.NewRequest(http.MethodGet, "/api/domains/"+record.ID+"/ftp", nil)
+	panelURLRequest.Host = "admin.local:8080"
+	panelURLRecorder := httptest.NewRecorder()
+	router.ServeHTTP(panelURLRecorder, panelURLRequest)
+
+	if panelURLRecorder.Code != http.StatusOK {
+		t.Fatalf("panel url status = %d, want %d, body = %s", panelURLRecorder.Code, http.StatusOK, panelURLRecorder.Body.String())
+	}
+
+	var panelURLPayload struct {
+		FTP struct {
+			Host string `json:"host"`
+			Port int    `json:"port"`
+		} `json:"ftp"`
+	}
+	if err := json.Unmarshal(panelURLRecorder.Body.Bytes(), &panelURLPayload); err != nil {
+		t.Fatalf("decode panel url ftp response: %v", err)
+	}
+	if panelURLPayload.FTP.Host != "panel.example.com" {
+		t.Fatalf("ftp host = %q, want panel.example.com", panelURLPayload.FTP.Host)
+	}
+	if panelURLPayload.FTP.Port != 2121 {
+		t.Fatalf("ftp port = %d, want 2121", panelURLPayload.FTP.Port)
+	}
+
+	if _, err := settingsService.Update(context.Background(), settings.UpdateInput{
+		PanelName: "FlowPanel",
+		PanelURL:  "",
+	}); err != nil {
+		t.Fatalf("clear panel url: %v", err)
+	}
+
+	requestHostRequest := httptest.NewRequest(http.MethodGet, "/api/domains/"+record.ID+"/ftp", nil)
+	requestHostRequest.Host = "admin.local:8080"
+	requestHostRecorder := httptest.NewRecorder()
+	router.ServeHTTP(requestHostRecorder, requestHostRequest)
+
+	if requestHostRecorder.Code != http.StatusOK {
+		t.Fatalf("request host status = %d, want %d, body = %s", requestHostRecorder.Code, http.StatusOK, requestHostRecorder.Body.String())
+	}
+
+	var requestHostPayload struct {
+		FTP struct {
+			Host string `json:"host"`
+		} `json:"ftp"`
+	}
+	if err := json.Unmarshal(requestHostRecorder.Body.Bytes(), &requestHostPayload); err != nil {
+		t.Fatalf("decode request host ftp response: %v", err)
+	}
+	if requestHostPayload.FTP.Host != "admin.local" {
+		t.Fatalf("ftp host = %q, want admin.local", requestHostPayload.FTP.Host)
 	}
 }
 
@@ -2834,6 +2919,8 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		fakePHPManager{},
 		fakePHPMyAdminManager{},
 		fileManager,
+		nil,
+		nil,
 		events.NewService(logger.Named("events"), eventStore),
 		backupManager,
 		settingsService,
@@ -2844,6 +2931,101 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 	}
 
 	return router, domains, store
+}
+
+func newTestDomainRouterWithFTP(t *testing.T) (http.Handler, *domain.Service, *settings.Service) {
+	t.Helper()
+
+	cfg := config.Config{
+		Env:             "test",
+		AdminListenAddr: ":18080",
+		PublicHTTPAddr:  ":19080",
+		PublicHTTPSAddr: ":19443",
+		PHPMyAdminAddr:  ":32109",
+		Database: config.DatabaseConfig{
+			Path: ":memory:",
+		},
+		Session: config.SessionConfig{
+			Secret:     strings.Repeat("s", 32),
+			CookieName: "flowpanel_test",
+			Lifetime:   time.Hour,
+		},
+		Cron: config.CronConfig{
+			Enabled: false,
+		},
+	}
+
+	logger := zap.NewNop()
+	dbConn, err := db.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = dbConn.Close()
+	})
+
+	store := domain.NewStore(dbConn)
+	if err := store.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure store: %v", err)
+	}
+	cronStore := flowcron.NewStore(dbConn)
+	if err := cronStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure cron store: %v", err)
+	}
+	eventStore := events.NewStore(dbConn)
+	if err := eventStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure event store: %v", err)
+	}
+	settingsStore := settings.NewStore(dbConn)
+	if err := settingsStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure settings store: %v", err)
+	}
+	ftpStore := ftp.NewStore(dbConn)
+	if err := ftpStore.Ensure(context.Background()); err != nil {
+		t.Fatalf("ensure ftp store: %v", err)
+	}
+
+	domains := domain.NewService(store)
+	fileManager, err := files.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file manager: %v", err)
+	}
+	settingsService := settings.NewService(settingsStore)
+	ftpService := ftp.NewService(ftpStore, domains)
+	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), filepath.Join(t.TempDir(), "backups"), cfg.Database.Path, dbConn, domains, fakeMariaDBManager{}, settingsService, nil)
+
+	router, err := NewRouter(app.New(
+		cfg,
+		logger,
+		dbConn,
+		domains,
+		auth.NewSessionManager(cfg),
+		flowcron.NewScheduler(logger.Named("cron"), false, cronStore),
+		caddy.NewRuntime(
+			logger.Named("caddy"),
+			cfg.AdminListenAddr,
+			cfg.PublicHTTPAddr,
+			cfg.PublicHTTPSAddr,
+			fakePHPManager{},
+			fakePHPMyAdminManager{},
+			cfg.PHPMyAdminAddr,
+		),
+		fakeMariaDBManager{},
+		fakePHPManager{},
+		fakePHPMyAdminManager{},
+		fileManager,
+		nil,
+		ftpService,
+		events.NewService(logger.Named("events"), eventStore),
+		backupManager,
+		settingsService,
+		nil,
+	))
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	return router, domains, settingsService
 }
 
 func installFakeComposer(t *testing.T, script string) string {
@@ -2953,6 +3135,8 @@ func newTestCronRouter(t *testing.T, enabled bool) (http.Handler, *flowcron.Sche
 		fakePHPManager{},
 		fakePHPMyAdminManager{},
 		fileManager,
+		nil,
+		nil,
 		events.NewService(logger.Named("events"), eventStore),
 		backupManager,
 		settingsService,

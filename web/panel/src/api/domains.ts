@@ -13,6 +13,16 @@ export type DomainRecord = {
   created_at: string;
 };
 
+export type DomainFTPStatus = {
+  supported: boolean;
+  enabled: boolean;
+  username: string;
+  root_path: string;
+  has_password: boolean;
+  host: string;
+  port: number;
+};
+
 export type DomainGitHubIntegration = {
   repository_url: string;
   auto_deploy_on_push: boolean;
@@ -82,6 +92,11 @@ export type DeleteDomainResult = {
   warnings: string[];
 };
 
+export type UpdateDomainFTPInput = {
+  username: string;
+  enabled: boolean;
+};
+
 export async function fetchDomains(): Promise<DomainsPayload> {
   const response = await fetch("/api/domains", {
     credentials: "include",
@@ -94,7 +109,9 @@ export async function fetchDomains(): Promise<DomainsPayload> {
   return response.json();
 }
 
-export async function createDomain(input: CreateDomainInput): Promise<DomainRecord> {
+export async function createDomain(
+  input: CreateDomainInput,
+): Promise<DomainRecord> {
   const response = await fetch("/api/domains", {
     method: "POST",
     credentials: "include",
@@ -136,10 +153,13 @@ export async function deleteDomain(
   }
   const suffix = params.size ? `?${params.toString()}` : "";
 
-  const response = await fetch(`/api/domains/${encodeURIComponent(id)}${suffix}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(id)}${suffix}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
 
   if (!response.ok) {
     throw await readDomainApiError(response, "delete domain");
@@ -148,7 +168,9 @@ export async function deleteDomain(
   const payload = (await response.json()) as { warnings?: unknown };
   return {
     warnings: Array.isArray(payload.warnings)
-      ? payload.warnings.filter((warning): warning is string => typeof warning === "string")
+      ? payload.warnings.filter(
+          (warning): warning is string => typeof warning === "string",
+        )
       : [],
   };
 }
@@ -157,30 +179,100 @@ export async function updateDomainGitHubIntegration(
   hostname: string,
   input: UpdateDomainGitHubIntegrationInput,
 ): Promise<DomainRecord> {
-  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/github`, {
-    method: "PUT",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/github`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
     },
-    body: JSON.stringify(input),
-  });
+  );
 
   return readDomainMutationResponse(response, "save github integration");
+}
+
+export async function fetchDomainFTPStatus(
+  domainID: string,
+): Promise<DomainFTPStatus> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(domainID)}/ftp`,
+    {
+      credentials: "include",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "load ftp account");
+  }
+
+  const payload = (await response.json()) as { ftp: DomainFTPStatus };
+  return payload.ftp;
+}
+
+export async function updateDomainFTP(
+  domainID: string,
+  input: UpdateDomainFTPInput,
+): Promise<DomainFTPStatus> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(domainID)}/ftp`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "save ftp account");
+  }
+
+  const payload = (await response.json()) as { ftp: DomainFTPStatus };
+  return payload.ftp;
+}
+
+export async function resetDomainFTPPassword(
+  domainID: string,
+): Promise<{ ftp: DomainFTPStatus; password: string }> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(domainID)}/ftp/reset-password`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "reset ftp password");
+  }
+
+  const payload = (await response.json()) as {
+    ftp: DomainFTPStatus;
+    password: string;
+  };
+  return payload;
 }
 
 export async function updateDomainPHPSettings(
   hostname: string,
   input: UpdateDomainPHPSettingsInput,
 ): Promise<DomainRecord> {
-  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/php-settings`, {
-    method: "PUT",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/php-settings`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
     },
-    body: JSON.stringify(input),
-  });
+  );
 
   return readDomainMutationResponse(response, "save php settings");
 }
@@ -188,16 +280,21 @@ export async function updateDomainPHPSettings(
 export async function deployDomainGitHubIntegration(
   hostname: string,
 ): Promise<DomainGitHubDeployResult> {
-  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/github/deploy`, {
-    method: "POST",
-    credentials: "include",
-  });
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/github/deploy`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
 
   if (!response.ok) {
     throw await readDomainApiError(response, "deploy from github");
   }
 
-  const payload = (await response.json()) as { action: DomainGitHubDeployResult["action"] };
+  const payload = (await response.json()) as {
+    action: DomainGitHubDeployResult["action"];
+  };
   return { action: payload.action };
 }
 
@@ -205,14 +302,17 @@ export async function copyDomainWebsite(
   hostname: string,
   input: CopyDomainWebsiteInput,
 ): Promise<void> {
-  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/copy`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/copy`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
     },
-    body: JSON.stringify(input),
-  });
+  );
 
   if (!response.ok) {
     throw await readDomainApiError(response, "copy website");
@@ -227,7 +327,10 @@ export async function fetchDomainPreview(
     signal?: AbortSignal;
   },
 ): Promise<Blob> {
-  const previewUrl = new URL(getDomainPreviewUrl(hostname), window.location.origin);
+  const previewUrl = new URL(
+    getDomainPreviewUrl(hostname),
+    window.location.origin,
+  );
   if (options?.refresh) {
     previewUrl.searchParams.set("refresh", "1");
   }

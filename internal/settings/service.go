@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
+
+	"flowpanel/internal/ftp"
 )
 
 const (
@@ -14,21 +17,30 @@ const (
 	maxPanelNameLength   = 80
 	maxPanelURLLength    = 512
 	maxGitHubTokenLength = 4096
+	maxPassivePortsLen   = 32
 )
 
 type Record struct {
 	PanelName               string `json:"panel_name"`
 	PanelURL                string `json:"panel_url"`
 	GitHubToken             string `json:"github_token"`
+	FTPEnabled              bool   `json:"ftp_enabled"`
+	FTPHost                 string
+	FTPPort                 int `json:"ftp_port"`
+	FTPPublicIP             string
+	FTPPassivePorts         string `json:"ftp_passive_ports"`
 	GoogleDriveEmail        string `json:"google_drive_email"`
 	GoogleDriveConnected    bool   `json:"google_drive_connected"`
 	GoogleDriveRefreshToken string `json:"-"`
 }
 
 type UpdateInput struct {
-	PanelName   string `json:"panel_name"`
-	PanelURL    string `json:"panel_url"`
-	GitHubToken string `json:"github_token"`
+	PanelName       string `json:"panel_name"`
+	PanelURL        string `json:"panel_url"`
+	GitHubToken     string `json:"github_token"`
+	FTPEnabled      bool   `json:"ftp_enabled"`
+	FTPPort         int    `json:"ftp_port"`
+	FTPPassivePorts string `json:"ftp_passive_ports"`
 }
 
 type ValidationErrors map[string]string
@@ -52,6 +64,9 @@ func (s *Service) Get(ctx context.Context) (Record, error) {
 
 	record, err := s.store.Get(ctx)
 	if err == nil {
+		record.FTPHost = ftp.DefaultHost()
+		record.FTPPublicIP = ""
+		record.FTPPassivePorts = normalizeFTPPassivePorts(record.FTPPassivePorts)
 		return record, nil
 	}
 	if err == sql.ErrNoRows {
@@ -68,9 +83,14 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	}
 
 	record := Record{
-		PanelName:   normalizeSingleLine(input.PanelName, defaultPanelName, maxPanelNameLength),
-		PanelURL:    normalizePanelURL(input.PanelURL),
-		GitHubToken: normalizeOptionalSingleLine(input.GitHubToken, maxGitHubTokenLength),
+		PanelName:       normalizeSingleLine(input.PanelName, defaultPanelName, maxPanelNameLength),
+		PanelURL:        normalizePanelURL(input.PanelURL),
+		GitHubToken:     normalizeOptionalSingleLine(input.GitHubToken, maxGitHubTokenLength),
+		FTPEnabled:      input.FTPEnabled,
+		FTPHost:         ftp.DefaultHost(),
+		FTPPort:         normalizeFTPPort(input.FTPPort),
+		FTPPublicIP:     "",
+		FTPPassivePorts: normalizeFTPPassivePorts(input.FTPPassivePorts),
 	}
 
 	if s == nil || s.store == nil {
@@ -141,6 +161,11 @@ func defaultRecord() Record {
 		PanelName:            defaultPanelName,
 		PanelURL:             "",
 		GitHubToken:          "",
+		FTPEnabled:           false,
+		FTPHost:              "0.0.0.0",
+		FTPPort:              2121,
+		FTPPublicIP:          "",
+		FTPPassivePorts:      ftp.DefaultPassivePorts(),
 		GoogleDriveEmail:     "",
 		GoogleDriveConnected: false,
 	}
@@ -167,6 +192,21 @@ func validateUpdateInput(input UpdateInput) ValidationErrors {
 
 	if len(strings.TrimSpace(input.GitHubToken)) > maxGitHubTokenLength {
 		validation["github_token"] = fmt.Sprintf("GitHub token must be %d characters or fewer.", maxGitHubTokenLength)
+	}
+
+	ftpPort := normalizeFTPPort(input.FTPPort)
+	if ftpPort < 1 || ftpPort > 65535 {
+		validation["ftp_port"] = "FTP port must be between 1 and 65535."
+	}
+
+	ftpPassivePorts := strings.TrimSpace(input.FTPPassivePorts)
+	if len(ftpPassivePorts) > maxPassivePortsLen {
+		validation["ftp_passive_ports"] = fmt.Sprintf("FTP passive ports must be %d characters or fewer.", maxPassivePortsLen)
+	} else if ftpPassivePorts != "" {
+		minPort, maxPort, ok := parsePassivePorts(ftpPassivePorts)
+		if !ok || minPort < 1 || maxPort > 65535 || minPort > maxPort {
+			validation["ftp_passive_ports"] = "Enter a passive port range like 30000-30100."
+		}
 	}
 
 	return validation
@@ -203,6 +243,41 @@ func normalizePanelURL(value string) string {
 	}
 
 	return parsed.String()
+}
+
+func normalizeFTPPort(value int) int {
+	if value == 0 {
+		return ftp.DefaultPort()
+	}
+
+	return value
+}
+
+func normalizeFTPPassivePorts(value string) string {
+	value = normalizeOptionalSingleLine(value, maxPassivePortsLen)
+	if value == "" {
+		return ftp.DefaultPassivePorts()
+	}
+
+	return value
+}
+
+func parsePassivePorts(value string) (int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(value), "-")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+
+	minPort, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return 0, 0, false
+	}
+	maxPort, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return 0, 0, false
+	}
+
+	return minPort, maxPort, true
 }
 
 func parsePanelURL(value string) (*url.URL, error) {

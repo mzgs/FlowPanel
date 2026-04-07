@@ -53,6 +53,7 @@ import {
   DomainComposerDialog,
   type ComposerPackage,
 } from "@/components/domain-composer-dialog";
+import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { DomainPHPDialog } from "@/components/domain-php-dialog";
 import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
@@ -380,6 +381,7 @@ export function DomainDetailPage() {
   const [backupDataError, setBackupDataError] = useState<string | null>(null);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [composerDialogOpen, setComposerDialogOpen] = useState(false);
+  const [ftpDialogOpen, setFTPDialogOpen] = useState(false);
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
   const [phpDialogOpen, setPHPDialogOpen] = useState(false);
   const [terminalDialogOpen, setTerminalDialogOpen] = useState(false);
@@ -452,6 +454,7 @@ export function DomainDetailPage() {
     setBackupDataError(null);
     setBackupDialogOpen(false);
     setComposerDialogOpen(false);
+    setFTPDialogOpen(false);
     setGitHubDialogOpen(false);
     setPHPDialogOpen(false);
     setTerminalDialogOpen(false);
@@ -1184,6 +1187,11 @@ export function DomainDetailPage() {
           void handleComposerAction("update");
         }}
       />
+      <DomainFTPDialog
+        open={ftpDialogOpen && domain !== null}
+        domain={domain}
+        onOpenChange={setFTPDialogOpen}
+      />
       <DomainGitHubDialog
         open={githubDialogOpen && domain !== null}
         onOpenChange={setGitHubDialogOpen}
@@ -1510,6 +1518,11 @@ export function DomainDetailPage() {
 
                     if (item.title === "Backup & Restore" && domain !== null) {
                       setBackupDialogOpen(true);
+                      return;
+                    }
+
+                    if (item.title === "FTP") {
+                      setFTPDialogOpen(true);
                       return;
                     }
 

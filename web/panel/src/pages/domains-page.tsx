@@ -8,6 +8,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  UserCog,
 } from "@/components/icons/tabler-icons";
 import {
   createBackup,
@@ -29,6 +30,7 @@ import {
 import { downloadEntry } from "@/api/files";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { BackupRecordsDialog } from "@/components/backup-records-dialog";
+import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -119,7 +121,8 @@ const kindConfig: Record<
   App: {
     targetLabel: "Internal port",
     targetPlaceholder: "3000",
-    helpText: "Traffic will be forwarded to the selected local application port.",
+    helpText:
+      "Traffic will be forwarded to the selected local application port.",
   },
   "Reverse proxy": {
     targetLabel: "Upstream URL",
@@ -237,18 +240,35 @@ export function DomainsPage() {
   const [backupsLoading, setBackupsLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null);
-  const [deleteDomainCandidate, setDeleteDomainCandidate] = useState<DomainRecord | null>(null);
-  const [deleteDomainOptions, setDeleteDomainOptions] = useState(initialDeleteDomainOptions);
-  const [creatingBackupDomainId, setCreatingBackupDomainId] = useState<string | null>(null);
-  const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
-  const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
-  const [deletingBackupName, setDeletingBackupName] = useState<string | null>(null);
-  const [createdBackupDomainId, setCreatedBackupDomainId] = useState<string | null>(null);
-  const [downloadingDomainId, setDownloadingDomainId] = useState<string | null>(null);
+  const [deleteDomainCandidate, setDeleteDomainCandidate] =
+    useState<DomainRecord | null>(null);
+  const [deleteDomainOptions, setDeleteDomainOptions] = useState(
+    initialDeleteDomainOptions,
+  );
+  const [creatingBackupDomainId, setCreatingBackupDomainId] = useState<
+    string | null
+  >(null);
+  const [restoringBackupName, setRestoringBackupName] = useState<string | null>(
+    null,
+  );
+  const [restoredBackupName, setRestoredBackupName] = useState<string | null>(
+    null,
+  );
+  const [deletingBackupName, setDeletingBackupName] = useState<string | null>(
+    null,
+  );
+  const [createdBackupDomainId, setCreatedBackupDomainId] = useState<
+    string | null
+  >(null);
+  const [downloadingDomainId, setDownloadingDomainId] = useState<string | null>(
+    null,
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [backupsLoadError, setBackupsLoadError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [backupDialogDomain, setBackupDialogDomain] = useState<DomainRecord | null>(
+  const [backupDialogDomain, setBackupDialogDomain] =
+    useState<DomainRecord | null>(null);
+  const [ftpDialogDomain, setFTPDialogDomain] = useState<DomainRecord | null>(
     null,
   );
   const hostnameInputRef = useRef<HTMLInputElement | null>(null);
@@ -273,7 +293,9 @@ export function DomainsPage() {
           setSitesBasePath(domainsResult.value.sites_base_path);
           setLoadError(null);
         } else {
-          setLoadError(getErrorMessage(domainsResult.reason, "Failed to load domains."));
+          setLoadError(
+            getErrorMessage(domainsResult.reason, "Failed to load domains."),
+          );
         }
 
         if (backupsResult.status === "fulfilled") {
@@ -281,7 +303,9 @@ export function DomainsPage() {
           setBackupsLoadError(null);
         } else {
           setBackups([]);
-          setBackupsLoadError(getErrorMessage(backupsResult.reason, "Failed to load backups."));
+          setBackupsLoadError(
+            getErrorMessage(backupsResult.reason, "Failed to load backups."),
+          );
         }
       } finally {
         if (active) {
@@ -311,25 +335,30 @@ export function DomainsPage() {
 
   const isEditing = formMode === "edit" && editingDomainId !== null;
   const config = kindConfig[form.kind];
-  const siteBackups = backups.reduce<Record<string, BackupRecord[]>>((groups, backup) => {
-    const hostname = getSiteHostnameFromBackupRecord(backup);
-    if (!hostname) {
-      return groups;
-    }
+  const siteBackups = backups.reduce<Record<string, BackupRecord[]>>(
+    (groups, backup) => {
+      const hostname = getSiteHostnameFromBackupRecord(backup);
+      if (!hostname) {
+        return groups;
+      }
 
-    if (!groups[hostname]) {
-      groups[hostname] = [];
-    }
-    groups[hostname].push(backup);
-    return groups;
-  }, {});
+      if (!groups[hostname]) {
+        groups[hostname] = [];
+      }
+      groups[hostname].push(backup);
+      return groups;
+    },
+    {},
+  );
   const selectedDomainBackups = backupDialogDomain
-    ? siteBackups[backupDialogDomain.hostname] ?? []
+    ? (siteBackups[backupDialogDomain.hostname] ?? [])
     : [];
   const backupDialogCreating =
-    backupDialogDomain !== null && creatingBackupDomainId === backupDialogDomain.id;
+    backupDialogDomain !== null &&
+    creatingBackupDomainId === backupDialogDomain.id;
   const backupDialogCreated =
-    backupDialogDomain !== null && createdBackupDomainId === backupDialogDomain.id;
+    backupDialogDomain !== null &&
+    createdBackupDomainId === backupDialogDomain.id;
   const deleteDocumentRootAvailable =
     deleteDomainCandidate !== null &&
     isSiteBackedKind(deleteDomainCandidate.kind) &&
@@ -456,7 +485,9 @@ export function DomainsPage() {
           ? null
           : getErrorMessage(
               error,
-              isEditing ? "Failed to update domain." : "Failed to create domain.",
+              isEditing
+                ? "Failed to update domain."
+                : "Failed to create domain.",
             ),
       );
     } finally {
@@ -487,7 +518,9 @@ export function DomainsPage() {
       setDomains((current) =>
         current.filter((currentDomain) => currentDomain.id !== domain.id),
       );
-      setBackupDialogDomain((current) => (current?.id === domain.id ? null : current));
+      setBackupDialogDomain((current) =>
+        current?.id === domain.id ? null : current,
+      );
       if (editingDomainId === domain.id) {
         setResetOnClose(true);
         setFormOpen(false);
@@ -498,11 +531,15 @@ export function DomainsPage() {
         });
       }
     } catch (error) {
-      setLoadError(getErrorMessage(error, `Failed to delete ${domain.hostname}.`));
+      setLoadError(
+        getErrorMessage(error, `Failed to delete ${domain.hostname}.`),
+      );
     } finally {
       setDeletingDomainId(null);
       setDeleteDomainOptions(initialDeleteDomainOptions);
-      setDeleteDomainCandidate((current) => (current?.id === domain.id ? null : current));
+      setDeleteDomainCandidate((current) =>
+        current?.id === domain.id ? null : current,
+      );
     }
   }
 
@@ -521,7 +558,10 @@ export function DomainsPage() {
         include_databases: false,
         site_hostnames: [domain.hostname],
       });
-      setBackups((current) => [record, ...current.filter((item) => item.name !== record.name)]);
+      setBackups((current) => [
+        record,
+        ...current.filter((item) => item.name !== record.name),
+      ]);
       setBackupsLoadError(null);
       if (createdBackupTimeoutRef.current !== null) {
         window.clearTimeout(createdBackupTimeoutRef.current);
@@ -536,7 +576,10 @@ export function DomainsPage() {
       toast.success(`Created backup ${record.name}.`);
     } catch (error) {
       toast.error(
-        getErrorMessage(error, `Failed to create backup for ${domain.hostname}.`),
+        getErrorMessage(
+          error,
+          `Failed to create backup for ${domain.hostname}.`,
+        ),
       );
     } finally {
       setCreatingBackupDomainId(null);
@@ -554,7 +597,9 @@ export function DomainsPage() {
       const fileName = await downloadEntry(filesPath);
       toast.success(`Downloaded ${fileName}.`);
     } catch (error) {
-      toast.error(getErrorMessage(error, `Failed to download ${domain.hostname}.`));
+      toast.error(
+        getErrorMessage(error, `Failed to download ${domain.hostname}.`),
+      );
     } finally {
       setDownloadingDomainId(null);
     }
@@ -612,14 +657,20 @@ export function DomainsPage() {
             setBackupDialogDomain(null);
           }
         }}
-        title={backupDialogDomain ? `${backupDialogDomain.hostname} backups` : "Domain backups"}
+        title={
+          backupDialogDomain
+            ? `${backupDialogDomain.hostname} backups`
+            : "Domain backups"
+        }
         backups={selectedDomainBackups}
         onCreateBackup={() => {
           if (backupDialogDomain) {
             void handleCreateBackup(backupDialogDomain);
           }
         }}
-        createDisabled={backupDialogDomain === null || creatingBackupDomainId !== null}
+        createDisabled={
+          backupDialogDomain === null || creatingBackupDomainId !== null
+        }
         createBusy={backupDialogCreating}
         createDone={backupDialogCreated}
         onRestoreBackup={(name) => {
@@ -654,7 +705,10 @@ export function DomainsPage() {
         }
         confirmText="Delete domain"
         destructive
-        isLoading={deleteDomainCandidate !== null && deletingDomainId === deleteDomainCandidate.id}
+        isLoading={
+          deleteDomainCandidate !== null &&
+          deletingDomainId === deleteDomainCandidate.id
+        }
         handleConfirm={() => {
           void confirmDeleteDomain();
         }}
@@ -690,7 +744,9 @@ export function DomainsPage() {
             <Checkbox
               id={deleteDocumentRootCheckboxId}
               checked={deleteDomainOptions.deleteDocumentRoot}
-              disabled={deletingDomainId !== null || !deleteDocumentRootAvailable}
+              disabled={
+                deletingDomainId !== null || !deleteDocumentRootAvailable
+              }
               onCheckedChange={(checked) =>
                 setDeleteDomainOptions((current) => ({
                   ...current,
@@ -719,6 +775,16 @@ export function DomainsPage() {
           </div>
         </div>
       </ActionConfirmDialog>
+
+      <DomainFTPDialog
+        open={ftpDialogDomain !== null}
+        domain={ftpDialogDomain}
+        onOpenChange={(open) => {
+          if (!open) {
+            setFTPDialogDomain(null);
+          }
+        }}
+      />
 
       <Dialog open={formOpen} onOpenChange={handleOpenChange}>
         <PageHeader
@@ -769,7 +835,9 @@ export function DomainsPage() {
                         <TableHead>Domain</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead>Backup</TableHead>
-                        <TableHead className="w-[220px] text-right">Actions</TableHead>
+                        <TableHead className="w-[260px] text-right">
+                          Actions
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -779,7 +847,8 @@ export function DomainsPage() {
                           sitesBasePath,
                           domain.target,
                         );
-                        const backupCount = siteBackups[domain.hostname]?.length ?? 0;
+                        const backupCount =
+                          siteBackups[domain.hostname]?.length ?? 0;
 
                         return (
                           <TableRow key={domain.id}>
@@ -792,7 +861,11 @@ export function DomainsPage() {
                                 >
                                   {domain.hostname}
                                 </Link>
-                                <Badge asChild variant="outline" className="rounded-full">
+                                <Badge
+                                  asChild
+                                  variant="outline"
+                                  className="rounded-full"
+                                >
                                   <a
                                     href={getDomainSiteUrl(domain.hostname)}
                                     target="_blank"
@@ -840,7 +913,7 @@ export function DomainsPage() {
                                 </button>
                               )}
                             </TableCell>
-                            <TableCell className="w-[220px]">
+                            <TableCell className="w-[260px]">
                               <div className="flex items-center justify-end gap-0.5">
                                 {filesPath !== null ? (
                                   <Button
@@ -895,6 +968,23 @@ export function DomainsPage() {
                                   type="button"
                                   variant="ghost"
                                   size="icon"
+                                  onClick={() => {
+                                    setFTPDialogDomain(domain);
+                                  }}
+                                  disabled={deletingDomainId !== null}
+                                  aria-label={`Manage FTP for ${domain.hostname}`}
+                                  title="Manage FTP"
+                                  className={domainActionButtonClass}
+                                >
+                                  <UserCog
+                                    className="size-6"
+                                    stroke={domainActionIconStroke}
+                                  />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
                                   onClick={() => openEditForm(domain)}
                                   disabled={deletingDomainId !== null}
                                   aria-label={`Edit ${domain.hostname}`}
@@ -945,7 +1035,10 @@ export function DomainsPage() {
                       No domains configured.
                     </p>
                     <p className="text-[13px] leading-6 text-[var(--app-text-muted)]">
-                      Click <span className="font-medium text-[var(--app-text)]">Add domain</span>{" "}
+                      Click{" "}
+                      <span className="font-medium text-[var(--app-text)]">
+                        Add domain
+                      </span>{" "}
                       to create the first entry.
                     </p>
                   </div>
@@ -958,7 +1051,11 @@ export function DomainsPage() {
         <DialogContent
           className="sm:max-w-xl"
           onAnimationEnd={(event) => {
-            if (event.target !== event.currentTarget || formOpen || !resetOnClose) {
+            if (
+              event.target !== event.currentTarget ||
+              formOpen ||
+              !resetOnClose
+            ) {
               return;
             }
 
@@ -981,7 +1078,9 @@ export function DomainsPage() {
           }}
         >
           <DialogHeader>
-            <DialogTitle>{isEditing ? "Edit domain" : "New domain"}</DialogTitle>
+            <DialogTitle>
+              {isEditing ? "Edit domain" : "New domain"}
+            </DialogTitle>
             <DialogDescription>
               {isEditing
                 ? "Update the route target and domain type. Domains stay fixed after creation."
@@ -1037,7 +1136,9 @@ export function DomainsPage() {
                 }
               />
               {errors.hostname ? (
-                <p className="text-[12px] text-[var(--app-danger)]">{errors.hostname}</p>
+                <p className="text-[12px] text-[var(--app-danger)]">
+                  {errors.hostname}
+                </p>
               ) : isEditing ? (
                 <p className="text-[12px] text-[var(--app-text-muted)]">
                   Domain cannot be changed after creation.
@@ -1090,7 +1191,9 @@ export function DomainsPage() {
                 })}
               </div>
               {errors.kind ? (
-                <p className="text-[12px] text-[var(--app-danger)]">{errors.kind}</p>
+                <p className="text-[12px] text-[var(--app-danger)]">
+                  {errors.kind}
+                </p>
               ) : null}
             </div>
 
@@ -1123,7 +1226,9 @@ export function DomainsPage() {
                   className={errors.target ? "border-[var(--app-danger)]" : ""}
                 />
                 {errors.target ? (
-                  <p className="text-[12px] text-[var(--app-danger)]">{errors.target}</p>
+                  <p className="text-[12px] text-[var(--app-danger)]">
+                    {errors.target}
+                  </p>
                 ) : (
                   <p className="text-[12px] text-[var(--app-text-muted)]">
                     {config.helpText}
@@ -1142,7 +1247,8 @@ export function DomainsPage() {
                     Caddy cache
                   </label>
                   <p className="text-[12px] text-[var(--app-text-muted)]">
-                    Cache eligible responses for this domain with Caddy&apos;s cache module.
+                    Cache eligible responses for this domain with Caddy&apos;s
+                    cache module.
                   </p>
                 </div>
                 <Switch
@@ -1161,7 +1267,8 @@ export function DomainsPage() {
 
             <DialogFooter className="border-t border-[var(--app-border)] pt-4">
               <div className="text-[12px] text-[var(--app-text-muted)]">
-                Static and PHP domains use the default directories automatically.
+                Static and PHP domains use the default directories
+                automatically.
               </div>
               <div className="flex items-center justify-end gap-2">
                 <Button

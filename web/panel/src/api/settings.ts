@@ -2,6 +2,9 @@ export type PanelSettings = {
   panel_name: string;
   panel_url: string;
   github_token: string;
+  ftp_enabled: boolean;
+  ftp_port: number;
+  ftp_passive_ports: string;
   google_drive_email: string;
   google_drive_connected: boolean;
   google_drive_available: boolean;
@@ -9,7 +12,12 @@ export type PanelSettings = {
 
 export type UpdatePanelSettingsInput = Pick<
   PanelSettings,
-  "panel_name" | "panel_url" | "github_token"
+  | "panel_name"
+  | "panel_url"
+  | "github_token"
+  | "ftp_enabled"
+  | "ftp_port"
+  | "ftp_passive_ports"
 >;
 
 export type SettingsApiError = Error & {
