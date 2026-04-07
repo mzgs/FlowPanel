@@ -29,6 +29,7 @@ import {
   Scissors,
   Search,
   ShieldCheck,
+  TerminalSquare,
   Trash2,
   Upload,
 } from "@/components/icons/tabler-icons";
@@ -51,6 +52,7 @@ import {
   type FileListing,
 } from "@/api/files";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
+import { TerminalWindow } from "@/components/terminal-window";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -365,6 +367,7 @@ export function FilesPage() {
   const [permissionTarget, setPermissionTarget] = useState<FileEntry | null>(null);
   const [permissionValue, setPermissionValue] = useState("");
   const [permissionRecursive, setPermissionRecursive] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
 
   const listingQuery = useQuery({
     queryKey: ["files", currentPath],
@@ -412,6 +415,7 @@ export function FilesPage() {
   const canEditPermissions = selectedItem !== null && selectedItem.type !== "symlink";
   const contextPasteTarget =
     contextTargetItem?.type === "directory" ? contextTargetItem.path : currentPath;
+  const terminalPathLabel = listing?.absolute_path || listing?.root_path || "/";
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1401,6 +1405,18 @@ export function FilesPage() {
                       variant="secondary"
                       size="icon"
                       className="size-8"
+                      aria-label="Open terminal"
+                      title="Open terminal"
+                      onClick={() => setTerminalOpen(true)}
+                      disabled={!listing}
+                    >
+                      <TerminalSquare className="h-4 w-4" />
+                      <span className="sr-only">Open terminal</span>
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="size-8"
                       aria-label="New folder"
                       title="New folder"
                       onClick={() => openDialog("folder")}
@@ -1777,6 +1793,22 @@ export function FilesPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={terminalOpen} onOpenChange={setTerminalOpen}>
+        <DialogContent className="max-w-6xl gap-0 overflow-hidden p-0 sm:max-w-6xl">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Terminal</DialogTitle>
+            <DialogDescription>{terminalPathLabel}</DialogDescription>
+          </DialogHeader>
+          <TerminalWindow
+            cwd={currentPath}
+            cwdLabel={terminalPathLabel}
+            title="Terminal"
+            className="rounded-none border-0 shadow-none"
+            heightClassName="h-[24rem] sm:h-[32rem]"
+          />
         </DialogContent>
       </Dialog>
 

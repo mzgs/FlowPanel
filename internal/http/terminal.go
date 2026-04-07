@@ -12,9 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"flowpanel/internal/app"
+	filesvc "flowpanel/internal/files"
 
 	"github.com/creack/pty"
 	"github.com/gobwas/ws"
@@ -68,12 +70,22 @@ func newTerminalWebSocketHandler(app *app.App) stdhttp.Handler {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
-		ptyFile, cmd, cwd, shell, err := startTerminalSession(ctx)
+		startDir, err := resolveTerminalSessionDirectory(app, r)
+		if err != nil {
+			logger.Warn("resolve terminal start directory failed", zap.Error(err))
+			_ = socket.writeJSON(terminalServerMessage{
+				Type:    "error",
+				Message: terminalStartErrorMessage(err),
+			})
+			return
+		}
+
+		ptyFile, cmd, cwd, shell, err := startTerminalSession(ctx, startDir)
 		if err != nil {
 			logger.Error("start terminal session failed", zap.Error(err))
 			_ = socket.writeJSON(terminalServerMessage{
 				Type:    "error",
-				Message: "Failed to start the local shell session.",
+				Message: terminalStartErrorMessage(err),
 			})
 			return
 		}
@@ -132,15 +144,47 @@ func (w *terminalSocketWriter) writeJSON(payload terminalServerMessage) error {
 	return wsutil.WriteServerText(w.conn, data)
 }
 
-func startTerminalSession(ctx context.Context) (*os.File, *exec.Cmd, string, string, error) {
+func resolveTerminalSessionDirectory(app *app.App, r *stdhttp.Request) (string, error) {
+	requestedPath := strings.TrimSpace(r.URL.Query().Get("cwd"))
+	if requestedPath == "" {
+		return terminalStartDirectory()
+	}
+	if app.Files == nil {
+		return "", errors.New("file manager is not configured")
+	}
+
+	directoryPath, _, err := app.Files.ResolveDirectory(requestedPath)
+	if err != nil {
+		return "", err
+	}
+
+	return directoryPath, nil
+}
+
+func terminalStartErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, filesvc.ErrInvalidPath),
+		errors.Is(err, filesvc.ErrNotFound),
+		errors.Is(err, filesvc.ErrDirectoryExpected),
+		errors.Is(err, filesvc.ErrUnsupportedEntry):
+		return "Failed to open the requested folder in the terminal."
+	default:
+		return "Failed to start the local shell session."
+	}
+}
+
+func startTerminalSession(ctx context.Context, startDir string) (*os.File, *exec.Cmd, string, string, error) {
 	shell, args, err := resolveTerminalShell()
 	if err != nil {
 		return nil, nil, "", "", err
 	}
 
-	cwd, err := terminalStartDirectory()
-	if err != nil {
-		return nil, nil, "", "", err
+	cwd := strings.TrimSpace(startDir)
+	if cwd == "" {
+		cwd, err = terminalStartDirectory()
+		if err != nil {
+			return nil, nil, "", "", err
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, shell, args...)

@@ -55,6 +55,46 @@ func TestListReturnsRootWhenTraversalTargetsMissingPath(t *testing.T) {
 	}
 }
 
+func TestResolveDirectoryNormalizesTraversalToRootedPath(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, "site"), 0o755); err != nil {
+		t.Fatalf("mkdir site: %v", err)
+	}
+
+	absolutePath, normalizedPath, err := service.ResolveDirectory("../../site")
+	if err != nil {
+		t.Fatalf("resolve directory: %v", err)
+	}
+
+	if normalizedPath != "site" {
+		t.Fatalf("normalized path = %q, want site", normalizedPath)
+	}
+	if absolutePath != filepath.Join(service.RootPath(), "site") {
+		t.Fatalf("absolute path = %q, want rooted path", absolutePath)
+	}
+}
+
+func TestResolveDirectoryRejectsFiles(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<h1>hello</h1>"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if _, _, err := service.ResolveDirectory("index.html"); err != ErrDirectoryExpected {
+		t.Fatalf("resolve directory error = %v, want %v", err, ErrDirectoryExpected)
+	}
+}
+
 func TestListIncludesPermissions(t *testing.T) {
 	root := t.TempDir()
 	service, err := NewService(root)

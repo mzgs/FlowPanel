@@ -113,6 +113,18 @@ func (s *Service) RootName() string {
 	return s.rootName
 }
 
+func (s *Service) ResolveDirectory(relPath string) (string, string, error) {
+	absolutePath, normalizedPath, entryType, err := s.resolveExisting(relPath)
+	if err != nil {
+		return "", "", err
+	}
+	if entryType != EntryTypeDirectory {
+		return "", "", ErrDirectoryExpected
+	}
+
+	return absolutePath, normalizedPath, nil
+}
+
 func (s *Service) List(relPath string) (Listing, error) {
 	absolutePath, normalizedPath, entryType, err := s.resolveExisting(relPath)
 	if err != nil {
