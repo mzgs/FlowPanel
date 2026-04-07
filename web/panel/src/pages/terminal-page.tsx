@@ -251,13 +251,12 @@ export function TerminalPage() {
     <>
       <PageHeader
         title="Terminal"
-        meta="Interactive local shell running on the FlowPanel host."
         actions={actions}
       />
 
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-300">
+          <div className="flex items-center justify-between border-b border-zinc-800 bg-[oklch(0.24_0.01_246.79)] px-4 py-3 text-sm text-zinc-300">
             <div className="flex items-center gap-2">
               <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
               <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
