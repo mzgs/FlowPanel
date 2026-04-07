@@ -79,9 +79,9 @@ export function TerminalPage() {
       lineHeight: 1.35,
       scrollback: 5000,
       theme: {
-        background: "#1e1e1e",
+        background: "#000000",
         cursor: "#f5f5f5",
-        cursorAccent: "#1e1e1e",
+        cursorAccent: "#000000",
         foreground: "#f5f5f5",
         selectionBackground: "rgba(255,255,255,0.18)",
       },
@@ -257,7 +257,7 @@ export function TerminalPage() {
 
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div className="flex items-center justify-between border-b border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-300">
+          <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-300">
             <div className="flex items-center gap-2">
               <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
               <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
@@ -276,28 +276,10 @@ export function TerminalPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b px-4 py-3 text-sm text-muted-foreground">
-            <div>
-              Host: <span className="font-mono text-foreground">local</span>
-            </div>
-            <div>
-              Shell: <span className="font-mono text-foreground">{sessionMeta.shell || "waiting"}</span>
-            </div>
-            <div className="min-w-0">
-              Directory:{" "}
-              <span className="font-mono text-foreground" title={sessionMeta.cwd || undefined}>
-                {sessionMeta.cwd || "waiting"}
-              </span>
-            </div>
-            <div>
-              PID: <span className="font-mono text-foreground">{sessionMeta.pid ?? "waiting"}</span>
-            </div>
-          </div>
-
-          <div className="bg-[#1e1e1e] px-3 py-3 sm:px-4">
+          <div className="bg-black px-3 py-3 sm:px-4">
             <div
               ref={hostRef}
-              className="h-[34rem] overflow-hidden rounded-md border border-zinc-800 bg-[#1e1e1e] sm:h-[40rem]"
+              className="h-[26rem] overflow-hidden rounded-md border border-zinc-800 bg-black sm:h-[32rem]"
               onClick={() => terminalRef.current?.focus()}
             />
           </div>
