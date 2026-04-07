@@ -226,6 +226,20 @@ export function DomainFTPDialog({
           </div>
         ) : ftpStatus ? (
           <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>FTP server</Label>
+                <p className="font-mono text-[13px] text-[var(--app-text)]">{ftpStatus.host}</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>FTP port</Label>
+                <p className="font-mono text-[13px] text-[var(--app-text)]">{ftpStatus.port}</p>
+              </div>
+            </div>
+
+            <hr className="border-[var(--app-border)]" />
+
             <div className="space-y-2">
               <Label htmlFor="domain-ftp-username">FTP username</Label>
               <Input
