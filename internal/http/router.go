@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -1592,6 +1593,148 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodHead, "/phpmyadmin", phpMyAdminStatusHandler)
 		r.Method(stdhttp.MethodPost, "/phpmyadmin/install", phpMyAdminInstallHandler)
 
+		ftpAccountsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.FTPAccounts == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "ftp accounts are not configured",
+				})
+				return
+			}
+
+			records, err := app.FTPAccounts.ListAccounts(r.Context())
+			if err != nil {
+				app.Logger.Error("list ftp accounts failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to list ftp accounts",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"accounts": records,
+			})
+		})
+
+		ftpAccountsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.FTPAccounts == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "ftp accounts are not configured",
+				})
+				return
+			}
+
+			var input ftp.CreateAccountInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			record, err := app.FTPAccounts.CreateAccount(r.Context(), input)
+			if err != nil {
+				var validation ftp.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("create ftp account failed", zap.Error(err))
+				mutationEvent(r.Context(), "ftp", "create", "ftp_account", input.Username, input.Username, "failed", "Failed to create the FTP account.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to create ftp account",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "ftp", "create", "ftp_account", record.ID, record.Username, "succeeded", fmt.Sprintf("Created FTP account %q.", record.Username))
+			writeJSON(w, stdhttp.StatusCreated, map[string]any{
+				"account": record,
+			})
+		})
+
+		ftpAccountsUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.FTPAccounts == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "ftp accounts are not configured",
+				})
+				return
+			}
+
+			var input ftp.UpdateAccountInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			accountID := chi.URLParam(r, "accountID")
+			record, err := app.FTPAccounts.UpdateAccount(r.Context(), accountID, input)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+						"error": "ftp account not found",
+					})
+					return
+				}
+
+				var validation ftp.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("update ftp account failed",
+					zap.String("account_id", accountID),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "ftp", "update", "ftp_account", accountID, accountID, "failed", "Failed to update the FTP account.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to update ftp account",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "ftp", "update", "ftp_account", record.ID, record.Username, "succeeded", fmt.Sprintf("Updated FTP account %q.", record.Username))
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"account": record,
+			})
+		})
+
+		ftpAccountsDeleteHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.FTPAccounts == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "ftp accounts are not configured",
+				})
+				return
+			}
+
+			accountID := chi.URLParam(r, "accountID")
+			if err := app.FTPAccounts.DeleteAccount(r.Context(), accountID); err != nil {
+				app.Logger.Error("delete ftp account failed",
+					zap.String("account_id", accountID),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "ftp", "delete", "ftp_account", accountID, accountID, "failed", "Failed to delete the FTP account.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to delete ftp account",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "ftp", "delete", "ftp_account", accountID, accountID, "succeeded", "Deleted the FTP account.")
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"deleted": true,
+			})
+		})
+
 		domainsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"sites_base_path": app.Domains.BasePath(),
@@ -2783,6 +2926,11 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/domains/{domainID}/ftp", domainFTPGetHandler)
 		r.Method(stdhttp.MethodPut, "/domains/{domainID}/ftp", domainFTPUpdateHandler)
 		r.Method(stdhttp.MethodPost, "/domains/{domainID}/ftp/reset-password", domainFTPResetPasswordHandler)
+		r.Method(stdhttp.MethodGet, "/ftp/accounts", ftpAccountsListHandler)
+		r.Method(stdhttp.MethodHead, "/ftp/accounts", ftpAccountsListHandler)
+		r.Method(stdhttp.MethodPost, "/ftp/accounts", ftpAccountsCreateHandler)
+		r.Method(stdhttp.MethodPut, "/ftp/accounts/{accountID}", ftpAccountsUpdateHandler)
+		r.Method(stdhttp.MethodDelete, "/ftp/accounts/{accountID}", ftpAccountsDeleteHandler)
 
 		filesListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Files == nil {

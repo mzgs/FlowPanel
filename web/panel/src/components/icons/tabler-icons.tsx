@@ -89,6 +89,7 @@ export const RotateCcw = pick("IconRotateClockwise2", "IconRotate2");
 export const Scissors = pick("IconCut");
 export const Search = pick("IconSearch");
 export const SearchIcon = pick("IconSearch");
+export const Server = pick("IconServer");
 export const ServerOff = pick("IconServerOff");
 export const Settings = pick("IconSettings");
 export const Settings2 = pick("IconSettings2");

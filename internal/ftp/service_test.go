@@ -2,6 +2,7 @@ package ftp
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"flowpanel/internal/db"
@@ -228,4 +229,124 @@ func TestServiceReturnsUnsupportedForNonSiteDomains(t *testing.T) {
 	if status.Supported {
 		t.Fatal("ftp should be unsupported for app domains")
 	}
+}
+
+func TestServiceCreateAndUpdateManagedAccount(t *testing.T) {
+	ctx := context.Background()
+	sqliteDB, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() {
+		_ = sqliteDB.Close()
+	}()
+
+	domainStore := domain.NewStore(sqliteDB)
+	if err := domainStore.Ensure(ctx); err != nil {
+		t.Fatalf("ensure domain store: %v", err)
+	}
+	ftpStore := NewStore(sqliteDB)
+	if err := ftpStore.Ensure(ctx); err != nil {
+		t.Fatalf("ensure ftp store: %v", err)
+	}
+
+	sitesBasePath := t.TempDir()
+	domains := domain.NewServiceWithBasePath(sitesBasePath, domainStore)
+	record, err := domains.Create(ctx, domain.CreateInput{
+		Hostname: "example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	service := NewService(ftpStore, domains)
+	account, err := service.CreateAccount(ctx, CreateAccountInput{
+		Username: "deploy-user",
+		Password: "MyCustomFTPPassword1",
+		RootPath: "example.com/releases/current",
+		DomainID: record.ID,
+		Enabled:  boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("create ftp account: %v", err)
+	}
+	if account.DomainID != record.ID {
+		t.Fatalf("domain id = %q, want %q", account.DomainID, record.ID)
+	}
+	if want := filepath.Join(sitesBasePath, "example.com", "releases", "current"); account.RootPath != want {
+		t.Fatalf("root path = %q, want %q", account.RootPath, want)
+	}
+	if !account.Enabled {
+		t.Fatal("expected account to be enabled")
+	}
+
+	updated, err := service.UpdateAccount(ctx, account.ID, UpdateAccountInput{
+		Username: "deploy-user",
+		RootPath: filepath.Join(sitesBasePath, "example.com", "public"),
+		DomainID: record.ID,
+		Enabled:  boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("update ftp account: %v", err)
+	}
+	if want := filepath.Join(sitesBasePath, "example.com", "public"); updated.RootPath != want {
+		t.Fatalf("updated root path = %q, want %q", updated.RootPath, want)
+	}
+
+	status, ok, err := service.StatusForUsername(ctx, "deploy-user")
+	if err != nil {
+		t.Fatalf("status for username: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected status lookup to succeed")
+	}
+	if status.RootPath != updated.RootPath {
+		t.Fatalf("status root path = %q, want %q", status.RootPath, updated.RootPath)
+	}
+}
+
+func TestServiceRejectsManagedAccountRootOutsideSitesBasePath(t *testing.T) {
+	ctx := context.Background()
+	sqliteDB, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() {
+		_ = sqliteDB.Close()
+	}()
+
+	domainStore := domain.NewStore(sqliteDB)
+	if err := domainStore.Ensure(ctx); err != nil {
+		t.Fatalf("ensure domain store: %v", err)
+	}
+	ftpStore := NewStore(sqliteDB)
+	if err := ftpStore.Ensure(ctx); err != nil {
+		t.Fatalf("ensure ftp store: %v", err)
+	}
+
+	domains := domain.NewServiceWithBasePath(t.TempDir(), domainStore)
+	service := NewService(ftpStore, domains)
+
+	_, err = service.CreateAccount(ctx, CreateAccountInput{
+		Username: "deploy-user",
+		Password: "MyCustomFTPPassword1",
+		RootPath: "../outside",
+		Enabled:  boolPtr(true),
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	validation, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("error type = %T, want ValidationErrors", err)
+	}
+	if validation["root_path"] == "" {
+		t.Fatal("missing root_path validation error")
+	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

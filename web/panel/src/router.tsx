@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   List,
   Search,
+  Server,
   Settings,
   TerminalSquare,
   World,
@@ -47,6 +48,7 @@ import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { DomainsPage } from "@/pages/domains-page";
 import { FilesPage } from "@/pages/files-page";
+import { FTPPage } from "@/pages/ftp-page";
 import { LogsPage } from "@/pages/logs-page";
 import { SettingsPage } from "@/pages/settings-page";
 import { TerminalPage } from "@/pages/terminal-page";
@@ -55,6 +57,7 @@ const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
+  { to: "/ftp", label: "FTP", icon: Server },
   { to: "/backups", label: "Backups", icon: HardDrive },
   { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/cron", label: "Cron", icon: Clock },
@@ -74,6 +77,10 @@ function formatSegmentLabel(segment: string) {
 
   if (segment === "file-manager") {
     return "Files";
+  }
+
+  if (segment === "ftp") {
+    return "FTP";
   }
 
   return decodeURIComponent(segment)
@@ -299,6 +306,12 @@ const databaseRoute = createRoute({
   component: DatabasePage,
 });
 
+const ftpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/ftp",
+  component: FTPPage,
+});
+
 const backupsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/backups",
@@ -348,6 +361,7 @@ const routeTree = rootRoute.addChildren([
   domainsRoute,
   domainDetailRoute,
   databaseRoute,
+  ftpRoute,
   backupsRoute,
   filesRoute,
   legacyFileManagerRoute,

@@ -9,13 +9,15 @@ import (
 	"time"
 )
 
-const ftpAccountsTableName = "domain_ftp_accounts"
+const ftpAccountsTableName = "ftp_accounts"
 
 var ErrUsernameTaken = errors.New("ftp username already exists")
 
 type Account struct {
+	ID           string    `json:"id"`
 	DomainID     string    `json:"domain_id"`
 	Username     string    `json:"username"`
+	RootPath     string    `json:"root_path"`
 	Enabled      bool      `json:"enabled"`
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -40,9 +42,11 @@ func (s *Store) Ensure(ctx context.Context) error {
 	}
 
 	const statement = `
-CREATE TABLE IF NOT EXISTS domain_ftp_accounts (
-    domain_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS ftp_accounts (
+    id TEXT PRIMARY KEY,
+    domain_id TEXT NOT NULL DEFAULT '',
     username TEXT NOT NULL UNIQUE,
+    root_path TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
@@ -51,46 +55,90 @@ CREATE TABLE IF NOT EXISTS domain_ftp_accounts (
 `
 
 	if _, err := s.db.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("ensure domain ftp accounts table: %w", err)
+		return fmt.Errorf("ensure ftp accounts table: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+CREATE INDEX IF NOT EXISTS idx_ftp_accounts_domain_id
+ON ftp_accounts(domain_id)
+`); err != nil {
+		return fmt.Errorf("ensure ftp accounts domain index: %w", err)
+	}
+	if err := s.migrateLegacyDomainAccounts(ctx); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (s *Store) GetByDomainID(ctx context.Context, domainID string) (Account, error) {
+func (s *Store) List(ctx context.Context) ([]Account, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, domain_id, username, root_path, password_hash, enabled, created_at, updated_at
+FROM ftp_accounts
+ORDER BY created_at DESC, id DESC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("list ftp accounts: %w", err)
+	}
+	defer rows.Close()
+
+	accounts := make([]Account, 0)
+	for rows.Next() {
+		account, err := scanAccount(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ftp accounts: %w", err)
+	}
+
+	return accounts, nil
+}
+
+func (s *Store) GetByID(ctx context.Context, id string) (Account, error) {
 	if s == nil || s.db == nil {
 		return Account{}, sql.ErrNoRows
 	}
 
-	var (
-		account     Account
-		enabledInt  int64
-		createdAtNS int64
-		updatedAtNS int64
-	)
-
-	err := s.db.QueryRowContext(ctx, `
-SELECT domain_id, username, password_hash, enabled, created_at, updated_at
-FROM domain_ftp_accounts
-WHERE domain_id = ?
-`, strings.TrimSpace(domainID)).Scan(
-		&account.DomainID,
-		&account.Username,
-		&account.PasswordHash,
-		&enabledInt,
-		&createdAtNS,
-		&updatedAtNS,
-	)
+	account, err := scanAccount(s.db.QueryRowContext(ctx, `
+SELECT id, domain_id, username, root_path, password_hash, enabled, created_at, updated_at
+FROM ftp_accounts
+WHERE id = ?
+`, strings.TrimSpace(id)).Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Account{}, sql.ErrNoRows
 		}
-		return Account{}, fmt.Errorf("get ftp account by domain id: %w", err)
+		return Account{}, fmt.Errorf("get ftp account by id: %w", err)
 	}
 
-	account.Enabled = enabledInt != 0
-	account.CreatedAt = time.Unix(0, createdAtNS).UTC()
-	account.UpdatedAt = time.Unix(0, updatedAtNS).UTC()
+	return account, nil
+}
+
+func (s *Store) GetPrimaryByDomainID(ctx context.Context, domainID string) (Account, error) {
+	if s == nil || s.db == nil {
+		return Account{}, sql.ErrNoRows
+	}
+
+	account, err := scanAccount(s.db.QueryRowContext(ctx, `
+SELECT id, domain_id, username, root_path, password_hash, enabled, created_at, updated_at
+FROM ftp_accounts
+WHERE domain_id = ?
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+`, strings.TrimSpace(domainID)).Scan)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Account{}, sql.ErrNoRows
+		}
+		return Account{}, fmt.Errorf("get primary ftp account by domain id: %w", err)
+	}
+
 	return account, nil
 }
 
@@ -99,25 +147,11 @@ func (s *Store) GetByUsername(ctx context.Context, username string) (Account, er
 		return Account{}, sql.ErrNoRows
 	}
 
-	var (
-		account     Account
-		enabledInt  int64
-		createdAtNS int64
-		updatedAtNS int64
-	)
-
-	err := s.db.QueryRowContext(ctx, `
-SELECT domain_id, username, password_hash, enabled, created_at, updated_at
-FROM domain_ftp_accounts
+	account, err := scanAccount(s.db.QueryRowContext(ctx, `
+SELECT id, domain_id, username, root_path, password_hash, enabled, created_at, updated_at
+FROM ftp_accounts
 WHERE username = ?
-`, strings.TrimSpace(username)).Scan(
-		&account.DomainID,
-		&account.Username,
-		&account.PasswordHash,
-		&enabledInt,
-		&createdAtNS,
-		&updatedAtNS,
-	)
+`, strings.TrimSpace(username)).Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Account{}, sql.ErrNoRows
@@ -125,9 +159,6 @@ WHERE username = ?
 		return Account{}, fmt.Errorf("get ftp account by username: %w", err)
 	}
 
-	account.Enabled = enabledInt != 0
-	account.CreatedAt = time.Unix(0, createdAtNS).UTC()
-	account.UpdatedAt = time.Unix(0, updatedAtNS).UTC()
 	return account, nil
 }
 
@@ -137,23 +168,29 @@ func (s *Store) Upsert(ctx context.Context, account Account) error {
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO domain_ftp_accounts (
+INSERT INTO ftp_accounts (
+    id,
     domain_id,
     username,
+    root_path,
     password_hash,
     enabled,
     created_at,
     updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(domain_id) DO UPDATE SET
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    domain_id = excluded.domain_id,
     username = excluded.username,
+    root_path = excluded.root_path,
     password_hash = excluded.password_hash,
     enabled = excluded.enabled,
     updated_at = excluded.updated_at
 `,
-		account.DomainID,
+		account.ID,
+		strings.TrimSpace(account.DomainID),
 		account.Username,
+		account.RootPath,
 		account.PasswordHash,
 		boolToInt(account.Enabled),
 		account.CreatedAt.UTC().UnixNano(),
@@ -167,7 +204,22 @@ ON CONFLICT(domain_id) DO UPDATE SET
 		return ErrUsernameTaken
 	}
 
-	return fmt.Errorf("upsert ftp account for domain %q: %w", account.DomainID, err)
+	return fmt.Errorf("upsert ftp account %q: %w", account.ID, err)
+}
+
+func (s *Store) DeleteByID(ctx context.Context, id string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	if _, err := s.db.ExecContext(ctx, `
+DELETE FROM ftp_accounts
+WHERE id = ?
+`, strings.TrimSpace(id)); err != nil {
+		return fmt.Errorf("delete ftp account by id: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Store) DeleteByDomainID(ctx context.Context, domainID string) error {
@@ -176,13 +228,101 @@ func (s *Store) DeleteByDomainID(ctx context.Context, domainID string) error {
 	}
 
 	if _, err := s.db.ExecContext(ctx, `
-DELETE FROM domain_ftp_accounts
+DELETE FROM ftp_accounts
 WHERE domain_id = ?
 `, strings.TrimSpace(domainID)); err != nil {
-		return fmt.Errorf("delete ftp account by domain id: %w", err)
+		return fmt.Errorf("delete ftp accounts by domain id: %w", err)
 	}
 
 	return nil
+}
+
+func (s *Store) migrateLegacyDomainAccounts(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	var count int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ftp_accounts`).Scan(&count); err != nil {
+		return fmt.Errorf("count ftp accounts: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	if !tableExists(ctx, s.db, "domain_ftp_accounts") {
+		return nil
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO ftp_accounts (
+    id,
+    domain_id,
+    username,
+    root_path,
+    password_hash,
+    enabled,
+    created_at,
+    updated_at
+)
+SELECT
+    lower(hex(randomblob(16))),
+    legacy.domain_id,
+    legacy.username,
+    COALESCE(domains.target, ''),
+    legacy.password_hash,
+    legacy.enabled,
+    legacy.created_at,
+    legacy.updated_at
+FROM domain_ftp_accounts AS legacy
+LEFT JOIN domains ON domains.id = legacy.domain_id
+`)
+	if err != nil {
+		return fmt.Errorf("migrate legacy ftp accounts: %w", err)
+	}
+
+	return nil
+}
+
+func tableExists(ctx context.Context, db *sql.DB, name string) bool {
+	if db == nil {
+		return false
+	}
+
+	var found string
+	err := db.QueryRowContext(ctx, `
+SELECT name
+FROM sqlite_master
+WHERE type = 'table' AND name = ?
+`, strings.TrimSpace(name)).Scan(&found)
+	return err == nil && found != ""
+}
+
+func scanAccount(scan func(dest ...any) error) (Account, error) {
+	var (
+		account     Account
+		enabledInt  int64
+		createdAtNS int64
+		updatedAtNS int64
+	)
+
+	if err := scan(
+		&account.ID,
+		&account.DomainID,
+		&account.Username,
+		&account.RootPath,
+		&account.PasswordHash,
+		&enabledInt,
+		&createdAtNS,
+		&updatedAtNS,
+	); err != nil {
+		return Account{}, err
+	}
+
+	account.Enabled = enabledInt != 0
+	account.CreatedAt = time.Unix(0, createdAtNS).UTC()
+	account.UpdatedAt = time.Unix(0, updatedAtNS).UTC()
+	return account, nil
 }
 
 func boolToInt(value bool) int {
