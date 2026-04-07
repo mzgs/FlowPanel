@@ -1,7 +1,9 @@
 package httpx
 
 import (
+	"bufio"
 	"fmt"
+	"net"
 	stdhttp "net/http"
 	"runtime/debug"
 	"time"
@@ -14,6 +16,10 @@ type statusRecorder struct {
 	stdhttp.ResponseWriter
 	status int
 	bytes  int
+}
+
+func (r *statusRecorder) Unwrap() stdhttp.ResponseWriter {
+	return r.ResponseWriter
 }
 
 func (r *statusRecorder) WriteHeader(statusCode int) {
@@ -30,6 +36,18 @@ func (r *statusRecorder) Write(body []byte) (int, error) {
 	r.bytes += written
 
 	return written, err
+}
+
+func (r *statusRecorder) Flush() {
+	_ = stdhttp.NewResponseController(r.ResponseWriter).Flush()
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if r.status == 0 {
+		r.status = stdhttp.StatusSwitchingProtocols
+	}
+
+	return stdhttp.NewResponseController(r.ResponseWriter).Hijack()
 }
 
 func RequestLogger(logger *zap.Logger) func(stdhttp.Handler) stdhttp.Handler {

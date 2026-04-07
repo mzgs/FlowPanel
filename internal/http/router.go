@@ -101,6 +101,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
+		r.Method(stdhttp.MethodGet, "/terminal/ws", newTerminalWebSocketHandler(app))
 
 		settingsGetHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			record, err := app.Settings.Get(r.Context())
