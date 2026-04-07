@@ -8,6 +8,7 @@ import {
   type BackupRecord,
 } from "@/api/backups";
 import {
+  copyDomainWebsite,
   deployDomainGitHubIntegration,
   fetchDomainPreview,
   fetchDomains,
@@ -54,6 +55,7 @@ import {
 } from "@/components/domain-composer-dialog";
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { DomainPHPDialog } from "@/components/domain-php-dialog";
+import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
 import { PageHeader } from "@/components/page-header";
 import { TerminalWindow } from "@/components/terminal-window";
 import { Badge } from "@/components/ui/badge";
@@ -368,6 +370,7 @@ export function DomainDetailPage() {
   const { hostname } = useParams({ from: "/domains/$hostname" });
   const navigate = useNavigate();
   const [domain, setDomain] = useState<DomainRecord | null>(null);
+  const [allDomains, setAllDomains] = useState<DomainRecord[]>([]);
   const [sitesBasePath, setSitesBasePath] = useState("");
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
@@ -380,6 +383,15 @@ export function DomainDetailPage() {
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
   const [phpDialogOpen, setPHPDialogOpen] = useState(false);
   const [terminalDialogOpen, setTerminalDialogOpen] = useState(false);
+  const [websiteCopyDialogOpen, setWebsiteCopyDialogOpen] = useState(false);
+  const [websiteCopyTargetHostname, setWebsiteCopyTargetHostname] = useState("");
+  const [websiteCopyReplaceTargetFiles, setWebsiteCopyReplaceTargetFiles] =
+    useState(true);
+  const [websiteCopyPending, setWebsiteCopyPending] = useState(false);
+  const [websiteCopyError, setWebsiteCopyError] = useState<string | null>(null);
+  const [websiteCopyFieldErrors, setWebsiteCopyFieldErrors] = useState<
+    Record<string, string>
+  >({});
   const [composerHasManifest, setComposerHasManifest] = useState(false);
   const [composerPackages, setComposerPackages] = useState<ComposerPackage[]>([]);
   const [composerLoading, setComposerLoading] = useState(false);
@@ -432,6 +444,7 @@ export function DomainDetailPage() {
     setLoading(true);
     setLoadError(null);
     setDomain(null);
+    setAllDomains([]);
     setSitesBasePath("");
     setBackups([]);
     setDatabases([]);
@@ -442,6 +455,12 @@ export function DomainDetailPage() {
     setGitHubDialogOpen(false);
     setPHPDialogOpen(false);
     setTerminalDialogOpen(false);
+    setWebsiteCopyDialogOpen(false);
+    setWebsiteCopyTargetHostname("");
+    setWebsiteCopyReplaceTargetFiles(true);
+    setWebsiteCopyPending(false);
+    setWebsiteCopyError(null);
+    setWebsiteCopyFieldErrors({});
     setComposerHasManifest(false);
     setComposerPackages([]);
     setComposerLoading(false);
@@ -491,6 +510,7 @@ export function DomainDetailPage() {
         const nextGitHubForm = toGitHubFormState(matchedDomain);
 
         setSitesBasePath(domainsResult.value.sites_base_path);
+        setAllDomains(domainsResult.value.domains);
         setDomain(matchedDomain);
         setGitHubForm(nextGitHubForm);
         setSavedGitHubForm(nextGitHubForm);
@@ -656,6 +676,31 @@ export function DomainDetailPage() {
     : null;
   const terminalPathLabel = filesPath || "/";
   const composerManifestPath = getComposerManifestPath(filesPath);
+  const websiteCopyTargets = allDomains.filter(
+    (record) =>
+      record.hostname !== domain?.hostname &&
+      (record.kind === "Static site" || record.kind === "Php site"),
+  );
+
+  useEffect(() => {
+    if (!websiteCopyDialogOpen) {
+      return;
+    }
+
+    if (websiteCopyTargets.length === 0) {
+      if (websiteCopyTargetHostname !== "") {
+        setWebsiteCopyTargetHostname("");
+      }
+      return;
+    }
+
+    const hasSelectedTarget = websiteCopyTargets.some(
+      (record) => record.hostname === websiteCopyTargetHostname,
+    );
+    if (!hasSelectedTarget) {
+      setWebsiteCopyTargetHostname(websiteCopyTargets[0]?.hostname ?? "");
+    }
+  }, [websiteCopyDialogOpen, websiteCopyTargetHostname, websiteCopyTargets]);
 
   useEffect(() => {
     if (!composerDialogOpen || !domain || composerManifestPath === null) {
@@ -1058,6 +1103,35 @@ export function DomainDetailPage() {
     }
   }
 
+  async function handleCopyWebsite() {
+    if (!domain || !isSiteBackedKind(domain.kind) || websiteCopyPending) {
+      return;
+    }
+
+    setWebsiteCopyPending(true);
+    setWebsiteCopyError(null);
+    setWebsiteCopyFieldErrors({});
+
+    try {
+      await copyDomainWebsite(domain.hostname, {
+        target_hostname: websiteCopyTargetHostname.trim(),
+        replace_target_files: websiteCopyReplaceTargetFiles,
+      });
+      setWebsiteCopyDialogOpen(false);
+      toast.success(
+        `Copied website files from ${domain.hostname} to ${websiteCopyTargetHostname}.`,
+      );
+    } catch (error) {
+      const copyError = error as DomainApiError;
+      setWebsiteCopyFieldErrors(copyError.fieldErrors ?? {});
+      const message = copyError.message || "Website files could not be copied.";
+      setWebsiteCopyError(message);
+      toast.error(message);
+    } finally {
+      setWebsiteCopyPending(false);
+    }
+  }
+
   return (
     <>
       <DomainBackupRestoreDialog
@@ -1201,6 +1275,40 @@ export function DomainDetailPage() {
           }}
           onSave={() => {
             void handleSavePHPSettings();
+          }}
+        />
+      ) : null}
+      {domain && isSiteBackedKind(domain.kind) ? (
+        <DomainWebsiteCopyDialog
+          open={websiteCopyDialogOpen}
+          onOpenChange={(open) => {
+            setWebsiteCopyDialogOpen(open);
+            if (!open) {
+              setWebsiteCopyError(null);
+              setWebsiteCopyFieldErrors({});
+            }
+          }}
+          sourceDomain={domain}
+          targets={websiteCopyTargets}
+          targetHostname={websiteCopyTargetHostname}
+          replaceTargetFiles={websiteCopyReplaceTargetFiles}
+          copying={websiteCopyPending}
+          error={websiteCopyError}
+          fieldErrors={websiteCopyFieldErrors}
+          onTargetHostnameChange={(value) => {
+            setWebsiteCopyError(null);
+            setWebsiteCopyFieldErrors((current) => {
+              const next = { ...current };
+              delete next.target_hostname;
+              return next;
+            });
+            setWebsiteCopyTargetHostname(value);
+          }}
+          onReplaceTargetFilesChange={(checked) => {
+            setWebsiteCopyReplaceTargetFiles(checked);
+          }}
+          onCopy={() => {
+            void handleCopyWebsite();
           }}
         />
       ) : null}
@@ -1402,6 +1510,25 @@ export function DomainDetailPage() {
 
                     if (item.title === "Backup & Restore" && domain !== null) {
                       setBackupDialogOpen(true);
+                      return;
+                    }
+
+                    if (item.title === "Website Copying" && domain !== null) {
+                      if (!isSiteBackedKind(domain.kind)) {
+                        toast.error(
+                          "Website copying is available only for Static site and Php site domains.",
+                        );
+                        return;
+                      }
+                      if (websiteCopyTargets.length === 0) {
+                        toast.error("No other site-backed domains are available to receive a copy.");
+                        return;
+                      }
+
+                      setWebsiteCopyError(null);
+                      setWebsiteCopyFieldErrors({});
+                      setWebsiteCopyReplaceTargetFiles(true);
+                      setWebsiteCopyDialogOpen(true);
                     }
                   }}
                 />

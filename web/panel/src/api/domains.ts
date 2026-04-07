@@ -60,6 +60,11 @@ export type UpdateDomainPHPSettingsInput = {
   display_errors: string;
 };
 
+export type CopyDomainWebsiteInput = {
+  target_hostname: string;
+  replace_target_files: boolean;
+};
+
 export type DomainGitHubDeployResult = {
   action: "initialized" | "updated";
 };
@@ -194,6 +199,24 @@ export async function deployDomainGitHubIntegration(
 
   const payload = (await response.json()) as { action: DomainGitHubDeployResult["action"] };
   return { action: payload.action };
+}
+
+export async function copyDomainWebsite(
+  hostname: string,
+  input: CopyDomainWebsiteInput,
+): Promise<void> {
+  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/copy`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "copy website");
+  }
 }
 
 export async function fetchDomainPreview(

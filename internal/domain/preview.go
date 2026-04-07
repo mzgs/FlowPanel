@@ -178,6 +178,20 @@ func (s *Service) RefreshPreview(ctx context.Context, hostname string) (string, 
 	return s.ensurePreview(ctx, hostname, true)
 }
 
+func (s *Service) InvalidatePreview(hostname string) error {
+	normalizedHostname := normalizeHostname(hostname)
+	if normalizedHostname == "" {
+		return ErrNotFound
+	}
+
+	cachePath := s.previewPath(normalizedHostname)
+	if err := os.Remove(cachePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("delete domain preview cache: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Service) ensurePreview(ctx context.Context, hostname string, force bool) (string, error) {
 	normalizedHostname := normalizeHostname(hostname)
 	if normalizedHostname == "" {

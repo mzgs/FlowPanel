@@ -289,7 +289,7 @@ func TestPHPMyAdminInstallSyncsCaddy(t *testing.T) {
 	if err := cronStore.Ensure(context.Background()); err != nil {
 		t.Fatalf("ensure cron store: %v", err)
 	}
-	domains := domain.NewService(store)
+	domains := domain.NewServiceWithBasePath(t.TempDir(), store)
 
 	router, err := NewRouter(&app.App{
 		Config:     cfg,
@@ -674,6 +674,145 @@ func TestDeleteDomainDocumentRootRejectsBasePathDeletion(t *testing.T) {
 	}
 	if warning != "The domain document root could not be deleted." {
 		t.Fatalf("warning = %q, want generic document root warning", warning)
+	}
+}
+
+func TestDomainWebsiteCopyEndpointCopiesFilesAndReplacesTarget(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	source, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "source.example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create source domain: %v", err)
+	}
+	target, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "target.example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create target domain: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(source.Target, "index.html"), []byte("from-source"), 0o644); err != nil {
+		t.Fatalf("write source index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(source.Target, "app.css"), []byte("body{}"), 0o644); err != nil {
+		t.Fatalf("write source asset: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target.Target, "stale.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write target stale file: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/domains/source.example.com/copy",
+		strings.NewReader(`{"target_hostname":"target.example.com","replace_target_files":true}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	indexContent, err := os.ReadFile(filepath.Join(target.Target, "index.html"))
+	if err != nil {
+		t.Fatalf("read copied index: %v", err)
+	}
+	if string(indexContent) != "from-source" {
+		t.Fatalf("copied index = %q, want from-source", string(indexContent))
+	}
+
+	assetContent, err := os.ReadFile(filepath.Join(target.Target, "app.css"))
+	if err != nil {
+		t.Fatalf("read copied asset: %v", err)
+	}
+	if string(assetContent) != "body{}" {
+		t.Fatalf("copied asset = %q, want body{}", string(assetContent))
+	}
+
+	if _, err := os.Stat(filepath.Join(target.Target, "stale.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale file still exists, stat err = %v", err)
+	}
+}
+
+func TestDomainWebsiteCopyEndpointRejectsSameDomain(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	if _, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "example.com",
+		Kind:     domain.KindStaticSite,
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/domains/example.com/copy",
+		strings.NewReader(`{"target_hostname":"example.com","replace_target_files":true}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+
+	var payload struct {
+		Error       string            `json:"error"`
+		FieldErrors map[string]string `json:"field_errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error != "validation failed" {
+		t.Fatalf("error = %q, want validation failed", payload.Error)
+	}
+	if payload.FieldErrors["target_hostname"] != "Choose a different destination domain." {
+		t.Fatalf("target_hostname error = %q", payload.FieldErrors["target_hostname"])
+	}
+}
+
+func TestDomainWebsiteCopyEndpointRejectsTargetConflictWithoutReplace(t *testing.T) {
+	router, domains, _ := newTestDomainRouter(t)
+
+	source, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "source.example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create source domain: %v", err)
+	}
+	target, err := domains.Create(context.Background(), domain.CreateInput{
+		Hostname: "target.example.com",
+		Kind:     domain.KindStaticSite,
+	})
+	if err != nil {
+		t.Fatalf("create target domain: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(source.Target, "index.html"), []byte("from-source"), 0o644); err != nil {
+		t.Fatalf("write source index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target.Target, "index.html"), []byte("existing-target"), 0o644); err != nil {
+		t.Fatalf("write target index: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/domains/source.example.com/copy",
+		strings.NewReader(`{"target_hostname":"target.example.com","replace_target_files":false}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusConflict, recorder.Body.String())
 	}
 }
 

@@ -1057,6 +1057,10 @@ func movePath(sourcePath string, destinationPath string) error {
 	return os.RemoveAll(sourcePath)
 }
 
+func CopyPath(sourcePath string, destinationPath string) error {
+	return copyPath(sourcePath, destinationPath)
+}
+
 func copyPath(sourcePath string, destinationPath string) error {
 	info, err := os.Stat(sourcePath)
 	if err != nil {

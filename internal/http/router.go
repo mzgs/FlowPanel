@@ -1688,6 +1688,125 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			stdhttp.ServeFile(w, r, previewPath)
 		})
 
+		domainsWebsiteCopyHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostname := chi.URLParam(r, "hostname")
+			sourceRecord, ok := app.Domains.FindByHostname(hostname)
+			if !ok {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{
+					"error": "domain not found",
+				})
+				return
+			}
+
+			var input struct {
+				TargetHostname     string `json:"target_hostname"`
+				ReplaceTargetFiles bool   `json:"replace_target_files"`
+			}
+			if err := decodeJSON(r, &input); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid request body",
+				})
+				return
+			}
+
+			validation := domain.ValidationErrors{}
+			if !isSiteBackedDomainRecord(sourceRecord) {
+				validation["kind"] = "Website copying is available only for Static site and Php site domains."
+			}
+
+			targetHostname := strings.TrimSpace(input.TargetHostname)
+			var targetRecord domain.Record
+			if targetHostname == "" {
+				validation["target_hostname"] = "Select a destination domain."
+			} else {
+				record, exists := app.Domains.FindByHostname(targetHostname)
+				if !exists {
+					validation["target_hostname"] = "Select a valid destination domain."
+				} else {
+					targetRecord = record
+					if !isSiteBackedDomainRecord(targetRecord) {
+						validation["target_hostname"] = "Destination domain must be a Static site or Php site."
+					}
+					if targetRecord.Hostname == sourceRecord.Hostname {
+						validation["target_hostname"] = "Choose a different destination domain."
+					}
+				}
+			}
+
+			if len(validation) > 0 {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error":        "validation failed",
+					"field_errors": map[string]string(validation),
+				})
+				return
+			}
+
+			if err := copyDomainDocumentRoot(
+				sourceRecord,
+				targetRecord,
+				app.Domains.BasePath(),
+				input.ReplaceTargetFiles,
+			); err != nil {
+				switch {
+				case errors.Is(err, errDomainCopyConflict):
+					writeJSON(w, stdhttp.StatusConflict, map[string]any{
+						"error": "target directory already contains files that would be replaced",
+					})
+				case errors.Is(err, errDomainCopyInvalidTarget):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": "validation failed",
+						"field_errors": map[string]string{
+							"target_hostname": "Destination domain must use a different document root.",
+						},
+					})
+				default:
+					app.Logger.Error("copy website failed",
+						zap.String("source_hostname", sourceRecord.Hostname),
+						zap.String("target_hostname", targetRecord.Hostname),
+						zap.Error(err),
+					)
+					mutationEvent(
+						r.Context(),
+						"domains",
+						"copy",
+						"website",
+						sourceRecord.Hostname,
+						sourceRecord.Hostname,
+						"failed",
+						"Failed to copy website files.",
+					)
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to copy website",
+					})
+				}
+				return
+			}
+
+			if err := app.Domains.InvalidatePreview(targetRecord.Hostname); err != nil {
+				app.Logger.Warn("invalidate copied domain preview failed",
+					zap.String("hostname", targetRecord.Hostname),
+					zap.Error(err),
+				)
+			}
+
+			mutationEvent(
+				r.Context(),
+				"domains",
+				"copy",
+				"website",
+				sourceRecord.Hostname,
+				sourceRecord.Hostname,
+				"succeeded",
+				fmt.Sprintf(`Copied website files from %q to %q.`, sourceRecord.Hostname, targetRecord.Hostname),
+			)
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"ok":              true,
+				"source_hostname": sourceRecord.Hostname,
+				"target_hostname": targetRecord.Hostname,
+			})
+		})
+
 		domainsComposerActionHandler := func(action string) stdhttp.HandlerFunc {
 			return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				hostname := chi.URLParam(r, "hostname")
@@ -2431,6 +2550,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodHead, "/domains/logs", domainsLogsHandler)
 		r.Method(stdhttp.MethodGet, "/domains/{hostname}/preview", domainsPreviewHandler)
 		r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
+		r.Method(stdhttp.MethodPost, "/domains/{hostname}/copy", domainsWebsiteCopyHandler)
 		r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/install", domainsComposerActionHandler("install"))
 		r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/update", domainsComposerActionHandler("update"))
 		r.Method(stdhttp.MethodPut, "/domains/{hostname}/php-settings", domainsPHPSettingsUpdateHandler)
@@ -3257,33 +3377,119 @@ func deleteLinkedDomainDatabases(ctx context.Context, manager mariadb.Manager, h
 	return nil, nil
 }
 
-func deleteDomainDocumentRoot(record domain.Record, basePath string) (string, error) {
-	if record.Kind != domain.KindStaticSite && record.Kind != domain.KindPHP {
-		return "", nil
+var (
+	errDomainCopyConflict      = errors.New("target directory already contains conflicting files")
+	errDomainCopyInvalidTarget = errors.New("source and destination domains share the same document root")
+)
+
+func isSiteBackedDomainRecord(record domain.Record) bool {
+	return record.Kind == domain.KindStaticSite || record.Kind == domain.KindPHP
+}
+
+func resolveDomainDocumentRoot(record domain.Record, basePath string) (string, error) {
+	if !isSiteBackedDomainRecord(record) {
+		return "", errors.New("domain is not site-backed")
 	}
 
 	normalizedBasePath := filepath.Clean(strings.TrimSpace(basePath))
 	if normalizedBasePath == "." || normalizedBasePath == "" {
-		err := errors.New("domain sites base path is not configured")
-		return "The domain document root could not be deleted.", err
+		return "", errors.New("domain sites base path is not configured")
 	}
 
 	targetPath := filepath.Clean(strings.TrimSpace(record.Target))
 	if targetPath == "." || targetPath == "" {
-		err := errors.New("domain document root is not configured")
-		return "The domain document root could not be deleted.", err
+		return "", errors.New("domain document root is not configured")
 	}
 
 	relativePath, err := filepath.Rel(normalizedBasePath, targetPath)
 	if err != nil {
-		return "The domain document root could not be deleted.", err
+		return "", err
 	}
 	if relativePath == "." {
-		err := errors.New("refusing to delete the sites base path")
-		return "The domain document root could not be deleted.", err
+		return "", errors.New("refusing to use the sites base path as a document root")
 	}
 	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
-		err := fmt.Errorf("document root %q is outside the sites base path", targetPath)
+		return "", fmt.Errorf("document root %q is outside the sites base path", targetPath)
+	}
+
+	return targetPath, nil
+}
+
+func copyDomainDocumentRoot(
+	source domain.Record,
+	target domain.Record,
+	basePath string,
+	replaceTargetFiles bool,
+) error {
+	sourcePath, err := resolveDomainDocumentRoot(source, basePath)
+	if err != nil {
+		return err
+	}
+
+	targetPath, err := resolveDomainDocumentRoot(target, basePath)
+	if err != nil {
+		return err
+	}
+
+	if sourcePath == targetPath {
+		return errDomainCopyInvalidTarget
+	}
+
+	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+		return fmt.Errorf("ensure target document root: %w", err)
+	}
+
+	if replaceTargetFiles {
+		if err := clearDocumentRootContents(targetPath); err != nil {
+			return err
+		}
+	}
+
+	entries, err := os.ReadDir(sourcePath)
+	if err != nil {
+		return fmt.Errorf("read source document root: %w", err)
+	}
+
+	for _, entry := range entries {
+		sourceEntryPath := filepath.Join(sourcePath, entry.Name())
+		targetEntryPath := filepath.Join(targetPath, entry.Name())
+		if err := filesvc.CopyPath(sourceEntryPath, targetEntryPath); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return errDomainCopyConflict
+			}
+			return fmt.Errorf("copy document root entry %q: %w", entry.Name(), err)
+		}
+	}
+
+	return nil
+}
+
+func clearDocumentRootContents(path string) error {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return os.MkdirAll(path, 0o755)
+		}
+		return fmt.Errorf("read target document root: %w", err)
+	}
+
+	for _, entry := range entries {
+		entryPath := filepath.Join(path, entry.Name())
+		if err := os.RemoveAll(entryPath); err != nil {
+			return fmt.Errorf("clear target document root entry %q: %w", entry.Name(), err)
+		}
+	}
+
+	return nil
+}
+
+func deleteDomainDocumentRoot(record domain.Record, basePath string) (string, error) {
+	if !isSiteBackedDomainRecord(record) {
+		return "", nil
+	}
+
+	targetPath, err := resolveDomainDocumentRoot(record, basePath)
+	if err != nil {
 		return "The domain document root could not be deleted.", err
 	}
 

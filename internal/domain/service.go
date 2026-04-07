@@ -102,7 +102,11 @@ type Service struct {
 }
 
 func NewService(store *Store) *Service {
-	return newService(defaultSitesBasePath(), store)
+	return NewServiceWithBasePath(defaultSitesBasePath(), store)
+}
+
+func NewServiceWithBasePath(basePath string, store *Store) *Service {
+	return newService(basePath, store)
 }
 
 func newService(basePath string, store *Store) *Service {
