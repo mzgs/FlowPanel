@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -48,6 +49,7 @@ type FormState = {
   password: string;
   rootPath: string;
   domainID: string;
+  enabled: boolean;
 };
 
 type FormErrors = {
@@ -55,6 +57,7 @@ type FormErrors = {
   password?: string;
   root_path?: string;
   domain_id?: string;
+  enabled?: string;
 };
 
 const initialForm: FormState = {
@@ -62,6 +65,7 @@ const initialForm: FormState = {
   password: "",
   rootPath: "",
   domainID: "",
+  enabled: true,
 };
 
 const supportedDomainKinds = new Set(["Static site", "Php site"]);
@@ -232,6 +236,7 @@ export function FTPPage() {
       password: "",
       rootPath: account.root_path,
       domainID: account.domain_id,
+      enabled: account.enabled,
     });
     setDialogMode("edit");
   }
@@ -263,6 +268,7 @@ export function FTPPage() {
       password: form.password.trim(),
       rootPath: normalizeRelativeRootPath(form.rootPath, sitesBasePath),
       domainID: form.domainID.trim(),
+      enabled: form.enabled,
     };
 
     const nextErrors: FormErrors = {};
@@ -291,7 +297,7 @@ export function FTPPage() {
           password: nextForm.password,
           root_path: nextForm.rootPath,
           domain_id: nextForm.domainID || undefined,
-          enabled: true,
+          enabled: nextForm.enabled,
         };
         await createFTPAccount(payload);
         toast.success(`Created FTP account ${nextForm.username}.`);
@@ -301,7 +307,7 @@ export function FTPPage() {
           password: nextForm.password || undefined,
           root_path: nextForm.rootPath,
           domain_id: nextForm.domainID || undefined,
-          enabled: true,
+          enabled: nextForm.enabled,
         });
         toast.success(`Updated FTP account ${nextForm.username}.`);
       }
@@ -316,6 +322,7 @@ export function FTPPage() {
           password: ftpError.fieldErrors.password,
           root_path: ftpError.fieldErrors.root_path,
           domain_id: ftpError.fieldErrors.domain_id,
+          enabled: ftpError.fieldErrors.enabled,
         });
       }
       setFormError(
@@ -505,6 +512,29 @@ export function FTPPage() {
                   Must stay inside {sitesBasePath || "the panel sites directory"}. Relative paths resolve there automatically.
                 </p>
               )}
+            </div>
+
+            <div className="flex items-start justify-between gap-4 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
+              <div className="space-y-1">
+                <Label htmlFor="ftp-account-enabled">FTP account enabled</Label>
+                <p className="text-[12px] text-[var(--app-text-muted)]">
+                  Disabled accounts keep their configuration but cannot log in.
+                </p>
+                {errors.enabled ? (
+                  <p className="text-[12px] text-[var(--app-danger)]">{errors.enabled}</p>
+                ) : null}
+              </div>
+              <Switch
+                id="ftp-account-enabled"
+                checked={form.enabled}
+                disabled={submitting}
+                onCheckedChange={(checked) => {
+                  setForm((current) => ({ ...current, enabled: checked }));
+                  if (errors.enabled) {
+                    setErrors((current) => ({ ...current, enabled: undefined }));
+                  }
+                }}
+              />
             </div>
 
             <DialogFooter>
