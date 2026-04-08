@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -259,10 +258,7 @@ export function PHPSettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="h-[min(760px,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-5 pt-4 sm:max-w-5xl sm:p-6 sm:pt-5">
         <DialogHeader className="gap-0.5 pb-0 pe-12">
-          <DialogTitle className="m-0 text-base leading-5">PHP settings</DialogTitle>
-          <DialogDescription className="m-0 text-xs leading-4">
-            Manage {runtimeLabel} settings for this node.
-          </DialogDescription>
+          <DialogTitle className="m-0 text-base leading-5">{runtimeLabel} settings</DialogTitle>
         </DialogHeader>
 
         <div className="mt-2 flex min-h-0 flex-col gap-4">
