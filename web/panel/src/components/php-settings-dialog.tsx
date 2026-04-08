@@ -257,291 +257,293 @@ export function PHPSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[min(760px,calc(100vh-2rem))] gap-0 overflow-hidden sm:max-w-5xl">
-        <DialogHeader className="gap-1 pb-0">
-          <DialogTitle className="m-0 leading-5">PHP settings</DialogTitle>
-          <DialogDescription className="m-0 leading-5">
+      <DialogContent className="h-[min(760px,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-5 pt-4 sm:max-w-5xl sm:p-6 sm:pt-5">
+        <DialogHeader className="gap-0.5 pb-0 pe-12">
+          <DialogTitle className="m-0 text-base leading-5">PHP settings</DialogTitle>
+          <DialogDescription className="m-0 text-xs leading-4">
             Manage {runtimeLabel} settings for this node.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="-mt-1 flex flex-wrap items-center gap-3 border-b border-[var(--app-border)] pb-4 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="text-[var(--app-text-muted)]">Selected runtime</span>
-            <Badge variant="outline" className="h-6 rounded-sm px-2 text-[11px]">
-              {runtimeLabel}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[var(--app-text-muted)]">Version</span>
-            <Badge variant="outline" className="h-6 rounded-sm px-2 text-[11px]">
-              {formatPHPVersion(status)}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[var(--app-text-muted)]">Service</span>
-            <Badge variant="outline" className="h-6 rounded-sm px-2 text-[11px]">
-              {getPHPServiceLabel(status)}
-            </Badge>
-          </div>
-        </div>
-
-        {backgroundActionLabel ? (
-          <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-sm text-[var(--app-text-muted)]">
+        <div className="mt-2 flex min-h-0 flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[var(--app-border)] pb-3 text-sm">
             <div className="flex items-center gap-2">
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-              {backgroundActionLabel}
+              <span className="text-[var(--app-text-muted)]">Selected runtime</span>
+              <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
+                {runtimeLabel}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[var(--app-text-muted)]">Version</span>
+              <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
+                {formatPHPVersion(status)}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[var(--app-text-muted)]">Service</span>
+              <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
+                {getPHPServiceLabel(status)}
+              </Badge>
             </div>
           </div>
-        ) : null}
 
-        {!status?.php_installed ? (
-          <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
-            Install the selected PHP runtime before saving settings.
-          </div>
-        ) : null}
+          {backgroundActionLabel ? (
+            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-sm text-[var(--app-text-muted)]">
+              <div className="flex items-center gap-2">
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                {backgroundActionLabel}
+              </div>
+            </div>
+          ) : null}
 
-        {error ? (
-          <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
-            {error}
-          </div>
-        ) : null}
+          {!status?.php_installed ? (
+            <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+              Install the selected PHP runtime before saving settings.
+            </div>
+          ) : null}
 
-        <div className="grid h-[420px] gap-4 md:grid-cols-[190px_minmax(0,1fr)]">
-          <nav className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] p-2">
-            <div className="space-y-1">
-              {phpSettingsSections.map((section) => (
-                <button
-                  key={section.id}
-                  type="button"
-                  className={cn(
-                    "flex w-full flex-col items-start rounded-md px-3 py-2 text-left transition-colors",
-                    activeSection === section.id
-                      ? "bg-[var(--app-surface-muted)] text-[var(--app-text)]"
-                      : "text-[var(--app-text-muted)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
+          {error ? (
+            <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-[190px_minmax(0,1fr)]">
+            <nav className="overflow-y-auto rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] p-2">
+              <div className="space-y-1">
+                {phpSettingsSections.map((section) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    className={cn(
+                      "flex w-full flex-col items-start rounded-md px-3 py-2 text-left transition-colors",
+                      activeSection === section.id
+                        ? "bg-[var(--app-surface-muted)] text-[var(--app-text)]"
+                        : "text-[var(--app-text-muted)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]"
+                    )}
+                    onClick={() => setActiveSection(section.id)}
+                  >
+                    <span className="text-sm font-medium">{section.label}</span>
+                  </button>
+                ))}
+              </div>
+            </nav>
+
+            <div className="min-h-0 min-w-0 overflow-y-auto pr-1">
+              {activeSection === "runtime-settings" ? (
+                <section className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="php_max_execution_time">Max execution time</Label>
+                    <Input
+                      id="php_max_execution_time"
+                      value={form.max_execution_time}
+                      onChange={(event) => handleFieldChange("max_execution_time", event.target.value)}
+                      placeholder="60"
+                      disabled={busy}
+                      aria-invalid={fieldErrors.max_execution_time ? true : undefined}
+                    />
+                    <p className="text-xs text-[var(--app-text-muted)]">
+                      Seconds. Use `0` for unlimited.
+                    </p>
+                    <FieldError message={fieldErrors.max_execution_time} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_max_input_time">Max input time</Label>
+                    <Input
+                      id="php_max_input_time"
+                      value={form.max_input_time}
+                      onChange={(event) => handleFieldChange("max_input_time", event.target.value)}
+                      placeholder="60"
+                      disabled={busy}
+                      aria-invalid={fieldErrors.max_input_time ? true : undefined}
+                    />
+                    <p className="text-xs text-[var(--app-text-muted)]">
+                      Seconds. Use `-1` for unlimited.
+                    </p>
+                    <FieldError message={fieldErrors.max_input_time} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_memory_limit">Memory limit</Label>
+                    <Input
+                      id="php_memory_limit"
+                      value={form.memory_limit}
+                      onChange={(event) => handleFieldChange("memory_limit", event.target.value)}
+                      placeholder="256M"
+                      disabled={busy}
+                      aria-invalid={fieldErrors.memory_limit ? true : undefined}
+                    />
+                    <FieldError message={fieldErrors.memory_limit} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_post_max_size">Post max size</Label>
+                    <Input
+                      id="php_post_max_size"
+                      value={form.post_max_size}
+                      onChange={(event) => handleFieldChange("post_max_size", event.target.value)}
+                      placeholder="64M"
+                      disabled={busy}
+                      aria-invalid={fieldErrors.post_max_size ? true : undefined}
+                    />
+                    <FieldError message={fieldErrors.post_max_size} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_file_uploads">File uploads</Label>
+                    <Select
+                      value={form.file_uploads}
+                      onValueChange={(value) => handleFieldChange("file_uploads", value)}
+                      disabled={busy}
+                    >
+                      <SelectTrigger
+                        id="php_file_uploads"
+                        className="w-full"
+                        aria-invalid={fieldErrors.file_uploads ? true : undefined}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="On">On</SelectItem>
+                        <SelectItem value="Off">Off</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FieldError message={fieldErrors.file_uploads} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_upload_max_filesize">Upload max filesize</Label>
+                    <Input
+                      id="php_upload_max_filesize"
+                      value={form.upload_max_filesize}
+                      onChange={(event) => handleFieldChange("upload_max_filesize", event.target.value)}
+                      placeholder="64M"
+                      disabled={busy}
+                      aria-invalid={fieldErrors.upload_max_filesize ? true : undefined}
+                    />
+                    <FieldError message={fieldErrors.upload_max_filesize} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_max_file_uploads">Max file uploads</Label>
+                    <Input
+                      id="php_max_file_uploads"
+                      value={form.max_file_uploads}
+                      onChange={(event) => handleFieldChange("max_file_uploads", event.target.value)}
+                      placeholder="20"
+                      disabled={busy}
+                      aria-invalid={fieldErrors.max_file_uploads ? true : undefined}
+                    />
+                    <FieldError message={fieldErrors.max_file_uploads} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_default_socket_timeout">Default socket timeout</Label>
+                    <Input
+                      id="php_default_socket_timeout"
+                      value={form.default_socket_timeout}
+                      onChange={(event) => handleFieldChange("default_socket_timeout", event.target.value)}
+                      placeholder="60"
+                      disabled={busy}
+                      aria-invalid={fieldErrors.default_socket_timeout ? true : undefined}
+                    />
+                    <FieldError message={fieldErrors.default_socket_timeout} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_display_errors">Display errors</Label>
+                    <Select
+                      value={form.display_errors}
+                      onValueChange={(value) => handleFieldChange("display_errors", value)}
+                      disabled={busy}
+                    >
+                      <SelectTrigger
+                        id="php_display_errors"
+                        className="w-full"
+                        aria-invalid={fieldErrors.display_errors ? true : undefined}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="On">On</SelectItem>
+                        <SelectItem value="Off">Off</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FieldError message={fieldErrors.display_errors} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="php_error_reporting">Error reporting</Label>
+                    <Select
+                      value={form.error_reporting}
+                      onValueChange={(value) => handleFieldChange("error_reporting", value)}
+                      disabled={busy}
+                    >
+                      <SelectTrigger
+                        id="php_error_reporting"
+                        className="w-full"
+                        aria-invalid={fieldErrors.error_reporting ? true : undefined}
+                      >
+                        <SelectValue placeholder="Select error reporting" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {phpErrorReportingOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FieldError message={fieldErrors.error_reporting} />
+                  </div>
+                </section>
+              ) : (
+                <section className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
+                      <div className="text-xs text-[var(--app-text-muted)]">Platform</div>
+                      <div className="mt-1 break-all text-sm text-[var(--app-text)]">
+                        {formatValue(status?.platform)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
+                      <div className="text-xs text-[var(--app-text-muted)]">PHP binary</div>
+                      <div className="mt-1 break-all text-sm text-[var(--app-text)]">
+                        {formatValue(status?.php_path)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
+                      <div className="text-xs text-[var(--app-text-muted)]">Managed config</div>
+                      <div className="mt-1 break-all text-sm text-[var(--app-text)]">
+                        {formatValue(status?.managed_config_file)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
+                      <div className="text-xs text-[var(--app-text-muted)]">Loaded config</div>
+                      <div className="mt-1 break-all text-sm text-[var(--app-text)]">
+                        {formatValue(status?.loaded_config_file)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {status?.issues && status.issues.length > 0 ? (
+                    <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
+                      <h3 className="text-sm font-semibold text-[var(--app-text)]">Issues</h3>
+                      <ul className="mt-3 space-y-2 text-sm text-[var(--app-text-muted)]">
+                        {status.issues.map((issue) => (
+                          <li key={issue}>{issue}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : (
+                    <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 text-sm text-[var(--app-text-muted)]">
+                      No runtime issues reported for {runtimeLabel}.
+                    </div>
                   )}
-                  onClick={() => setActiveSection(section.id)}
-                >
-                  <span className="text-sm font-medium">{section.label}</span>
-                </button>
-              ))}
+                </section>
+              )}
             </div>
-          </nav>
-
-          <div className="min-w-0 overflow-y-auto pr-1">
-            {activeSection === "runtime-settings" ? (
-              <section className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="php_max_execution_time">Max execution time</Label>
-                  <Input
-                    id="php_max_execution_time"
-                    value={form.max_execution_time}
-                    onChange={(event) => handleFieldChange("max_execution_time", event.target.value)}
-                    placeholder="60"
-                    disabled={busy}
-                    aria-invalid={fieldErrors.max_execution_time ? true : undefined}
-                  />
-                  <p className="text-xs text-[var(--app-text-muted)]">
-                    Seconds. Use `0` for unlimited.
-                  </p>
-                  <FieldError message={fieldErrors.max_execution_time} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_max_input_time">Max input time</Label>
-                  <Input
-                    id="php_max_input_time"
-                    value={form.max_input_time}
-                    onChange={(event) => handleFieldChange("max_input_time", event.target.value)}
-                    placeholder="60"
-                    disabled={busy}
-                    aria-invalid={fieldErrors.max_input_time ? true : undefined}
-                  />
-                  <p className="text-xs text-[var(--app-text-muted)]">
-                    Seconds. Use `-1` for unlimited.
-                  </p>
-                  <FieldError message={fieldErrors.max_input_time} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_memory_limit">Memory limit</Label>
-                  <Input
-                    id="php_memory_limit"
-                    value={form.memory_limit}
-                    onChange={(event) => handleFieldChange("memory_limit", event.target.value)}
-                    placeholder="256M"
-                    disabled={busy}
-                    aria-invalid={fieldErrors.memory_limit ? true : undefined}
-                  />
-                  <FieldError message={fieldErrors.memory_limit} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_post_max_size">Post max size</Label>
-                  <Input
-                    id="php_post_max_size"
-                    value={form.post_max_size}
-                    onChange={(event) => handleFieldChange("post_max_size", event.target.value)}
-                    placeholder="64M"
-                    disabled={busy}
-                    aria-invalid={fieldErrors.post_max_size ? true : undefined}
-                  />
-                  <FieldError message={fieldErrors.post_max_size} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_file_uploads">File uploads</Label>
-                  <Select
-                    value={form.file_uploads}
-                    onValueChange={(value) => handleFieldChange("file_uploads", value)}
-                    disabled={busy}
-                  >
-                    <SelectTrigger
-                      id="php_file_uploads"
-                      className="w-full"
-                      aria-invalid={fieldErrors.file_uploads ? true : undefined}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="On">On</SelectItem>
-                      <SelectItem value="Off">Off</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FieldError message={fieldErrors.file_uploads} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_upload_max_filesize">Upload max filesize</Label>
-                  <Input
-                    id="php_upload_max_filesize"
-                    value={form.upload_max_filesize}
-                    onChange={(event) => handleFieldChange("upload_max_filesize", event.target.value)}
-                    placeholder="64M"
-                    disabled={busy}
-                    aria-invalid={fieldErrors.upload_max_filesize ? true : undefined}
-                  />
-                  <FieldError message={fieldErrors.upload_max_filesize} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_max_file_uploads">Max file uploads</Label>
-                  <Input
-                    id="php_max_file_uploads"
-                    value={form.max_file_uploads}
-                    onChange={(event) => handleFieldChange("max_file_uploads", event.target.value)}
-                    placeholder="20"
-                    disabled={busy}
-                    aria-invalid={fieldErrors.max_file_uploads ? true : undefined}
-                  />
-                  <FieldError message={fieldErrors.max_file_uploads} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_default_socket_timeout">Default socket timeout</Label>
-                  <Input
-                    id="php_default_socket_timeout"
-                    value={form.default_socket_timeout}
-                    onChange={(event) => handleFieldChange("default_socket_timeout", event.target.value)}
-                    placeholder="60"
-                    disabled={busy}
-                    aria-invalid={fieldErrors.default_socket_timeout ? true : undefined}
-                  />
-                  <FieldError message={fieldErrors.default_socket_timeout} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_display_errors">Display errors</Label>
-                  <Select
-                    value={form.display_errors}
-                    onValueChange={(value) => handleFieldChange("display_errors", value)}
-                    disabled={busy}
-                  >
-                    <SelectTrigger
-                      id="php_display_errors"
-                      className="w-full"
-                      aria-invalid={fieldErrors.display_errors ? true : undefined}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="On">On</SelectItem>
-                      <SelectItem value="Off">Off</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FieldError message={fieldErrors.display_errors} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="php_error_reporting">Error reporting</Label>
-                  <Select
-                    value={form.error_reporting}
-                    onValueChange={(value) => handleFieldChange("error_reporting", value)}
-                    disabled={busy}
-                  >
-                    <SelectTrigger
-                      id="php_error_reporting"
-                      className="w-full"
-                      aria-invalid={fieldErrors.error_reporting ? true : undefined}
-                    >
-                      <SelectValue placeholder="Select error reporting" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {phpErrorReportingOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FieldError message={fieldErrors.error_reporting} />
-                </div>
-              </section>
-            ) : (
-              <section className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
-                    <div className="text-xs text-[var(--app-text-muted)]">Platform</div>
-                    <div className="mt-1 break-all text-sm text-[var(--app-text)]">
-                      {formatValue(status?.platform)}
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
-                    <div className="text-xs text-[var(--app-text-muted)]">PHP binary</div>
-                    <div className="mt-1 break-all text-sm text-[var(--app-text)]">
-                      {formatValue(status?.php_path)}
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
-                    <div className="text-xs text-[var(--app-text-muted)]">Managed config</div>
-                    <div className="mt-1 break-all text-sm text-[var(--app-text)]">
-                      {formatValue(status?.managed_config_file)}
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
-                    <div className="text-xs text-[var(--app-text-muted)]">Loaded config</div>
-                    <div className="mt-1 break-all text-sm text-[var(--app-text)]">
-                      {formatValue(status?.loaded_config_file)}
-                    </div>
-                  </div>
-                </div>
-
-                {status?.issues && status.issues.length > 0 ? (
-                  <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
-                    <h3 className="text-sm font-semibold text-[var(--app-text)]">Issues</h3>
-                    <ul className="mt-3 space-y-2 text-sm text-[var(--app-text-muted)]">
-                      {status.issues.map((issue) => (
-                        <li key={issue}>{issue}</li>
-                      ))}
-                    </ul>
-                  </section>
-                ) : (
-                  <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 text-sm text-[var(--app-text-muted)]">
-                    No runtime issues reported for {runtimeLabel}.
-                  </div>
-                )}
-              </section>
-            )}
           </div>
         </div>
 
