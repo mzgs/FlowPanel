@@ -53,6 +53,11 @@ type blockingPHPManager struct {
 	releaseInstall chan struct{}
 }
 
+type blockingReadyPHPManager struct {
+	installStarted chan struct{}
+	releaseInstall chan struct{}
+}
+
 type trackingMariaDBManager struct {
 	databases     []mariadb.DatabaseRecord
 	deleted       []string
@@ -204,6 +209,58 @@ func (m *blockingPHPManager) Restart(context.Context) error {
 }
 
 func (m *blockingPHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
+}
+
+func (m *blockingReadyPHPManager) Status(context.Context) phpenv.Status {
+	return phpenv.Status{
+		PHPInstalled:     true,
+		PHPVersion:       "PHP 8.3.6 (cli)",
+		FPMInstalled:     true,
+		ServiceRunning:   true,
+		Ready:            true,
+		ListenAddress:    "127.0.0.1:9000",
+		State:            "ready",
+		Message:          "PHP and php-fpm are ready for Caddy at 127.0.0.1:9000.",
+		InstallAvailable: false,
+		RemoveAvailable:  true,
+		StartAvailable:   false,
+		StopAvailable:    true,
+		RestartAvailable: true,
+	}
+}
+
+func (m *blockingReadyPHPManager) Install(context.Context) error {
+	if m.installStarted != nil {
+		select {
+		case <-m.installStarted:
+		default:
+			close(m.installStarted)
+		}
+	}
+	if m.releaseInstall != nil {
+		<-m.releaseInstall
+	}
+	return nil
+}
+
+func (m *blockingReadyPHPManager) Remove(context.Context) error {
+	return nil
+}
+
+func (m *blockingReadyPHPManager) Start(context.Context) error {
+	return nil
+}
+
+func (m *blockingReadyPHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (m *blockingReadyPHPManager) Restart(context.Context) error {
+	return nil
+}
+
+func (m *blockingReadyPHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return m.Status(context.Background()), nil
 }
 
@@ -730,6 +787,63 @@ func TestPHPStatusShowsInstallingWhileInstallRunsInBackground(t *testing.T) {
 	}
 	if payload.PHP.StartAvailable {
 		t.Fatal("start_available = true, want false while install is in progress")
+	}
+
+	close(manager.releaseInstall)
+
+	select {
+	case <-installDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for php install request to finish")
+	}
+}
+
+func TestPHPStatusClearsInstallingWhenRuntimeIsAlreadyDetected(t *testing.T) {
+	manager := &blockingReadyPHPManager{
+		installStarted: make(chan struct{}),
+		releaseInstall: make(chan struct{}),
+	}
+	router, _, _ := newTestDomainRouterWithManagers(t, fakeMariaDBManager{}, manager, fakePHPMyAdminManager{})
+
+	baseReq := httptest.NewRequest(http.MethodPost, "/api/php/install", nil)
+	ctx, cancel := context.WithCancel(baseReq.Context())
+	cancel()
+	req := baseReq.WithContext(ctx)
+
+	installRecorder := httptest.NewRecorder()
+	installDone := make(chan struct{})
+	go func() {
+		router.ServeHTTP(installRecorder, req)
+		close(installDone)
+	}()
+
+	select {
+	case <-manager.installStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for php install to start")
+	}
+
+	statusRecorder := httptest.NewRecorder()
+	router.ServeHTTP(statusRecorder, httptest.NewRequest(http.MethodGet, "/api/php", nil))
+
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", statusRecorder.Code, http.StatusOK, statusRecorder.Body.String())
+	}
+
+	var payload struct {
+		PHP phpenv.Status `json:"php"`
+	}
+	if err := json.Unmarshal(statusRecorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.PHP.State != "ready" {
+		t.Fatalf("state = %q, want ready", payload.PHP.State)
+	}
+	if !payload.PHP.StopAvailable {
+		t.Fatal("stop_available = false, want true once php-fpm is already detected")
+	}
+	if !payload.PHP.RestartAvailable {
+		t.Fatal("restart_available = false, want true once php-fpm is already detected")
 	}
 
 	close(manager.releaseInstall)

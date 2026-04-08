@@ -114,17 +114,20 @@ type Service struct {
 }
 
 type actionPlan struct {
-	packageManager string
-	installLabel   string
-	removeLabel    string
-	startLabel     string
-	stopLabel      string
-	restartLabel   string
-	installCmds    [][]string
-	removeCmds     [][]string
-	startCmds      [][]string
-	stopCmds       [][]string
-	restartCmds    [][]string
+	packageManager   string
+	installLabel     string
+	removeLabel      string
+	startLabel       string
+	stopLabel        string
+	restartLabel     string
+	installCmds      [][]string
+	removeCmds       [][]string
+	startCmds        [][]string
+	stopCmds         [][]string
+	restartCmds      [][]string
+	startSupported   bool
+	stopSupported    bool
+	restartSupported bool
 }
 
 func NewService(logger *zap.Logger) *Service {
@@ -186,11 +189,11 @@ func (s *Service) Status(ctx context.Context) Status {
 	status.InstallLabel = plan.installLabel
 	status.RemoveAvailable = len(plan.removeCmds) > 0 && (status.PHPInstalled || status.FPMInstalled)
 	status.RemoveLabel = plan.removeLabel
-	status.StartAvailable = len(plan.startCmds) > 0 && status.FPMInstalled && !status.ServiceRunning
+	status.StartAvailable = (len(plan.startCmds) > 0 || plan.startSupported) && status.FPMInstalled && !status.ServiceRunning
 	status.StartLabel = plan.startLabel
-	status.StopAvailable = len(plan.stopCmds) > 0 && status.FPMInstalled && status.ServiceRunning
+	status.StopAvailable = (len(plan.stopCmds) > 0 || plan.stopSupported) && status.FPMInstalled && status.ServiceRunning
 	status.StopLabel = plan.stopLabel
-	status.RestartAvailable = len(plan.restartCmds) > 0 && status.FPMInstalled && status.ServiceRunning
+	status.RestartAvailable = (len(plan.restartCmds) > 0 || plan.restartSupported) && status.FPMInstalled && status.ServiceRunning
 	status.RestartLabel = plan.restartLabel
 
 	switch {
@@ -239,8 +242,15 @@ func (s *Service) Install(ctx context.Context) error {
 	s.logger.Info("installing php runtime",
 		zap.String("package_manager", plan.packageManager),
 	)
-	if err := runCommands(ctx, append(plan.installCmds, plan.startCmds...)...); err != nil {
+	if err := runCommands(ctx, plan.installCmds...); err != nil {
 		return err
+	}
+	if len(plan.startCmds) > 0 {
+		return runCommands(ctx, plan.startCmds...)
+	}
+	if plan.startSupported {
+		fpmPath, _ := lookupPHPFPM()
+		return runPHPFPMServiceCommand(ctx, fpmPath, "start")
 	}
 
 	return nil
@@ -257,7 +267,13 @@ func (s *Service) Remove(ctx context.Context) error {
 	)
 	commands := make([][]string, 0, len(plan.stopCmds)+len(plan.removeCmds))
 	if status := s.Status(ctx); status.ServiceRunning {
-		commands = append(commands, plan.stopCmds...)
+		if len(plan.stopCmds) > 0 {
+			commands = append(commands, plan.stopCmds...)
+		} else if plan.stopSupported {
+			if err := runPHPFPMServiceCommand(ctx, status.FPMPath, "stop"); err != nil {
+				return err
+			}
+		}
 	}
 	commands = append(commands, plan.removeCmds...)
 
@@ -266,38 +282,50 @@ func (s *Service) Remove(ctx context.Context) error {
 
 func (s *Service) Start(ctx context.Context) error {
 	plan := detectActionPlan()
-	if len(plan.startCmds) == 0 {
+	if len(plan.startCmds) == 0 && !plan.startSupported {
 		return fmt.Errorf("automatic php-fpm startup is not supported on %s", runtime.GOOS)
 	}
 
 	s.logger.Info("starting php-fpm service",
 		zap.String("package_manager", plan.packageManager),
 	)
-	return runCommands(ctx, plan.startCmds...)
+	if len(plan.startCmds) > 0 {
+		return runCommands(ctx, plan.startCmds...)
+	}
+	fpmPath, _ := lookupPHPFPM()
+	return runPHPFPMServiceCommand(ctx, fpmPath, "start")
 }
 
 func (s *Service) Stop(ctx context.Context) error {
 	plan := detectActionPlan()
-	if len(plan.stopCmds) == 0 {
+	if len(plan.stopCmds) == 0 && !plan.stopSupported {
 		return fmt.Errorf("automatic php-fpm shutdown is not supported on %s", runtime.GOOS)
 	}
 
 	s.logger.Info("stopping php-fpm service",
 		zap.String("package_manager", plan.packageManager),
 	)
-	return runCommands(ctx, plan.stopCmds...)
+	if len(plan.stopCmds) > 0 {
+		return runCommands(ctx, plan.stopCmds...)
+	}
+	fpmPath, _ := lookupPHPFPM()
+	return runPHPFPMServiceCommand(ctx, fpmPath, "stop")
 }
 
 func (s *Service) Restart(ctx context.Context) error {
 	plan := detectActionPlan()
-	if len(plan.restartCmds) == 0 {
+	if len(plan.restartCmds) == 0 && !plan.restartSupported {
 		return fmt.Errorf("automatic php-fpm restart is not supported on %s", runtime.GOOS)
 	}
 
 	s.logger.Info("restarting php-fpm service",
 		zap.String("package_manager", plan.packageManager),
 	)
-	return runCommands(ctx, plan.restartCmds...)
+	if len(plan.restartCmds) > 0 {
+		return runCommands(ctx, plan.restartCmds...)
+	}
+	fpmPath, _ := lookupPHPFPM()
+	return runPHPFPMServiceCommand(ctx, fpmPath, "restart")
 }
 
 func detectActionPlan() actionPlan {
@@ -331,11 +359,23 @@ func detectActionPlan() actionPlan {
 	case "linux":
 		if os.Geteuid() == 0 {
 			if aptPath, ok := lookupCommand("apt-get"); ok {
+				serviceSupported := false
+				if _, ok := lookupCommand("systemctl"); ok {
+					serviceSupported = true
+				} else if _, ok := lookupCommand("service"); ok {
+					serviceSupported = true
+				}
 				installArgs := append([]string{aptPath, "install", "-y"}, aptPHPPackages...)
 				return actionPlan{
-					packageManager: "apt",
-					installLabel:   "Install PHP",
-					removeLabel:    "Remove PHP",
+					packageManager:   "apt",
+					installLabel:     "Install PHP",
+					removeLabel:      "Remove PHP",
+					startLabel:       "Start PHP-FPM",
+					stopLabel:        "Stop PHP-FPM",
+					restartLabel:     "Restart PHP-FPM",
+					startSupported:   serviceSupported,
+					stopSupported:    serviceSupported,
+					restartSupported: serviceSupported,
 					installCmds: [][]string{
 						{aptPath, "update"},
 						installArgs,

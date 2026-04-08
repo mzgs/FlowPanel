@@ -497,6 +497,7 @@ export function DashboardPage() {
 
   useEffect(() => {
     if (
+      runningAction === null &&
       !isRuntimeActionState(phpStatus?.state) &&
       !isRuntimeActionState(mariadbStatus?.state) &&
       !isRuntimeActionState(phpMyAdminStatus?.state)
@@ -511,7 +512,24 @@ export function DashboardPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [mariadbStatus?.state, phpMyAdminStatus?.state, phpStatus?.state, refreshOverviewStatuses]);
+  }, [runningAction, mariadbStatus?.state, phpMyAdminStatus?.state, phpStatus?.state, refreshOverviewStatuses]);
+
+  useEffect(() => {
+    if (runningAction === "install-php" && phpStatus?.php_installed && phpStatus?.fpm_installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (
+      runningAction === "install-mariadb" &&
+      (mariadbStatus?.server_installed || mariadbStatus?.client_installed)
+    ) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "install-phpmyadmin" && phpMyAdminStatus?.installed) {
+      setRunningAction(null);
+    }
+  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus]);
 
   async function handleMariaDBInstall() {
     setRunningAction("install-mariadb");

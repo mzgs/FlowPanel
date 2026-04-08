@@ -455,6 +455,7 @@ export function ApplicationsPage() {
 
   useEffect(() => {
     if (
+      runningAction === null &&
       !isRuntimeActionState(phpStatus?.state) &&
       !isRuntimeActionState(mariadbStatus?.state) &&
       !isRuntimeActionState(phpMyAdminStatus?.state)
@@ -469,7 +470,68 @@ export function ApplicationsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state]);
+  }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state]);
+
+  useEffect(() => {
+    if (runningAction === "install-php" && phpStatus?.php_installed && phpStatus?.fpm_installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-php" && phpStatus && !phpStatus.php_installed && !phpStatus.fpm_installed) {
+      setRemoveCandidate((current) => (current === "php" ? null : current));
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "start-php" && phpStatus?.service_running) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "stop-php" && phpStatus?.fpm_installed && !phpStatus.service_running) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "restart-php" && phpStatus?.service_running) {
+      setRunningAction(null);
+      return;
+    }
+    if (
+      runningAction === "install-mariadb" &&
+      (mariadbStatus?.server_installed || mariadbStatus?.client_installed)
+    ) {
+      setRunningAction(null);
+      return;
+    }
+    if (
+      runningAction === "remove-mariadb" &&
+      mariadbStatus &&
+      !mariadbStatus.server_installed &&
+      !mariadbStatus.client_installed
+    ) {
+      setRemoveCandidate((current) => (current === "mariadb" ? null : current));
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "start-mariadb" && mariadbStatus?.service_running) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "stop-mariadb" && mariadbStatus?.server_installed && !mariadbStatus.service_running) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "restart-mariadb" && mariadbStatus?.service_running) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "install-phpmyadmin" && phpMyAdminStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-phpmyadmin" && phpMyAdminStatus && !phpMyAdminStatus.installed) {
+      setRemoveCandidate((current) => (current === "phpmyadmin" ? null : current));
+      setRunningAction(null);
+    }
+  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus]);
 
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
   const phpMyAdminServiceStatus = getPHPMyAdminServiceStatus(phpMyAdminStatus);
@@ -519,17 +581,22 @@ export function ApplicationsPage() {
       if (target === "php") {
         const nextStatus = await removePHP();
         setPHPStatus(nextStatus);
-        toast.success("PHP removed.");
+        toast.success(
+          !nextStatus.php_installed && !nextStatus.fpm_installed ? "PHP removed." : "PHP removal started.",
+        );
       } else if (target === "mariadb") {
         const nextStatus = await removeMariaDB();
         setMariaDBStatus(nextStatus);
-        toast.success("MariaDB removed.");
+        toast.success(
+          !nextStatus.server_installed && !nextStatus.client_installed
+            ? "MariaDB removed."
+            : "MariaDB removal started.",
+        );
       } else {
         const nextStatus = await removePHPMyAdmin();
         setPHPMyAdminStatus(nextStatus);
-        toast.success("phpMyAdmin removed.");
+        toast.success(!nextStatus.installed ? "phpMyAdmin removed." : "phpMyAdmin removal started.");
       }
-      setRemoveCandidate((current) => (current === target ? null : current));
     } catch (error) {
       const fallback =
         target === "php"
@@ -540,7 +607,6 @@ export function ApplicationsPage() {
       const message = getErrorMessage(error, fallback);
       setPageError(message);
       toast.error(message);
-    } finally {
       setRunningAction(null);
     }
   }

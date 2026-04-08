@@ -80,6 +80,7 @@ async function parseMariaDBResponse(response: Response): Promise<MariaDBStatus> 
 export async function fetchMariaDBStatus(): Promise<MariaDBStatus> {
   const response = await fetch("/api/mariadb", {
     credentials: "include",
+    cache: "no-store",
   });
 
   return parseMariaDBResponse(response);

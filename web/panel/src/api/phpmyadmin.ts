@@ -40,6 +40,7 @@ async function parsePHPMyAdminResponse(response: Response): Promise<PHPMyAdminSt
 export async function fetchPHPMyAdminStatus(): Promise<PHPMyAdminStatus> {
   const response = await fetch("/api/phpmyadmin", {
     credentials: "include",
+    cache: "no-store",
   });
 
   return parsePHPMyAdminResponse(response);

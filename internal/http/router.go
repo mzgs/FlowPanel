@@ -173,18 +173,38 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		trackPHPStatus := func(status phpenv.Status) phpenv.Status {
 			switch runtimeActions.Current("php") {
 			case "install":
+				if status.PHPInstalled && status.FPMInstalled && status.ServiceRunning {
+					runtimeActions.End("php", "install")
+					return status
+				}
 				status.State = "installing"
 				status.Message = "PHP installation is running in the background."
 			case "remove":
+				if !status.PHPInstalled && !status.FPMInstalled {
+					runtimeActions.End("php", "remove")
+					return status
+				}
 				status.State = "removing"
 				status.Message = "PHP removal is running in the background."
 			case "start":
+				if status.ServiceRunning {
+					runtimeActions.End("php", "start")
+					return status
+				}
 				status.State = "starting"
 				status.Message = "PHP-FPM is starting in the background."
 			case "stop":
+				if status.FPMInstalled && !status.ServiceRunning {
+					runtimeActions.End("php", "stop")
+					return status
+				}
 				status.State = "stopping"
 				status.Message = "PHP-FPM is stopping in the background."
 			case "restart":
+				if status.ServiceRunning {
+					runtimeActions.End("php", "restart")
+					return status
+				}
 				status.State = "restarting"
 				status.Message = "PHP-FPM is restarting in the background."
 			default:
@@ -202,18 +222,38 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		trackMariaDBStatus := func(status mariadb.Status) mariadb.Status {
 			switch runtimeActions.Current("mariadb") {
 			case "install":
+				if status.ServerInstalled && status.ServiceRunning {
+					runtimeActions.End("mariadb", "install")
+					return status
+				}
 				status.State = "installing"
 				status.Message = "MariaDB installation is running in the background."
 			case "remove":
+				if !status.ServerInstalled && !status.ClientInstalled {
+					runtimeActions.End("mariadb", "remove")
+					return status
+				}
 				status.State = "removing"
 				status.Message = "MariaDB removal is running in the background."
 			case "start":
+				if status.ServiceRunning {
+					runtimeActions.End("mariadb", "start")
+					return status
+				}
 				status.State = "starting"
 				status.Message = "MariaDB is starting in the background."
 			case "stop":
+				if status.ServerInstalled && !status.ServiceRunning {
+					runtimeActions.End("mariadb", "stop")
+					return status
+				}
 				status.State = "stopping"
 				status.Message = "MariaDB is stopping in the background."
 			case "restart":
+				if status.ServiceRunning {
+					runtimeActions.End("mariadb", "restart")
+					return status
+				}
 				status.State = "restarting"
 				status.Message = "MariaDB is restarting in the background."
 			default:
@@ -231,9 +271,17 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		trackPHPMyAdminStatus := func(status phpmyadmin.Status) phpmyadmin.Status {
 			switch runtimeActions.Current("phpmyadmin") {
 			case "install":
+				if status.Installed {
+					runtimeActions.End("phpmyadmin", "install")
+					return status
+				}
 				status.State = "installing"
 				status.Message = "phpMyAdmin installation is running in the background."
 			case "remove":
+				if !status.Installed {
+					runtimeActions.End("phpmyadmin", "remove")
+					return status
+				}
 				status.State = "removing"
 				status.Message = "phpMyAdmin removal is running in the background."
 			default:

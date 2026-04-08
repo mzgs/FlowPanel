@@ -1,6 +1,9 @@
 package phpenv
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestParsePHPVersion(t *testing.T) {
 	output := "PHP 8.4.11 (cli) (built: Jul 29 2025 15:30:21) (NTS)\nCopyright (c) The PHP Group\n"
@@ -33,6 +36,22 @@ func TestParseFPMListenAddressUnixSocket(t *testing.T) {
 	got := parseFPMListenAddress(output)
 	if got != "/run/php/php8.4-fpm.sock" {
 		t.Fatalf("parseFPMListenAddress() = %q, want /run/php/php8.4-fpm.sock", got)
+	}
+}
+
+func TestFPMServiceCandidatesVersionedBinary(t *testing.T) {
+	got := fpmServiceCandidates("/usr/sbin/php-fpm8.3")
+	want := []string{"php8.3-fpm", "php-fpm8.3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fpmServiceCandidates() = %#v, want %#v", got, want)
+	}
+}
+
+func TestFPMServiceCandidatesGenericBinary(t *testing.T) {
+	got := fpmServiceCandidates("/usr/sbin/php-fpm")
+	want := []string{"php-fpm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fpmServiceCandidates() = %#v, want %#v", got, want)
 	}
 }
 

@@ -429,9 +429,18 @@ func determineManagedPHPConfigFile(loadedConfigFile, scanDir string) string {
 }
 
 func restartPHPFPM(ctx context.Context, fpmPath string) error {
+	return runPHPFPMServiceCommand(ctx, fpmPath, "restart")
+}
+
+func runPHPFPMServiceCommand(ctx context.Context, fpmPath, action string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return fmt.Errorf("php-fpm service action is required")
+	}
+
 	if runtimePlan := detectActionPlan(); runtimePlan.packageManager == "homebrew" {
 		if brewPath, ok := lookupCommand("brew"); ok {
-			if _, err := runCommand(ctx, brewPath, "services", "restart", "php"); err == nil {
+			if _, err := runCommand(ctx, brewPath, "services", action, "php"); err == nil {
 				return nil
 			}
 		}
@@ -440,14 +449,14 @@ func restartPHPFPM(ctx context.Context, fpmPath string) error {
 	candidates := fpmServiceCandidates(fpmPath)
 	if systemctlPath, ok := lookupCommand("systemctl"); ok {
 		for _, candidate := range candidates {
-			if _, err := runCommand(ctx, systemctlPath, "restart", candidate); err == nil {
+			if _, err := runCommand(ctx, systemctlPath, action, candidate); err == nil {
 				return nil
 			}
 		}
 	}
 	if servicePath, ok := lookupCommand("service"); ok {
 		for _, candidate := range candidates {
-			if _, err := runCommand(ctx, servicePath, candidate, "restart"); err == nil {
+			if _, err := runCommand(ctx, servicePath, candidate, action); err == nil {
 				return nil
 			}
 		}
@@ -456,7 +465,7 @@ func restartPHPFPM(ctx context.Context, fpmPath string) error {
 	if len(candidates) == 0 {
 		return fmt.Errorf("no php-fpm service name could be determined")
 	}
-	return fmt.Errorf("automatic php-fpm restart is not supported for %s", strings.Join(candidates, ", "))
+	return fmt.Errorf("automatic php-fpm %s is not supported for %s", action, strings.Join(candidates, ", "))
 }
 
 func fpmServiceCandidates(fpmPath string) []string {

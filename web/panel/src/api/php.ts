@@ -85,6 +85,7 @@ async function parsePHPResponse(response: Response): Promise<PHPStatus> {
 export async function fetchPHPStatus(): Promise<PHPStatus> {
   const response = await fetch("/api/php", {
     credentials: "include",
+    cache: "no-store",
   });
 
   return parsePHPResponse(response);
