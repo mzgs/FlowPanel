@@ -1,16 +1,15 @@
 import { useRef, useState, type ChangeEvent } from "react";
 import { importPHPMyAdminTheme, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import { LoaderCircle, Upload } from "@/components/icons/tabler-icons";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
@@ -79,9 +78,6 @@ export function PHPMyAdminSettingsDialog({
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>phpMyAdmin settings</DialogTitle>
-            <DialogDescription>
-              Review the current phpMyAdmin path and import a theme ZIP into its themes folder.
-            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-5">
@@ -93,16 +89,13 @@ export function PHPMyAdminSettingsDialog({
 
             <section className="space-y-2">
               <Label htmlFor="phpmyadmin_path">phpMyAdmin path</Label>
-              <Input
+              <Badge
                 id="phpmyadmin_path"
-                value={installPath}
-                readOnly
-                spellCheck={false}
-                placeholder="Not installed"
-              />
-              <p className="text-xs text-[var(--app-text-muted)]">
-                Current install path shown for reference.
-              </p>
+                variant="outline"
+                className="max-w-full justify-start whitespace-normal break-all py-1 text-left"
+              >
+                {installPath || "Not installed"}
+              </Badge>
             </section>
 
             <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
