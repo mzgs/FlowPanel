@@ -202,6 +202,16 @@ function samePHPSettings(left: PHPSettings, right: PHPSettings) {
   );
 }
 
+function isPHPActionState(state?: string | null) {
+  return (
+    state === "installing" ||
+    state === "removing" ||
+    state === "starting" ||
+    state === "stopping" ||
+    state === "restarting"
+  );
+}
+
 type ActionIcon = ComponentType<{
   className?: string;
   size?: number | string;
@@ -669,10 +679,20 @@ export function DomainDetailPage() {
 
     void loadPHPStatus();
 
+    let intervalId: number | null = null;
+    if (isPHPActionState(phpStatus?.state)) {
+      intervalId = window.setInterval(() => {
+        void loadPHPStatus();
+      }, 3_000);
+    }
+
     return () => {
       active = false;
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
     };
-  }, [domain?.hostname, domain?.kind, domain?.php_settings, phpDialogOpen]);
+  }, [domain?.hostname, domain?.kind, domain?.php_settings, phpDialogOpen, phpStatus?.state]);
 
   const filesPath = domain
     ? getFilesPathFromDomainTarget(domain.kind, sitesBasePath, domain.target)

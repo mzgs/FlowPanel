@@ -74,6 +74,7 @@ var (
 type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
+	Remove(context.Context) error
 	Start(context.Context) error
 	Stop(context.Context) error
 	Restart(context.Context) error
@@ -104,6 +105,8 @@ type Status struct {
 	Issues           []string `json:"issues,omitempty"`
 	InstallAvailable bool     `json:"install_available"`
 	InstallLabel     string   `json:"install_label,omitempty"`
+	RemoveAvailable  bool     `json:"remove_available"`
+	RemoveLabel      string   `json:"remove_label,omitempty"`
 	StartAvailable   bool     `json:"start_available"`
 	StartLabel       string   `json:"start_label,omitempty"`
 	StopAvailable    bool     `json:"stop_available"`
@@ -153,10 +156,12 @@ type Service struct {
 type actionPlan struct {
 	packageManager string
 	installLabel   string
+	removeLabel    string
 	startLabel     string
 	stopLabel      string
 	restartLabel   string
 	installCmds    [][]string
+	removeCmds     [][]string
 	startCmds      [][]string
 	stopCmds       [][]string
 	restartCmds    [][]string
@@ -206,6 +211,8 @@ func (s *Service) Status(ctx context.Context) Status {
 	status.ListenAddress, status.ServiceRunning = detectReachableAddress()
 	status.InstallAvailable = len(plan.installCmds) > 0 && !status.ServerInstalled
 	status.InstallLabel = plan.installLabel
+	status.RemoveAvailable = len(plan.removeCmds) > 0 && (status.ServerInstalled || status.ClientInstalled)
+	status.RemoveLabel = plan.removeLabel
 	status.StartAvailable = len(plan.startCmds) > 0 && status.ServerInstalled && !status.ServiceRunning
 	status.StartLabel = plan.startLabel
 	status.StopAvailable = len(plan.stopCmds) > 0 && status.ServerInstalled && status.ServiceRunning
@@ -252,6 +259,34 @@ func (s *Service) Install(ctx context.Context) error {
 	if err := s.ensureRootPassword(ctx); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+func (s *Service) Remove(ctx context.Context) error {
+	plan := detectActionPlan()
+	if len(plan.removeCmds) == 0 {
+		return fmt.Errorf("automatic MariaDB removal is not supported on %s", runtime.GOOS)
+	}
+
+	s.logger.Info("removing mariadb runtime",
+		zap.String("package_manager", plan.packageManager),
+	)
+	commands := make([][]string, 0, len(plan.stopCmds)+len(plan.removeCmds))
+	if status := s.Status(ctx); status.ServiceRunning {
+		commands = append(commands, plan.stopCmds...)
+	}
+	commands = append(commands, plan.removeCmds...)
+	if err := runCommands(ctx, commands...); err != nil {
+		return err
+	}
+
+	if s.rootPasswordPath != "" {
+		if err := os.Remove(s.rootPasswordPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove mariadb root password file: %w", err)
+		}
+	}
+	_ = os.Unsetenv("FLOWPANEL_MARIADB_PASSWORD")
 
 	return nil
 }
@@ -1157,11 +1192,15 @@ func detectActionPlan() actionPlan {
 			return actionPlan{
 				packageManager: "homebrew",
 				installLabel:   "Install MariaDB",
+				removeLabel:    "Remove MariaDB",
 				startLabel:     "Start MariaDB",
 				stopLabel:      "Stop MariaDB",
 				restartLabel:   "Restart MariaDB",
 				installCmds: [][]string{
 					{brewPath, "install", "mariadb"},
+				},
+				removeCmds: [][]string{
+					{brewPath, "uninstall", "mariadb"},
 				},
 				startCmds: [][]string{
 					{brewPath, "services", "start", "mariadb"},
@@ -1181,12 +1220,16 @@ func detectActionPlan() actionPlan {
 					return actionPlan{
 						packageManager: "apt",
 						installLabel:   "Install MariaDB",
+						removeLabel:    "Remove MariaDB",
 						startLabel:     "Start MariaDB",
 						stopLabel:      "Stop MariaDB",
 						restartLabel:   "Restart MariaDB",
 						installCmds: [][]string{
 							{aptPath, "update"},
 							{aptPath, "install", "-y", "mariadb-server", "mariadb-client"},
+						},
+						removeCmds: [][]string{
+							{aptPath, "remove", "-y", "mariadb-server", "mariadb-client"},
 						},
 						startCmds: [][]string{
 							{systemctlPath, "start", "mariadb"},
@@ -1202,9 +1245,13 @@ func detectActionPlan() actionPlan {
 				return actionPlan{
 					packageManager: "apt",
 					installLabel:   "Install MariaDB",
+					removeLabel:    "Remove MariaDB",
 					installCmds: [][]string{
 						{aptPath, "update"},
 						{aptPath, "install", "-y", "mariadb-server", "mariadb-client"},
+					},
+					removeCmds: [][]string{
+						{aptPath, "remove", "-y", "mariadb-server", "mariadb-client"},
 					},
 				}
 			}
@@ -1213,11 +1260,15 @@ func detectActionPlan() actionPlan {
 					return actionPlan{
 						packageManager: "dnf",
 						installLabel:   "Install MariaDB",
+						removeLabel:    "Remove MariaDB",
 						startLabel:     "Start MariaDB",
 						stopLabel:      "Stop MariaDB",
 						restartLabel:   "Restart MariaDB",
 						installCmds: [][]string{
 							{dnfPath, "install", "-y", "mariadb-server", "mariadb"},
+						},
+						removeCmds: [][]string{
+							{dnfPath, "remove", "-y", "mariadb-server", "mariadb"},
 						},
 						startCmds: [][]string{
 							{systemctlPath, "start", "mariadb"},
@@ -1233,8 +1284,12 @@ func detectActionPlan() actionPlan {
 				return actionPlan{
 					packageManager: "dnf",
 					installLabel:   "Install MariaDB",
+					removeLabel:    "Remove MariaDB",
 					installCmds: [][]string{
 						{dnfPath, "install", "-y", "mariadb-server", "mariadb"},
+					},
+					removeCmds: [][]string{
+						{dnfPath, "remove", "-y", "mariadb-server", "mariadb"},
 					},
 				}
 			}
@@ -1243,11 +1298,15 @@ func detectActionPlan() actionPlan {
 					return actionPlan{
 						packageManager: "yum",
 						installLabel:   "Install MariaDB",
+						removeLabel:    "Remove MariaDB",
 						startLabel:     "Start MariaDB",
 						stopLabel:      "Stop MariaDB",
 						restartLabel:   "Restart MariaDB",
 						installCmds: [][]string{
 							{yumPath, "install", "-y", "mariadb-server", "mariadb"},
+						},
+						removeCmds: [][]string{
+							{yumPath, "remove", "-y", "mariadb-server", "mariadb"},
 						},
 						startCmds: [][]string{
 							{systemctlPath, "start", "mariadb"},
@@ -1263,8 +1322,12 @@ func detectActionPlan() actionPlan {
 				return actionPlan{
 					packageManager: "yum",
 					installLabel:   "Install MariaDB",
+					removeLabel:    "Remove MariaDB",
 					installCmds: [][]string{
 						{yumPath, "install", "-y", "mariadb-server", "mariadb"},
+					},
+					removeCmds: [][]string{
+						{yumPath, "remove", "-y", "mariadb-server", "mariadb"},
 					},
 				}
 			}
@@ -1273,11 +1336,15 @@ func detectActionPlan() actionPlan {
 					return actionPlan{
 						packageManager: "pacman",
 						installLabel:   "Install MariaDB",
+						removeLabel:    "Remove MariaDB",
 						startLabel:     "Start MariaDB",
 						stopLabel:      "Stop MariaDB",
 						restartLabel:   "Restart MariaDB",
 						installCmds: [][]string{
 							{pacmanPath, "-Sy", "--noconfirm", "mariadb"},
+						},
+						removeCmds: [][]string{
+							{pacmanPath, "-Rns", "--noconfirm", "mariadb"},
 						},
 						startCmds: [][]string{
 							{systemctlPath, "start", "mariadb"},
@@ -1293,8 +1360,12 @@ func detectActionPlan() actionPlan {
 				return actionPlan{
 					packageManager: "pacman",
 					installLabel:   "Install MariaDB",
+					removeLabel:    "Remove MariaDB",
 					installCmds: [][]string{
 						{pacmanPath, "-Sy", "--noconfirm", "mariadb"},
+					},
+					removeCmds: [][]string{
+						{pacmanPath, "-Rns", "--noconfirm", "mariadb"},
 					},
 				}
 			}

@@ -41,6 +41,7 @@ var (
 type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
+	Remove(context.Context) error
 }
 
 type Status struct {
@@ -54,6 +55,8 @@ type Status struct {
 	Issues           []string `json:"issues,omitempty"`
 	InstallAvailable bool     `json:"install_available"`
 	InstallLabel     string   `json:"install_label,omitempty"`
+	RemoveAvailable  bool     `json:"remove_available"`
+	RemoveLabel      string   `json:"remove_label,omitempty"`
 }
 
 type Service struct {
@@ -77,6 +80,7 @@ func (s *Service) Status(context.Context) Status {
 		PackageManager:   "manual",
 		InstallLabel:     "Install phpMyAdmin",
 		InstallAvailable: true,
+		RemoveLabel:      "Remove phpMyAdmin",
 	}
 
 	info, err := os.Stat(installPath)
@@ -86,6 +90,7 @@ func (s *Service) Status(context.Context) Status {
 		status.InstallPath = installPath
 		status.Version = detectVersion(installPath)
 		status.InstallAvailable = false
+		status.RemoveAvailable = true
 		status.State = "installed"
 		switch {
 		case status.Version != "" && status.InstallPath != "":
@@ -158,6 +163,28 @@ func (s *Service) Install(ctx context.Context) error {
 	}
 	if err := writeVersionMetadata(installPath(), version); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (s *Service) Remove(context.Context) error {
+	path := installPath()
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("inspect phpmyadmin path: %w", err)
+	case !info.IsDir():
+		return fmt.Errorf("%s exists but is not a directory", path)
+	}
+
+	s.logger.Info("removing phpmyadmin",
+		zap.String("install_path", path),
+	)
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove phpmyadmin path: %w", err)
 	}
 
 	return nil

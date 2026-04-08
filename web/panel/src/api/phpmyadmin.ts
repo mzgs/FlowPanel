@@ -9,6 +9,8 @@ export type PHPMyAdminStatus = {
   issues?: string[];
   install_available: boolean;
   install_label?: string;
+  remove_available: boolean;
+  remove_label?: string;
 };
 
 type PHPMyAdminStatusPayload = {
@@ -45,6 +47,15 @@ export async function fetchPHPMyAdminStatus(): Promise<PHPMyAdminStatus> {
 
 export async function installPHPMyAdmin(): Promise<PHPMyAdminStatus> {
   const response = await fetch("/api/phpmyadmin/install", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parsePHPMyAdminResponse(response);
+}
+
+export async function removePHPMyAdmin(): Promise<PHPMyAdminStatus> {
+  const response = await fetch("/api/phpmyadmin/remove", {
     method: "POST",
     credentials: "include",
   });

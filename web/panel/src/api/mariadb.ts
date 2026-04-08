@@ -15,6 +15,8 @@ export type MariaDBStatus = {
   issues?: string[];
   install_available: boolean;
   install_label?: string;
+  remove_available: boolean;
+  remove_label?: string;
   start_available?: boolean;
   start_label?: string;
   stop_available?: boolean;
@@ -85,6 +87,15 @@ export async function fetchMariaDBStatus(): Promise<MariaDBStatus> {
 
 export async function installMariaDB(): Promise<MariaDBStatus> {
   const response = await fetch("/api/mariadb/install", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parseMariaDBResponse(response);
+}
+
+export async function removeMariaDB(): Promise<MariaDBStatus> {
+  const response = await fetch("/api/mariadb/remove", {
     method: "POST",
     credentials: "include",
   });

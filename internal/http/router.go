@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"flowpanel/internal/app"
@@ -36,6 +37,7 @@ import (
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
+	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/settings"
 	"flowpanel/internal/systemstatus"
 	"flowpanel/web"
@@ -46,6 +48,82 @@ import (
 )
 
 const googleDriveOAuthStateSessionKey = "google_drive_oauth_state"
+
+type runtimeActionTracker struct {
+	mu      sync.Mutex
+	actions map[string]string
+}
+
+func newRuntimeActionTracker() *runtimeActionTracker {
+	return &runtimeActionTracker{
+		actions: make(map[string]string),
+	}
+}
+
+func (t *runtimeActionTracker) Begin(resource, action string) error {
+	if t == nil {
+		return nil
+	}
+
+	resource = strings.TrimSpace(resource)
+	action = strings.TrimSpace(action)
+	if resource == "" || action == "" {
+		return nil
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if current := strings.TrimSpace(t.actions[resource]); current != "" {
+		return fmt.Errorf("%s %s is already in progress", resource, current)
+	}
+
+	t.actions[resource] = action
+	return nil
+}
+
+func (t *runtimeActionTracker) End(resource, action string) {
+	if t == nil {
+		return
+	}
+
+	resource = strings.TrimSpace(resource)
+	action = strings.TrimSpace(action)
+	if resource == "" || action == "" {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.actions[resource] == action {
+		delete(t.actions, resource)
+	}
+}
+
+func (t *runtimeActionTracker) Current(resource string) string {
+	if t == nil {
+		return ""
+	}
+
+	resource = strings.TrimSpace(resource)
+	if resource == "" {
+		return ""
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return strings.TrimSpace(t.actions[resource])
+}
+
+func backgroundRequestContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+
+	return context.WithoutCancel(ctx)
+}
 
 func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	panelHandler, err := newPanelHandler()
@@ -68,6 +146,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	router.Method(stdhttp.MethodHead, "/healthz", healthHandler)
 
 	router.Route("/api", func(r chi.Router) {
+		runtimeActions := newRuntimeActionTracker()
 		syncDomainsWithCaddy := func(ctx context.Context) error {
 			return syncDomainsWithCurrentSettings(ctx, app)
 		}
@@ -75,7 +154,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			if app == nil || app.Events == nil {
 				return
 			}
-			if _, err := app.Events.Record(ctx, input); err != nil {
+			if _, err := app.Events.Record(backgroundRequestContext(ctx), input); err != nil {
 				app.Logger.Error("record event failed", zap.Error(err))
 			}
 		}
@@ -90,6 +169,80 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				Status:        status,
 				Message:       message,
 			})
+		}
+		trackPHPStatus := func(status phpenv.Status) phpenv.Status {
+			switch runtimeActions.Current("php") {
+			case "install":
+				status.State = "installing"
+				status.Message = "PHP installation is running in the background."
+			case "remove":
+				status.State = "removing"
+				status.Message = "PHP removal is running in the background."
+			case "start":
+				status.State = "starting"
+				status.Message = "PHP-FPM is starting in the background."
+			case "stop":
+				status.State = "stopping"
+				status.Message = "PHP-FPM is stopping in the background."
+			case "restart":
+				status.State = "restarting"
+				status.Message = "PHP-FPM is restarting in the background."
+			default:
+				return status
+			}
+
+			status.Ready = false
+			status.InstallAvailable = false
+			status.RemoveAvailable = false
+			status.StartAvailable = false
+			status.StopAvailable = false
+			status.RestartAvailable = false
+			return status
+		}
+		trackMariaDBStatus := func(status mariadb.Status) mariadb.Status {
+			switch runtimeActions.Current("mariadb") {
+			case "install":
+				status.State = "installing"
+				status.Message = "MariaDB installation is running in the background."
+			case "remove":
+				status.State = "removing"
+				status.Message = "MariaDB removal is running in the background."
+			case "start":
+				status.State = "starting"
+				status.Message = "MariaDB is starting in the background."
+			case "stop":
+				status.State = "stopping"
+				status.Message = "MariaDB is stopping in the background."
+			case "restart":
+				status.State = "restarting"
+				status.Message = "MariaDB is restarting in the background."
+			default:
+				return status
+			}
+
+			status.Ready = false
+			status.InstallAvailable = false
+			status.RemoveAvailable = false
+			status.StartAvailable = false
+			status.StopAvailable = false
+			status.RestartAvailable = false
+			return status
+		}
+		trackPHPMyAdminStatus := func(status phpmyadmin.Status) phpmyadmin.Status {
+			switch runtimeActions.Current("phpmyadmin") {
+			case "install":
+				status.State = "installing"
+				status.Message = "phpMyAdmin installation is running in the background."
+			case "remove":
+				status.State = "removing"
+				status.Message = "phpMyAdmin removal is running in the background."
+			default:
+				return status
+			}
+
+			status.InstallAvailable = false
+			status.RemoveAvailable = false
+			return status
 		}
 
 		bootstrapHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -1070,7 +1223,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"mariadb": app.MariaDB.Status(r.Context()),
+				"mariadb": trackMariaDBStatus(app.MariaDB.Status(r.Context())),
 			})
 		})
 		r.Method(stdhttp.MethodGet, "/mariadb", mariaDBStatusHandler)
@@ -1163,19 +1316,61 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.MariaDB.Install(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("mariadb", "install"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.MariaDB.Install(actionCtx); err != nil {
+				runtimeActions.End("mariadb", "install")
 				app.Logger.Error("install mariadb failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "install", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "install", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("mariadb", "install")
 
-			mutationEvent(r.Context(), "runtime", "install", "mariadb", "mariadb", "MariaDB", "succeeded", "Installed MariaDB.")
+			mutationEvent(actionCtx, "runtime", "install", "mariadb", "mariadb", "MariaDB", "succeeded", "Installed MariaDB.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"mariadb": app.MariaDB.Status(r.Context()),
+				"mariadb": trackMariaDBStatus(app.MariaDB.Status(actionCtx)),
+			})
+		})
+
+		mariaDBRemoveHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("mariadb", "remove"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.MariaDB.Remove(actionCtx); err != nil {
+				runtimeActions.End("mariadb", "remove")
+				app.Logger.Error("remove mariadb failed", zap.Error(err))
+				mutationEvent(actionCtx, "runtime", "remove", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			runtimeActions.End("mariadb", "remove")
+
+			mutationEvent(actionCtx, "runtime", "remove", "mariadb", "mariadb", "MariaDB", "succeeded", "Removed MariaDB.")
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"mariadb": trackMariaDBStatus(app.MariaDB.Status(actionCtx)),
 			})
 		})
 
@@ -1187,19 +1382,28 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.MariaDB.Start(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("mariadb", "start"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.MariaDB.Start(actionCtx); err != nil {
+				runtimeActions.End("mariadb", "start")
 				app.Logger.Error("start mariadb failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "start", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "start", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("mariadb", "start")
 
-			mutationEvent(r.Context(), "runtime", "start", "mariadb", "mariadb", "MariaDB", "succeeded", "Started MariaDB.")
+			mutationEvent(actionCtx, "runtime", "start", "mariadb", "mariadb", "MariaDB", "succeeded", "Started MariaDB.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"mariadb": app.MariaDB.Status(r.Context()),
+				"mariadb": trackMariaDBStatus(app.MariaDB.Status(actionCtx)),
 			})
 		})
 
@@ -1211,19 +1415,28 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.MariaDB.Stop(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("mariadb", "stop"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.MariaDB.Stop(actionCtx); err != nil {
+				runtimeActions.End("mariadb", "stop")
 				app.Logger.Error("stop mariadb failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "stop", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "stop", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("mariadb", "stop")
 
-			mutationEvent(r.Context(), "runtime", "stop", "mariadb", "mariadb", "MariaDB", "succeeded", "Stopped MariaDB.")
+			mutationEvent(actionCtx, "runtime", "stop", "mariadb", "mariadb", "MariaDB", "succeeded", "Stopped MariaDB.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"mariadb": app.MariaDB.Status(r.Context()),
+				"mariadb": trackMariaDBStatus(app.MariaDB.Status(actionCtx)),
 			})
 		})
 
@@ -1235,22 +1448,32 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.MariaDB.Restart(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("mariadb", "restart"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.MariaDB.Restart(actionCtx); err != nil {
+				runtimeActions.End("mariadb", "restart")
 				app.Logger.Error("restart mariadb failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "restart", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "restart", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("mariadb", "restart")
 
-			mutationEvent(r.Context(), "runtime", "restart", "mariadb", "mariadb", "MariaDB", "succeeded", "Restarted MariaDB.")
+			mutationEvent(actionCtx, "runtime", "restart", "mariadb", "mariadb", "MariaDB", "succeeded", "Restarted MariaDB.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"mariadb": app.MariaDB.Status(r.Context()),
+				"mariadb": trackMariaDBStatus(app.MariaDB.Status(actionCtx)),
 			})
 		})
 		r.Method(stdhttp.MethodPost, "/mariadb/install", mariaDBInstallHandler)
+		r.Method(stdhttp.MethodPost, "/mariadb/remove", mariaDBRemoveHandler)
 		r.Method(stdhttp.MethodPost, "/mariadb/start", mariaDBStartHandler)
 		r.Method(stdhttp.MethodPost, "/mariadb/stop", mariaDBStopHandler)
 		r.Method(stdhttp.MethodPost, "/mariadb/restart", mariaDBRestartHandler)
@@ -1479,7 +1702,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"php": app.PHP.Status(r.Context()),
+				"php": trackPHPStatus(app.PHP.Status(r.Context())),
 			})
 		})
 
@@ -1491,20 +1714,29 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.PHP.Install(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("php", "install"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.PHP.Install(actionCtx); err != nil {
+				runtimeActions.End("php", "install")
 				app.Logger.Error("install php failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "install", "php", "php", "PHP", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "install", "php", "php", "PHP", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("php", "install")
 
-			status := app.PHP.Status(r.Context())
+			status := trackPHPStatus(app.PHP.Status(actionCtx))
 			if status.Ready {
-				if err := syncDomainsWithCaddy(r.Context()); err != nil {
+				if err := syncDomainsWithCaddy(actionCtx); err != nil {
 					app.Logger.Error("sync domains after php install failed", zap.Error(err))
-					mutationEvent(r.Context(), "runtime", "install", "php", "php", "PHP", "failed", "PHP installed but failed to republish domains.")
+					mutationEvent(actionCtx, "runtime", "install", "php", "php", "PHP", "failed", "PHP installed but failed to republish domains.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "php installed but failed to republish domains",
 					})
@@ -1512,7 +1744,50 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 			}
 
-			mutationEvent(r.Context(), "runtime", "install", "php", "php", "PHP", "succeeded", "Installed PHP.")
+			mutationEvent(actionCtx, "runtime", "install", "php", "php", "PHP", "succeeded", "Installed PHP.")
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": status,
+			})
+		})
+
+		phpRemoveHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime is not configured",
+				})
+				return
+			}
+
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("php", "remove"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.PHP.Remove(actionCtx); err != nil {
+				runtimeActions.End("php", "remove")
+				app.Logger.Error("remove php failed", zap.Error(err))
+				mutationEvent(actionCtx, "runtime", "remove", "php", "php", "PHP", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			runtimeActions.End("php", "remove")
+
+			status := trackPHPStatus(app.PHP.Status(actionCtx))
+			if err := syncDomainsWithCaddy(actionCtx); err != nil {
+				app.Logger.Error("sync domains after php remove failed", zap.Error(err))
+				mutationEvent(actionCtx, "runtime", "remove", "php", "php", "PHP", "failed", "PHP removed but failed to republish domains.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "php removed but failed to republish domains",
+				})
+				return
+			}
+
+			mutationEvent(actionCtx, "runtime", "remove", "php", "php", "PHP", "succeeded", "Removed PHP.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"php": status,
@@ -1527,20 +1802,29 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.PHP.Start(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("php", "start"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.PHP.Start(actionCtx); err != nil {
+				runtimeActions.End("php", "start")
 				app.Logger.Error("start php failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "start", "php", "php", "PHP", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "start", "php", "php", "PHP", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("php", "start")
 
-			status := app.PHP.Status(r.Context())
+			status := trackPHPStatus(app.PHP.Status(actionCtx))
 			if status.Ready {
-				if err := syncDomainsWithCaddy(r.Context()); err != nil {
+				if err := syncDomainsWithCaddy(actionCtx); err != nil {
 					app.Logger.Error("sync domains after php start failed", zap.Error(err))
-					mutationEvent(r.Context(), "runtime", "start", "php", "php", "PHP", "failed", "PHP started but failed to republish domains.")
+					mutationEvent(actionCtx, "runtime", "start", "php", "php", "PHP", "failed", "PHP started but failed to republish domains.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "php started but failed to republish domains",
 					})
@@ -1548,7 +1832,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 			}
 
-			mutationEvent(r.Context(), "runtime", "start", "php", "php", "PHP", "succeeded", "Started PHP.")
+			mutationEvent(actionCtx, "runtime", "start", "php", "php", "PHP", "succeeded", "Started PHP.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"php": status,
@@ -1563,19 +1847,28 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.PHP.Stop(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("php", "stop"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.PHP.Stop(actionCtx); err != nil {
+				runtimeActions.End("php", "stop")
 				app.Logger.Error("stop php failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "stop", "php", "php", "PHP", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "stop", "php", "php", "PHP", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("php", "stop")
 
-			mutationEvent(r.Context(), "runtime", "stop", "php", "php", "PHP", "succeeded", "Stopped PHP.")
+			mutationEvent(actionCtx, "runtime", "stop", "php", "php", "PHP", "succeeded", "Stopped PHP.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"php": app.PHP.Status(r.Context()),
+				"php": trackPHPStatus(app.PHP.Status(actionCtx)),
 			})
 		})
 
@@ -1587,20 +1880,29 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.PHP.Restart(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("php", "restart"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.PHP.Restart(actionCtx); err != nil {
+				runtimeActions.End("php", "restart")
 				app.Logger.Error("restart php failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "restart", "php", "php", "PHP", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "restart", "php", "php", "PHP", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("php", "restart")
 
-			status := app.PHP.Status(r.Context())
+			status := trackPHPStatus(app.PHP.Status(actionCtx))
 			if status.Ready {
-				if err := syncDomainsWithCaddy(r.Context()); err != nil {
+				if err := syncDomainsWithCaddy(actionCtx); err != nil {
 					app.Logger.Error("sync domains after php restart failed", zap.Error(err))
-					mutationEvent(r.Context(), "runtime", "restart", "php", "php", "PHP", "failed", "PHP restarted but failed to republish domains.")
+					mutationEvent(actionCtx, "runtime", "restart", "php", "php", "PHP", "failed", "PHP restarted but failed to republish domains.")
 					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 						"error": "php restarted but failed to republish domains",
 					})
@@ -1608,7 +1910,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 			}
 
-			mutationEvent(r.Context(), "runtime", "restart", "php", "php", "PHP", "succeeded", "Restarted PHP.")
+			mutationEvent(actionCtx, "runtime", "restart", "php", "php", "PHP", "succeeded", "Restarted PHP.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"php": status,
@@ -1670,6 +1972,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodHead, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodPost, "/php/install", phpInstallHandler)
+		r.Method(stdhttp.MethodPost, "/php/remove", phpRemoveHandler)
 		r.Method(stdhttp.MethodPost, "/php/start", phpStartHandler)
 		r.Method(stdhttp.MethodPost, "/php/stop", phpStopHandler)
 		r.Method(stdhttp.MethodPost, "/php/restart", phpRestartHandler)
@@ -1684,7 +1987,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"phpmyadmin": app.PHPMyAdmin.Status(r.Context()),
+				"phpmyadmin": trackPHPMyAdminStatus(app.PHPMyAdmin.Status(r.Context())),
 			})
 		})
 
@@ -1696,22 +1999,31 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if err := app.PHPMyAdmin.Install(r.Context()); err != nil {
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("phpmyadmin", "install"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.PHPMyAdmin.Install(actionCtx); err != nil {
+				runtimeActions.End("phpmyadmin", "install")
 				app.Logger.Error("install phpmyadmin failed", zap.Error(err))
-				mutationEvent(r.Context(), "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "failed", err.Error())
+				mutationEvent(actionCtx, "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
+			runtimeActions.End("phpmyadmin", "install")
 
-			status := app.PHPMyAdmin.Status(r.Context())
+			status := trackPHPMyAdminStatus(app.PHPMyAdmin.Status(actionCtx))
 			if status.Installed && app.PHP != nil {
-				phpStatus := app.PHP.Status(r.Context())
+				phpStatus := trackPHPStatus(app.PHP.Status(actionCtx))
 				if phpStatus.Ready {
-					if err := syncDomainsWithCaddy(r.Context()); err != nil {
+					if err := syncDomainsWithCaddy(actionCtx); err != nil {
 						app.Logger.Error("sync domains after phpmyadmin install failed", zap.Error(err))
-						mutationEvent(r.Context(), "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "failed", "phpMyAdmin installed but failed to republish routes.")
+						mutationEvent(actionCtx, "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "failed", "phpMyAdmin installed but failed to republish routes.")
 						writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 							"error": "phpmyadmin installed but failed to republish routes",
 						})
@@ -1720,7 +2032,50 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				}
 			}
 
-			mutationEvent(r.Context(), "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "succeeded", "Installed phpMyAdmin.")
+			mutationEvent(actionCtx, "runtime", "install", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "succeeded", "Installed phpMyAdmin.")
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"phpmyadmin": status,
+			})
+		})
+
+		phpMyAdminRemoveHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHPMyAdmin == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "phpmyadmin runtime is not configured",
+				})
+				return
+			}
+
+			actionCtx := backgroundRequestContext(r.Context())
+			if err := runtimeActions.Begin("phpmyadmin", "remove"); err != nil {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			if err := app.PHPMyAdmin.Remove(actionCtx); err != nil {
+				runtimeActions.End("phpmyadmin", "remove")
+				app.Logger.Error("remove phpmyadmin failed", zap.Error(err))
+				mutationEvent(actionCtx, "runtime", "remove", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			runtimeActions.End("phpmyadmin", "remove")
+
+			status := trackPHPMyAdminStatus(app.PHPMyAdmin.Status(actionCtx))
+			if err := syncDomainsWithCaddy(actionCtx); err != nil {
+				app.Logger.Error("sync domains after phpmyadmin remove failed", zap.Error(err))
+				mutationEvent(actionCtx, "runtime", "remove", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "failed", "phpMyAdmin removed but failed to republish routes.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "phpmyadmin removed but failed to republish routes",
+				})
+				return
+			}
+
+			mutationEvent(actionCtx, "runtime", "remove", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "succeeded", "Removed phpMyAdmin.")
 
 			writeJSON(w, stdhttp.StatusOK, map[string]any{
 				"phpmyadmin": status,
@@ -1730,6 +2085,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/phpmyadmin", phpMyAdminStatusHandler)
 		r.Method(stdhttp.MethodHead, "/phpmyadmin", phpMyAdminStatusHandler)
 		r.Method(stdhttp.MethodPost, "/phpmyadmin/install", phpMyAdminInstallHandler)
+		r.Method(stdhttp.MethodPost, "/phpmyadmin/remove", phpMyAdminRemoveHandler)
 
 		ftpAccountsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.FTPAccounts == nil {

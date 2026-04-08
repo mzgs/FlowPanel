@@ -40,6 +40,7 @@ var aptPHPPackages = []string{
 type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
+	Remove(context.Context) error
 	Start(context.Context) error
 	Stop(context.Context) error
 	Restart(context.Context) error
@@ -62,6 +63,8 @@ type Status struct {
 	Issues            []string `json:"issues,omitempty"`
 	InstallAvailable  bool     `json:"install_available"`
 	InstallLabel      string   `json:"install_label,omitempty"`
+	RemoveAvailable   bool     `json:"remove_available"`
+	RemoveLabel       string   `json:"remove_label,omitempty"`
 	StartAvailable    bool     `json:"start_available"`
 	StartLabel        string   `json:"start_label,omitempty"`
 	StopAvailable     bool     `json:"stop_available"`
@@ -113,10 +116,12 @@ type Service struct {
 type actionPlan struct {
 	packageManager string
 	installLabel   string
+	removeLabel    string
 	startLabel     string
 	stopLabel      string
 	restartLabel   string
 	installCmds    [][]string
+	removeCmds     [][]string
 	startCmds      [][]string
 	stopCmds       [][]string
 	restartCmds    [][]string
@@ -179,6 +184,8 @@ func (s *Service) Status(ctx context.Context) Status {
 
 	status.InstallAvailable = len(plan.installCmds) > 0 && (!status.PHPInstalled || !status.FPMInstalled)
 	status.InstallLabel = plan.installLabel
+	status.RemoveAvailable = len(plan.removeCmds) > 0 && (status.PHPInstalled || status.FPMInstalled)
+	status.RemoveLabel = plan.removeLabel
 	status.StartAvailable = len(plan.startCmds) > 0 && status.FPMInstalled && !status.ServiceRunning
 	status.StartLabel = plan.startLabel
 	status.StopAvailable = len(plan.stopCmds) > 0 && status.FPMInstalled && status.ServiceRunning
@@ -239,6 +246,24 @@ func (s *Service) Install(ctx context.Context) error {
 	return nil
 }
 
+func (s *Service) Remove(ctx context.Context) error {
+	plan := detectActionPlan()
+	if len(plan.removeCmds) == 0 {
+		return fmt.Errorf("automatic PHP removal is not supported on %s", runtime.GOOS)
+	}
+
+	s.logger.Info("removing php runtime",
+		zap.String("package_manager", plan.packageManager),
+	)
+	commands := make([][]string, 0, len(plan.stopCmds)+len(plan.removeCmds))
+	if status := s.Status(ctx); status.ServiceRunning {
+		commands = append(commands, plan.stopCmds...)
+	}
+	commands = append(commands, plan.removeCmds...)
+
+	return runCommands(ctx, commands...)
+}
+
 func (s *Service) Start(ctx context.Context) error {
 	plan := detectActionPlan()
 	if len(plan.startCmds) == 0 {
@@ -282,11 +307,15 @@ func detectActionPlan() actionPlan {
 			return actionPlan{
 				packageManager: "homebrew",
 				installLabel:   "Install PHP",
+				removeLabel:    "Remove PHP",
 				startLabel:     "Start PHP-FPM",
 				stopLabel:      "Stop PHP-FPM",
 				restartLabel:   "Restart PHP-FPM",
 				installCmds: [][]string{
 					{brewPath, "install", "php"},
+				},
+				removeCmds: [][]string{
+					{brewPath, "uninstall", "php"},
 				},
 				startCmds: [][]string{
 					{brewPath, "services", "start", "php"},
@@ -306,9 +335,13 @@ func detectActionPlan() actionPlan {
 				return actionPlan{
 					packageManager: "apt",
 					installLabel:   "Install PHP",
+					removeLabel:    "Remove PHP",
 					installCmds: [][]string{
 						{aptPath, "update"},
 						installArgs,
+					},
+					removeCmds: [][]string{
+						append([]string{aptPath, "remove", "-y"}, aptPHPPackages...),
 					},
 				}
 			}
@@ -316,8 +349,12 @@ func detectActionPlan() actionPlan {
 				return actionPlan{
 					packageManager: "dnf",
 					installLabel:   "Install PHP",
+					removeLabel:    "Remove PHP",
 					installCmds: [][]string{
 						{dnfPath, "install", "-y", "php", "php-fpm"},
+					},
+					removeCmds: [][]string{
+						{dnfPath, "remove", "-y", "php", "php-fpm"},
 					},
 				}
 			}
@@ -325,8 +362,12 @@ func detectActionPlan() actionPlan {
 				return actionPlan{
 					packageManager: "yum",
 					installLabel:   "Install PHP",
+					removeLabel:    "Remove PHP",
 					installCmds: [][]string{
 						{yumPath, "install", "-y", "php", "php-fpm"},
+					},
+					removeCmds: [][]string{
+						{yumPath, "remove", "-y", "php", "php-fpm"},
 					},
 				}
 			}
@@ -334,8 +375,12 @@ func detectActionPlan() actionPlan {
 				return actionPlan{
 					packageManager: "pacman",
 					installLabel:   "Install PHP",
+					removeLabel:    "Remove PHP",
 					installCmds: [][]string{
 						{pacmanPath, "-Sy", "--noconfirm", "php", "php-fpm"},
+					},
+					removeCmds: [][]string{
+						{pacmanPath, "-Rns", "--noconfirm", "php", "php-fpm"},
 					},
 				}
 			}

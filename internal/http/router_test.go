@@ -44,6 +44,15 @@ type fakePHPManager struct{}
 
 type fakeMariaDBManager struct{}
 
+type contextAwarePHPManager struct {
+	removed bool
+}
+
+type blockingPHPManager struct {
+	installStarted chan struct{}
+	releaseInstall chan struct{}
+}
+
 type trackingMariaDBManager struct {
 	databases     []mariadb.DatabaseRecord
 	deleted       []string
@@ -55,6 +64,18 @@ type fakePHPMyAdminManager struct{}
 
 type installablePHPMyAdminManager struct {
 	status phpmyadmin.Status
+}
+
+type removablePHPManager struct {
+	removed bool
+}
+
+type removableMariaDBManager struct {
+	removed bool
+}
+
+type removablePHPMyAdminManager struct {
+	removed bool
 }
 
 type previewGeneratorFunc func(ctx context.Context, targetURL string) ([]byte, error)
@@ -74,6 +95,10 @@ func (fakePHPManager) Install(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) Remove(context.Context) error {
+	return nil
+}
+
 func (fakePHPManager) Start(context.Context) error {
 	return nil
 }
@@ -88,6 +113,98 @@ func (fakePHPManager) Restart(context.Context) error {
 
 func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return fakePHPManager{}.Status(context.Background()), nil
+}
+
+func (m *contextAwarePHPManager) Status(context.Context) phpenv.Status {
+	if m.removed {
+		return phpenv.Status{
+			State:           "missing",
+			Message:         "PHP is not installed.",
+			RemoveAvailable: false,
+		}
+	}
+
+	return phpenv.Status{
+		Ready:           false,
+		State:           "installed",
+		Message:         "PHP is installed.",
+		RemoveAvailable: true,
+	}
+}
+
+func (m *contextAwarePHPManager) Install(ctx context.Context) error {
+	m.removed = false
+	return ctx.Err()
+}
+
+func (m *contextAwarePHPManager) Remove(ctx context.Context) error {
+	m.removed = true
+	return ctx.Err()
+}
+
+func (m *contextAwarePHPManager) Start(context.Context) error {
+	return nil
+}
+
+func (m *contextAwarePHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (m *contextAwarePHPManager) Restart(context.Context) error {
+	return nil
+}
+
+func (m *contextAwarePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
+}
+
+func (m *blockingPHPManager) Status(context.Context) phpenv.Status {
+	return phpenv.Status{
+		PHPInstalled:     true,
+		PHPVersion:       "PHP 8.3.6 (cli)",
+		FPMInstalled:     true,
+		ServiceRunning:   false,
+		ListenAddress:    "127.0.0.1:9000",
+		State:            "stopped",
+		Message:          "PHP is installed, but php-fpm is not running on 127.0.0.1:9000.",
+		InstallAvailable: false,
+		RemoveAvailable:  true,
+		StartAvailable:   true,
+	}
+}
+
+func (m *blockingPHPManager) Install(context.Context) error {
+	if m.installStarted != nil {
+		select {
+		case <-m.installStarted:
+		default:
+			close(m.installStarted)
+		}
+	}
+	if m.releaseInstall != nil {
+		<-m.releaseInstall
+	}
+	return nil
+}
+
+func (m *blockingPHPManager) Remove(context.Context) error {
+	return nil
+}
+
+func (m *blockingPHPManager) Start(context.Context) error {
+	return nil
+}
+
+func (m *blockingPHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (m *blockingPHPManager) Restart(context.Context) error {
+	return nil
+}
+
+func (m *blockingPHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
 }
 
 func (fakeMariaDBManager) Status(context.Context) mariadb.Status {
@@ -105,6 +222,10 @@ func (fakeMariaDBManager) Status(context.Context) mariadb.Status {
 }
 
 func (fakeMariaDBManager) Install(context.Context) error {
+	return nil
+}
+
+func (fakeMariaDBManager) Remove(context.Context) error {
 	return nil
 }
 
@@ -186,6 +307,10 @@ func (m *trackingMariaDBManager) Install(context.Context) error {
 	return nil
 }
 
+func (m *trackingMariaDBManager) Remove(context.Context) error {
+	return nil
+}
+
 func (m *trackingMariaDBManager) Start(context.Context) error {
 	return nil
 }
@@ -255,6 +380,10 @@ func (fakePHPMyAdminManager) Install(context.Context) error {
 	return nil
 }
 
+func (fakePHPMyAdminManager) Remove(context.Context) error {
+	return nil
+}
+
 func (m *installablePHPMyAdminManager) Status(context.Context) phpmyadmin.Status {
 	return m.status
 }
@@ -263,6 +392,164 @@ func (m *installablePHPMyAdminManager) Install(context.Context) error {
 	m.status.Installed = true
 	m.status.State = "installed"
 	m.status.Message = "phpMyAdmin is installed."
+	return nil
+}
+
+func (m *installablePHPMyAdminManager) Remove(context.Context) error {
+	m.status.Installed = false
+	m.status.State = "missing"
+	m.status.Message = "phpMyAdmin is not installed."
+	return nil
+}
+
+func (m *removablePHPManager) Status(context.Context) phpenv.Status {
+	if m.removed {
+		return phpenv.Status{
+			State: "missing",
+		}
+	}
+
+	return phpenv.Status{
+		PHPInstalled:     true,
+		FPMInstalled:     true,
+		ServiceRunning:   true,
+		Ready:            true,
+		State:            "ready",
+		Message:          "PHP and php-fpm are ready for Caddy at 127.0.0.1:9000.",
+		ListenAddress:    "127.0.0.1:9000",
+		RemoveAvailable:  true,
+		InstallAvailable: false,
+	}
+}
+
+func (m *removablePHPManager) Install(context.Context) error {
+	m.removed = false
+	return nil
+}
+
+func (m *removablePHPManager) Remove(context.Context) error {
+	m.removed = true
+	return nil
+}
+
+func (m *removablePHPManager) Start(context.Context) error {
+	return nil
+}
+
+func (m *removablePHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (m *removablePHPManager) Restart(context.Context) error {
+	return nil
+}
+
+func (m *removablePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
+}
+
+func (m *removableMariaDBManager) Status(context.Context) mariadb.Status {
+	if m.removed {
+		return mariadb.Status{
+			Product: "MariaDB",
+			State:   "missing",
+		}
+	}
+
+	return mariadb.Status{
+		Product:          "MariaDB",
+		ServerInstalled:  true,
+		ClientInstalled:  true,
+		ServiceRunning:   true,
+		Ready:            true,
+		State:            "ready",
+		Message:          "MariaDB is accepting local connections on 127.0.0.1:3306.",
+		ListenAddress:    "127.0.0.1:3306",
+		RemoveAvailable:  true,
+		InstallAvailable: false,
+	}
+}
+
+func (m *removableMariaDBManager) Install(context.Context) error {
+	m.removed = false
+	return nil
+}
+
+func (m *removableMariaDBManager) Remove(context.Context) error {
+	m.removed = true
+	return nil
+}
+
+func (m *removableMariaDBManager) Start(context.Context) error {
+	return nil
+}
+
+func (m *removableMariaDBManager) Stop(context.Context) error {
+	return nil
+}
+
+func (m *removableMariaDBManager) Restart(context.Context) error {
+	return nil
+}
+
+func (m *removableMariaDBManager) RootPassword(context.Context) (string, bool, error) {
+	return "", false, nil
+}
+
+func (m *removableMariaDBManager) SetRootPassword(context.Context, string) error {
+	return nil
+}
+
+func (m *removableMariaDBManager) ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error) {
+	return nil, nil
+}
+
+func (m *removableMariaDBManager) DumpDatabase(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *removableMariaDBManager) RestoreDatabase(context.Context, string, []byte) error {
+	return nil
+}
+
+func (m *removableMariaDBManager) CreateDatabase(context.Context, mariadb.CreateDatabaseInput) (mariadb.DatabaseRecord, error) {
+	return mariadb.DatabaseRecord{}, nil
+}
+
+func (m *removableMariaDBManager) UpdateDatabase(context.Context, string, mariadb.UpdateDatabaseInput) (mariadb.DatabaseRecord, error) {
+	return mariadb.DatabaseRecord{}, nil
+}
+
+func (m *removableMariaDBManager) DeleteDatabase(context.Context, string, mariadb.DeleteDatabaseInput) error {
+	return nil
+}
+
+func (m *removablePHPMyAdminManager) Status(context.Context) phpmyadmin.Status {
+	if m.removed {
+		return phpmyadmin.Status{
+			State:            "missing",
+			Message:          "phpMyAdmin is not installed.",
+			InstallAvailable: true,
+		}
+	}
+
+	return phpmyadmin.Status{
+		Installed:        true,
+		InstallPath:      "/usr/share/phpmyadmin",
+		State:            "installed",
+		Message:          "phpMyAdmin is installed.",
+		RemoveAvailable:  true,
+		InstallAvailable: false,
+	}
+}
+
+func (m *removablePHPMyAdminManager) Install(context.Context) error {
+	m.removed = false
+	return nil
+}
+
+func (m *removablePHPMyAdminManager) Remove(context.Context) error {
+	m.removed = true
 	return nil
 }
 
@@ -357,6 +644,100 @@ func TestPHPMyAdminInstallSyncsCaddy(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("asset status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestPHPInstallContinuesAfterRequestCancellation(t *testing.T) {
+	manager := &contextAwarePHPManager{}
+	router, _, _ := newTestDomainRouterWithManagers(t, fakeMariaDBManager{}, manager, fakePHPMyAdminManager{})
+
+	baseReq := httptest.NewRequest(http.MethodPost, "/api/php/install", nil)
+	ctx, cancel := context.WithCancel(baseReq.Context())
+	cancel()
+	req := baseReq.WithContext(ctx)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+}
+
+func TestPHPRemoveContinuesAfterRequestCancellation(t *testing.T) {
+	manager := &contextAwarePHPManager{}
+	router, _, _ := newStartedTestDomainRouterWithManagers(t, fakeMariaDBManager{}, manager, fakePHPMyAdminManager{})
+
+	baseReq := httptest.NewRequest(http.MethodPost, "/api/php/remove", nil)
+	ctx, cancel := context.WithCancel(baseReq.Context())
+	cancel()
+	req := baseReq.WithContext(ctx)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+}
+
+func TestPHPStatusShowsInstallingWhileInstallRunsInBackground(t *testing.T) {
+	manager := &blockingPHPManager{
+		installStarted: make(chan struct{}),
+		releaseInstall: make(chan struct{}),
+	}
+	router, _, _ := newTestDomainRouterWithManagers(t, fakeMariaDBManager{}, manager, fakePHPMyAdminManager{})
+
+	baseReq := httptest.NewRequest(http.MethodPost, "/api/php/install", nil)
+	ctx, cancel := context.WithCancel(baseReq.Context())
+	cancel()
+	req := baseReq.WithContext(ctx)
+
+	installRecorder := httptest.NewRecorder()
+	installDone := make(chan struct{})
+	go func() {
+		router.ServeHTTP(installRecorder, req)
+		close(installDone)
+	}()
+
+	select {
+	case <-manager.installStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for php install to start")
+	}
+
+	statusRecorder := httptest.NewRecorder()
+	router.ServeHTTP(statusRecorder, httptest.NewRequest(http.MethodGet, "/api/php", nil))
+
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", statusRecorder.Code, http.StatusOK, statusRecorder.Body.String())
+	}
+
+	var payload struct {
+		PHP phpenv.Status `json:"php"`
+	}
+	if err := json.Unmarshal(statusRecorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.PHP.State != "installing" {
+		t.Fatalf("state = %q, want installing", payload.PHP.State)
+	}
+	if payload.PHP.Message != "PHP installation is running in the background." {
+		t.Fatalf("message = %q", payload.PHP.Message)
+	}
+	if payload.PHP.RemoveAvailable {
+		t.Fatal("remove_available = true, want false while install is in progress")
+	}
+	if payload.PHP.StartAvailable {
+		t.Fatal("start_available = true, want false while install is in progress")
+	}
+
+	close(manager.releaseInstall)
+
+	select {
+	case <-installDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for php install request to finish")
 	}
 }
 
@@ -2754,6 +3135,33 @@ func TestMariaDBInstallEndpoint(t *testing.T) {
 	}
 }
 
+func TestMariaDBRemoveEndpoint(t *testing.T) {
+	router, _, _ := newStartedTestDomainRouterWithManagers(t, &removableMariaDBManager{}, fakePHPManager{}, fakePHPMyAdminManager{})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/mariadb/remove", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var payload struct {
+		MariaDB struct {
+			State           string `json:"state"`
+			ServerInstalled bool   `json:"server_installed"`
+		} `json:"mariadb"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.MariaDB.State != "missing" {
+		t.Fatalf("state = %q, want missing", payload.MariaDB.State)
+	}
+	if payload.MariaDB.ServerInstalled {
+		t.Fatal("server_installed = true, want false")
+	}
+}
+
 func TestMariaDBDatabasesListEndpoint(t *testing.T) {
 	router, _, _ := newTestDomainRouter(t)
 
@@ -2844,6 +3252,60 @@ func TestMariaDBDeleteDatabaseEndpoint(t *testing.T) {
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+}
+
+func TestPHPRemoveEndpoint(t *testing.T) {
+	router, _, _ := newStartedTestDomainRouterWithManagers(t, fakeMariaDBManager{}, &removablePHPManager{}, fakePHPMyAdminManager{})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/php/remove", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var payload struct {
+		PHP struct {
+			State        string `json:"state"`
+			PHPInstalled bool   `json:"php_installed"`
+		} `json:"php"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.PHP.State != "missing" {
+		t.Fatalf("state = %q, want missing", payload.PHP.State)
+	}
+	if payload.PHP.PHPInstalled {
+		t.Fatal("php_installed = true, want false")
+	}
+}
+
+func TestPHPMyAdminRemoveEndpoint(t *testing.T) {
+	router, _, _ := newStartedTestDomainRouterWithManagers(t, fakeMariaDBManager{}, fakePHPManager{}, &removablePHPMyAdminManager{})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/phpmyadmin/remove", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var payload struct {
+		PHPMyAdmin struct {
+			State     string `json:"state"`
+			Installed bool   `json:"installed"`
+		} `json:"phpmyadmin"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.PHPMyAdmin.State != "missing" {
+		t.Fatalf("state = %q, want missing", payload.PHPMyAdmin.State)
+	}
+	if payload.PHPMyAdmin.Installed {
+		t.Fatal("installed = true, want false")
 	}
 }
 
@@ -2998,14 +3460,42 @@ func TestPanelHandlerFallsBackToIndexForClientRoutesWithDots(t *testing.T) {
 }
 
 func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.Store) {
+	return newTestDomainRouterWithManagers(t, fakeMariaDBManager{}, fakePHPManager{}, fakePHPMyAdminManager{})
+}
+
+func newStartedTestDomainRouterWithManagers(
+	t *testing.T,
+	mariaDBManager mariadb.Manager,
+	phpManager phpenv.Manager,
+	phpMyAdminManager phpmyadmin.Manager,
+) (http.Handler, *domain.Service, *domain.Store) {
+	return newTestDomainRouterWithManagersOptions(t, mariaDBManager, phpManager, phpMyAdminManager, true)
+}
+
+func newTestDomainRouterWithManagers(
+	t *testing.T,
+	mariaDBManager mariadb.Manager,
+	phpManager phpenv.Manager,
+	phpMyAdminManager phpmyadmin.Manager,
+) (http.Handler, *domain.Service, *domain.Store) {
+	return newTestDomainRouterWithManagersOptions(t, mariaDBManager, phpManager, phpMyAdminManager, false)
+}
+
+func newTestDomainRouterWithManagersOptions(
+	t *testing.T,
+	mariaDBManager mariadb.Manager,
+	phpManager phpenv.Manager,
+	phpMyAdminManager phpmyadmin.Manager,
+	startCaddy bool,
+) (http.Handler, *domain.Service, *domain.Store) {
 	t.Helper()
 
 	cfg := config.Config{
 		Env:             "test",
-		AdminListenAddr: ":18080",
-		PublicHTTPAddr:  ":19080",
-		PublicHTTPSAddr: ":19443",
-		PHPMyAdminAddr:  ":32109",
+		AdminListenAddr: reserveTCPAddress(t),
+		PublicHTTPAddr:  reserveTCPAddress(t),
+		PublicHTTPSAddr: reserveTCPAddress(t),
+		PHPMyAdminAddr:  reserveTCPAddress(t),
 		Database: config.DatabaseConfig{
 			Path: ":memory:",
 		},
@@ -3051,7 +3541,24 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		t.Fatalf("new file manager: %v", err)
 	}
 	settingsService := settings.NewService(settingsStore)
-	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), filepath.Join(t.TempDir(), "backups"), cfg.Database.Path, dbConn, domains, fakeMariaDBManager{}, settingsService, nil)
+	backupManager := backup.NewService(logger.Named("backup"), t.TempDir(), filepath.Join(t.TempDir(), "backups"), cfg.Database.Path, dbConn, domains, mariaDBManager, settingsService, nil)
+	runtime := caddy.NewRuntime(
+		logger.Named("caddy"),
+		cfg.AdminListenAddr,
+		cfg.PublicHTTPAddr,
+		cfg.PublicHTTPSAddr,
+		phpManager,
+		phpMyAdminManager,
+		cfg.PHPMyAdminAddr,
+	)
+	if startCaddy {
+		if err := runtime.Start(context.Background()); err != nil {
+			t.Fatalf("start caddy runtime: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = runtime.Stop(context.Background())
+		})
+	}
 
 	router, err := NewRouter(app.New(
 		cfg,
@@ -3060,18 +3567,10 @@ func newTestDomainRouter(t *testing.T) (http.Handler, *domain.Service, *domain.S
 		domains,
 		auth.NewSessionManager(cfg),
 		flowcron.NewScheduler(logger.Named("cron"), false, cronStore),
-		caddy.NewRuntime(
-			logger.Named("caddy"),
-			cfg.AdminListenAddr,
-			cfg.PublicHTTPAddr,
-			cfg.PublicHTTPSAddr,
-			fakePHPManager{},
-			fakePHPMyAdminManager{},
-			cfg.PHPMyAdminAddr,
-		),
-		fakeMariaDBManager{},
-		fakePHPManager{},
-		fakePHPMyAdminManager{},
+		runtime,
+		mariaDBManager,
+		phpManager,
+		phpMyAdminManager,
 		fileManager,
 		nil,
 		nil,

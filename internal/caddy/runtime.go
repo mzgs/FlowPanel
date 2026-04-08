@@ -282,15 +282,15 @@ func (r *Runtime) resolvePHPMyAdminRouteConfig(ctx context.Context) (*phpMyAdmin
 	}
 
 	if r.php == nil {
-		return nil, fmt.Errorf("php-fpm support is not configured")
+		return nil, nil
 	}
 
 	phpStatus := r.php.Status(ctx)
 	if !phpStatus.Ready {
-		return nil, fmt.Errorf("php-fpm is not ready: %s", phpStatus.Message)
+		return nil, nil
 	}
 	if strings.TrimSpace(phpStatus.ListenAddress) == "" {
-		return nil, fmt.Errorf("php-fpm listen address is not configured")
+		return nil, nil
 	}
 
 	return &phpMyAdminRouteConfig{

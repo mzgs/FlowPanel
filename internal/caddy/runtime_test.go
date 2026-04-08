@@ -601,6 +601,10 @@ func (fakePHPManager) Install(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) Remove(context.Context) error {
+	return nil
+}
+
 func (fakePHPManager) Start(context.Context) error {
 	return nil
 }
@@ -624,6 +628,10 @@ func (fakePHPMyAdminManager) Status(context.Context) phpmyadmin.Status {
 }
 
 func (fakePHPMyAdminManager) Install(context.Context) error {
+	return nil
+}
+
+func (fakePHPMyAdminManager) Remove(context.Context) error {
 	return nil
 }
 

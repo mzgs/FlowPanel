@@ -47,6 +47,27 @@ type DomainPHPDialogProps = {
   onSave: () => void;
 };
 
+function getPHPActionLabel(state?: string | null) {
+  switch (state) {
+    case "installing":
+      return "Installing...";
+    case "removing":
+      return "Removing...";
+    case "starting":
+      return "Starting...";
+    case "stopping":
+      return "Stopping...";
+    case "restarting":
+      return "Restarting...";
+    default:
+      return null;
+  }
+}
+
+function isPHPActionState(state?: string | null) {
+  return getPHPActionLabel(state) !== null;
+}
+
 function FieldError({ message }: { message?: string }) {
   if (!message) {
     return null;
@@ -61,6 +82,11 @@ function extractVersionNumber(value: string, pattern: RegExp) {
 }
 
 function formatPHPVersion(status: PHPStatus | null) {
+  const actionLabel = getPHPActionLabel(status?.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
   if (!status?.php_installed) {
     return "Not installed";
   }
@@ -76,6 +102,11 @@ function formatPHPVersion(status: PHPStatus | null) {
 function getPHPServiceLabel(status: PHPStatus | null) {
   if (!status) {
     return "Unavailable";
+  }
+
+  const actionLabel = getPHPActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel.replace("...", "");
   }
 
   if (status.service_running) {
@@ -106,7 +137,8 @@ export function DomainPHPDialog({
   onStart,
   onSave,
 }: DomainPHPDialogProps) {
-  const busy = saving || runningAction !== null;
+  const backgroundActionLabel = getPHPActionLabel(status?.state);
+  const busy = saving || runningAction !== null || isPHPActionState(status?.state);
   const installDisabled = busy;
   const startDisabled = busy || !status?.start_available;
 
@@ -139,6 +171,12 @@ export function DomainPHPDialog({
         </section>
 
         <div className="flex flex-wrap items-center gap-2">
+          {backgroundActionLabel ? (
+            <Button type="button" variant="outline" disabled>
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              {backgroundActionLabel}
+            </Button>
+          ) : null}
           {status?.install_available ? (
             <Button type="button" onClick={onInstall} disabled={installDisabled}>
               {runningAction === "install" ? (

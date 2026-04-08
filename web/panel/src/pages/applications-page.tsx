@@ -2,17 +2,28 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   fetchMariaDBStatus,
   installMariaDB,
+  removeMariaDB,
   restartMariaDB,
   startMariaDB,
   stopMariaDB,
   type MariaDBStatus,
 } from "@/api/mariadb";
-import { fetchPHPStatus, installPHP, restartPHP, startPHP, stopPHP, type PHPStatus } from "@/api/php";
+import {
+  fetchPHPStatus,
+  installPHP,
+  removePHP,
+  restartPHP,
+  startPHP,
+  stopPHP,
+  type PHPStatus,
+} from "@/api/php";
 import {
   fetchPHPMyAdminStatus,
   installPHPMyAdmin,
+  removePHPMyAdmin,
   type PHPMyAdminStatus,
 } from "@/api/phpmyadmin";
+import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import {
   Database,
   ExternalLink,
@@ -34,6 +45,8 @@ import { toast } from "sonner";
 
 const compactActionButtonClassName = "h-7 gap-1.5 px-2.5 text-xs";
 const statusMetaBadgeClassName = "h-5 rounded-sm px-1.5 py-0 text-[11px] font-medium";
+type RemovableApplication = "php" | "mariadb" | "phpmyadmin";
+type RuntimeState = string | null | undefined;
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {
@@ -48,7 +61,33 @@ function extractVersionNumber(value: string, pattern: RegExp) {
   return match?.[1] ?? null;
 }
 
+function getRuntimeActionLabel(state: RuntimeState) {
+  switch (state) {
+    case "installing":
+      return "Installing...";
+    case "removing":
+      return "Removing...";
+    case "starting":
+      return "Starting...";
+    case "stopping":
+      return "Stopping...";
+    case "restarting":
+      return "Restarting...";
+    default:
+      return null;
+  }
+}
+
+function isRuntimeActionState(state: RuntimeState) {
+  return getRuntimeActionLabel(state) !== null;
+}
+
 function formatPHPVersion(status: PHPStatus | null) {
+  const actionLabel = getRuntimeActionLabel(status?.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
   if (!status?.php_installed) {
     return "Not installed";
   }
@@ -75,6 +114,11 @@ function formatMariaDBValue(status: MariaDBStatus | null) {
     return "Unavailable";
   }
 
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
   if (status.ready && status.version?.trim()) {
     return formatMariaDBVersion(status.version.trim());
   }
@@ -95,6 +139,11 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
     return "Unavailable";
   }
 
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
   if (status.installed && status.version?.trim()) {
     return status.version.trim();
   }
@@ -109,6 +158,11 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
 function getPHPBadge(status: PHPStatus | null) {
   if (!status) {
     return { label: "Unavailable", variant: "outline" as const };
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
   }
 
   if (status.ready) {
@@ -131,6 +185,11 @@ function getMariaDBBadge(status: MariaDBStatus | null) {
     return { label: "Unavailable", variant: "outline" as const };
   }
 
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
+  }
+
   if (status.ready) {
     return { label: "Ready", variant: "default" as const };
   }
@@ -151,6 +210,11 @@ function getPHPMyAdminBadge(status: PHPMyAdminStatus | null) {
     return { label: "Unavailable", variant: "outline" as const };
   }
 
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
+  }
+
   if (status.installed) {
     return { label: "Installed", variant: "default" as const };
   }
@@ -159,11 +223,40 @@ function getPHPMyAdminBadge(status: PHPMyAdminStatus | null) {
 }
 
 function getPHPMyAdminServiceStatus(status: PHPMyAdminStatus | null) {
+  const actionLabel = getRuntimeActionLabel(status?.state);
+  if (actionLabel) {
+    return { value: actionLabel.replace("...", ""), tone: undefined };
+  }
+
   if (status?.installed) {
     return { value: "Running", tone: "success" as const };
   }
 
   return { value: "Stopped", tone: "danger" as const };
+}
+
+function canRemovePHP(status: PHPStatus | null) {
+  if (!status) {
+    return false;
+  }
+
+  return status.remove_available;
+}
+
+function canRemoveMariaDB(status: MariaDBStatus | null) {
+  if (!status) {
+    return false;
+  }
+
+  return status.remove_available;
+}
+
+function canRemovePHPMyAdmin(status: PHPMyAdminStatus | null) {
+  if (!status) {
+    return false;
+  }
+
+  return status.remove_available;
 }
 
 function SectionCard({
@@ -267,11 +360,15 @@ export function ApplicationsPage() {
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
+  const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
 
   const [runningAction, setRunningAction] = useState<
     | "install-mariadb"
+    | "remove-mariadb"
     | "install-php"
+    | "remove-php"
     | "install-phpmyadmin"
+    | "remove-phpmyadmin"
     | "start-mariadb"
     | "stop-mariadb"
     | "restart-mariadb"
@@ -356,8 +453,97 @@ export function ApplicationsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (
+      !isRuntimeActionState(phpStatus?.state) &&
+      !isRuntimeActionState(mariadbStatus?.state) &&
+      !isRuntimeActionState(phpMyAdminStatus?.state)
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadPage();
+    }, 3_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state]);
+
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
   const phpMyAdminServiceStatus = getPHPMyAdminServiceStatus(phpMyAdminStatus);
+  const phpRemoveEnabled = canRemovePHP(phpStatus);
+  const mariaDBRemoveEnabled = canRemoveMariaDB(mariadbStatus);
+  const phpMyAdminRemoveEnabled = canRemovePHPMyAdmin(phpMyAdminStatus);
+  const phpBusyLabel = getRuntimeActionLabel(phpStatus?.state);
+  const mariadbBusyLabel = getRuntimeActionLabel(mariadbStatus?.state);
+  const phpMyAdminBusyLabel = getRuntimeActionLabel(phpMyAdminStatus?.state);
+  const removeDialogDescription =
+    removeCandidate === "php"
+      ? "Remove PHP and php-fpm from this node? PHP-backed domains will stop serving until PHP is installed again."
+      : removeCandidate === "mariadb"
+        ? "Remove MariaDB from this node? Existing databases may become unavailable until MariaDB is installed again."
+        : removeCandidate === "phpmyadmin"
+          ? "Remove phpMyAdmin from this node? The browser database client will no longer be available."
+          : "Remove this runtime?";
+  const removeDialogTitle =
+    removeCandidate === "php"
+      ? "Remove PHP"
+      : removeCandidate === "mariadb"
+        ? "Remove MariaDB"
+        : removeCandidate === "phpmyadmin"
+          ? "Remove phpMyAdmin"
+          : "Remove application";
+  const removeDialogConfirmText =
+    removeCandidate === "php"
+      ? "Remove PHP"
+      : removeCandidate === "mariadb"
+        ? "Remove MariaDB"
+        : removeCandidate === "phpmyadmin"
+          ? "Remove phpMyAdmin"
+          : "Remove";
+
+  async function handleRemoveApplication() {
+    if (removeCandidate === null) {
+      return;
+    }
+
+    const target = removeCandidate;
+    const action =
+      target === "php" ? "remove-php" : target === "mariadb" ? "remove-mariadb" : "remove-phpmyadmin";
+    setRunningAction(action);
+    setPageError(null);
+
+    try {
+      if (target === "php") {
+        const nextStatus = await removePHP();
+        setPHPStatus(nextStatus);
+        toast.success("PHP removed.");
+      } else if (target === "mariadb") {
+        const nextStatus = await removeMariaDB();
+        setMariaDBStatus(nextStatus);
+        toast.success("MariaDB removed.");
+      } else {
+        const nextStatus = await removePHPMyAdmin();
+        setPHPMyAdminStatus(nextStatus);
+        toast.success("phpMyAdmin removed.");
+      }
+      setRemoveCandidate((current) => (current === target ? null : current));
+    } catch (error) {
+      const fallback =
+        target === "php"
+          ? "Failed to remove PHP."
+          : target === "mariadb"
+            ? "Failed to remove MariaDB."
+            : "Failed to remove phpMyAdmin.";
+      const message = getErrorMessage(error, fallback);
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
 
   async function handlePHPInstall() {
     setRunningAction("install-php");
@@ -533,6 +719,28 @@ export function ApplicationsPage() {
 
   return (
     <>
+      <ActionConfirmDialog
+        open={removeCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open && runningAction === null) {
+            setRemoveCandidate(null);
+          }
+        }}
+        title={removeDialogTitle}
+        desc={removeDialogDescription}
+        confirmText={removeDialogConfirmText}
+        destructive
+        isLoading={
+          (removeCandidate === "php" && runningAction === "remove-php") ||
+          (removeCandidate === "mariadb" && runningAction === "remove-mariadb") ||
+          (removeCandidate === "phpmyadmin" && runningAction === "remove-phpmyadmin")
+        }
+        handleConfirm={() => {
+          void handleRemoveApplication();
+        }}
+        className="sm:max-w-md"
+      />
+
       <PageHeader
         title="Applications"
         meta="Install, configure, and monitor the shared runtimes available on this node."
@@ -567,12 +775,18 @@ export function ApplicationsPage() {
             meta={[
               {
                 label: "Service",
-                value: phpStatus?.service_running ? "Running" : "Stopped",
-                tone: phpStatus?.service_running ? "success" : "danger",
+                value: phpBusyLabel?.replace("...", "") ?? (phpStatus?.service_running ? "Running" : "Stopped"),
+                tone: phpBusyLabel ? undefined : phpStatus?.service_running ? "success" : "danger",
               },
             ]}
             actions={
               <>
+                {phpBusyLabel ? (
+                  <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    {phpBusyLabel}
+                  </Button>
+                ) : null}
                 {phpStatus?.install_available ? (
                   <Button
                     type="button"
@@ -653,10 +867,17 @@ export function ApplicationsPage() {
                   variant="outline"
                   size="sm"
                   className={compactActionButtonClassName}
-                  disabled
-                  title="Runtime removal is not supported yet."
+                  onClick={() => {
+                    setRemoveCandidate("php");
+                  }}
+                  disabled={runningAction !== null || !phpRemoveEnabled}
+                  title={phpRemoveEnabled ? undefined : "Runtime removal is only available for installed runtimes."}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  {runningAction === "remove-php" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
                   Remove
                 </Button>
               </>
@@ -671,12 +892,20 @@ export function ApplicationsPage() {
             meta={[
               {
                 label: "Service",
-                value: mariadbStatus?.service_running ? "Running" : "Stopped",
-                tone: mariadbStatus?.service_running ? "success" : "danger",
+                value:
+                  mariadbBusyLabel?.replace("...", "") ??
+                  (mariadbStatus?.service_running ? "Running" : "Stopped"),
+                tone: mariadbBusyLabel ? undefined : mariadbStatus?.service_running ? "success" : "danger",
               },
             ]}
             actions={
               <>
+                {mariadbBusyLabel ? (
+                  <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    {mariadbBusyLabel}
+                  </Button>
+                ) : null}
                 {mariadbStatus?.install_available ? (
                   <Button
                     type="button"
@@ -757,10 +986,17 @@ export function ApplicationsPage() {
                   variant="outline"
                   size="sm"
                   className={compactActionButtonClassName}
-                  disabled
-                  title="Runtime removal is not supported yet."
+                  onClick={() => {
+                    setRemoveCandidate("mariadb");
+                  }}
+                  disabled={runningAction !== null || !mariaDBRemoveEnabled}
+                  title={mariaDBRemoveEnabled ? undefined : "Runtime removal is only available for installed runtimes."}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  {runningAction === "remove-mariadb" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
                   Remove
                 </Button>
               </>
@@ -775,6 +1011,12 @@ export function ApplicationsPage() {
             meta={[{ label: "Service status", value: phpMyAdminServiceStatus.value, tone: phpMyAdminServiceStatus.tone }]}
             actions={
               <>
+                {phpMyAdminBusyLabel ? (
+                  <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    {phpMyAdminBusyLabel}
+                  </Button>
+                ) : null}
                 {phpMyAdminStatus?.install_available ? (
                   <Button
                     type="button"
@@ -818,10 +1060,17 @@ export function ApplicationsPage() {
                   variant="outline"
                   size="sm"
                   className={compactActionButtonClassName}
-                  disabled
-                  title="Runtime removal is not supported yet."
+                  onClick={() => {
+                    setRemoveCandidate("phpmyadmin");
+                  }}
+                  disabled={runningAction !== null || !phpMyAdminRemoveEnabled}
+                  title={phpMyAdminRemoveEnabled ? undefined : "Runtime removal is only available for installed runtimes."}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  {runningAction === "remove-phpmyadmin" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
                   Remove
                 </Button>
               </>

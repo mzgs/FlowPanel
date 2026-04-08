@@ -27,6 +27,8 @@ export type PHPStatus = {
   issues?: string[];
   install_available: boolean;
   install_label?: string;
+  remove_available: boolean;
+  remove_label?: string;
   start_available: boolean;
   start_label?: string;
   stop_available?: boolean;
@@ -90,6 +92,15 @@ export async function fetchPHPStatus(): Promise<PHPStatus> {
 
 export async function installPHP(): Promise<PHPStatus> {
   const response = await fetch("/api/php/install", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parsePHPResponse(response);
+}
+
+export async function removePHP(): Promise<PHPStatus> {
+  const response = await fetch("/api/php/remove", {
     method: "POST",
     credentials: "include",
   });

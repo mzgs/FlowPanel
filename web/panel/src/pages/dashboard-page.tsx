@@ -17,6 +17,27 @@ function getActionError(error: unknown, fallback: string) {
   return fallback;
 }
 
+function getRuntimeActionLabel(state?: string | null) {
+  switch (state) {
+    case "installing":
+      return "Installing...";
+    case "removing":
+      return "Removing...";
+    case "starting":
+      return "Starting...";
+    case "stopping":
+      return "Stopping...";
+    case "restarting":
+      return "Restarting...";
+    default:
+      return null;
+  }
+}
+
+function isRuntimeActionState(state?: string | null) {
+  return getRuntimeActionLabel(state) !== null;
+}
+
 type OverviewData = {
   databaseCount: number | null;
   mariadbStatus: MariaDBStatus | null;
@@ -92,6 +113,9 @@ function ApplicationsCard({
 }) {
   const mariaDBValue = formatMariaDBValue(mariadbStatus);
   const phpVersion = formatPHPVersion(phpStatus);
+  const phpBusyLabel = getRuntimeActionLabel(phpStatus?.state);
+  const mariadbBusyLabel = getRuntimeActionLabel(mariadbStatus?.state);
+  const phpMyAdminBusyLabel = getRuntimeActionLabel(phpMyAdminStatus?.state);
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
 
   return (
@@ -103,7 +127,12 @@ function ApplicationsCard({
             icon={<TerminalSquare className="h-4 w-4" />}
             label="PHP"
             value={
-              phpVersion ? (
+              phpBusyLabel ? (
+                <div className="flex items-center gap-2 text-[12px] text-[var(--app-text-muted)]">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  {phpBusyLabel}
+                </div>
+              ) : phpVersion ? (
                 <div
                   className="max-w-[13rem] truncate text-right font-mono text-[12px] text-[var(--app-text)] sm:max-w-[18rem]"
                   title={phpVersion.full}
@@ -126,7 +155,12 @@ function ApplicationsCard({
             icon={<Database className="h-4 w-4" />}
             label="MariaDB"
             value={
-              mariadbStatus?.install_available ? (
+              mariadbBusyLabel ? (
+                <div className="flex items-center gap-2 text-[12px] text-[var(--app-text-muted)]">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  {mariadbBusyLabel}
+                </div>
+              ) : mariadbStatus?.install_available ? (
                 <Button type="button" size="sm" onClick={onInstallMariaDB} disabled={runningAction !== null}>
                   {runningAction === "install-mariadb" ? (
                     <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -151,7 +185,12 @@ function ApplicationsCard({
             icon={<LayoutDashboard className="h-4 w-4" />}
             label="phpMyAdmin"
             value={
-              phpMyAdminStatus?.install_available ? (
+              phpMyAdminBusyLabel ? (
+                <div className="flex items-center gap-2 text-[12px] text-[var(--app-text-muted)]">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  {phpMyAdminBusyLabel}
+                </div>
+              ) : phpMyAdminStatus?.install_available ? (
                 <Button
                   type="button"
                   size="sm"
@@ -233,6 +272,11 @@ function formatMariaDBValue(status: MariaDBStatus | null) {
     return "Unavailable";
   }
 
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
   if (status.ready && status.version?.trim()) {
     return formatMariaDBVersion(status.version.trim());
   }
@@ -253,6 +297,11 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
     return "Unavailable";
   }
 
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
   if (status.installed && status.version?.trim()) {
     return status.version.trim();
   }
@@ -265,6 +314,14 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
 }
 
 function formatPHPVersion(status: PHPStatus | null) {
+  const actionLabel = getRuntimeActionLabel(status?.state);
+  if (actionLabel) {
+    return {
+      full: actionLabel,
+      short: actionLabel,
+    };
+  }
+
   if (!status?.php_installed) {
     return null;
   }
@@ -427,6 +484,34 @@ export function DashboardPage() {
       window.clearInterval(intervalId);
     };
   }, [refreshSystemStatus]);
+
+  const refreshOverviewStatuses = useEffectEvent(async () => {
+    const nextOverview = await fetchOverviewData();
+    setPHPStatus(nextOverview.phpStatus);
+    setPHPMyAdminStatus(nextOverview.phpMyAdminStatus);
+    setDatabaseCount(nextOverview.databaseCount);
+    setMariaDBStatus(nextOverview.mariadbStatus);
+    setPHPError(nextOverview.phpError);
+    setSiteCount(nextOverview.siteCount);
+  });
+
+  useEffect(() => {
+    if (
+      !isRuntimeActionState(phpStatus?.state) &&
+      !isRuntimeActionState(mariadbStatus?.state) &&
+      !isRuntimeActionState(phpMyAdminStatus?.state)
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshOverviewStatuses();
+    }, 3_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [mariadbStatus?.state, phpMyAdminStatus?.state, phpStatus?.state, refreshOverviewStatuses]);
 
   async function handleMariaDBInstall() {
     setRunningAction("install-mariadb");
