@@ -1,7 +1,9 @@
 package mariadb
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -10,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -81,6 +84,8 @@ type Manager interface {
 	RootPassword(context.Context) (string, bool, error)
 	SetRootPassword(context.Context, string) error
 	ListDatabases(context.Context) ([]DatabaseRecord, error)
+	DumpAllDatabases(context.Context) ([]byte, error)
+	DumpAllDatabasesArchive(context.Context) ([]byte, error)
 	DumpDatabase(context.Context, string) ([]byte, error)
 	RestoreDatabase(context.Context, string, []byte) error
 	CreateDatabase(context.Context, CreateDatabaseInput) (DatabaseRecord, error)
@@ -165,6 +170,11 @@ type actionPlan struct {
 	startCmds      [][]string
 	stopCmds       [][]string
 	restartCmds    [][]string
+}
+
+type archiveEntry struct {
+	name    string
+	content []byte
 }
 
 func NewService(logger *zap.Logger, store *Store) *Service {
@@ -497,6 +507,79 @@ func (s *Service) DumpDatabase(ctx context.Context, databaseName string) ([]byte
 		}
 	}
 
+	return s.dumpDatabases(ctx, []string{databaseName})
+}
+
+func (s *Service) DumpAllDatabases(ctx context.Context) ([]byte, error) {
+	databaseNames, err := s.listDumpableDatabases(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.dumpDatabases(ctx, databaseNames)
+}
+
+func (s *Service) DumpAllDatabasesArchive(ctx context.Context) ([]byte, error) {
+	databaseNames, err := s.listDumpableDatabases(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]archiveEntry, 0, len(databaseNames))
+	for _, databaseName := range databaseNames {
+		dump, err := s.DumpDatabase(ctx, databaseName)
+		if err != nil {
+			return nil, err
+		}
+
+		entries = append(entries, archiveEntry{
+			name:    path.Join(databaseName + ".sql"),
+			content: dump,
+		})
+	}
+
+	if len(entries) == 0 {
+		return nil, errors.New("no databases available to export")
+	}
+
+	return buildDumpArchive(entries, time.Now().UTC())
+}
+
+func (s *Service) listDumpableDatabases(ctx context.Context) ([]string, error) {
+	records, err := s.ListDatabases(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	databaseNames := make([]string, 0, len(records))
+	seen := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		name := strings.TrimSpace(record.Name)
+		if name == "" || isSystemDatabase(name) {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		databaseNames = append(databaseNames, name)
+	}
+
+	if len(databaseNames) == 0 {
+		return nil, errors.New("no databases available to export")
+	}
+
+	return databaseNames, nil
+}
+
+func (s *Service) dumpDatabases(ctx context.Context, databaseNames []string) ([]byte, error) {
+	args := []string{"--databases"}
+	args = append(args, databaseNames...)
+
+	return s.runDump(ctx, args...)
+}
+
+func (s *Service) runDump(ctx context.Context, dumpArgs ...string) ([]byte, error) {
 	dumpPath, ok := lookupFirstCommand(dumpBinaryCandidates...)
 	if !ok {
 		return nil, errors.New("mariadb dump client is not installed")
@@ -535,7 +618,7 @@ func (s *Service) DumpDatabase(ctx context.Context, databaseName string) ([]byte
 			fmt.Sprintf("--port=%s", config.port),
 		)
 	}
-	args = append(args, "--databases", databaseName)
+	args = append(args, dumpArgs...)
 
 	cmd := exec.CommandContext(runCtx, dumpPath, args...)
 	if config.password != "" {
@@ -567,6 +650,41 @@ func (s *Service) DumpDatabase(ctx context.Context, databaseName string) ([]byte
 	}
 
 	return stdout.Bytes(), nil
+}
+
+func buildDumpArchive(entries []archiveEntry, createdAt time.Time) ([]byte, error) {
+	var buffer bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buffer)
+	tarWriter := tar.NewWriter(gzipWriter)
+
+	for _, entry := range entries {
+		header := &tar.Header{
+			Name:    entry.name,
+			Mode:    0o644,
+			Size:    int64(len(entry.content)),
+			ModTime: createdAt,
+		}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			_ = tarWriter.Close()
+			_ = gzipWriter.Close()
+			return nil, fmt.Errorf("write archive header for %s: %w", entry.name, err)
+		}
+		if _, err := tarWriter.Write(entry.content); err != nil {
+			_ = tarWriter.Close()
+			_ = gzipWriter.Close()
+			return nil, fmt.Errorf("write archive entry for %s: %w", entry.name, err)
+		}
+	}
+
+	if err := tarWriter.Close(); err != nil {
+		_ = gzipWriter.Close()
+		return nil, fmt.Errorf("close dump archive: %w", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return nil, fmt.Errorf("finalize dump archive: %w", err)
+	}
+
+	return buffer.Bytes(), nil
 }
 
 func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump []byte) error {

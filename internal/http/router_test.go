@@ -1,7 +1,9 @@
 package httpx
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -485,6 +487,36 @@ func (fakeMariaDBManager) ListDatabases(context.Context) ([]mariadb.DatabaseReco
 	}, nil
 }
 
+func (fakeMariaDBManager) DumpAllDatabases(context.Context) ([]byte, error) {
+	return []byte("CREATE DATABASE `flowpanel`;\nUSE `flowpanel`;\n"), nil
+}
+
+func (fakeMariaDBManager) DumpAllDatabasesArchive(context.Context) ([]byte, error) {
+	var archive bytes.Buffer
+	gzipWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzipWriter)
+	content := []byte("CREATE DATABASE `flowpanel`;\nUSE `flowpanel`;\n")
+
+	if err := tarWriter.WriteHeader(&tar.Header{
+		Name: "flowpanel.sql",
+		Mode: 0o644,
+		Size: int64(len(content)),
+	}); err != nil {
+		return nil, err
+	}
+	if _, err := tarWriter.Write(content); err != nil {
+		return nil, err
+	}
+	if err := tarWriter.Close(); err != nil {
+		return nil, err
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return nil, err
+	}
+
+	return archive.Bytes(), nil
+}
+
 func (fakeMariaDBManager) CreateDatabase(context.Context, mariadb.CreateDatabaseInput) (mariadb.DatabaseRecord, error) {
 	return mariadb.DatabaseRecord{
 		Name:     "flowpanel",
@@ -556,6 +588,14 @@ func (m *trackingMariaDBManager) ListDatabases(context.Context) ([]mariadb.Datab
 }
 
 func (m *trackingMariaDBManager) DumpDatabase(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *trackingMariaDBManager) DumpAllDatabases(context.Context) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *trackingMariaDBManager) DumpAllDatabasesArchive(context.Context) ([]byte, error) {
 	return nil, nil
 }
 
@@ -770,6 +810,14 @@ func (m *removableMariaDBManager) SetRootPassword(context.Context, string) error
 }
 
 func (m *removableMariaDBManager) ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error) {
+	return nil, nil
+}
+
+func (m *removableMariaDBManager) DumpAllDatabases(context.Context) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *removableMariaDBManager) DumpAllDatabasesArchive(context.Context) ([]byte, error) {
 	return nil, nil
 }
 
@@ -3533,6 +3581,42 @@ func TestMariaDBDatabaseBackupEndpoint(t *testing.T) {
 	}
 	if body := recorder.Body.String(); !strings.Contains(body, "CREATE DATABASE `flowpanel`;") {
 		t.Fatalf("body = %q, want database dump", body)
+	}
+}
+
+func TestMariaDBAllDatabasesBackupEndpoint(t *testing.T) {
+	router, _, _ := newTestDomainRouter(t)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/mariadb/backup", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, "mariadb-all-databases-") || !strings.Contains(disposition, ".tar.gz") {
+		t.Fatalf("content-disposition = %q, want tar.gz filename for mariadb database archive", disposition)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(recorder.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("open gzip archive: %v", err)
+	}
+	defer gzipReader.Close()
+
+	tarReader := tar.NewReader(gzipReader)
+	header, err := tarReader.Next()
+	if err != nil {
+		t.Fatalf("read tar header: %v", err)
+	}
+	if header.Name != "flowpanel.sql" {
+		t.Fatalf("header name = %q, want flowpanel.sql", header.Name)
+	}
+
+	body, err := io.ReadAll(tarReader)
+	if err != nil {
+		t.Fatalf("read tar body: %v", err)
+	}
+	if !strings.Contains(string(body), "CREATE DATABASE `flowpanel`;") {
+		t.Fatalf("body = %q, want database dump", string(body))
 	}
 }
 

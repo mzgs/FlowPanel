@@ -199,6 +199,36 @@ export async function downloadMariaDBDatabaseBackup(name: string): Promise<strin
   return fileName;
 }
 
+export async function downloadMariaDBAllDatabasesBackup(): Promise<string> {
+  const response = await fetch("/api/mariadb/backup", {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await readMariaDBApiError(response, "back up mariadb");
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const fileName = getDownloadFilename(
+    response.headers.get("Content-Disposition"),
+    "mariadb-all-databases.tar.gz",
+  );
+  const anchor = document.createElement("a");
+
+  anchor.href = downloadUrl;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(downloadUrl);
+  }, 0);
+
+  return fileName;
+}
+
 export async function createMariaDBDatabase(
   input: CreateMariaDBDatabaseInput,
 ): Promise<MariaDBDatabase> {
@@ -274,7 +304,7 @@ function getDownloadFilename(contentDisposition: string | null, name: string) {
     }
   }
 
-  return `${name}.sql`;
+  return name.includes(".") ? name : `${name}.sql`;
 }
 
 async function readMariaDBApiError(

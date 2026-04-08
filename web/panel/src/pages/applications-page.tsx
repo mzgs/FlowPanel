@@ -25,6 +25,7 @@ import {
   type PHPMyAdminStatus,
 } from "@/api/phpmyadmin";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
+import { MariaDBSettingsDialog } from "@/components/mariadb-settings-dialog";
 import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialog";
 import {
   Database,
@@ -654,6 +655,7 @@ export function ApplicationsPage() {
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
+  const [mariaDBSettingsOpen, setMariaDBSettingsOpen] = useState(false);
   const [phpMyAdminSettingsOpen, setPHPMyAdminSettingsOpen] = useState(false);
 
   const [runningAction, setRunningAction] = useState<string | null>(null);
@@ -1062,6 +1064,12 @@ export function ApplicationsPage() {
 
   return (
     <>
+      <MariaDBSettingsDialog
+        open={mariaDBSettingsOpen}
+        onOpenChange={setMariaDBSettingsOpen}
+        status={mariadbStatus}
+      />
+
       <PHPMyAdminSettingsDialog
         open={phpMyAdminSettingsOpen}
         onOpenChange={setPHPMyAdminSettingsOpen}
@@ -1156,6 +1164,21 @@ export function ApplicationsPage() {
                 tone: mariadbBusyLabel ? undefined : mariadbStatus?.service_running ? "success" : "danger",
               },
             ]}
+            configAction={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-md text-[var(--app-text-muted)]"
+                aria-label="Open MariaDB settings"
+                title="Open MariaDB settings"
+                onClick={() => {
+                  setMariaDBSettingsOpen(true);
+                }}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            }
             actions={
               <>
                 {mariadbBusyLabel ? (

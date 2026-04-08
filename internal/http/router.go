@@ -1550,6 +1550,40 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/mariadb/databases", mariaDBDatabasesListHandler)
 		r.Method(stdhttp.MethodHead, "/mariadb/databases", mariaDBDatabasesListHandler)
 
+		mariaDBBackupHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			dump, err := app.MariaDB.DumpAllDatabasesArchive(r.Context())
+			if err != nil {
+				var validation mariadb.ValidationErrors
+				switch {
+				case errors.As(err, &validation):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				default:
+					app.Logger.Error("dump mariadb databases archive failed", zap.Error(err))
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "failed to back up databases",
+					})
+					return
+				}
+			}
+
+			fileName := fmt.Sprintf("mariadb-all-databases-%s.tar.gz", time.Now().UTC().Format("20060102-150405"))
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+			w.Header().Set("Content-Type", "application/gzip")
+			stdhttp.ServeContent(w, r, fileName, time.Now().UTC(), bytes.NewReader(dump))
+		})
+		r.Method(stdhttp.MethodGet, "/mariadb/backup", mariaDBBackupHandler)
+
 		mariaDBDatabaseBackupHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.MariaDB == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
