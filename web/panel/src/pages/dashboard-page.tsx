@@ -307,7 +307,7 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
   }
 
   if (status.installed) {
-    return "Installed";
+    return "Ready";
   }
 
   return "Not installed";

@@ -89,7 +89,7 @@ function formatPHPVersion(status: PHPStatus | null) {
   }
 
   if (!status?.php_installed) {
-    return "Not installed";
+    return "";
   }
 
   const version = status.php_version?.trim();
@@ -131,7 +131,7 @@ function formatMariaDBValue(status: MariaDBStatus | null) {
     return "Installed";
   }
 
-  return "Not installed";
+  return "";
 }
 
 function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
@@ -152,7 +152,7 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
     return "Installed";
   }
 
-  return "Not installed";
+  return "";
 }
 
 function getPHPBadge(status: PHPStatus | null) {
@@ -216,7 +216,7 @@ function getPHPMyAdminBadge(status: PHPMyAdminStatus | null) {
   }
 
   if (status.installed) {
-    return { label: "Installed", variant: "default" as const };
+    return { label: "Ready", variant: "default" as const };
   }
 
   return { label: "Not installed", variant: "outline" as const };
@@ -312,7 +312,9 @@ function ApplicationCard({
             <h2 className="text-sm font-semibold tracking-tight text-[var(--app-text)]">{name}</h2>
             <Badge variant={badge.variant}>{badge.label}</Badge>
           </div>
-          <div className="mt-1 text-sm font-medium text-[var(--app-text)]">{summary}</div>
+          {summary ? (
+            <div className="mt-1 text-sm font-medium text-[var(--app-text)]">{summary}</div>
+          ) : null}
           {meta.length > 0 ? (
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-text-muted)]">
               {meta.map((item) => (
@@ -572,6 +574,7 @@ export function ApplicationsPage() {
     }
 
     const target = removeCandidate;
+    setRemoveCandidate(null);
     const action =
       target === "php" ? "remove-php" : target === "mariadb" ? "remove-mariadb" : "remove-phpmyadmin";
     setRunningAction(action);
@@ -788,7 +791,7 @@ export function ApplicationsPage() {
       <ActionConfirmDialog
         open={removeCandidate !== null}
         onOpenChange={(open) => {
-          if (!open && runningAction === null) {
+          if (!open) {
             setRemoveCandidate(null);
           }
         }}
