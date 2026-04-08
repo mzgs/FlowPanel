@@ -16,6 +16,7 @@ import (
 	stdhttp "net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -1177,7 +1178,82 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				"mariadb": app.MariaDB.Status(r.Context()),
 			})
 		})
+
+		mariaDBStartHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.MariaDB.Start(r.Context()); err != nil {
+				app.Logger.Error("start mariadb failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "start", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "runtime", "start", "mariadb", "mariadb", "MariaDB", "succeeded", "Started MariaDB.")
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"mariadb": app.MariaDB.Status(r.Context()),
+			})
+		})
+
+		mariaDBStopHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.MariaDB.Stop(r.Context()); err != nil {
+				app.Logger.Error("stop mariadb failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "stop", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "runtime", "stop", "mariadb", "mariadb", "MariaDB", "succeeded", "Stopped MariaDB.")
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"mariadb": app.MariaDB.Status(r.Context()),
+			})
+		})
+
+		mariaDBRestartHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.MariaDB == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "mariadb runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.MariaDB.Restart(r.Context()); err != nil {
+				app.Logger.Error("restart mariadb failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "restart", "mariadb", "mariadb", "MariaDB", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "runtime", "restart", "mariadb", "mariadb", "MariaDB", "succeeded", "Restarted MariaDB.")
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"mariadb": app.MariaDB.Status(r.Context()),
+			})
+		})
 		r.Method(stdhttp.MethodPost, "/mariadb/install", mariaDBInstallHandler)
+		r.Method(stdhttp.MethodPost, "/mariadb/start", mariaDBStartHandler)
+		r.Method(stdhttp.MethodPost, "/mariadb/stop", mariaDBStopHandler)
+		r.Method(stdhttp.MethodPost, "/mariadb/restart", mariaDBRestartHandler)
 
 		mariaDBDatabasesListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.MariaDB == nil {
@@ -1479,6 +1555,66 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		phpStopHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.PHP.Stop(r.Context()); err != nil {
+				app.Logger.Error("stop php failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "stop", "php", "php", "PHP", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "runtime", "stop", "php", "php", "PHP", "succeeded", "Stopped PHP.")
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": app.PHP.Status(r.Context()),
+			})
+		})
+
+		phpRestartHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime is not configured",
+				})
+				return
+			}
+
+			if err := app.PHP.Restart(r.Context()); err != nil {
+				app.Logger.Error("restart php failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "restart", "php", "php", "PHP", "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			status := app.PHP.Status(r.Context())
+			if status.Ready {
+				if err := syncDomainsWithCaddy(r.Context()); err != nil {
+					app.Logger.Error("sync domains after php restart failed", zap.Error(err))
+					mutationEvent(r.Context(), "runtime", "restart", "php", "php", "PHP", "failed", "PHP restarted but failed to republish domains.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "php restarted but failed to republish domains",
+					})
+					return
+				}
+			}
+
+			mutationEvent(r.Context(), "runtime", "restart", "php", "php", "PHP", "succeeded", "Restarted PHP.")
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": status,
+			})
+		})
+
 		phpSettingsUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -1535,6 +1671,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodHead, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodPost, "/php/install", phpInstallHandler)
 		r.Method(stdhttp.MethodPost, "/php/start", phpStartHandler)
+		r.Method(stdhttp.MethodPost, "/php/stop", phpStopHandler)
+		r.Method(stdhttp.MethodPost, "/php/restart", phpRestartHandler)
 		r.Method(stdhttp.MethodPut, "/php/settings", phpSettingsUpdateHandler)
 
 		phpMyAdminStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -3438,15 +3576,65 @@ type panelHandler struct {
 	fileServer stdhttp.Handler
 }
 
+var errInvalidPanelAssets = errors.New("panel bundle is invalid")
+
 var panelAssetPattern = regexp.MustCompile(`(?:src|href)=["']([^"']+)["']`)
 
-func newPanelHandler() (*panelHandler, error) {
-	distFS, err := web.DistFS()
+var loadEmbeddedPanelFS = web.DistFS
+
+var loadLocalPanelFS = func() (fs.FS, error) {
+	root, err := findFlowPanelRoot()
 	if err != nil {
 		return nil, err
 	}
 
-	return newPanelHandlerWithFS(distFS)
+	return os.DirFS(filepath.Join(root, "web", "dist")), nil
+}
+
+var buildLocalPanelAssets = func() error {
+	root, err := findFlowPanelRoot()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("npm", "run", "build")
+	cmd.Dir = filepath.Join(root, "web", "panel")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("build panel assets: %w", err)
+	}
+
+	return nil
+}
+
+func newPanelHandler() (*panelHandler, error) {
+	distFS, err := loadEmbeddedPanelFS()
+	if err != nil {
+		return nil, err
+	}
+
+	handler, err := newPanelHandlerWithFS(distFS)
+	if err == nil || !errors.Is(err, errInvalidPanelAssets) {
+		return handler, err
+	}
+
+	if buildErr := buildLocalPanelAssets(); buildErr != nil {
+		return nil, fmt.Errorf("%w; automatic rebuild failed: %v", err, buildErr)
+	}
+
+	localDistFS, localErr := loadLocalPanelFS()
+	if localErr != nil {
+		return nil, fmt.Errorf("%w; built local assets but could not load web/dist: %v", err, localErr)
+	}
+
+	handler, retryErr := newPanelHandlerWithFS(localDistFS)
+	if retryErr != nil {
+		return nil, fmt.Errorf("%w; rebuilt local assets but validation still failed: %v", err, retryErr)
+	}
+
+	return handler, nil
 }
 
 func newPanelHandlerWithFS(distFS fs.FS) (*panelHandler, error) {
@@ -3515,10 +3703,10 @@ func validatePanelAssets(distFS fs.FS, index []byte) error {
 
 		stat, err := fs.Stat(distFS, assetPath)
 		if err != nil {
-			return fmt.Errorf("panel bundle is invalid: missing asset %q referenced by index.html: %w", assetPath, err)
+			return fmt.Errorf("%w: missing asset %q referenced by index.html: %v", errInvalidPanelAssets, assetPath, err)
 		}
 		if stat.IsDir() {
-			return fmt.Errorf("panel bundle is invalid: asset %q referenced by index.html is a directory", assetPath)
+			return fmt.Errorf("%w: asset %q referenced by index.html is a directory", errInvalidPanelAssets, assetPath)
 		}
 	}
 
@@ -3545,6 +3733,28 @@ func normalizePanelAssetPath(ref string) (string, bool) {
 	}
 
 	return ref, true
+}
+
+func findFlowPanelRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+
+	for current := wd; ; current = filepath.Dir(current) {
+		if _, err := os.Stat(filepath.Join(current, "go.mod")); err == nil {
+			if _, err := os.Stat(filepath.Join(current, "web", "panel", "package.json")); err == nil {
+				return current, nil
+			}
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+
+	return "", errors.New("could not locate FlowPanel project root")
 }
 
 func writeJSON(w stdhttp.ResponseWriter, status int, payload any) {

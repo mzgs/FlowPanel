@@ -29,6 +29,10 @@ export type PHPStatus = {
   install_label?: string;
   start_available: boolean;
   start_label?: string;
+  stop_available?: boolean;
+  stop_label?: string;
+  restart_available?: boolean;
+  restart_label?: string;
   loaded_config_file?: string;
   scan_dir?: string;
   managed_config_file?: string;
@@ -95,6 +99,24 @@ export async function installPHP(): Promise<PHPStatus> {
 
 export async function startPHP(): Promise<PHPStatus> {
   const response = await fetch("/api/php/start", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parsePHPResponse(response);
+}
+
+export async function stopPHP(): Promise<PHPStatus> {
+  const response = await fetch("/api/php/stop", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parsePHPResponse(response);
+}
+
+export async function restartPHP(): Promise<PHPStatus> {
+  const response = await fetch("/api/php/restart", {
     method: "POST",
     credentials: "include",
   });

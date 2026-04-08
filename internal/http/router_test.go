@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -77,6 +78,14 @@ func (fakePHPManager) Start(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (fakePHPManager) Restart(context.Context) error {
+	return nil
+}
+
 func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return fakePHPManager{}.Status(context.Background()), nil
 }
@@ -96,6 +105,18 @@ func (fakeMariaDBManager) Status(context.Context) mariadb.Status {
 }
 
 func (fakeMariaDBManager) Install(context.Context) error {
+	return nil
+}
+
+func (fakeMariaDBManager) Start(context.Context) error {
+	return nil
+}
+
+func (fakeMariaDBManager) Stop(context.Context) error {
+	return nil
+}
+
+func (fakeMariaDBManager) Restart(context.Context) error {
 	return nil
 }
 
@@ -162,6 +183,18 @@ func (m *trackingMariaDBManager) Status(context.Context) mariadb.Status {
 }
 
 func (m *trackingMariaDBManager) Install(context.Context) error {
+	return nil
+}
+
+func (m *trackingMariaDBManager) Start(context.Context) error {
+	return nil
+}
+
+func (m *trackingMariaDBManager) Stop(context.Context) error {
+	return nil
+}
+
+func (m *trackingMariaDBManager) Restart(context.Context) error {
 	return nil
 }
 
@@ -2825,6 +2858,61 @@ func TestNewPanelHandlerRejectsMissingReferencedAsset(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "assets/index.js") {
 		t.Fatalf("error = %q, want missing asset path", err)
+	}
+}
+
+func TestNewPanelHandlerBuildsLocalAssetsWhenEmbeddedBundleIsInvalid(t *testing.T) {
+	previousLoadEmbeddedPanelFS := loadEmbeddedPanelFS
+	previousLoadLocalPanelFS := loadLocalPanelFS
+	previousBuildLocalPanelAssets := buildLocalPanelAssets
+	t.Cleanup(func() {
+		loadEmbeddedPanelFS = previousLoadEmbeddedPanelFS
+		loadLocalPanelFS = previousLoadLocalPanelFS
+		buildLocalPanelAssets = previousBuildLocalPanelAssets
+	})
+
+	buildCalled := false
+	loadEmbeddedPanelFS = func() (fs.FS, error) {
+		return fstest.MapFS{
+			"index.html": {
+				Data: []byte(`<!doctype html><html><head><script type="module" src="/assets/index.js"></script></head><body><div id="root"></div></body></html>`),
+			},
+		}, nil
+	}
+	buildLocalPanelAssets = func() error {
+		buildCalled = true
+		return nil
+	}
+	loadLocalPanelFS = func() (fs.FS, error) {
+		return fstest.MapFS{
+			"index.html": {
+				Data: []byte(`<!doctype html><html><head><link rel="stylesheet" href="/assets/index.css"><script type="module" src="/assets/index.js"></script></head><body><div id="root"></div></body></html>`),
+			},
+			"assets/index.css": {
+				Data: []byte("body { background: #fff; }"),
+			},
+			"assets/index.js": {
+				Data: []byte("console.log('ok')"),
+			},
+		}, nil
+	}
+
+	handler, err := newPanelHandler()
+	if err != nil {
+		t.Fatalf("new panel handler: %v", err)
+	}
+	if !buildCalled {
+		t.Fatal("expected panel build to run when embedded assets are invalid")
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/assets/index.js", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), "console.log('ok')") {
+		t.Fatalf("body = %q, want rebuilt asset content", recorder.Body.String())
 	}
 }
 

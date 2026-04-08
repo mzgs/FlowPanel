@@ -74,6 +74,9 @@ var (
 type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
+	Start(context.Context) error
+	Stop(context.Context) error
+	Restart(context.Context) error
 	RootPassword(context.Context) (string, bool, error)
 	SetRootPassword(context.Context, string) error
 	ListDatabases(context.Context) ([]DatabaseRecord, error)
@@ -101,6 +104,12 @@ type Status struct {
 	Issues           []string `json:"issues,omitempty"`
 	InstallAvailable bool     `json:"install_available"`
 	InstallLabel     string   `json:"install_label,omitempty"`
+	StartAvailable   bool     `json:"start_available"`
+	StartLabel       string   `json:"start_label,omitempty"`
+	StopAvailable    bool     `json:"stop_available"`
+	StopLabel        string   `json:"stop_label,omitempty"`
+	RestartAvailable bool     `json:"restart_available"`
+	RestartLabel     string   `json:"restart_label,omitempty"`
 }
 
 type DatabaseRecord struct {
@@ -144,7 +153,13 @@ type Service struct {
 type actionPlan struct {
 	packageManager string
 	installLabel   string
+	startLabel     string
+	stopLabel      string
+	restartLabel   string
 	installCmds    [][]string
+	startCmds      [][]string
+	stopCmds       [][]string
+	restartCmds    [][]string
 }
 
 func NewService(logger *zap.Logger, store *Store) *Service {
@@ -191,6 +206,12 @@ func (s *Service) Status(ctx context.Context) Status {
 	status.ListenAddress, status.ServiceRunning = detectReachableAddress()
 	status.InstallAvailable = len(plan.installCmds) > 0 && !status.ServerInstalled
 	status.InstallLabel = plan.installLabel
+	status.StartAvailable = len(plan.startCmds) > 0 && status.ServerInstalled && !status.ServiceRunning
+	status.StartLabel = plan.startLabel
+	status.StopAvailable = len(plan.stopCmds) > 0 && status.ServerInstalled && status.ServiceRunning
+	status.StopLabel = plan.stopLabel
+	status.RestartAvailable = len(plan.restartCmds) > 0 && status.ServerInstalled && status.ServiceRunning
+	status.RestartLabel = plan.restartLabel
 
 	switch {
 	case status.ServiceRunning:
@@ -233,6 +254,42 @@ func (s *Service) Install(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (s *Service) Start(ctx context.Context) error {
+	plan := detectActionPlan()
+	if len(plan.startCmds) == 0 {
+		return fmt.Errorf("automatic MariaDB startup is not supported on %s", runtime.GOOS)
+	}
+
+	s.logger.Info("starting mariadb service",
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.startCmds...)
+}
+
+func (s *Service) Stop(ctx context.Context) error {
+	plan := detectActionPlan()
+	if len(plan.stopCmds) == 0 {
+		return fmt.Errorf("automatic MariaDB shutdown is not supported on %s", runtime.GOOS)
+	}
+
+	s.logger.Info("stopping mariadb service",
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.stopCmds...)
+}
+
+func (s *Service) Restart(ctx context.Context) error {
+	plan := detectActionPlan()
+	if len(plan.restartCmds) == 0 {
+		return fmt.Errorf("automatic MariaDB restart is not supported on %s", runtime.GOOS)
+	}
+
+	s.logger.Info("restarting mariadb service",
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.restartCmds...)
 }
 
 func (s *Service) RootPassword(context.Context) (string, bool, error) {
@@ -1100,14 +1157,48 @@ func detectActionPlan() actionPlan {
 			return actionPlan{
 				packageManager: "homebrew",
 				installLabel:   "Install MariaDB",
+				startLabel:     "Start MariaDB",
+				stopLabel:      "Stop MariaDB",
+				restartLabel:   "Restart MariaDB",
 				installCmds: [][]string{
 					{brewPath, "install", "mariadb"},
+				},
+				startCmds: [][]string{
+					{brewPath, "services", "start", "mariadb"},
+				},
+				stopCmds: [][]string{
+					{brewPath, "services", "stop", "mariadb"},
+				},
+				restartCmds: [][]string{
+					{brewPath, "services", "restart", "mariadb"},
 				},
 			}
 		}
 	case "linux":
 		if os.Geteuid() == 0 {
 			if aptPath, ok := lookupCommand("apt-get"); ok {
+				if systemctlPath, ok := lookupCommand("systemctl"); ok {
+					return actionPlan{
+						packageManager: "apt",
+						installLabel:   "Install MariaDB",
+						startLabel:     "Start MariaDB",
+						stopLabel:      "Stop MariaDB",
+						restartLabel:   "Restart MariaDB",
+						installCmds: [][]string{
+							{aptPath, "update"},
+							{aptPath, "install", "-y", "mariadb-server", "mariadb-client"},
+						},
+						startCmds: [][]string{
+							{systemctlPath, "start", "mariadb"},
+						},
+						stopCmds: [][]string{
+							{systemctlPath, "stop", "mariadb"},
+						},
+						restartCmds: [][]string{
+							{systemctlPath, "restart", "mariadb"},
+						},
+					}
+				}
 				return actionPlan{
 					packageManager: "apt",
 					installLabel:   "Install MariaDB",
@@ -1118,6 +1209,27 @@ func detectActionPlan() actionPlan {
 				}
 			}
 			if dnfPath, ok := lookupCommand("dnf"); ok {
+				if systemctlPath, ok := lookupCommand("systemctl"); ok {
+					return actionPlan{
+						packageManager: "dnf",
+						installLabel:   "Install MariaDB",
+						startLabel:     "Start MariaDB",
+						stopLabel:      "Stop MariaDB",
+						restartLabel:   "Restart MariaDB",
+						installCmds: [][]string{
+							{dnfPath, "install", "-y", "mariadb-server", "mariadb"},
+						},
+						startCmds: [][]string{
+							{systemctlPath, "start", "mariadb"},
+						},
+						stopCmds: [][]string{
+							{systemctlPath, "stop", "mariadb"},
+						},
+						restartCmds: [][]string{
+							{systemctlPath, "restart", "mariadb"},
+						},
+					}
+				}
 				return actionPlan{
 					packageManager: "dnf",
 					installLabel:   "Install MariaDB",
@@ -1127,6 +1239,27 @@ func detectActionPlan() actionPlan {
 				}
 			}
 			if yumPath, ok := lookupCommand("yum"); ok {
+				if systemctlPath, ok := lookupCommand("systemctl"); ok {
+					return actionPlan{
+						packageManager: "yum",
+						installLabel:   "Install MariaDB",
+						startLabel:     "Start MariaDB",
+						stopLabel:      "Stop MariaDB",
+						restartLabel:   "Restart MariaDB",
+						installCmds: [][]string{
+							{yumPath, "install", "-y", "mariadb-server", "mariadb"},
+						},
+						startCmds: [][]string{
+							{systemctlPath, "start", "mariadb"},
+						},
+						stopCmds: [][]string{
+							{systemctlPath, "stop", "mariadb"},
+						},
+						restartCmds: [][]string{
+							{systemctlPath, "restart", "mariadb"},
+						},
+					}
+				}
 				return actionPlan{
 					packageManager: "yum",
 					installLabel:   "Install MariaDB",
@@ -1136,6 +1269,27 @@ func detectActionPlan() actionPlan {
 				}
 			}
 			if pacmanPath, ok := lookupCommand("pacman"); ok {
+				if systemctlPath, ok := lookupCommand("systemctl"); ok {
+					return actionPlan{
+						packageManager: "pacman",
+						installLabel:   "Install MariaDB",
+						startLabel:     "Start MariaDB",
+						stopLabel:      "Stop MariaDB",
+						restartLabel:   "Restart MariaDB",
+						installCmds: [][]string{
+							{pacmanPath, "-Sy", "--noconfirm", "mariadb"},
+						},
+						startCmds: [][]string{
+							{systemctlPath, "start", "mariadb"},
+						},
+						stopCmds: [][]string{
+							{systemctlPath, "stop", "mariadb"},
+						},
+						restartCmds: [][]string{
+							{systemctlPath, "restart", "mariadb"},
+						},
+					}
+				}
 				return actionPlan{
 					packageManager: "pacman",
 					installLabel:   "Install MariaDB",

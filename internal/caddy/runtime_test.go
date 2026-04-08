@@ -605,6 +605,14 @@ func (fakePHPManager) Start(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (fakePHPManager) Restart(context.Context) error {
+	return nil
+}
+
 func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return fakePHPManager{}.Status(context.Background()), nil
 }

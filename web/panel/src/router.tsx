@@ -16,6 +16,7 @@ import {
   HardDrive,
   LayoutDashboard,
   List,
+  Package,
   Search,
   Server,
   Settings,
@@ -43,6 +44,7 @@ import {
 import { CronPage } from "@/pages/cron-page";
 import { DomainDetailPage } from "@/pages/domain-detail-page";
 import { ActivityPage } from "@/pages/activity-page";
+import { ApplicationsPage } from "@/pages/applications-page";
 import { BackupsPage } from "@/pages/backups-page";
 import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
@@ -57,6 +59,7 @@ const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
+  { to: "/applications", label: "Applications", icon: Package },
   { to: "/ftp", label: "FTP", icon: Server },
   { to: "/backups", label: "Backups", icon: HardDrive },
   { to: "/files", label: "Files", icon: FolderOpen },
@@ -306,6 +309,12 @@ const databaseRoute = createRoute({
   component: DatabasePage,
 });
 
+const applicationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/applications",
+  component: ApplicationsPage,
+});
+
 const ftpRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/ftp",
@@ -361,6 +370,7 @@ const routeTree = rootRoute.addChildren([
   domainsRoute,
   domainDetailRoute,
   databaseRoute,
+  applicationsRoute,
   ftpRoute,
   backupsRoute,
   filesRoute,

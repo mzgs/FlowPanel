@@ -41,6 +41,8 @@ type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
 	Start(context.Context) error
+	Stop(context.Context) error
+	Restart(context.Context) error
 	UpdateSettings(context.Context, UpdateSettingsInput) (Status, error)
 }
 
@@ -62,6 +64,10 @@ type Status struct {
 	InstallLabel      string   `json:"install_label,omitempty"`
 	StartAvailable    bool     `json:"start_available"`
 	StartLabel        string   `json:"start_label,omitempty"`
+	StopAvailable     bool     `json:"stop_available"`
+	StopLabel         string   `json:"stop_label,omitempty"`
+	RestartAvailable  bool     `json:"restart_available"`
+	RestartLabel      string   `json:"restart_label,omitempty"`
 	LoadedConfigFile  string   `json:"loaded_config_file,omitempty"`
 	ScanDir           string   `json:"scan_dir,omitempty"`
 	ManagedConfigFile string   `json:"managed_config_file,omitempty"`
@@ -108,8 +114,12 @@ type actionPlan struct {
 	packageManager string
 	installLabel   string
 	startLabel     string
+	stopLabel      string
+	restartLabel   string
 	installCmds    [][]string
 	startCmds      [][]string
+	stopCmds       [][]string
+	restartCmds    [][]string
 }
 
 func NewService(logger *zap.Logger) *Service {
@@ -171,6 +181,10 @@ func (s *Service) Status(ctx context.Context) Status {
 	status.InstallLabel = plan.installLabel
 	status.StartAvailable = len(plan.startCmds) > 0 && status.FPMInstalled && !status.ServiceRunning
 	status.StartLabel = plan.startLabel
+	status.StopAvailable = len(plan.stopCmds) > 0 && status.FPMInstalled && status.ServiceRunning
+	status.StopLabel = plan.stopLabel
+	status.RestartAvailable = len(plan.restartCmds) > 0 && status.FPMInstalled && status.ServiceRunning
+	status.RestartLabel = plan.restartLabel
 
 	switch {
 	case status.PHPInstalled && status.FPMInstalled && status.ListenAddress != "" && status.ServiceRunning:
@@ -237,6 +251,30 @@ func (s *Service) Start(ctx context.Context) error {
 	return runCommands(ctx, plan.startCmds...)
 }
 
+func (s *Service) Stop(ctx context.Context) error {
+	plan := detectActionPlan()
+	if len(plan.stopCmds) == 0 {
+		return fmt.Errorf("automatic php-fpm shutdown is not supported on %s", runtime.GOOS)
+	}
+
+	s.logger.Info("stopping php-fpm service",
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.stopCmds...)
+}
+
+func (s *Service) Restart(ctx context.Context) error {
+	plan := detectActionPlan()
+	if len(plan.restartCmds) == 0 {
+		return fmt.Errorf("automatic php-fpm restart is not supported on %s", runtime.GOOS)
+	}
+
+	s.logger.Info("restarting php-fpm service",
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.restartCmds...)
+}
+
 func detectActionPlan() actionPlan {
 	switch runtime.GOOS {
 	case "darwin":
@@ -245,11 +283,19 @@ func detectActionPlan() actionPlan {
 				packageManager: "homebrew",
 				installLabel:   "Install PHP",
 				startLabel:     "Start PHP-FPM",
+				stopLabel:      "Stop PHP-FPM",
+				restartLabel:   "Restart PHP-FPM",
 				installCmds: [][]string{
 					{brewPath, "install", "php"},
 				},
 				startCmds: [][]string{
 					{brewPath, "services", "start", "php"},
+				},
+				stopCmds: [][]string{
+					{brewPath, "services", "stop", "php"},
+				},
+				restartCmds: [][]string{
+					{brewPath, "services", "restart", "php"},
 				},
 			}
 		}
