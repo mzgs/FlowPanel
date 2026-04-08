@@ -7,6 +7,7 @@ export type DomainRecord = {
   hostname: string;
   kind: DomainKind;
   target: string;
+  php_version?: string;
   php_settings: PHPSettings;
   github_integration?: DomainGitHubIntegration | null;
   cache_enabled: boolean;
@@ -58,6 +59,7 @@ export type UpdateDomainGitHubIntegrationInput = {
 };
 
 export type UpdateDomainPHPSettingsInput = {
+  php_version: string;
   max_execution_time: string;
   max_input_time: string;
   memory_limit: string;

@@ -91,6 +91,15 @@ func (f previewGeneratorFunc) Capture(ctx context.Context, targetURL string) ([]
 
 func (fakePHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
+		DefaultVersion: "8.3",
+		Ready:          true,
+		ListenAddress:  "127.0.0.1:9000",
+	}
+}
+
+func (fakePHPManager) StatusForVersion(context.Context, string) phpenv.RuntimeStatus {
+	return phpenv.RuntimeStatus{
+		Version:       "8.3",
 		Ready:         true,
 		ListenAddress: "127.0.0.1:9000",
 	}
@@ -100,7 +109,15 @@ func (fakePHPManager) Install(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) InstallVersion(context.Context, string) error {
+	return nil
+}
+
 func (fakePHPManager) Remove(context.Context) error {
+	return nil
+}
+
+func (fakePHPManager) RemoveVersion(context.Context, string) error {
 	return nil
 }
 
@@ -108,7 +125,15 @@ func (fakePHPManager) Start(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) StartVersion(context.Context, string) error {
+	return nil
+}
+
 func (fakePHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (fakePHPManager) StopVersion(context.Context, string) error {
 	return nil
 }
 
@@ -116,13 +141,22 @@ func (fakePHPManager) Restart(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) RestartVersion(context.Context, string) error {
+	return nil
+}
+
 func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return fakePHPManager{}.Status(context.Background()), nil
+}
+
+func (fakePHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return fakePHPManager{}.StatusForVersion(context.Background(), "8.3"), nil
 }
 
 func (m *contextAwarePHPManager) Status(context.Context) phpenv.Status {
 	if m.removed {
 		return phpenv.Status{
+			DefaultVersion:  "8.3",
 			State:           "missing",
 			Message:         "PHP is not installed.",
 			RemoveAvailable: false,
@@ -130,10 +164,22 @@ func (m *contextAwarePHPManager) Status(context.Context) phpenv.Status {
 	}
 
 	return phpenv.Status{
+		DefaultVersion:  "8.3",
 		Ready:           false,
 		State:           "installed",
 		Message:         "PHP is installed.",
 		RemoveAvailable: true,
+	}
+}
+
+func (m *contextAwarePHPManager) StatusForVersion(ctx context.Context, _ string) phpenv.RuntimeStatus {
+	status := m.Status(ctx)
+	return phpenv.RuntimeStatus{
+		Version:         "8.3",
+		Ready:           status.Ready,
+		State:           status.State,
+		Message:         status.Message,
+		RemoveAvailable: status.RemoveAvailable,
 	}
 }
 
@@ -142,12 +188,24 @@ func (m *contextAwarePHPManager) Install(ctx context.Context) error {
 	return ctx.Err()
 }
 
+func (m *contextAwarePHPManager) InstallVersion(ctx context.Context, _ string) error {
+	return m.Install(ctx)
+}
+
 func (m *contextAwarePHPManager) Remove(ctx context.Context) error {
 	m.removed = true
 	return ctx.Err()
 }
 
+func (m *contextAwarePHPManager) RemoveVersion(ctx context.Context, _ string) error {
+	return m.Remove(ctx)
+}
+
 func (m *contextAwarePHPManager) Start(context.Context) error {
+	return nil
+}
+
+func (m *contextAwarePHPManager) StartVersion(context.Context, string) error {
 	return nil
 }
 
@@ -155,7 +213,15 @@ func (m *contextAwarePHPManager) Stop(context.Context) error {
 	return nil
 }
 
+func (m *contextAwarePHPManager) StopVersion(context.Context, string) error {
+	return nil
+}
+
 func (m *contextAwarePHPManager) Restart(context.Context) error {
+	return nil
+}
+
+func (m *contextAwarePHPManager) RestartVersion(context.Context, string) error {
 	return nil
 }
 
@@ -163,8 +229,29 @@ func (m *contextAwarePHPManager) UpdateSettings(context.Context, phpenv.UpdateSe
 	return m.Status(context.Background()), nil
 }
 
+func (m *contextAwarePHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
+}
+
 func (m *blockingPHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
+		DefaultVersion:   "8.3",
+		PHPInstalled:     true,
+		PHPVersion:       "PHP 8.3.6 (cli)",
+		FPMInstalled:     true,
+		ServiceRunning:   false,
+		ListenAddress:    "127.0.0.1:9000",
+		State:            "stopped",
+		Message:          "PHP is installed, but php-fpm is not running on 127.0.0.1:9000.",
+		InstallAvailable: false,
+		RemoveAvailable:  true,
+		StartAvailable:   true,
+	}
+}
+
+func (m *blockingPHPManager) StatusForVersion(context.Context, string) phpenv.RuntimeStatus {
+	return phpenv.RuntimeStatus{
+		Version:          "8.3",
 		PHPInstalled:     true,
 		PHPVersion:       "PHP 8.3.6 (cli)",
 		FPMInstalled:     true,
@@ -192,7 +279,15 @@ func (m *blockingPHPManager) Install(context.Context) error {
 	return nil
 }
 
+func (m *blockingPHPManager) InstallVersion(ctx context.Context, _ string) error {
+	return m.Install(ctx)
+}
+
 func (m *blockingPHPManager) Remove(context.Context) error {
+	return nil
+}
+
+func (m *blockingPHPManager) RemoveVersion(context.Context, string) error {
 	return nil
 }
 
@@ -200,7 +295,15 @@ func (m *blockingPHPManager) Start(context.Context) error {
 	return nil
 }
 
+func (m *blockingPHPManager) StartVersion(context.Context, string) error {
+	return nil
+}
+
 func (m *blockingPHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (m *blockingPHPManager) StopVersion(context.Context, string) error {
 	return nil
 }
 
@@ -208,12 +311,40 @@ func (m *blockingPHPManager) Restart(context.Context) error {
 	return nil
 }
 
+func (m *blockingPHPManager) RestartVersion(context.Context, string) error {
+	return nil
+}
+
 func (m *blockingPHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return m.Status(context.Background()), nil
 }
 
+func (m *blockingPHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
+}
+
 func (m *blockingReadyPHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
+		DefaultVersion:   "8.3",
+		PHPInstalled:     true,
+		PHPVersion:       "PHP 8.3.6 (cli)",
+		FPMInstalled:     true,
+		ServiceRunning:   true,
+		Ready:            true,
+		ListenAddress:    "127.0.0.1:9000",
+		State:            "ready",
+		Message:          "PHP and php-fpm are ready for Caddy at 127.0.0.1:9000.",
+		InstallAvailable: false,
+		RemoveAvailable:  true,
+		StartAvailable:   false,
+		StopAvailable:    true,
+		RestartAvailable: true,
+	}
+}
+
+func (m *blockingReadyPHPManager) StatusForVersion(context.Context, string) phpenv.RuntimeStatus {
+	return phpenv.RuntimeStatus{
+		Version:          "8.3",
 		PHPInstalled:     true,
 		PHPVersion:       "PHP 8.3.6 (cli)",
 		FPMInstalled:     true,
@@ -244,7 +375,15 @@ func (m *blockingReadyPHPManager) Install(context.Context) error {
 	return nil
 }
 
+func (m *blockingReadyPHPManager) InstallVersion(ctx context.Context, _ string) error {
+	return m.Install(ctx)
+}
+
 func (m *blockingReadyPHPManager) Remove(context.Context) error {
+	return nil
+}
+
+func (m *blockingReadyPHPManager) RemoveVersion(context.Context, string) error {
 	return nil
 }
 
@@ -252,7 +391,15 @@ func (m *blockingReadyPHPManager) Start(context.Context) error {
 	return nil
 }
 
+func (m *blockingReadyPHPManager) StartVersion(context.Context, string) error {
+	return nil
+}
+
 func (m *blockingReadyPHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (m *blockingReadyPHPManager) StopVersion(context.Context, string) error {
 	return nil
 }
 
@@ -260,8 +407,16 @@ func (m *blockingReadyPHPManager) Restart(context.Context) error {
 	return nil
 }
 
+func (m *blockingReadyPHPManager) RestartVersion(context.Context, string) error {
+	return nil
+}
+
 func (m *blockingReadyPHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return m.Status(context.Background()), nil
+}
+
+func (m *blockingReadyPHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
 }
 
 func (fakeMariaDBManager) Status(context.Context) mariadb.Status {
@@ -462,11 +617,13 @@ func (m *installablePHPMyAdminManager) Remove(context.Context) error {
 func (m *removablePHPManager) Status(context.Context) phpenv.Status {
 	if m.removed {
 		return phpenv.Status{
-			State: "missing",
+			DefaultVersion: "8.3",
+			State:          "missing",
 		}
 	}
 
 	return phpenv.Status{
+		DefaultVersion:   "8.3",
 		PHPInstalled:     true,
 		FPMInstalled:     true,
 		ServiceRunning:   true,
@@ -479,9 +636,29 @@ func (m *removablePHPManager) Status(context.Context) phpenv.Status {
 	}
 }
 
+func (m *removablePHPManager) StatusForVersion(ctx context.Context, _ string) phpenv.RuntimeStatus {
+	status := m.Status(ctx)
+	return phpenv.RuntimeStatus{
+		Version:          "8.3",
+		PHPInstalled:     status.PHPInstalled,
+		FPMInstalled:     status.FPMInstalled,
+		ServiceRunning:   status.ServiceRunning,
+		Ready:            status.Ready,
+		State:            status.State,
+		Message:          status.Message,
+		ListenAddress:    status.ListenAddress,
+		RemoveAvailable:  status.RemoveAvailable,
+		InstallAvailable: status.InstallAvailable,
+	}
+}
+
 func (m *removablePHPManager) Install(context.Context) error {
 	m.removed = false
 	return nil
+}
+
+func (m *removablePHPManager) InstallVersion(ctx context.Context, _ string) error {
+	return m.Install(ctx)
 }
 
 func (m *removablePHPManager) Remove(context.Context) error {
@@ -489,7 +666,15 @@ func (m *removablePHPManager) Remove(context.Context) error {
 	return nil
 }
 
+func (m *removablePHPManager) RemoveVersion(ctx context.Context, _ string) error {
+	return m.Remove(ctx)
+}
+
 func (m *removablePHPManager) Start(context.Context) error {
+	return nil
+}
+
+func (m *removablePHPManager) StartVersion(context.Context, string) error {
 	return nil
 }
 
@@ -497,12 +682,24 @@ func (m *removablePHPManager) Stop(context.Context) error {
 	return nil
 }
 
+func (m *removablePHPManager) StopVersion(context.Context, string) error {
+	return nil
+}
+
 func (m *removablePHPManager) Restart(context.Context) error {
+	return nil
+}
+
+func (m *removablePHPManager) RestartVersion(context.Context, string) error {
 	return nil
 }
 
 func (m *removablePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return m.Status(context.Background()), nil
+}
+
+func (m *removablePHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
 }
 
 func (m *removableMariaDBManager) Status(context.Context) mariadb.Status {

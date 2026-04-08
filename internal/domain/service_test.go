@@ -403,17 +403,20 @@ func TestUpdatePHPSettingsPersistsDomain(t *testing.T) {
 		t.Fatalf("create php domain: %v", err)
 	}
 
-	updated, err := service.UpdatePHPSettings(ctx, record.Hostname, phpenv.UpdateSettingsInput{
-		MaxExecutionTime:     "300",
-		MaxInputTime:         "60",
-		MemoryLimit:          "256M",
-		PostMaxSize:          "64M",
-		FileUploads:          "On",
-		UploadMaxFilesize:    "64M",
-		MaxFileUploads:       "20",
-		DefaultSocketTimeout: "60",
-		ErrorReporting:       "E_ALL & ~E_NOTICE",
-		DisplayErrors:        "Off",
+	updated, err := service.UpdatePHPSettings(ctx, record.Hostname, UpdatePHPInput{
+		PHPVersion: "8.3",
+		UpdateSettingsInput: phpenv.UpdateSettingsInput{
+			MaxExecutionTime:     "300",
+			MaxInputTime:         "60",
+			MemoryLimit:          "256M",
+			PostMaxSize:          "64M",
+			FileUploads:          "On",
+			UploadMaxFilesize:    "64M",
+			MaxFileUploads:       "20",
+			DefaultSocketTimeout: "60",
+			ErrorReporting:       "E_ALL & ~E_NOTICE",
+			DisplayErrors:        "Off",
+		},
 	})
 	if err != nil {
 		t.Fatalf("update php settings: %v", err)
@@ -424,6 +427,9 @@ func TestUpdatePHPSettingsPersistsDomain(t *testing.T) {
 	}
 	if updated.PHPSettings.ErrorReporting != "E_ALL & ~E_NOTICE" {
 		t.Fatalf("error_reporting = %q, want symbolic value", updated.PHPSettings.ErrorReporting)
+	}
+	if updated.PHPVersion != "8.3" {
+		t.Fatalf("php_version = %q, want 8.3", updated.PHPVersion)
 	}
 
 	records, err := store.List(ctx)
@@ -438,6 +444,9 @@ func TestUpdatePHPSettingsPersistsDomain(t *testing.T) {
 	}
 	if records[0].PHPSettings.DisplayErrors != "Off" {
 		t.Fatalf("persisted display_errors = %q, want Off", records[0].PHPSettings.DisplayErrors)
+	}
+	if records[0].PHPVersion != "8.3" {
+		t.Fatalf("persisted php_version = %q, want 8.3", records[0].PHPVersion)
 	}
 }
 

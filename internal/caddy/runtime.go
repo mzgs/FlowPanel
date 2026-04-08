@@ -53,7 +53,8 @@ type configSummary struct {
 }
 
 type phpRouteConfig struct {
-	fastCGIAddress string
+	defaultVersion   string
+	fastCGIAddresses map[string]string
 }
 
 type phpMyAdminRouteConfig struct {
@@ -246,29 +247,53 @@ func (r *Runtime) Stop(ctx context.Context) error {
 }
 
 func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Record) (*phpRouteConfig, error) {
+	if r.php == nil {
+		for _, record := range records {
+			if record.Kind == domain.KindPHP {
+				return nil, fmt.Errorf("php-fpm support is not configured")
+			}
+		}
+		return nil, nil
+	}
+
+	aggregateStatus := r.php.Status(ctx)
+	requiredVersions := map[string]struct{}{}
+
 	for _, record := range records {
 		if record.Kind != domain.KindPHP {
 			continue
 		}
 
-		if r.php == nil {
-			return nil, fmt.Errorf("php-fpm support is not configured")
+		version := strings.TrimSpace(record.PHPVersion)
+		if version == "" {
+			version = strings.TrimSpace(aggregateStatus.DefaultVersion)
 		}
-
-		status := r.php.Status(ctx)
-		if !status.Ready {
-			return nil, fmt.Errorf("php-fpm is not ready: %s", status.Message)
+		if version == "" {
+			return nil, fmt.Errorf("no default PHP version is configured")
 		}
-		if strings.TrimSpace(status.ListenAddress) == "" {
-			return nil, fmt.Errorf("php-fpm listen address is not configured")
-		}
-
-		return &phpRouteConfig{
-			fastCGIAddress: status.ListenAddress,
-		}, nil
+		requiredVersions[version] = struct{}{}
 	}
 
-	return nil, nil
+	if len(requiredVersions) == 0 {
+		return nil, nil
+	}
+
+	config := &phpRouteConfig{
+		defaultVersion:   aggregateStatus.DefaultVersion,
+		fastCGIAddresses: make(map[string]string, len(requiredVersions)),
+	}
+	for version := range requiredVersions {
+		status := r.php.StatusForVersion(ctx, version)
+		if !status.Ready {
+			return nil, fmt.Errorf("php-fpm %s is not ready: %s", version, status.Message)
+		}
+		if strings.TrimSpace(status.ListenAddress) == "" {
+			return nil, fmt.Errorf("php-fpm %s listen address is not configured", version)
+		}
+		config.fastCGIAddresses[version] = status.ListenAddress
+	}
+
+	return config, nil
 }
 
 func (r *Runtime) resolvePHPMyAdminRouteConfig(ctx context.Context) (*phpMyAdminRouteConfig, error) {
@@ -454,13 +479,20 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 			}, "handler", "file_server", nil),
 		)
 	case domain.KindPHP:
-		if phpConfig == nil || strings.TrimSpace(phpConfig.fastCGIAddress) == "" {
+		if phpConfig == nil {
+			return nil, false, fmt.Errorf("php-fpm is not configured for %q", record.Hostname)
+		}
+		fastCGIAddress, err := phpConfig.fastCGIAddressFor(record.PHPVersion)
+		if err != nil {
+			return nil, false, err
+		}
+		if strings.TrimSpace(fastCGIAddress) == "" {
 			return nil, false, fmt.Errorf("php-fpm is not configured for %q", record.Hostname)
 		}
 
 		originHandlers = append(originHandlers,
 			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
-				Routes: phpSubrouteRoutes(record.Target, phpConfig.fastCGIAddress, record.PHPSettings),
+				Routes: phpSubrouteRoutes(record.Target, fastCGIAddress, record.PHPSettings),
 			}, "handler", "subroute", nil),
 		)
 	case domain.KindApp:
@@ -643,6 +675,27 @@ func phpSettingsValue(settings phpenv.Settings) string {
 	appendSetting("display_errors", settings.DisplayErrors)
 
 	return strings.Join(lines, "\n")
+}
+
+func (c *phpRouteConfig) fastCGIAddressFor(version string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("php-fpm is not configured")
+	}
+
+	resolvedVersion := strings.TrimSpace(version)
+	if resolvedVersion == "" {
+		resolvedVersion = strings.TrimSpace(c.defaultVersion)
+	}
+	if resolvedVersion == "" {
+		return "", fmt.Errorf("no PHP version is configured")
+	}
+
+	address := strings.TrimSpace(c.fastCGIAddresses[resolvedVersion])
+	if address == "" {
+		return "", fmt.Errorf("php-fpm is not configured for PHP %s", resolvedVersion)
+	}
+
+	return address, nil
 }
 
 func fastCGIDialAddress(address string) string {

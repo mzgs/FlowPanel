@@ -1741,6 +1741,10 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodDelete, "/mariadb/databases/{databaseName}", mariaDBDatabaseDeleteHandler)
 
+		phpActionVersion := func(r *stdhttp.Request) string {
+			return strings.TrimSpace(r.URL.Query().Get("version"))
+		}
+
 		phpStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -1763,13 +1767,20 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			actionCtx := backgroundRequestContext(r.Context())
+			version := phpActionVersion(r)
 			if err := runtimeActions.Begin("php", "install"); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
-			if err := app.PHP.Install(actionCtx); err != nil {
+			var err error
+			if strings.TrimSpace(version) != "" {
+				err = app.PHP.InstallVersion(actionCtx, version)
+			} else {
+				err = app.PHP.Install(actionCtx)
+			}
+			if err != nil {
 				runtimeActions.End("php", "install")
 				app.Logger.Error("install php failed", zap.Error(err))
 				mutationEvent(actionCtx, "runtime", "install", "php", "php", "PHP", "failed", err.Error())
@@ -1781,7 +1792,11 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			runtimeActions.End("php", "install")
 
 			status := trackPHPStatus(app.PHP.Status(actionCtx))
-			if status.Ready {
+			shouldSync := status.Ready
+			if strings.TrimSpace(version) != "" {
+				shouldSync = app.PHP.StatusForVersion(actionCtx, version).Ready
+			}
+			if shouldSync {
 				if err := syncDomainsWithCaddy(actionCtx); err != nil {
 					app.Logger.Error("sync domains after php install failed", zap.Error(err))
 					mutationEvent(actionCtx, "runtime", "install", "php", "php", "PHP", "failed", "PHP installed but failed to republish domains.")
@@ -1808,13 +1823,20 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			actionCtx := backgroundRequestContext(r.Context())
+			version := phpActionVersion(r)
 			if err := runtimeActions.Begin("php", "remove"); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
-			if err := app.PHP.Remove(actionCtx); err != nil {
+			var err error
+			if strings.TrimSpace(version) != "" {
+				err = app.PHP.RemoveVersion(actionCtx, version)
+			} else {
+				err = app.PHP.Remove(actionCtx)
+			}
+			if err != nil {
 				runtimeActions.End("php", "remove")
 				app.Logger.Error("remove php failed", zap.Error(err))
 				mutationEvent(actionCtx, "runtime", "remove", "php", "php", "PHP", "failed", err.Error())
@@ -1851,13 +1873,20 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			actionCtx := backgroundRequestContext(r.Context())
+			version := phpActionVersion(r)
 			if err := runtimeActions.Begin("php", "start"); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
-			if err := app.PHP.Start(actionCtx); err != nil {
+			var err error
+			if strings.TrimSpace(version) != "" {
+				err = app.PHP.StartVersion(actionCtx, version)
+			} else {
+				err = app.PHP.Start(actionCtx)
+			}
+			if err != nil {
 				runtimeActions.End("php", "start")
 				app.Logger.Error("start php failed", zap.Error(err))
 				mutationEvent(actionCtx, "runtime", "start", "php", "php", "PHP", "failed", err.Error())
@@ -1869,7 +1898,11 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			runtimeActions.End("php", "start")
 
 			status := trackPHPStatus(app.PHP.Status(actionCtx))
-			if status.Ready {
+			shouldSync := status.Ready
+			if strings.TrimSpace(version) != "" {
+				shouldSync = app.PHP.StatusForVersion(actionCtx, version).Ready
+			}
+			if shouldSync {
 				if err := syncDomainsWithCaddy(actionCtx); err != nil {
 					app.Logger.Error("sync domains after php start failed", zap.Error(err))
 					mutationEvent(actionCtx, "runtime", "start", "php", "php", "PHP", "failed", "PHP started but failed to republish domains.")
@@ -1896,13 +1929,20 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			actionCtx := backgroundRequestContext(r.Context())
+			version := phpActionVersion(r)
 			if err := runtimeActions.Begin("php", "stop"); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
-			if err := app.PHP.Stop(actionCtx); err != nil {
+			var err error
+			if strings.TrimSpace(version) != "" {
+				err = app.PHP.StopVersion(actionCtx, version)
+			} else {
+				err = app.PHP.Stop(actionCtx)
+			}
+			if err != nil {
 				runtimeActions.End("php", "stop")
 				app.Logger.Error("stop php failed", zap.Error(err))
 				mutationEvent(actionCtx, "runtime", "stop", "php", "php", "PHP", "failed", err.Error())
@@ -1929,13 +1969,20 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			actionCtx := backgroundRequestContext(r.Context())
+			version := phpActionVersion(r)
 			if err := runtimeActions.Begin("php", "restart"); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{
 					"error": err.Error(),
 				})
 				return
 			}
-			if err := app.PHP.Restart(actionCtx); err != nil {
+			var err error
+			if strings.TrimSpace(version) != "" {
+				err = app.PHP.RestartVersion(actionCtx, version)
+			} else {
+				err = app.PHP.Restart(actionCtx)
+			}
+			if err != nil {
 				runtimeActions.End("php", "restart")
 				app.Logger.Error("restart php failed", zap.Error(err))
 				mutationEvent(actionCtx, "runtime", "restart", "php", "php", "PHP", "failed", err.Error())
@@ -1947,7 +1994,11 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			runtimeActions.End("php", "restart")
 
 			status := trackPHPStatus(app.PHP.Status(actionCtx))
-			if status.Ready {
+			shouldSync := status.Ready
+			if strings.TrimSpace(version) != "" {
+				shouldSync = app.PHP.StatusForVersion(actionCtx, version).Ready
+			}
+			if shouldSync {
 				if err := syncDomainsWithCaddy(actionCtx); err != nil {
 					app.Logger.Error("sync domains after php restart failed", zap.Error(err))
 					mutationEvent(actionCtx, "runtime", "restart", "php", "php", "PHP", "failed", "PHP restarted but failed to republish domains.")
@@ -1973,6 +2024,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
+			version := phpActionVersion(r)
+
 			var input phpenv.UpdateSettingsInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
@@ -1981,7 +2034,16 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			status, err := app.PHP.UpdateSettings(r.Context(), input)
+			var (
+				status phpenv.Status
+				err    error
+			)
+			if strings.TrimSpace(version) != "" {
+				_, err = app.PHP.UpdateSettingsForVersion(r.Context(), version, input)
+				status = app.PHP.Status(r.Context())
+			} else {
+				status, err = app.PHP.UpdateSettings(r.Context(), input)
+			}
 			if err != nil {
 				var validation phpenv.ValidationErrors
 				if errors.As(err, &validation) {
@@ -2000,7 +2062,11 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				return
 			}
 
-			if status.Ready {
+			shouldSync := status.Ready
+			if strings.TrimSpace(version) != "" {
+				shouldSync = app.PHP.StatusForVersion(r.Context(), version).Ready
+			}
+			if shouldSync {
 				if err := syncDomainsWithCaddy(r.Context()); err != nil {
 					app.Logger.Error("sync domains after php settings update failed", zap.Error(err))
 					mutationEvent(r.Context(), "runtime", "update", "php", "php", "PHP", "failed", "PHP settings saved but failed to republish domains.")
@@ -2930,7 +2996,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		domainsPHPSettingsUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			hostname := chi.URLParam(r, "hostname")
 
-			var input phpenv.UpdateSettingsInput
+			var input domain.UpdatePHPInput
 			if err := decodeJSON(r, &input); err != nil {
 				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
 					"error": "invalid request body",

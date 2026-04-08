@@ -44,40 +44,53 @@ type phpConfigInfo struct {
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, input UpdateSettingsInput) (Status, error) {
-	validation := ValidateUpdateSettingsInput(input)
-	if len(validation) > 0 {
-		return Status{}, validation
-	}
-
-	status := s.Status(ctx)
-	if !status.PHPInstalled || status.PHPPath == "" {
-		return Status{}, fmt.Errorf("php is not installed")
-	}
-
-	configInfo, err := inspectPHPConfig(ctx, status.PHPPath)
+	runtimeStatus, err := s.UpdateSettingsForVersion(ctx, "", input)
 	if err != nil {
 		return Status{}, err
 	}
 
+	status := s.Status(ctx)
+	if status.ManagedConfigFile == "" {
+		status.ManagedConfigFile = runtimeStatus.ManagedConfigFile
+	}
+	return status, nil
+}
+
+func (s *Service) UpdateSettingsForVersion(ctx context.Context, version string, input UpdateSettingsInput) (RuntimeStatus, error) {
+	validation := ValidateUpdateSettingsInput(input)
+	if len(validation) > 0 {
+		return RuntimeStatus{}, validation
+	}
+
+	status := s.StatusForVersion(ctx, version)
+	if !status.PHPInstalled || status.PHPPath == "" {
+		return RuntimeStatus{}, fmt.Errorf("php %s is not installed", status.Version)
+	}
+
+	configInfo, err := inspectPHPConfig(ctx, status.PHPPath)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
+
 	if configInfo.managedConfigFile == "" {
-		return Status{}, fmt.Errorf("flowpanel could not determine where to write PHP settings")
+		return RuntimeStatus{}, fmt.Errorf("flowpanel could not determine where to write PHP settings")
 	}
 
 	normalized := NormalizeUpdateSettingsInput(input)
 	if err := os.MkdirAll(filepath.Dir(configInfo.managedConfigFile), 0o755); err != nil {
-		return Status{}, fmt.Errorf("create php config directory: %w", err)
+		return RuntimeStatus{}, fmt.Errorf("create php config directory: %w", err)
 	}
 	if err := os.WriteFile(configInfo.managedConfigFile, []byte(renderManagedPHPConfig(normalized)), 0o644); err != nil {
-		return Status{}, fmt.Errorf("write php settings: %w", err)
+		return RuntimeStatus{}, fmt.Errorf("write php settings: %w", err)
 	}
 
 	if status.ServiceRunning {
 		if err := restartPHPFPM(ctx, status.FPMPath); err != nil {
-			return Status{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
+			return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
 		}
 	}
 
-	nextStatus := s.Status(ctx)
+	nextStatus := s.StatusForVersion(ctx, status.Version)
 	if nextStatus.ManagedConfigFile == "" {
 		nextStatus.ManagedConfigFile = configInfo.managedConfigFile
 	}
@@ -438,14 +451,6 @@ func runPHPFPMServiceCommand(ctx context.Context, fpmPath, action string) error 
 		return fmt.Errorf("php-fpm service action is required")
 	}
 
-	if runtimePlan := detectActionPlan(); runtimePlan.packageManager == "homebrew" {
-		if brewPath, ok := lookupCommand("brew"); ok {
-			if _, err := runCommand(ctx, brewPath, "services", action, "php"); err == nil {
-				return nil
-			}
-		}
-	}
-
 	candidates := fpmServiceCandidates(fpmPath)
 	if systemctlPath, ok := lookupCommand("systemctl"); ok {
 		for _, candidate := range candidates {
@@ -470,13 +475,21 @@ func runPHPFPMServiceCommand(ctx context.Context, fpmPath, action string) error 
 
 func fpmServiceCandidates(fpmPath string) []string {
 	base := strings.TrimSpace(filepath.Base(fpmPath))
-	if base == "" {
-		return []string{"php-fpm"}
+	candidates := []string{}
+	if base != "" {
+		candidates = append(candidates, base)
 	}
-
-	candidates := []string{base}
 	if matches := regexp.MustCompile(`^php-fpm(\d+(?:\.\d+)?)$`).FindStringSubmatch(base); len(matches) == 2 {
 		candidates = append([]string{"php" + matches[1] + "-fpm"}, candidates...)
+	}
+	if matches := regexp.MustCompile(`^php(\d+(?:\.\d+)?)\-fpm$`).FindStringSubmatch(base); len(matches) == 2 {
+		candidates = append(candidates, "php-fpm"+matches[1])
+	}
+	if matches := regexp.MustCompile(`/php@(\d+(?:\.\d+)?)/`).FindStringSubmatch(filepath.ToSlash(strings.TrimSpace(fpmPath))); len(matches) == 2 {
+		candidates = append(candidates, "php@"+matches[1], "php")
+	}
+	if len(candidates) == 0 {
+		candidates = append(candidates, "php-fpm", "php")
 	}
 
 	deduped := make([]string, 0, len(candidates))

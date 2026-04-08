@@ -195,7 +195,12 @@ func TestBuildConfigBuildsFastCGIRouteForPHPDomains(t *testing.T) {
 			Kind:     domain.KindPHP,
 			Target:   "/var/www/php.example.com",
 		},
-	}, &phpRouteConfig{fastCGIAddress: "127.0.0.1:9000"}, nil, nil, runtimeSyncModeStandard)
+	}, &phpRouteConfig{
+		defaultVersion: "8.3",
+		fastCGIAddresses: map[string]string{
+			"8.3": "127.0.0.1:9000",
+		},
+	}, nil, nil, runtimeSyncModeStandard)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -243,7 +248,12 @@ func TestBuildConfigIncludesPerDomainPHPValueOverrides(t *testing.T) {
 				ErrorReporting:   "E_ALL & ~E_NOTICE",
 			},
 		},
-	}, &phpRouteConfig{fastCGIAddress: "127.0.0.1:9000"}, nil, nil, runtimeSyncModeStandard)
+	}, &phpRouteConfig{
+		defaultVersion: "8.3",
+		fastCGIAddresses: map[string]string{
+			"8.3": "127.0.0.1:9000",
+		},
+	}, nil, nil, runtimeSyncModeStandard)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -265,7 +275,12 @@ func TestBuildConfigNormalizesUnixSocketFastCGIAddress(t *testing.T) {
 			Kind:     domain.KindPHP,
 			Target:   "/var/www/php.example.com",
 		},
-	}, &phpRouteConfig{fastCGIAddress: "/run/php/php8.3-fpm.sock"}, nil, nil, runtimeSyncModeStandard)
+	}, &phpRouteConfig{
+		defaultVersion: "8.3",
+		fastCGIAddresses: map[string]string{
+			"8.3": "/run/php/php8.3-fpm.sock",
+		},
+	}, nil, nil, runtimeSyncModeStandard)
 	if err != nil {
 		t.Fatalf("build config: %v", err)
 	}
@@ -592,6 +607,15 @@ type fakePHPManager struct{}
 
 func (fakePHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
+		DefaultVersion: "8.3",
+		Ready:          true,
+		ListenAddress:  "127.0.0.1:9000",
+	}
+}
+
+func (fakePHPManager) StatusForVersion(context.Context, string) phpenv.RuntimeStatus {
+	return phpenv.RuntimeStatus{
+		Version:       "8.3",
 		Ready:         true,
 		ListenAddress: "127.0.0.1:9000",
 	}
@@ -601,7 +625,15 @@ func (fakePHPManager) Install(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) InstallVersion(context.Context, string) error {
+	return nil
+}
+
 func (fakePHPManager) Remove(context.Context) error {
+	return nil
+}
+
+func (fakePHPManager) RemoveVersion(context.Context, string) error {
 	return nil
 }
 
@@ -609,7 +641,15 @@ func (fakePHPManager) Start(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) StartVersion(context.Context, string) error {
+	return nil
+}
+
 func (fakePHPManager) Stop(context.Context) error {
+	return nil
+}
+
+func (fakePHPManager) StopVersion(context.Context, string) error {
 	return nil
 }
 
@@ -617,8 +657,16 @@ func (fakePHPManager) Restart(context.Context) error {
 	return nil
 }
 
+func (fakePHPManager) RestartVersion(context.Context, string) error {
+	return nil
+}
+
 func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput) (phpenv.Status, error) {
 	return fakePHPManager{}.Status(context.Background()), nil
+}
+
+func (fakePHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return fakePHPManager{}.StatusForVersion(context.Background(), "8.3"), nil
 }
 
 type fakePHPMyAdminManager struct{}

@@ -27,6 +27,7 @@ import {
   fetchPHPStatus,
   installPHP,
   startPHP,
+  type PHPRuntimeStatus,
   type PHPSettings,
   type PHPStatus,
 } from "@/api/php";
@@ -147,7 +148,7 @@ const initialPHPSettings: PHPSettings = {
 };
 
 function toPHPSettingsForm(
-  status: PHPStatus | null,
+  status: PHPRuntimeStatus | null,
   overrides?: PHPSettings | null,
 ): PHPSettings {
   const statusSettings = status?.settings ?? {};
@@ -199,6 +200,38 @@ function samePHPSettings(left: PHPSettings, right: PHPSettings) {
     left.default_socket_timeout === right.default_socket_timeout &&
     left.error_reporting === right.error_reporting &&
     left.display_errors === right.display_errors
+  );
+}
+
+function getSelectedPHPVersion(
+  status: PHPStatus | null,
+  currentVersion?: string | null,
+) {
+  const normalizedCurrent = currentVersion?.trim();
+  if (normalizedCurrent) {
+    return normalizedCurrent;
+  }
+
+  const defaultVersion = status?.default_version?.trim();
+  if (defaultVersion) {
+    return defaultVersion;
+  }
+
+  return status?.versions?.[0]?.version ?? "";
+}
+
+function getPHPRuntimeStatus(
+  status: PHPStatus | null,
+  version?: string | null,
+): PHPRuntimeStatus | null {
+  const selectedVersion = getSelectedPHPVersion(status, version);
+  if (!selectedVersion) {
+    return null;
+  }
+
+  return (
+    status?.versions?.find((runtimeStatus) => runtimeStatus.version === selectedVersion) ??
+    null
   );
 }
 
@@ -438,6 +471,8 @@ export function DomainDetailPage() {
   const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
+  const [phpVersion, setPHPVersion] = useState("");
+  const [savedPHPVersion, setSavedPHPVersion] = useState("");
   const [phpForm, setPHPForm] = useState<PHPSettings>(initialPHPSettings);
   const [savedPHPForm, setSavedPHPForm] = useState<PHPSettings>(initialPHPSettings);
   const [phpFieldErrors, setPHPFieldErrors] = useState<Record<string, string>>({});
@@ -498,6 +533,8 @@ export function DomainDetailPage() {
     setPreviewRefreshing(false);
     setPreviewRefreshToken(0);
     setPHPStatus(null);
+    setPHPVersion("");
+    setSavedPHPVersion("");
     setPHPForm(initialPHPSettings);
     setSavedPHPForm(initialPHPSettings);
     setPHPFieldErrors({});
@@ -661,7 +698,11 @@ export function DomainDetailPage() {
           return;
         }
         setPHPStatus(nextStatus);
-        const nextForm = toPHPSettingsForm(nextStatus, domain?.php_settings);
+        const nextVersion = getSelectedPHPVersion(nextStatus, domain?.php_version);
+        const nextRuntime = getPHPRuntimeStatus(nextStatus, nextVersion);
+        const nextForm = toPHPSettingsForm(nextRuntime, domain?.php_settings);
+        setPHPVersion(nextVersion);
+        setSavedPHPVersion(nextVersion);
         setPHPForm(nextForm);
         setSavedPHPForm(nextForm);
         setPHPFieldErrors({});
@@ -800,7 +841,9 @@ export function DomainDetailPage() {
     backups: databaseBackups[database.name] ?? [],
   }));
   const githubDirty = !sameGitHubFormState(githubForm, savedGitHubForm);
-  const phpDirty = !samePHPSettings(phpForm, savedPHPForm);
+  const activePHPRuntime = getPHPRuntimeStatus(phpStatus, phpVersion);
+  const phpDirty =
+    phpVersion !== savedPHPVersion || !samePHPSettings(phpForm, savedPHPForm);
 
   async function handleCreateSiteBackup() {
     if (!domain || !showSiteBackups || creatingBackupTarget !== null) {
@@ -1050,9 +1093,13 @@ export function DomainDetailPage() {
     setPHPError(null);
 
     try {
-      const nextStatus = await installPHP();
+      const nextStatus = await installPHP(phpVersion || undefined);
       setPHPStatus(nextStatus);
-      const nextForm = toPHPSettingsForm(nextStatus, domain?.php_settings);
+      const nextVersion = getSelectedPHPVersion(nextStatus, phpVersion);
+      const nextRuntime = getPHPRuntimeStatus(nextStatus, nextVersion);
+      const nextForm = toPHPSettingsForm(nextRuntime, domain?.php_settings);
+      setPHPVersion(nextVersion);
+      setSavedPHPVersion(nextVersion);
       setPHPForm(nextForm);
       setSavedPHPForm(nextForm);
       setPHPFieldErrors({});
@@ -1071,9 +1118,13 @@ export function DomainDetailPage() {
     setPHPError(null);
 
     try {
-      const nextStatus = await startPHP();
+      const nextStatus = await startPHP(phpVersion || undefined);
       setPHPStatus(nextStatus);
-      const nextForm = toPHPSettingsForm(nextStatus, domain?.php_settings);
+      const nextVersion = getSelectedPHPVersion(nextStatus, phpVersion);
+      const nextRuntime = getPHPRuntimeStatus(nextStatus, nextVersion);
+      const nextForm = toPHPSettingsForm(nextRuntime, domain?.php_settings);
+      setPHPVersion(nextVersion);
+      setSavedPHPVersion(nextVersion);
       setPHPForm(nextForm);
       setSavedPHPForm(nextForm);
       setPHPFieldErrors({});
@@ -1098,6 +1149,7 @@ export function DomainDetailPage() {
 
     try {
       const updatedDomain = await updateDomainPHPSettings(domain.hostname, {
+        php_version: phpVersion,
         max_execution_time: phpForm.max_execution_time ?? "",
         max_input_time: phpForm.max_input_time ?? "",
         memory_limit: phpForm.memory_limit ?? "",
@@ -1109,8 +1161,11 @@ export function DomainDetailPage() {
         error_reporting: phpForm.error_reporting ?? "",
         display_errors: phpForm.display_errors ?? "Off",
       });
-      const nextForm = toPHPSettingsForm(phpStatus, updatedDomain.php_settings);
+      const nextRuntime = getPHPRuntimeStatus(phpStatus, updatedDomain.php_version);
+      const nextForm = toPHPSettingsForm(nextRuntime, updatedDomain.php_settings);
       setDomain(updatedDomain);
+      setPHPVersion(updatedDomain.php_version ?? "");
+      setSavedPHPVersion(updatedDomain.php_version ?? "");
       setPHPForm(nextForm);
       setSavedPHPForm(nextForm);
       setPHPDialogOpen(false);
@@ -1275,7 +1330,9 @@ export function DomainDetailPage() {
           open={phpDialogOpen && domain.kind === "Php site"}
           onOpenChange={setPHPDialogOpen}
           domain={domain}
-          status={phpStatus}
+          status={activePHPRuntime}
+          availableVersions={phpStatus?.available_versions ?? []}
+          selectedVersion={phpVersion}
           form={phpForm}
           fieldErrors={phpFieldErrors}
           loading={phpLoading}
@@ -1283,6 +1340,15 @@ export function DomainDetailPage() {
           error={phpError}
           dirty={phpDirty}
           runningAction={phpRunningAction}
+          onVersionChange={(value) => {
+            setPHPError(null);
+            setPHPFieldErrors((current) => {
+              const next = { ...current };
+              delete next.php_version;
+              return next;
+            });
+            setPHPVersion(value);
+          }}
           onFieldChange={(field, value) => {
             setPHPError(null);
             setPHPFieldErrors((current) => {

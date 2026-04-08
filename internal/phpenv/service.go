@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -20,6 +21,14 @@ const (
 	statusCommandTimeout = 3 * time.Second
 	dialTimeout          = 500 * time.Millisecond
 )
+
+var supportedPHPVersions = []string{
+	"8.4",
+	"8.3",
+	"8.2",
+	"8.1",
+	"8.0",
+}
 
 var aptPHPPackages = []string{
 	"php-fpm",
@@ -37,17 +46,27 @@ var aptPHPPackages = []string{
 	"php-zip",
 }
 
+var versionPattern = regexp.MustCompile(`\b(\d+\.\d+)`)
+
 type Manager interface {
 	Status(context.Context) Status
+	StatusForVersion(context.Context, string) RuntimeStatus
 	Install(context.Context) error
+	InstallVersion(context.Context, string) error
 	Remove(context.Context) error
+	RemoveVersion(context.Context, string) error
 	Start(context.Context) error
+	StartVersion(context.Context, string) error
 	Stop(context.Context) error
+	StopVersion(context.Context, string) error
 	Restart(context.Context) error
+	RestartVersion(context.Context, string) error
 	UpdateSettings(context.Context, UpdateSettingsInput) (Status, error)
+	UpdateSettingsForVersion(context.Context, string, UpdateSettingsInput) (RuntimeStatus, error)
 }
 
-type Status struct {
+type RuntimeStatus struct {
+	Version           string   `json:"version"`
 	Platform          string   `json:"platform"`
 	PackageManager    string   `json:"package_manager,omitempty"`
 	PHPInstalled      bool     `json:"php_installed"`
@@ -67,14 +86,47 @@ type Status struct {
 	RemoveLabel       string   `json:"remove_label,omitempty"`
 	StartAvailable    bool     `json:"start_available"`
 	StartLabel        string   `json:"start_label,omitempty"`
-	StopAvailable     bool     `json:"stop_available"`
+	StopAvailable     bool     `json:"stop_available,omitempty"`
 	StopLabel         string   `json:"stop_label,omitempty"`
-	RestartAvailable  bool     `json:"restart_available"`
+	RestartAvailable  bool     `json:"restart_available,omitempty"`
 	RestartLabel      string   `json:"restart_label,omitempty"`
 	LoadedConfigFile  string   `json:"loaded_config_file,omitempty"`
 	ScanDir           string   `json:"scan_dir,omitempty"`
 	ManagedConfigFile string   `json:"managed_config_file,omitempty"`
 	Settings          Settings `json:"settings"`
+}
+
+type Status struct {
+	Platform          string          `json:"platform"`
+	PackageManager    string          `json:"package_manager,omitempty"`
+	DefaultVersion    string          `json:"default_version,omitempty"`
+	AvailableVersions []string        `json:"available_versions,omitempty"`
+	Versions          []RuntimeStatus `json:"versions,omitempty"`
+	PHPInstalled      bool            `json:"php_installed"`
+	PHPPath           string          `json:"php_path,omitempty"`
+	PHPVersion        string          `json:"php_version,omitempty"`
+	FPMInstalled      bool            `json:"fpm_installed"`
+	FPMPath           string          `json:"fpm_path,omitempty"`
+	ListenAddress     string          `json:"listen_address,omitempty"`
+	ServiceRunning    bool            `json:"service_running"`
+	Ready             bool            `json:"ready"`
+	State             string          `json:"state"`
+	Message           string          `json:"message"`
+	Issues            []string        `json:"issues,omitempty"`
+	InstallAvailable  bool            `json:"install_available"`
+	InstallLabel      string          `json:"install_label,omitempty"`
+	RemoveAvailable   bool            `json:"remove_available"`
+	RemoveLabel       string          `json:"remove_label,omitempty"`
+	StartAvailable    bool            `json:"start_available"`
+	StartLabel        string          `json:"start_label,omitempty"`
+	StopAvailable     bool            `json:"stop_available,omitempty"`
+	StopLabel         string          `json:"stop_label,omitempty"`
+	RestartAvailable  bool            `json:"restart_available,omitempty"`
+	RestartLabel      string          `json:"restart_label,omitempty"`
+	LoadedConfigFile  string          `json:"loaded_config_file,omitempty"`
+	ScanDir           string          `json:"scan_dir,omitempty"`
+	ManagedConfigFile string          `json:"managed_config_file,omitempty"`
+	Settings          Settings        `json:"settings"`
 }
 
 type Settings struct {
@@ -113,21 +165,18 @@ type Service struct {
 	logger *zap.Logger
 }
 
-type actionPlan struct {
-	packageManager   string
-	installLabel     string
-	removeLabel      string
-	startLabel       string
-	stopLabel        string
-	restartLabel     string
-	installCmds      [][]string
-	removeCmds       [][]string
-	startCmds        [][]string
-	stopCmds         [][]string
-	restartCmds      [][]string
-	startSupported   bool
-	stopSupported    bool
-	restartSupported bool
+type versionActionPlan struct {
+	packageManager string
+	installLabel   string
+	removeLabel    string
+	startLabel     string
+	stopLabel      string
+	restartLabel   string
+	installCmds    [][]string
+	removeCmds     [][]string
+	startCmds      [][]string
+	stopCmds       [][]string
+	restartCmds    [][]string
 }
 
 func NewService(logger *zap.Logger) *Service {
@@ -140,15 +189,187 @@ func NewService(logger *zap.Logger) *Service {
 	}
 }
 
+func SupportedVersions() []string {
+	return append([]string(nil), supportedPHPVersions...)
+}
+
+func NormalizeVersion(value string) string {
+	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), "PHP "))
+	if value == "" {
+		return ""
+	}
+	match := versionPattern.FindStringSubmatch(value)
+	if len(match) != 2 {
+		return ""
+	}
+	for _, version := range supportedPHPVersions {
+		if match[1] == version {
+			return version
+		}
+	}
+	return ""
+}
+
 func (s *Service) Status(ctx context.Context) Status {
-	status := Status{
-		Platform: runtime.GOOS,
+	availableVersions := SupportedVersions()
+	runtimes := make([]RuntimeStatus, 0, len(availableVersions))
+	for _, version := range availableVersions {
+		runtimes = append(runtimes, s.inspectVersion(ctx, version))
 	}
 
-	plan := detectActionPlan()
-	status.PackageManager = plan.packageManager
+	defaultVersion := detectDefaultVersion(ctx, runtimes)
+	if defaultVersion == "" && len(availableVersions) > 0 {
+		defaultVersion = availableVersions[0]
+	}
 
-	phpPath, phpInstalled := lookupCommand("php")
+	status := Status{
+		Platform:          runtime.GOOS,
+		AvailableVersions: availableVersions,
+		Versions:          runtimes,
+		DefaultVersion:    defaultVersion,
+	}
+
+	defaultRuntime := findRuntimeStatus(runtimes, defaultVersion)
+	if defaultRuntime.Version == "" && len(runtimes) > 0 {
+		defaultRuntime = runtimes[0]
+	}
+	status.PackageManager = defaultRuntime.PackageManager
+	copyRuntimeStatus(&status, defaultRuntime)
+
+	return status
+}
+
+func (s *Service) StatusForVersion(ctx context.Context, version string) RuntimeStatus {
+	version = normalizeRequestedVersion(version)
+	if version == "" {
+		status := s.Status(ctx)
+		version = status.DefaultVersion
+		if version == "" && len(status.AvailableVersions) > 0 {
+			version = status.AvailableVersions[0]
+		}
+	}
+	if version == "" {
+		return RuntimeStatus{
+			Platform: runtime.GOOS,
+			State:    "unknown",
+			Message:  "FlowPanel could not determine which PHP version to use.",
+		}
+	}
+
+	return s.inspectVersion(ctx, version)
+}
+
+func (s *Service) Install(ctx context.Context) error {
+	return s.InstallVersion(ctx, "")
+}
+
+func (s *Service) InstallVersion(ctx context.Context, version string) error {
+	target := s.resolveActionVersion(ctx, version)
+	plan := detectVersionActionPlan(target)
+	if len(plan.installCmds) == 0 {
+		return fmt.Errorf("automatic PHP %s installation is not supported on %s", target, runtime.GOOS)
+	}
+
+	s.logger.Info("installing php runtime",
+		zap.String("version", target),
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.installCmds...)
+}
+
+func (s *Service) Remove(ctx context.Context) error {
+	return s.RemoveVersion(ctx, "")
+}
+
+func (s *Service) RemoveVersion(ctx context.Context, version string) error {
+	target := s.resolveActionVersion(ctx, version)
+	plan := detectVersionActionPlan(target)
+	if len(plan.removeCmds) == 0 {
+		return fmt.Errorf("automatic PHP %s removal is not supported on %s", target, runtime.GOOS)
+	}
+
+	s.logger.Info("removing php runtime",
+		zap.String("version", target),
+		zap.String("package_manager", plan.packageManager),
+	)
+
+	runtimeStatus := s.StatusForVersion(ctx, target)
+	commands := make([][]string, 0, len(plan.stopCmds)+len(plan.removeCmds))
+	if runtimeStatus.ServiceRunning {
+		commands = append(commands, plan.stopCmds...)
+	}
+	commands = append(commands, plan.removeCmds...)
+	return runCommands(ctx, commands...)
+}
+
+func (s *Service) Start(ctx context.Context) error {
+	return s.StartVersion(ctx, "")
+}
+
+func (s *Service) StartVersion(ctx context.Context, version string) error {
+	target := s.resolveActionVersion(ctx, version)
+	plan := detectVersionActionPlan(target)
+	if len(plan.startCmds) == 0 {
+		return fmt.Errorf("automatic php-fpm startup for PHP %s is not supported on %s", target, runtime.GOOS)
+	}
+
+	s.logger.Info("starting php-fpm service",
+		zap.String("version", target),
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.startCmds...)
+}
+
+func (s *Service) Stop(ctx context.Context) error {
+	return s.StopVersion(ctx, "")
+}
+
+func (s *Service) StopVersion(ctx context.Context, version string) error {
+	target := s.resolveActionVersion(ctx, version)
+	plan := detectVersionActionPlan(target)
+	if len(plan.stopCmds) == 0 {
+		return fmt.Errorf("automatic php-fpm shutdown for PHP %s is not supported on %s", target, runtime.GOOS)
+	}
+
+	s.logger.Info("stopping php-fpm service",
+		zap.String("version", target),
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.stopCmds...)
+}
+
+func (s *Service) Restart(ctx context.Context) error {
+	return s.RestartVersion(ctx, "")
+}
+
+func (s *Service) RestartVersion(ctx context.Context, version string) error {
+	target := s.resolveActionVersion(ctx, version)
+	plan := detectVersionActionPlan(target)
+	if len(plan.restartCmds) == 0 {
+		return fmt.Errorf("automatic php-fpm restart for PHP %s is not supported on %s", target, runtime.GOOS)
+	}
+
+	s.logger.Info("restarting php-fpm service",
+		zap.String("version", target),
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.restartCmds...)
+}
+
+func (s *Service) inspectVersion(ctx context.Context, version string) RuntimeStatus {
+	status := RuntimeStatus{
+		Version:        version,
+		Platform:       runtime.GOOS,
+		PackageManager: detectVersionActionPlan(version).packageManager,
+	}
+
+	if NormalizeVersion(version) == "" {
+		status.State = "unsupported"
+		status.Message = "This PHP version is not supported by FlowPanel."
+		return status
+	}
+
+	phpPath, phpInstalled := lookupVersionedPHPBinary(ctx, version)
 	if phpInstalled {
 		status.PHPInstalled = true
 		status.PHPPath = phpPath
@@ -168,11 +389,10 @@ func (s *Service) Status(ctx context.Context) Status {
 		}
 	}
 
-	fpmPath, fpmInstalled := lookupPHPFPM()
+	fpmPath, fpmInstalled := lookupVersionedPHPFPM(ctx, version)
 	if fpmInstalled {
 		status.FPMInstalled = true
 		status.FPMPath = fpmPath
-
 		output, err := runInspectCommand(ctx, fpmPath, "-tt")
 		if err != nil {
 			status.Issues = append(status.Issues, err.Error())
@@ -185,266 +405,327 @@ func (s *Service) Status(ctx context.Context) Status {
 		}
 	}
 
+	plan := detectVersionActionPlan(version)
 	status.InstallAvailable = len(plan.installCmds) > 0 && (!status.PHPInstalled || !status.FPMInstalled)
 	status.InstallLabel = plan.installLabel
 	status.RemoveAvailable = len(plan.removeCmds) > 0 && (status.PHPInstalled || status.FPMInstalled)
 	status.RemoveLabel = plan.removeLabel
-	status.StartAvailable = (len(plan.startCmds) > 0 || plan.startSupported) && status.FPMInstalled && !status.ServiceRunning
+	status.StartAvailable = len(plan.startCmds) > 0 && status.FPMInstalled && !status.ServiceRunning
 	status.StartLabel = plan.startLabel
-	status.StopAvailable = (len(plan.stopCmds) > 0 || plan.stopSupported) && status.FPMInstalled && status.ServiceRunning
+	status.StopAvailable = len(plan.stopCmds) > 0 && status.FPMInstalled && status.ServiceRunning
 	status.StopLabel = plan.stopLabel
-	status.RestartAvailable = (len(plan.restartCmds) > 0 || plan.restartSupported) && status.FPMInstalled && status.ServiceRunning
+	status.RestartAvailable = len(plan.restartCmds) > 0 && status.FPMInstalled && status.ServiceRunning
 	status.RestartLabel = plan.restartLabel
 
 	switch {
 	case status.PHPInstalled && status.FPMInstalled && status.ListenAddress != "" && status.ServiceRunning:
 		status.Ready = true
 		status.State = "ready"
-		status.Message = fmt.Sprintf("PHP and php-fpm are ready for Caddy at %s.", status.ListenAddress)
+		status.Message = fmt.Sprintf("PHP %s and php-fpm are ready for Caddy at %s.", version, status.ListenAddress)
 	case !status.PHPInstalled && !status.FPMInstalled:
 		status.State = "missing"
 		if status.InstallAvailable {
-			status.Message = "PHP is not installed. Install it here to enable Php site domains."
+			status.Message = fmt.Sprintf("PHP %s is not installed. Install it here to enable PHP sites on this runtime.", version)
 		} else {
-			status.Message = "PHP is not installed on this server."
+			status.Message = fmt.Sprintf("PHP %s is not installed on this server.", version)
 		}
 	case status.PHPInstalled && !status.FPMInstalled:
 		status.State = "missing-fpm"
 		if status.InstallAvailable {
-			status.Message = "PHP CLI is installed, but php-fpm is missing. Reinstall PHP to add FastCGI support."
+			status.Message = fmt.Sprintf("PHP %s CLI is installed, but php-fpm is missing. Reinstall PHP %s to add FastCGI support.", version, version)
 		} else {
-			status.Message = "PHP CLI is installed, but php-fpm is missing."
+			status.Message = fmt.Sprintf("PHP %s CLI is installed, but php-fpm is missing.", version)
 		}
 	case status.FPMInstalled && status.ListenAddress == "":
 		status.State = "misconfigured"
-		status.Message = "php-fpm is installed, but its listen address could not be determined."
+		status.Message = fmt.Sprintf("PHP %s php-fpm is installed, but its listen address could not be determined.", version)
 	case status.FPMInstalled && !status.ServiceRunning:
 		status.State = "stopped"
-		if status.StartAvailable {
-			status.Message = fmt.Sprintf("PHP is installed, but php-fpm is not running on %s.", status.ListenAddress)
-		} else {
-			status.Message = fmt.Sprintf("PHP is installed, but php-fpm is not reachable at %s.", status.ListenAddress)
-		}
+		status.Message = fmt.Sprintf("PHP %s is installed, but php-fpm is not reachable at %s.", version, status.ListenAddress)
 	default:
 		status.State = "unknown"
-		status.Message = "FlowPanel could not determine the PHP runtime state."
+		status.Message = fmt.Sprintf("FlowPanel could not determine the PHP %s runtime state.", version)
 	}
 
 	return status
 }
 
-func (s *Service) Install(ctx context.Context) error {
-	plan := detectActionPlan()
-	if len(plan.installCmds) == 0 {
-		return fmt.Errorf("automatic PHP installation is not supported on %s", runtime.GOOS)
+func (s *Service) resolveActionVersion(ctx context.Context, version string) string {
+	version = normalizeRequestedVersion(version)
+	if version != "" {
+		return version
 	}
-
-	s.logger.Info("installing php runtime",
-		zap.String("package_manager", plan.packageManager),
-	)
-	if err := runCommands(ctx, plan.installCmds...); err != nil {
-		return err
+	status := s.Status(ctx)
+	if status.DefaultVersion != "" {
+		return status.DefaultVersion
 	}
-	if len(plan.startCmds) > 0 {
-		return runCommands(ctx, plan.startCmds...)
+	if len(status.AvailableVersions) > 0 {
+		return status.AvailableVersions[0]
 	}
-	if plan.startSupported {
-		fpmPath, _ := lookupPHPFPM()
-		return runPHPFPMServiceCommand(ctx, fpmPath, "start")
-	}
-
-	return nil
+	return preferredInstallVersion()
 }
 
-func (s *Service) Remove(ctx context.Context) error {
-	plan := detectActionPlan()
-	if len(plan.removeCmds) == 0 {
-		return fmt.Errorf("automatic PHP removal is not supported on %s", runtime.GOOS)
-	}
-
-	s.logger.Info("removing php runtime",
-		zap.String("package_manager", plan.packageManager),
-	)
-	commands := make([][]string, 0, len(plan.stopCmds)+len(plan.removeCmds))
-	if status := s.Status(ctx); status.ServiceRunning {
-		if len(plan.stopCmds) > 0 {
-			commands = append(commands, plan.stopCmds...)
-		} else if plan.stopSupported {
-			if err := runPHPFPMServiceCommand(ctx, status.FPMPath, "stop"); err != nil {
-				return err
+func detectDefaultVersion(ctx context.Context, runtimes []RuntimeStatus) string {
+	if phpPath, ok := lookupCommand("php"); ok {
+		if output, err := runInspectCommand(ctx, phpPath, "-v"); err == nil {
+			if version := NormalizeVersion(parsePHPVersion(output)); version != "" {
+				return version
 			}
 		}
 	}
-	commands = append(commands, plan.removeCmds...)
 
-	return runCommands(ctx, commands...)
+	for _, runtimeStatus := range runtimes {
+		if runtimeStatus.PHPInstalled || runtimeStatus.FPMInstalled {
+			return runtimeStatus.Version
+		}
+	}
+
+	return ""
 }
 
-func (s *Service) Start(ctx context.Context) error {
-	plan := detectActionPlan()
-	if len(plan.startCmds) == 0 && !plan.startSupported {
-		return fmt.Errorf("automatic php-fpm startup is not supported on %s", runtime.GOOS)
+func findRuntimeStatus(runtimes []RuntimeStatus, version string) RuntimeStatus {
+	for _, runtimeStatus := range runtimes {
+		if runtimeStatus.Version == version {
+			return runtimeStatus
+		}
 	}
-
-	s.logger.Info("starting php-fpm service",
-		zap.String("package_manager", plan.packageManager),
-	)
-	if len(plan.startCmds) > 0 {
-		return runCommands(ctx, plan.startCmds...)
-	}
-	fpmPath, _ := lookupPHPFPM()
-	return runPHPFPMServiceCommand(ctx, fpmPath, "start")
+	return RuntimeStatus{}
 }
 
-func (s *Service) Stop(ctx context.Context) error {
-	plan := detectActionPlan()
-	if len(plan.stopCmds) == 0 && !plan.stopSupported {
-		return fmt.Errorf("automatic php-fpm shutdown is not supported on %s", runtime.GOOS)
+func copyRuntimeStatus(target *Status, runtimeStatus RuntimeStatus) {
+	if target == nil {
+		return
 	}
-
-	s.logger.Info("stopping php-fpm service",
-		zap.String("package_manager", plan.packageManager),
-	)
-	if len(plan.stopCmds) > 0 {
-		return runCommands(ctx, plan.stopCmds...)
-	}
-	fpmPath, _ := lookupPHPFPM()
-	return runPHPFPMServiceCommand(ctx, fpmPath, "stop")
+	target.PHPInstalled = runtimeStatus.PHPInstalled
+	target.PHPPath = runtimeStatus.PHPPath
+	target.PHPVersion = runtimeStatus.PHPVersion
+	target.FPMInstalled = runtimeStatus.FPMInstalled
+	target.FPMPath = runtimeStatus.FPMPath
+	target.ListenAddress = runtimeStatus.ListenAddress
+	target.ServiceRunning = runtimeStatus.ServiceRunning
+	target.Ready = runtimeStatus.Ready
+	target.State = runtimeStatus.State
+	target.Message = runtimeStatus.Message
+	target.Issues = append([]string(nil), runtimeStatus.Issues...)
+	target.InstallAvailable = runtimeStatus.InstallAvailable
+	target.InstallLabel = runtimeStatus.InstallLabel
+	target.RemoveAvailable = runtimeStatus.RemoveAvailable
+	target.RemoveLabel = runtimeStatus.RemoveLabel
+	target.StartAvailable = runtimeStatus.StartAvailable
+	target.StartLabel = runtimeStatus.StartLabel
+	target.StopAvailable = runtimeStatus.StopAvailable
+	target.StopLabel = runtimeStatus.StopLabel
+	target.RestartAvailable = runtimeStatus.RestartAvailable
+	target.RestartLabel = runtimeStatus.RestartLabel
+	target.LoadedConfigFile = runtimeStatus.LoadedConfigFile
+	target.ScanDir = runtimeStatus.ScanDir
+	target.ManagedConfigFile = runtimeStatus.ManagedConfigFile
+	target.Settings = runtimeStatus.Settings
 }
 
-func (s *Service) Restart(ctx context.Context) error {
-	plan := detectActionPlan()
-	if len(plan.restartCmds) == 0 && !plan.restartSupported {
-		return fmt.Errorf("automatic php-fpm restart is not supported on %s", runtime.GOOS)
+func normalizeRequestedVersion(version string) string {
+	normalized := NormalizeVersion(version)
+	if normalized != "" {
+		return normalized
 	}
-
-	s.logger.Info("restarting php-fpm service",
-		zap.String("package_manager", plan.packageManager),
-	)
-	if len(plan.restartCmds) > 0 {
-		return runCommands(ctx, plan.restartCmds...)
-	}
-	fpmPath, _ := lookupPHPFPM()
-	return runPHPFPMServiceCommand(ctx, fpmPath, "restart")
+	return ""
 }
 
-func detectActionPlan() actionPlan {
+func preferredInstallVersion() string {
+	if len(supportedPHPVersions) == 0 {
+		return ""
+	}
+	return supportedPHPVersions[0]
+}
+
+func detectVersionActionPlan(version string) versionActionPlan {
+	version = normalizeRequestedVersion(version)
+
 	switch runtime.GOOS {
 	case "darwin":
 		if brewPath, ok := lookupCommand("brew"); ok {
-			return actionPlan{
+			formula := brewFormulaForVersion(version)
+			return versionActionPlan{
 				packageManager: "homebrew",
-				installLabel:   "Install PHP",
-				removeLabel:    "Remove PHP",
-				startLabel:     "Start PHP-FPM",
-				stopLabel:      "Stop PHP-FPM",
-				restartLabel:   "Restart PHP-FPM",
+				installLabel:   fmt.Sprintf("Install PHP %s", version),
+				removeLabel:    fmt.Sprintf("Remove PHP %s", version),
+				startLabel:     fmt.Sprintf("Start PHP %s FPM", version),
+				stopLabel:      fmt.Sprintf("Stop PHP %s FPM", version),
+				restartLabel:   fmt.Sprintf("Restart PHP %s FPM", version),
 				installCmds: [][]string{
-					{brewPath, "install", "php"},
+					{brewPath, "install", formula},
 				},
 				removeCmds: [][]string{
-					{brewPath, "uninstall", "php"},
+					{brewPath, "uninstall", formula},
 				},
 				startCmds: [][]string{
-					{brewPath, "services", "start", "php"},
+					{brewPath, "services", "start", formula},
 				},
 				stopCmds: [][]string{
-					{brewPath, "services", "stop", "php"},
+					{brewPath, "services", "stop", formula},
 				},
 				restartCmds: [][]string{
-					{brewPath, "services", "restart", "php"},
+					{brewPath, "services", "restart", formula},
 				},
 			}
 		}
 	case "linux":
-		if os.Geteuid() == 0 {
-			if aptPath, ok := lookupCommand("apt-get"); ok {
-				serviceSupported := false
-				if _, ok := lookupCommand("systemctl"); ok {
-					serviceSupported = true
-				} else if _, ok := lookupCommand("service"); ok {
-					serviceSupported = true
-				}
-				installArgs := append([]string{aptPath, "install", "-y"}, aptPHPPackages...)
-				return actionPlan{
-					packageManager:   "apt",
-					installLabel:     "Install PHP",
-					removeLabel:      "Remove PHP",
-					startLabel:       "Start PHP-FPM",
-					stopLabel:        "Stop PHP-FPM",
-					restartLabel:     "Restart PHP-FPM",
-					startSupported:   serviceSupported,
-					stopSupported:    serviceSupported,
-					restartSupported: serviceSupported,
-					installCmds: [][]string{
-						{aptPath, "update"},
-						installArgs,
-					},
-					removeCmds: [][]string{
-						append([]string{aptPath, "remove", "-y"}, aptPHPPackages...),
-					},
-				}
+		if os.Geteuid() != 0 {
+			return versionActionPlan{}
+		}
+		if aptPath, ok := lookupCommand("apt-get"); ok {
+			packages := aptVersionPackages(version)
+			installArgs := append([]string{aptPath, "install", "-y"}, packages...)
+			removeArgs := append([]string{aptPath, "remove", "-y"}, packages...)
+			serviceName := "php" + version + "-fpm"
+			systemctlPath, hasSystemctl := lookupCommand("systemctl")
+			servicePath, hasService := lookupCommand("service")
+
+			plan := versionActionPlan{
+				packageManager: "apt",
+				installLabel:   fmt.Sprintf("Install PHP %s", version),
+				removeLabel:    fmt.Sprintf("Remove PHP %s", version),
+				startLabel:     fmt.Sprintf("Start PHP %s FPM", version),
+				stopLabel:      fmt.Sprintf("Stop PHP %s FPM", version),
+				restartLabel:   fmt.Sprintf("Restart PHP %s FPM", version),
+				installCmds: [][]string{
+					{aptPath, "update"},
+					installArgs,
+				},
+				removeCmds: [][]string{
+					removeArgs,
+				},
 			}
-			if dnfPath, ok := lookupCommand("dnf"); ok {
-				return actionPlan{
-					packageManager: "dnf",
-					installLabel:   "Install PHP",
-					removeLabel:    "Remove PHP",
-					installCmds: [][]string{
-						{dnfPath, "install", "-y", "php", "php-fpm"},
-					},
-					removeCmds: [][]string{
-						{dnfPath, "remove", "-y", "php", "php-fpm"},
-					},
-				}
+			if hasSystemctl {
+				plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
+				plan.stopCmds = [][]string{{systemctlPath, "stop", serviceName}}
+				plan.restartCmds = [][]string{{systemctlPath, "restart", serviceName}}
+			} else if hasService {
+				plan.startCmds = [][]string{{servicePath, serviceName, "start"}}
+				plan.stopCmds = [][]string{{servicePath, serviceName, "stop"}}
+				plan.restartCmds = [][]string{{servicePath, serviceName, "restart"}}
 			}
-			if yumPath, ok := lookupCommand("yum"); ok {
-				return actionPlan{
-					packageManager: "yum",
-					installLabel:   "Install PHP",
-					removeLabel:    "Remove PHP",
-					installCmds: [][]string{
-						{yumPath, "install", "-y", "php", "php-fpm"},
-					},
-					removeCmds: [][]string{
-						{yumPath, "remove", "-y", "php", "php-fpm"},
-					},
-				}
-			}
-			if pacmanPath, ok := lookupCommand("pacman"); ok {
-				return actionPlan{
-					packageManager: "pacman",
-					installLabel:   "Install PHP",
-					removeLabel:    "Remove PHP",
-					installCmds: [][]string{
-						{pacmanPath, "-Sy", "--noconfirm", "php", "php-fpm"},
-					},
-					removeCmds: [][]string{
-						{pacmanPath, "-Rns", "--noconfirm", "php", "php-fpm"},
-					},
-				}
-			}
+			return plan
 		}
 	}
 
-	return actionPlan{}
+	return versionActionPlan{}
 }
 
-func lookupPHPFPM() (string, bool) {
-	for _, candidate := range []string{
-		"php-fpm",
-		"php-fpm8.4",
-		"php-fpm8.3",
-		"php-fpm8.2",
-		"php-fpm8.1",
-		"php-fpm8.0",
-	} {
-		if path, ok := lookupCommand(candidate); ok {
+func aptVersionPackages(version string) []string {
+	prefix := "php" + version
+	return []string{
+		prefix + "-fpm",
+		prefix + "-cli",
+		prefix + "-common",
+		prefix + "-opcache",
+		prefix + "-bcmath",
+		prefix + "-mysql",
+		prefix + "-curl",
+		prefix + "-gd",
+		prefix + "-intl",
+		prefix + "-imagick",
+		prefix + "-mbstring",
+		prefix + "-xml",
+		prefix + "-zip",
+	}
+}
+
+func brewFormulaForVersion(version string) string {
+	if version == "" {
+		return "php"
+	}
+	return "php@" + version
+}
+
+func lookupVersionedPHPBinary(ctx context.Context, version string) (string, bool) {
+	for _, candidate := range phpBinaryCandidates(version) {
+		if path, ok := lookupCandidateExecutable(candidate); ok && binaryMatchesVersion(ctx, path, version) {
 			return path, true
 		}
 	}
-
 	return "", false
+}
+
+func lookupVersionedPHPFPM(ctx context.Context, version string) (string, bool) {
+	for _, candidate := range fpmBinaryCandidates(version) {
+		if path, ok := lookupCandidateExecutable(candidate); ok && binaryMatchesVersion(ctx, path, version) {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+func phpBinaryCandidates(version string) []string {
+	candidates := []string{
+		"php" + version,
+		filepath.Join("/usr/bin", "php"+version),
+		filepath.Join("/usr/local/bin", "php"+version),
+		filepath.Join("/opt/homebrew/opt", brewFormulaForVersion(version), "bin", "php"),
+		filepath.Join("/usr/local/opt", brewFormulaForVersion(version), "bin", "php"),
+	}
+	candidates = append(candidates,
+		"php",
+		filepath.Join("/opt/homebrew/bin", "php"),
+		filepath.Join("/usr/local/bin", "php"),
+	)
+	return dedupeStrings(candidates)
+}
+
+func fpmBinaryCandidates(version string) []string {
+	candidates := []string{
+		"php-fpm" + version,
+		"php" + version + "-fpm",
+		filepath.Join("/usr/sbin", "php-fpm"+version),
+		filepath.Join("/usr/sbin", "php"+version+"-fpm"),
+		filepath.Join("/usr/local/sbin", "php-fpm"+version),
+		filepath.Join("/usr/local/sbin", "php"+version+"-fpm"),
+		filepath.Join("/opt/homebrew/opt", brewFormulaForVersion(version), "sbin", "php-fpm"),
+		filepath.Join("/usr/local/opt", brewFormulaForVersion(version), "sbin", "php-fpm"),
+	}
+	candidates = append(candidates,
+		"php-fpm",
+		filepath.Join("/opt/homebrew/sbin", "php-fpm"),
+		filepath.Join("/usr/local/sbin", "php-fpm"),
+		filepath.Join("/usr/sbin", "php-fpm"),
+	)
+	return dedupeStrings(candidates)
+}
+
+func dedupeStrings(values []string) []string {
+	deduped := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		deduped = append(deduped, value)
+	}
+	return deduped
+}
+
+func lookupCandidateExecutable(candidate string) (string, bool) {
+	if strings.Contains(candidate, string(os.PathSeparator)) {
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			return "", false
+		}
+		return candidate, true
+	}
+	return lookupCommand(candidate)
+}
+
+func binaryMatchesVersion(ctx context.Context, path, version string) bool {
+	output, err := runInspectCommand(ctx, path, "-v")
+	if err != nil {
+		return false
+	}
+	return NormalizeVersion(parsePHPVersion(output)) == NormalizeVersion(version)
 }
 
 func lookupCommand(name string) (string, bool) {

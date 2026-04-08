@@ -11,9 +11,43 @@ export type PHPSettings = {
   display_errors?: string;
 };
 
+export type PHPRuntimeStatus = {
+  version: string;
+  platform: string;
+  package_manager?: string;
+  php_installed: boolean;
+  php_path?: string;
+  php_version?: string;
+  fpm_installed: boolean;
+  fpm_path?: string;
+  listen_address?: string;
+  service_running: boolean;
+  ready: boolean;
+  state: string;
+  message: string;
+  issues?: string[];
+  install_available: boolean;
+  install_label?: string;
+  remove_available: boolean;
+  remove_label?: string;
+  start_available: boolean;
+  start_label?: string;
+  stop_available?: boolean;
+  stop_label?: string;
+  restart_available?: boolean;
+  restart_label?: string;
+  loaded_config_file?: string;
+  scan_dir?: string;
+  managed_config_file?: string;
+  settings: PHPSettings;
+};
+
 export type PHPStatus = {
   platform: string;
   package_manager?: string;
+  default_version?: string;
+  available_versions?: string[];
+  versions?: PHPRuntimeStatus[];
   php_installed: boolean;
   php_path?: string;
   php_version?: string;
@@ -91,8 +125,16 @@ export async function fetchPHPStatus(): Promise<PHPStatus> {
   return parsePHPResponse(response);
 }
 
-export async function installPHP(): Promise<PHPStatus> {
-  const response = await fetch("/api/php/install", {
+function withVersion(path: string, version?: string): string {
+  if (!version) {
+    return path;
+  }
+
+  return `${path}?version=${encodeURIComponent(version)}`;
+}
+
+export async function installPHP(version?: string): Promise<PHPStatus> {
+  const response = await fetch(withVersion("/api/php/install", version), {
     method: "POST",
     credentials: "include",
   });
@@ -100,8 +142,8 @@ export async function installPHP(): Promise<PHPStatus> {
   return parsePHPResponse(response);
 }
 
-export async function removePHP(): Promise<PHPStatus> {
-  const response = await fetch("/api/php/remove", {
+export async function removePHP(version?: string): Promise<PHPStatus> {
+  const response = await fetch(withVersion("/api/php/remove", version), {
     method: "POST",
     credentials: "include",
   });
@@ -109,8 +151,8 @@ export async function removePHP(): Promise<PHPStatus> {
   return parsePHPResponse(response);
 }
 
-export async function startPHP(): Promise<PHPStatus> {
-  const response = await fetch("/api/php/start", {
+export async function startPHP(version?: string): Promise<PHPStatus> {
+  const response = await fetch(withVersion("/api/php/start", version), {
     method: "POST",
     credentials: "include",
   });
@@ -118,8 +160,8 @@ export async function startPHP(): Promise<PHPStatus> {
   return parsePHPResponse(response);
 }
 
-export async function stopPHP(): Promise<PHPStatus> {
-  const response = await fetch("/api/php/stop", {
+export async function stopPHP(version?: string): Promise<PHPStatus> {
+  const response = await fetch(withVersion("/api/php/stop", version), {
     method: "POST",
     credentials: "include",
   });
@@ -127,8 +169,8 @@ export async function stopPHP(): Promise<PHPStatus> {
   return parsePHPResponse(response);
 }
 
-export async function restartPHP(): Promise<PHPStatus> {
-  const response = await fetch("/api/php/restart", {
+export async function restartPHP(version?: string): Promise<PHPStatus> {
+  const response = await fetch(withVersion("/api/php/restart", version), {
     method: "POST",
     credentials: "include",
   });
@@ -138,8 +180,9 @@ export async function restartPHP(): Promise<PHPStatus> {
 
 export async function updatePHPSettings(
   input: UpdatePHPSettingsInput,
+  version?: string,
 ): Promise<PHPStatus> {
-  const response = await fetch("/api/php/settings", {
+  const response = await fetch(withVersion("/api/php/settings", version), {
     method: "PUT",
     credentials: "include",
     headers: {

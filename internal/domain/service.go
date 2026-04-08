@@ -43,6 +43,7 @@ type Record struct {
 	Hostname     string             `json:"hostname"`
 	Kind         Kind               `json:"kind"`
 	Target       string             `json:"target"`
+	PHPVersion   string             `json:"php_version,omitempty"`
 	PHPSettings  phpenv.Settings    `json:"php_settings"`
 	Logs         LogPaths           `json:"logs"`
 	GitHub       *GitHubIntegration `json:"github_integration,omitempty"`
@@ -79,6 +80,11 @@ type UpdateInput struct {
 	Kind         Kind   `json:"kind"`
 	Target       string `json:"target"`
 	CacheEnabled bool   `json:"cache_enabled"`
+}
+
+type UpdatePHPInput struct {
+	PHPVersion string `json:"php_version"`
+	phpenv.UpdateSettingsInput
 }
 
 type ValidationErrors map[string]string
@@ -567,15 +573,22 @@ func (s *Service) DeleteGitHubIntegration(ctx context.Context, hostname string) 
 func (s *Service) UpdatePHPSettings(
 	ctx context.Context,
 	hostname string,
-	input phpenv.UpdateSettingsInput,
+	input UpdatePHPInput,
 ) (Record, error) {
 	if s == nil {
 		return Record{}, ErrNotFound
 	}
 
-	validation := phpenv.ValidateUpdateSettingsInput(input)
+	validation := phpenv.ValidateUpdateSettingsInput(input.UpdateSettingsInput)
 	if len(validation) > 0 {
 		return Record{}, ValidationErrors(validation)
+	}
+	if normalizedVersion := strings.TrimSpace(input.PHPVersion); normalizedVersion != "" {
+		if phpenv.NormalizeVersion(normalizedVersion) == "" {
+			return Record{}, ValidationErrors{
+				"php_version": "Select a supported PHP version.",
+			}
+		}
 	}
 
 	s.mu.Lock()
@@ -591,7 +604,8 @@ func (s *Service) UpdatePHPSettings(
 		}
 	}
 
-	record.PHPSettings = phpenv.NormalizeUpdateSettingsInput(input)
+	record.PHPVersion = phpenv.NormalizeVersion(input.PHPVersion)
+	record.PHPSettings = phpenv.NormalizeUpdateSettingsInput(input.UpdateSettingsInput)
 	record = s.withTransientFields(record)
 
 	if s.store != nil {

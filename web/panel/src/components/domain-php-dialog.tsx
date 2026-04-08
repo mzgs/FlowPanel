@@ -1,5 +1,5 @@
 import { type DomainRecord } from "@/api/domains";
-import { type PHPSettings, type PHPStatus } from "@/api/php";
+import { type PHPRuntimeStatus, type PHPSettings } from "@/api/php";
 import { LoaderCircle } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,7 +33,9 @@ type DomainPHPDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   domain: DomainRecord;
-  status: PHPStatus | null;
+  status: PHPRuntimeStatus | null;
+  availableVersions: string[];
+  selectedVersion: string;
   form: PHPSettings;
   fieldErrors: Record<string, string>;
   loading: boolean;
@@ -41,6 +43,7 @@ type DomainPHPDialogProps = {
   error: string | null;
   dirty: boolean;
   runningAction: "install" | "start" | null;
+  onVersionChange: (value: string) => void;
   onFieldChange: (field: keyof PHPSettings, value: string) => void;
   onInstall: () => void;
   onStart: () => void;
@@ -81,7 +84,7 @@ function extractVersionNumber(value: string, pattern: RegExp) {
   return match?.[1] ?? null;
 }
 
-function formatPHPVersion(status: PHPStatus | null) {
+function formatPHPVersion(status: PHPRuntimeStatus | null) {
   const actionLabel = getPHPActionLabel(status?.state);
   if (actionLabel) {
     return actionLabel;
@@ -99,7 +102,7 @@ function formatPHPVersion(status: PHPStatus | null) {
   return extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version;
 }
 
-function getPHPServiceLabel(status: PHPStatus | null) {
+function getPHPServiceLabel(status: PHPRuntimeStatus | null) {
   if (!status) {
     return "Unavailable";
   }
@@ -125,6 +128,8 @@ export function DomainPHPDialog({
   onOpenChange,
   domain,
   status,
+  availableVersions,
+  selectedVersion,
   form,
   fieldErrors,
   loading,
@@ -132,6 +137,7 @@ export function DomainPHPDialog({
   error,
   dirty,
   runningAction,
+  onVersionChange,
   onFieldChange,
   onInstall,
   onStart,
@@ -150,6 +156,33 @@ export function DomainPHPDialog({
         </DialogHeader>
 
         <section className="grid gap-3 border-b border-[var(--app-border)] pb-4 sm:grid-cols-3">
+          <div className="sm:col-span-3">
+            <Label htmlFor="domain_php_version">PHP runtime</Label>
+            <Select
+              value={selectedVersion}
+              onValueChange={onVersionChange}
+              disabled={busy || availableVersions.length === 0}
+            >
+              <SelectTrigger
+                id="domain_php_version"
+                className="mt-2 w-full"
+                aria-invalid={fieldErrors.php_version ? true : undefined}
+              >
+                <SelectValue placeholder="Select a PHP version" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableVersions.map((version) => (
+                  <SelectItem key={version} value={version}>
+                    PHP {version}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mt-2 text-xs text-[var(--app-text-muted)]">
+              The selected runtime is assigned to this domain. Per-domain PHP settings stay the same across versions.
+            </p>
+            <FieldError message={fieldErrors.php_version} />
+          </div>
           <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
             <div className="text-xs text-[var(--app-text-muted)]">PHP version</div>
             <div className="mt-1 text-sm font-medium text-[var(--app-text)]">
@@ -378,15 +411,15 @@ export function DomainPHPDialog({
               <section className="grid gap-3 lg:grid-cols-2">
                 <div>
                   <div className="text-xs text-[var(--app-text-muted)]">Managed config</div>
-                  <small className="mt-1 block break-all text-[11px] text-[var(--app-text)]">
+                  <div className="mt-1 break-all text-[11px] text-[var(--app-text)]">
                     {status?.managed_config_file || "Unavailable"}
-                  </small>
+                  </div>
                 </div>
                 <div>
                   <div className="text-xs text-[var(--app-text-muted)]">Loaded config</div>
-                  <small className="mt-1 block break-all text-[11px] text-[var(--app-text)]">
+                  <div className="mt-1 break-all text-[11px] text-[var(--app-text)]">
                     {status?.loaded_config_file || "Unavailable"}
-                  </small>
+                  </div>
                 </div>
               </section>
             ) : null}
