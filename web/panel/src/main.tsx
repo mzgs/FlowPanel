@@ -4,6 +4,7 @@ import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
 import "@fontsource/manrope/600.css";
 import "@fontsource/manrope/700.css";
+import "react-loading-skeleton/dist/skeleton.css";
 import "./styles.css";
 
 import { StrictMode } from "react";

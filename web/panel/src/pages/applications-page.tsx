@@ -51,6 +51,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import Skeleton, { SkeletonTheme } from "react-loading-skeleton";
 import { toast } from "sonner";
 
 const compactActionButtonClassName = "h-7 gap-1.5 px-2.5 text-xs";
@@ -346,6 +347,65 @@ function ApplicationCard({
         {actions}
       </div>
     </section>
+  );
+}
+
+function ApplicationCardSkeleton({ showConfigAction = false }: { showConfigAction?: boolean }) {
+  return (
+    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+      <div className="relative px-4 py-4">
+        <div className="flex min-w-0 w-full items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+            <Skeleton circle width={18} height={18} />
+          </div>
+
+          <div className="min-w-0 flex-1 pr-10">
+            <div className="flex flex-wrap items-center gap-2">
+              <Skeleton width={112} height={14} />
+              <Skeleton width={74} height={20} borderRadius={6} />
+            </div>
+            <div className="mt-2">
+              <Skeleton width="58%" height={18} />
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <Skeleton width={120} height={12} />
+              <Skeleton width={96} height={12} />
+            </div>
+          </div>
+        </div>
+
+        {showConfigAction ? (
+          <div className="absolute right-4 top-4">
+            <Skeleton width={32} height={32} borderRadius={8} />
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-[var(--app-border)] px-4 py-3">
+        <Skeleton width={104} height={28} borderRadius={8} />
+        <Skeleton width={88} height={28} borderRadius={8} />
+        <Skeleton width={92} height={28} borderRadius={8} />
+      </div>
+    </section>
+  );
+}
+
+function ApplicationsPageSkeleton() {
+  return (
+    <SkeletonTheme
+      baseColor="var(--app-surface-muted)"
+      highlightColor="color-mix(in oklab, var(--app-bg-2) 82%, white)"
+      borderRadius="0.5rem"
+      duration={1.3}
+    >
+      <div className="space-y-5 px-4 pb-6 sm:px-6 lg:px-8">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <ApplicationCardSkeleton />
+          <ApplicationCardSkeleton />
+          <ApplicationCardSkeleton showConfigAction />
+        </div>
+      </div>
+    </SkeletonTheme>
   );
 }
 
@@ -993,16 +1053,9 @@ export function ApplicationsPage() {
       <>
         <PageHeader
           title="Applications"
-          meta="Install and configure the local runtimes FlowPanel manages."
+          meta="Install, configure, and monitor the shared runtimes available on this node."
         />
-        <div className="px-4 pb-6 sm:px-6 lg:px-8">
-          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-8 text-sm text-[var(--app-text-muted)]">
-            <div className="flex items-center gap-2">
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-              Inspecting application runtimes...
-            </div>
-          </section>
-        </div>
+        <ApplicationsPageSkeleton />
       </>
     );
   }
