@@ -26,6 +26,7 @@ import {
 } from "@/api/phpmyadmin";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { MariaDBSettingsDialog } from "@/components/mariadb-settings-dialog";
+import { PHPSettingsDialog } from "@/components/php-settings-dialog";
 import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialog";
 import {
   Database,
@@ -467,7 +468,9 @@ function PHPRuntimeCard({
   selectedVersion,
   runningAction,
   disableActions,
+  settingsDisabled,
   onVersionChange,
+  onOpenSettings,
   onInstall,
   onStart,
   onStop,
@@ -479,7 +482,9 @@ function PHPRuntimeCard({
   selectedVersion: string;
   runningAction: string | null;
   disableActions: boolean;
+  settingsDisabled: boolean;
   onVersionChange: (version: string) => void;
+  onOpenSettings: () => void;
   onInstall: (version: string) => void;
   onStart: (version: string) => void;
   onStop: (version: string) => void;
@@ -502,6 +507,20 @@ function PHPRuntimeCard({
       name="PHP"
       summary={formatInstalledPHPRuntimeVersion(status)}
       badge={badge}
+      configAction={
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-md text-[var(--app-text-muted)]"
+          aria-label="Open PHP settings"
+          title="Open PHP settings"
+          onClick={onOpenSettings}
+          disabled={settingsDisabled}
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+      }
       meta={[
         {
           fullWidth: true,
@@ -655,6 +674,7 @@ export function ApplicationsPage() {
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
+  const [phpSettingsOpen, setPHPSettingsOpen] = useState(false);
   const [mariaDBSettingsOpen, setMariaDBSettingsOpen] = useState(false);
   const [phpMyAdminSettingsOpen, setPHPMyAdminSettingsOpen] = useState(false);
 
@@ -1070,6 +1090,14 @@ export function ApplicationsPage() {
         status={mariadbStatus}
       />
 
+      <PHPSettingsDialog
+        open={phpSettingsOpen}
+        onOpenChange={setPHPSettingsOpen}
+        status={selectedPHPRuntime}
+        version={selectedPHPVersion}
+        onStatusChange={setPHPStatus}
+      />
+
       <PHPMyAdminSettingsDialog
         open={phpMyAdminSettingsOpen}
         onOpenChange={setPHPMyAdminSettingsOpen}
@@ -1132,7 +1160,11 @@ export function ApplicationsPage() {
             selectedVersion={selectedPHPVersion}
             runningAction={runningAction}
             disableActions={runningAction !== null}
+            settingsDisabled={selectedPHPRuntime === null}
             onVersionChange={setSelectedPHPVersion}
+            onOpenSettings={() => {
+              setPHPSettingsOpen(true);
+            }}
             onInstall={(version) => {
               void handlePHPInstall(version);
             }}
