@@ -42,6 +42,13 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -85,42 +92,6 @@ function getRuntimeActionLabel(state: RuntimeState) {
 
 function isRuntimeActionState(state: RuntimeState) {
   return getRuntimeActionLabel(state) !== null;
-}
-
-function formatPHPVersion(status: PHPStatus | null) {
-  const actionLabel = getRuntimeActionLabel(status?.state);
-  if (actionLabel) {
-    return actionLabel;
-  }
-
-  if (!status?.php_installed) {
-    return "";
-  }
-
-  const version = status.php_version?.trim();
-  if (!version) {
-    return "Installed";
-  }
-
-  return extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version;
-}
-
-function formatPHPRuntimeVersion(status: PHPRuntimeStatus) {
-  const actionLabel = getRuntimeActionLabel(status.state);
-  if (actionLabel) {
-    return actionLabel;
-  }
-
-  if (!status.php_installed) {
-    return "";
-  }
-
-  const version = status.php_version?.trim();
-  if (!version) {
-    return `PHP ${status.version}`;
-  }
-
-  return extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version;
 }
 
 function formatMariaDBVersion(version: string) {
@@ -176,31 +147,6 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
   }
 
   return "";
-}
-
-function getPHPBadge(status: PHPStatus | null) {
-  if (!status) {
-    return { label: "Unavailable", variant: "outline" as const };
-  }
-
-  const actionLabel = getRuntimeActionLabel(status.state);
-  if (actionLabel) {
-    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
-  }
-
-  if (status.ready) {
-    return { label: "Ready", variant: "default" as const };
-  }
-
-  if (status.service_running) {
-    return { label: "Running", variant: "secondary" as const };
-  }
-
-  if (status.php_installed) {
-    return { label: "Installed", variant: "outline" as const };
-  }
-
-  return { label: "Not installed", variant: "outline" as const };
 }
 
 function getPHPRuntimeBadge(status: PHPRuntimeStatus) {
@@ -279,14 +225,6 @@ function getPHPMyAdminServiceStatus(status: PHPMyAdminStatus | null) {
   return { value: "Stopped", tone: "danger" as const };
 }
 
-function canRemovePHP(status: PHPStatus | null) {
-  if (!status) {
-    return false;
-  }
-
-  return status.remove_available;
-}
-
 function canRemovePHPRuntime(status: PHPRuntimeStatus | null) {
   if (!status) {
     return false;
@@ -311,33 +249,6 @@ function canRemovePHPMyAdmin(status: PHPMyAdminStatus | null) {
   return status.remove_available;
 }
 
-function SectionCard({
-  title,
-  description,
-  actions,
-  children,
-}: {
-  title: string;
-  description?: string;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
-      <div className="flex flex-col gap-3 border-b border-[var(--app-border)] px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
-          <h2 className="text-base font-semibold tracking-tight text-[var(--app-text)]">{title}</h2>
-          {description ? (
-            <p className="max-w-2xl text-sm text-[var(--app-text-muted)]">{description}</p>
-          ) : null}
-        </div>
-        {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
-      </div>
-      <div className="px-5 py-5">{children}</div>
-    </section>
-  );
-}
-
 function ApplicationCard({
   icon,
   name,
@@ -351,68 +262,83 @@ function ApplicationCard({
   name: string;
   summary: string;
   badge: { label: string; variant: "default" | "secondary" | "destructive" | "outline" };
-  meta: Array<{ label: string; value: string; mono?: boolean; tone?: "success" | "danger" }>;
+  meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: "success" | "danger"; fullWidth?: boolean }>;
   actions: ReactNode;
   configAction?: ReactNode;
 }) {
   return (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
-      <div className="flex min-w-0 items-start justify-between gap-3 px-4 py-4">
-        <div className="flex min-w-0 items-start gap-3">
+      <div className="relative px-4 py-4">
+        <div className="flex min-w-0 w-full items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
             {icon}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 pr-10">
               <h2 className="text-sm font-semibold tracking-tight text-[var(--app-text)]">{name}</h2>
               <Badge variant={badge.variant}>{badge.label}</Badge>
             </div>
             {summary ? (
-              <div className="mt-1 text-sm font-medium text-[var(--app-text)]">{summary}</div>
+              <div className="mt-1 pr-10 text-sm font-medium text-[var(--app-text)]">{summary}</div>
             ) : null}
             {meta.length > 0 ? (
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-text-muted)]">
-                {meta.map((item) => (
-                  <span
-                    key={item.label}
-                    className={cn("truncate", item.mono && "font-mono")}
-                    title={`${item.label}: ${item.value}`}
-                  >
-                    {item.label}:{" "}
-                    {item.tone ? (
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          statusMetaBadgeClassName,
-                          item.tone === "success" &&
-                            "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
-                          item.tone === "danger" &&
-                            "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
-                        )}
-                      >
-                        {item.value}
-                      </Badge>
-                    ) : (
-                      item.value
-                    )}
-                  </span>
-                ))}
+              <div className="mt-1 flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-text-muted)]">
+                {meta.map((item) => {
+                  const Wrapper = item.fullWidth ? "div" : "span";
+
+                  return (
+                    <Wrapper
+                      key={item.label ?? String(item.value)}
+                      className={cn(
+                        item.fullWidth ? "block w-full basis-full shrink-0" : "truncate",
+                        item.mono && "font-mono"
+                      )}
+                      title={
+                        typeof item.value === "string" && item.label
+                          ? `${item.label}: ${item.value}`
+                          : typeof item.value === "string"
+                            ? item.value
+                            : undefined
+                      }
+                    >
+                      {item.label ? `${item.label}: ` : null}
+                      {item.tone ? (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            statusMetaBadgeClassName,
+                            item.tone === "success" &&
+                              "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
+                            item.tone === "danger" &&
+                              "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+                          )}
+                        >
+                          {item.value}
+                        </Badge>
+                      ) : (
+                        item.value
+                      )}
+                    </Wrapper>
+                  );
+                })}
               </div>
             ) : null}
           </div>
         </div>
-        {configAction ?? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0 rounded-md text-[var(--app-text-muted)]"
-            aria-label={`Configure ${name}`}
-            title={`Configure ${name}`}
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        )}
+        <div className="absolute right-4 top-4">
+          {configAction ?? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-md text-[var(--app-text-muted)]"
+              aria-label={`Configure ${name}`}
+              title={`Configure ${name}`}
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-[var(--app-border)] px-4 py-3">
@@ -426,41 +352,138 @@ function phpRuntimeActionKey(action: "install" | "remove" | "start" | "stop" | "
   return `${action}-php-${version}`;
 }
 
+function getAvailablePHPVersions(status: PHPStatus | null) {
+  const availableVersions = status?.available_versions?.filter((value) => value.trim().length > 0) ?? [];
+  if (availableVersions.length > 0) {
+    return availableVersions;
+  }
+
+  return (status?.versions ?? []).map((runtime) => runtime.version);
+}
+
+function getSelectedPHPRuntime(status: PHPStatus | null, version: string) {
+  const runtimes = status?.versions ?? [];
+  if (runtimes.length === 0) {
+    return null;
+  }
+
+  const normalizedVersion = version.trim();
+  if (normalizedVersion) {
+    const selectedRuntime = runtimes.find((runtime) => runtime.version === normalizedVersion);
+    if (selectedRuntime) {
+      return selectedRuntime;
+    }
+  }
+
+  const defaultVersion = status?.default_version?.trim();
+  if (defaultVersion) {
+    const defaultRuntime = runtimes.find((runtime) => runtime.version === defaultVersion);
+    if (defaultRuntime) {
+      return defaultRuntime;
+    }
+  }
+
+  return runtimes[0];
+}
+
+function formatInstalledPHPRuntimeVersion(status: PHPRuntimeStatus | null) {
+  if (!status?.php_installed) {
+    return "\u00a0";
+  }
+
+  const version = status.php_version?.trim();
+  if (!version) {
+    return "\u00a0";
+  }
+
+  return extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version;
+}
+
 function PHPRuntimeCard({
   status,
+  availableVersions,
+  selectedVersion,
   runningAction,
   disableActions,
+  onVersionChange,
   onInstall,
   onStart,
   onStop,
   onRestart,
   onRemove,
 }: {
-  status: PHPRuntimeStatus;
+  status: PHPRuntimeStatus | null;
+  availableVersions: string[];
+  selectedVersion: string;
   runningAction: string | null;
   disableActions: boolean;
+  onVersionChange: (version: string) => void;
   onInstall: (version: string) => void;
   onStart: (version: string) => void;
   onStop: (version: string) => void;
   onRestart: (version: string) => void;
   onRemove: (version: string) => void;
 }) {
-  const badge = getPHPRuntimeBadge(status);
-  const busyLabel = getRuntimeActionLabel(status.state);
+  const badge = status ? getPHPRuntimeBadge(status) : { label: "Unavailable", variant: "outline" as const };
+  const busyLabel = getRuntimeActionLabel(status?.state);
   const actionKey = (action: Parameters<typeof phpRuntimeActionKey>[0]) =>
-    phpRuntimeActionKey(action, status.version);
+    phpRuntimeActionKey(action, selectedVersion);
+  const serviceValue =
+    busyLabel?.replace("...", "") ??
+    (status?.service_running ? "Running" : status?.fpm_installed ? "Installed" : "Stopped");
+  const serviceTone = busyLabel ? undefined : status?.service_running ? "success" : "danger";
+  const removeEnabled = canRemovePHPRuntime(status);
 
   return (
     <ApplicationCard
       icon={<TerminalSquare className="h-5 w-5" />}
-      name={`PHP ${status.version}`}
-      summary={formatPHPRuntimeVersion(status)}
+      name="PHP"
+      summary={formatInstalledPHPRuntimeVersion(status)}
       badge={badge}
       meta={[
         {
-          label: "Service",
-          value: busyLabel?.replace("...", "") ?? (status.service_running ? "Running" : "Stopped"),
-          tone: busyLabel ? undefined : status.service_running ? "success" : "danger",
+          fullWidth: true,
+          value: (
+            <div className="flex w-full items-center justify-between gap-3">
+              <span className="flex items-center gap-1">
+                <span>Service:</span>
+                {serviceTone ? (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      statusMetaBadgeClassName,
+                      serviceTone === "success" &&
+                        "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
+                      serviceTone === "danger" &&
+                        "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+                    )}
+                  >
+                    {serviceValue}
+                  </Badge>
+                ) : (
+                  <span>{serviceValue}</span>
+                )}
+              </span>
+              <div className="w-[92px] shrink-0">
+                <Select
+                  value={selectedVersion}
+                  onValueChange={onVersionChange}
+                  disabled={availableVersions.length === 0}
+                >
+                  <SelectTrigger size="xs" className="w-full rounded-md">
+                    <SelectValue placeholder="Select PHP" />
+                  </SelectTrigger>
+                  <SelectContent align="start">
+                    {availableVersions.map((version) => (
+                      <SelectItem key={version} value={version}>
+                        PHP {version}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ),
         },
       ]}
       actions={
@@ -471,12 +494,12 @@ function PHPRuntimeCard({
               {busyLabel}
             </Button>
           ) : null}
-          {status.install_available ? (
+          {status?.install_available ? (
             <Button
               type="button"
               size="sm"
               className={compactActionButtonClassName}
-              onClick={() => onInstall(status.version)}
+              onClick={() => onInstall(selectedVersion)}
               disabled={disableActions}
             >
               {runningAction === actionKey("install") ? (
@@ -487,13 +510,13 @@ function PHPRuntimeCard({
               Install
             </Button>
           ) : null}
-          {status.start_available ? (
+          {status?.start_available ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
               className={compactActionButtonClassName}
-              onClick={() => onStart(status.version)}
+              onClick={() => onStart(selectedVersion)}
               disabled={disableActions}
             >
               {runningAction === actionKey("start") ? (
@@ -504,13 +527,13 @@ function PHPRuntimeCard({
               Start
             </Button>
           ) : null}
-          {status.stop_available ? (
+          {status?.stop_available ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
               className={compactActionButtonClassName}
-              onClick={() => onStop(status.version)}
+              onClick={() => onStop(selectedVersion)}
               disabled={disableActions}
             >
               {runningAction === actionKey("stop") ? (
@@ -521,13 +544,13 @@ function PHPRuntimeCard({
               Stop
             </Button>
           ) : null}
-          {status.restart_available ? (
+          {status?.restart_available ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
               className={compactActionButtonClassName}
-              onClick={() => onRestart(status.version)}
+              onClick={() => onRestart(selectedVersion)}
               disabled={disableActions}
             >
               {runningAction === actionKey("restart") ? (
@@ -543,9 +566,9 @@ function PHPRuntimeCard({
             variant="outline"
             size="sm"
             className={compactActionButtonClassName}
-            onClick={() => onRemove(status.version)}
-            disabled={disableActions || !canRemovePHPRuntime(status)}
-            title={canRemovePHPRuntime(status) ? undefined : "Runtime removal is only available for installed runtimes."}
+            onClick={() => onRemove(selectedVersion)}
+            disabled={disableActions || !removeEnabled}
+            title={removeEnabled ? undefined : "Runtime removal is only available for installed runtimes."}
           >
             {runningAction === actionKey("remove") ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -564,6 +587,7 @@ export function ApplicationsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [selectedPHPVersion, setSelectedPHPVersion] = useState("");
 
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
@@ -667,6 +691,28 @@ export function ApplicationsPage() {
   }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state]);
 
   useEffect(() => {
+    const availableVersions = getAvailablePHPVersions(phpStatus);
+    if (availableVersions.length === 0) {
+      if (selectedPHPVersion !== "") {
+        setSelectedPHPVersion("");
+      }
+      return;
+    }
+
+    if (availableVersions.includes(selectedPHPVersion)) {
+      return;
+    }
+
+    const defaultVersion = phpStatus?.default_version?.trim();
+    if (defaultVersion && availableVersions.includes(defaultVersion)) {
+      setSelectedPHPVersion(defaultVersion);
+      return;
+    }
+
+    setSelectedPHPVersion(availableVersions[0]);
+  }, [phpStatus, selectedPHPVersion]);
+
+  useEffect(() => {
     if (
       runningAction === "install-mariadb" &&
       (mariadbStatus?.server_installed || mariadbStatus?.client_installed)
@@ -708,11 +754,10 @@ export function ApplicationsPage() {
 
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
   const phpMyAdminServiceStatus = getPHPMyAdminServiceStatus(phpMyAdminStatus);
-  const phpRemoveEnabled = canRemovePHP(phpStatus);
-  const phpRuntimes = phpStatus?.versions ?? [];
+  const phpVersions = getAvailablePHPVersions(phpStatus);
+  const selectedPHPRuntime = getSelectedPHPRuntime(phpStatus, selectedPHPVersion);
   const mariaDBRemoveEnabled = canRemoveMariaDB(mariadbStatus);
   const phpMyAdminRemoveEnabled = canRemovePHPMyAdmin(phpMyAdminStatus);
-  const phpBusyLabel = getRuntimeActionLabel(phpStatus?.state);
   const mariadbBusyLabel = getRuntimeActionLabel(mariadbStatus?.state);
   const phpMyAdminBusyLabel = getRuntimeActionLabel(phpMyAdminStatus?.state);
   const removeDialogDescription =
@@ -1011,29 +1056,29 @@ export function ApplicationsPage() {
         ) : null}
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {phpRuntimes.map((runtime) => (
-            <PHPRuntimeCard
-              key={runtime.version}
-              status={runtime}
-              runningAction={runningAction}
-              disableActions={runningAction !== null}
-              onInstall={(version) => {
-                void handlePHPInstall(version);
-              }}
-              onStart={(version) => {
-                void handlePHPStart(version);
-              }}
-              onStop={(version) => {
-                void handlePHPStop(version);
-              }}
-              onRestart={(version) => {
-                void handlePHPRestart(version);
-              }}
-              onRemove={(version) => {
-                setRemoveCandidate({ kind: "php", version });
-              }}
-            />
-          ))}
+          <PHPRuntimeCard
+            status={selectedPHPRuntime}
+            availableVersions={phpVersions}
+            selectedVersion={selectedPHPVersion}
+            runningAction={runningAction}
+            disableActions={runningAction !== null}
+            onVersionChange={setSelectedPHPVersion}
+            onInstall={(version) => {
+              void handlePHPInstall(version);
+            }}
+            onStart={(version) => {
+              void handlePHPStart(version);
+            }}
+            onStop={(version) => {
+              void handlePHPStop(version);
+            }}
+            onRestart={(version) => {
+              void handlePHPRestart(version);
+            }}
+            onRemove={(version) => {
+              setRemoveCandidate({ kind: "php", version });
+            }}
+          />
 
           <ApplicationCard
             icon={<Database className="h-5 w-5" />}
