@@ -2,6 +2,7 @@ package phpmyadmin
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -119,6 +120,44 @@ func TestInstallDownloadsLatestArchiveAndWritesVersionMetadata(t *testing.T) {
 	}
 }
 
+func TestImportThemeExtractsThemeIntoThemesDirectoryAndOverwritesExistingTheme(t *testing.T) {
+	installPath := filepath.Join(t.TempDir(), "phpmyadmin")
+	if err := os.MkdirAll(filepath.Join(installPath, "themes", "metro"), 0o755); err != nil {
+		t.Fatalf("mkdir theme dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(installPath, "themes", "metro", "theme.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatalf("write existing theme file: %v", err)
+	}
+
+	restore := overrideInstallPath(t, installPath)
+	defer restore()
+
+	archiveBytes := buildThemeArchive(t, map[string]string{
+		"metro/theme.txt":  "new",
+		"metro/layout.css": "body { color: #111; }\n",
+	})
+
+	service := NewService(zap.NewNop())
+	status, err := service.ImportTheme(context.Background(), bytes.NewReader(archiveBytes))
+	if err != nil {
+		t.Fatalf("ImportTheme() error = %v", err)
+	}
+	if !status.Installed {
+		t.Fatal("Installed = false, want true")
+	}
+
+	themeFile, err := os.ReadFile(filepath.Join(installPath, "themes", "metro", "theme.txt"))
+	if err != nil {
+		t.Fatalf("read imported theme file: %v", err)
+	}
+	if string(themeFile) != "new" {
+		t.Fatalf("theme file = %q, want new", string(themeFile))
+	}
+	if _, err := os.Stat(filepath.Join(installPath, "themes", "metro", "layout.css")); err != nil {
+		t.Fatalf("layout.css stat error = %v", err)
+	}
+}
+
 func overrideInstallPath(t *testing.T, path string) func() {
 	t.Helper()
 
@@ -172,6 +211,29 @@ func buildPHPMyAdminArchive(t *testing.T, version string) []byte {
 	}
 	if err := gzipWriter.Close(); err != nil {
 		t.Fatalf("close gzip writer: %v", err)
+	}
+
+	return archive.Bytes()
+}
+
+func buildThemeArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+
+	for name, content := range files {
+		fileWriter, err := writer.Create(name)
+		if err != nil {
+			t.Fatalf("create zip file %s: %v", name, err)
+		}
+		if _, err := fileWriter.Write([]byte(content)); err != nil {
+			t.Fatalf("write zip file %s: %v", name, err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
 	}
 
 	return archive.Bytes()

@@ -63,3 +63,16 @@ export async function removePHPMyAdmin(): Promise<PHPMyAdminStatus> {
 
   return parsePHPMyAdminResponse(response);
 }
+
+export async function importPHPMyAdminTheme(file: File): Promise<PHPMyAdminStatus> {
+  const formData = new FormData();
+  formData.set("theme", file);
+
+  const response = await fetch("/api/phpmyadmin/theme", {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  return parsePHPMyAdminResponse(response);
+}

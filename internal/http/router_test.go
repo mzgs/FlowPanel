@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"mime/multipart"
 	"net"
@@ -68,7 +69,8 @@ type trackingMariaDBManager struct {
 type fakePHPMyAdminManager struct{}
 
 type installablePHPMyAdminManager struct {
-	status phpmyadmin.Status
+	status      phpmyadmin.Status
+	importedZIP []byte
 }
 
 type removablePHPManager struct {
@@ -596,6 +598,10 @@ func (fakePHPMyAdminManager) Remove(context.Context) error {
 	return nil
 }
 
+func (fakePHPMyAdminManager) ImportTheme(context.Context, io.Reader) (phpmyadmin.Status, error) {
+	return fakePHPMyAdminManager{}.Status(context.Background()), nil
+}
+
 func (m *installablePHPMyAdminManager) Status(context.Context) phpmyadmin.Status {
 	return m.status
 }
@@ -612,6 +618,15 @@ func (m *installablePHPMyAdminManager) Remove(context.Context) error {
 	m.status.State = "missing"
 	m.status.Message = "phpMyAdmin is not installed."
 	return nil
+}
+
+func (m *installablePHPMyAdminManager) ImportTheme(_ context.Context, archive io.Reader) (phpmyadmin.Status, error) {
+	content, err := io.ReadAll(archive)
+	if err != nil {
+		return phpmyadmin.Status{}, err
+	}
+	m.importedZIP = content
+	return m.status, nil
 }
 
 func (m *removablePHPManager) Status(context.Context) phpenv.Status {
@@ -805,6 +820,10 @@ func (m *removablePHPMyAdminManager) Install(context.Context) error {
 func (m *removablePHPMyAdminManager) Remove(context.Context) error {
 	m.removed = true
 	return nil
+}
+
+func (m *removablePHPMyAdminManager) ImportTheme(context.Context, io.Reader) (phpmyadmin.Status, error) {
+	return m.Status(context.Background()), nil
 }
 
 func TestPHPMyAdminInstallSyncsCaddy(t *testing.T) {
@@ -3617,6 +3636,45 @@ func TestPHPMyAdminRemoveEndpoint(t *testing.T) {
 	}
 	if payload.PHPMyAdmin.Installed {
 		t.Fatal("installed = true, want false")
+	}
+}
+
+func TestPHPMyAdminThemeImportEndpoint(t *testing.T) {
+	manager := &installablePHPMyAdminManager{
+		status: phpmyadmin.Status{
+			Installed:        true,
+			InstallPath:      "/usr/share/phpmyadmin",
+			State:            "installed",
+			Message:          "phpMyAdmin is installed.",
+			InstallAvailable: false,
+			RemoveAvailable:  true,
+		},
+	}
+	router, _, _ := newStartedTestDomainRouterWithManagers(t, fakeMariaDBManager{}, fakePHPManager{}, manager)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("theme", "metro.zip")
+	if err != nil {
+		t.Fatalf("create multipart file: %v", err)
+	}
+	if _, err := part.Write([]byte("zip-data")); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/phpmyadmin/theme", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if string(manager.importedZIP) != "zip-data" {
+		t.Fatalf("imported zip = %q, want zip-data", string(manager.importedZIP))
 	}
 }
 

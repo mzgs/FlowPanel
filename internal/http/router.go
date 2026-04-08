@@ -2196,10 +2196,58 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		phpMyAdminThemeImportHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHPMyAdmin == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "phpmyadmin runtime is not configured",
+				})
+				return
+			}
+
+			r.Body = stdhttp.MaxBytesReader(w, r.Body, 64<<20)
+			if err := r.ParseMultipartForm(64 << 20); err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "upload a valid theme zip file",
+				})
+				return
+			}
+
+			file, _, err := r.FormFile("theme")
+			if err != nil {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "upload a theme zip file in the theme field",
+				})
+				return
+			}
+			defer file.Close()
+
+			status, err := app.PHPMyAdmin.ImportTheme(r.Context(), file)
+			if err != nil {
+				if errors.Is(err, phpmyadmin.ErrThemeImportRequiresInstall) || errors.Is(err, phpmyadmin.ErrInvalidThemeArchive) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error": err.Error(),
+					})
+					return
+				}
+
+				app.Logger.Error("import phpmyadmin theme failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to import phpmyadmin theme",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "runtime", "import_theme", "phpmyadmin", "phpmyadmin", "phpMyAdmin", "succeeded", "Imported a phpMyAdmin theme.")
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"phpmyadmin": trackPHPMyAdminStatus(status),
+			})
+		})
+
 		r.Method(stdhttp.MethodGet, "/phpmyadmin", phpMyAdminStatusHandler)
 		r.Method(stdhttp.MethodHead, "/phpmyadmin", phpMyAdminStatusHandler)
 		r.Method(stdhttp.MethodPost, "/phpmyadmin/install", phpMyAdminInstallHandler)
 		r.Method(stdhttp.MethodPost, "/phpmyadmin/remove", phpMyAdminRemoveHandler)
+		r.Method(stdhttp.MethodPost, "/phpmyadmin/theme", phpMyAdminThemeImportHandler)
 
 		ftpAccountsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.FTPAccounts == nil {

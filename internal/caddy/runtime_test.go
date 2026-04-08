@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"testing"
 
@@ -681,6 +682,10 @@ func (fakePHPMyAdminManager) Install(context.Context) error {
 
 func (fakePHPMyAdminManager) Remove(context.Context) error {
 	return nil
+}
+
+func (fakePHPMyAdminManager) ImportTheme(context.Context, io.Reader) (phpmyadmin.Status, error) {
+	return phpmyadmin.Status{}, nil
 }
 
 func freeTCPAddress(t *testing.T) string {

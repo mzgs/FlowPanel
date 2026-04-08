@@ -25,6 +25,7 @@ import {
   type PHPMyAdminStatus,
 } from "@/api/phpmyadmin";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
+import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialog";
 import {
   Database,
   ExternalLink,
@@ -593,6 +594,7 @@ export function ApplicationsPage() {
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
+  const [phpMyAdminSettingsOpen, setPHPMyAdminSettingsOpen] = useState(false);
 
   const [runningAction, setRunningAction] = useState<string | null>(null);
 
@@ -1007,6 +1009,13 @@ export function ApplicationsPage() {
 
   return (
     <>
+      <PHPMyAdminSettingsDialog
+        open={phpMyAdminSettingsOpen}
+        onOpenChange={setPHPMyAdminSettingsOpen}
+        status={phpMyAdminStatus}
+        onStatusChange={setPHPMyAdminStatus}
+      />
+
       <ActionConfirmDialog
         open={removeCandidate !== null}
         onOpenChange={(open) => {
@@ -1205,6 +1214,20 @@ export function ApplicationsPage() {
             summary={formatPHPMyAdminValue(phpMyAdminStatus)}
             badge={getPHPMyAdminBadge(phpMyAdminStatus)}
             meta={[{ label: "Service status", value: phpMyAdminServiceStatus.value, tone: phpMyAdminServiceStatus.tone }]}
+            configAction={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-md text-[var(--app-text-muted)]"
+                aria-label="Open phpMyAdmin settings"
+                title="Open phpMyAdmin settings"
+                onClick={() => setPHPMyAdminSettingsOpen(true)}
+                disabled={phpMyAdminStatus === null}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            }
             actions={
               <>
                 {phpMyAdminBusyLabel ? (

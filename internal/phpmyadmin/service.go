@@ -2,6 +2,7 @@ package phpmyadmin
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -36,12 +37,16 @@ var (
 
 	phpMyAdminInstallPath = filepath.Join(config.FLOWPANEL_PATH, installDirName)
 	phpMyAdminDownloadURL = downloadURL
+
+	ErrThemeImportRequiresInstall = errors.New("phpmyadmin must be installed before importing a theme")
+	ErrInvalidThemeArchive        = errors.New("invalid phpmyadmin theme archive")
 )
 
 type Manager interface {
 	Status(context.Context) Status
 	Install(context.Context) error
 	Remove(context.Context) error
+	ImportTheme(context.Context, io.Reader) (Status, error)
 }
 
 type Status struct {
@@ -120,7 +125,8 @@ func (s *Service) Install(ctx context.Context) error {
 		return nil
 	}
 
-	basePath := filepath.Dir(installPath())
+	installPath := installPath()
+	basePath := filepath.Dir(installPath)
 	if err := os.MkdirAll(basePath, 0o755); err != nil {
 		return fmt.Errorf("create flowpanel path: %w", err)
 	}
@@ -136,7 +142,7 @@ func (s *Service) Install(ctx context.Context) error {
 
 	s.logger.Info("installing phpmyadmin",
 		zap.String("download_url", phpMyAdminDownloadURL),
-		zap.String("install_path", installPath()),
+		zap.String("install_path", installPath),
 	)
 
 	if err := downloadArchive(ctx, phpMyAdminDownloadURL, archivePath); err != nil {
@@ -148,20 +154,20 @@ func (s *Service) Install(ctx context.Context) error {
 		return err
 	}
 
-	if err := os.RemoveAll(installPath()); err != nil {
+	if err := os.RemoveAll(installPath); err != nil {
 		return fmt.Errorf("remove existing phpmyadmin path: %w", err)
 	}
-	if err := os.Rename(extractedPath, installPath()); err != nil {
+	if err := os.Rename(extractedPath, installPath); err != nil {
 		return fmt.Errorf("move phpmyadmin into place: %w", err)
 	}
 
-	if err := writeRuntimeConfig(installPath()); err != nil {
+	if err := writeRuntimeConfig(installPath); err != nil {
 		return err
 	}
-	if err := ensureRuntimeDirectories(installPath()); err != nil {
+	if err := ensureRuntimeDirectories(installPath); err != nil {
 		return err
 	}
-	if err := writeVersionMetadata(installPath(), version); err != nil {
+	if err := writeVersionMetadata(installPath, version); err != nil {
 		return err
 	}
 
@@ -188,6 +194,65 @@ func (s *Service) Remove(context.Context) error {
 	}
 
 	return nil
+}
+
+func (s *Service) ImportTheme(ctx context.Context, archive io.Reader) (Status, error) {
+	status := s.Status(ctx)
+	if !status.Installed || strings.TrimSpace(status.InstallPath) == "" {
+		return status, ErrThemeImportRequiresInstall
+	}
+	if archive == nil {
+		return status, fmt.Errorf("%w: theme archive is required", ErrInvalidThemeArchive)
+	}
+
+	themesPath := filepath.Join(status.InstallPath, "themes")
+	if err := os.MkdirAll(themesPath, 0o755); err != nil {
+		return status, fmt.Errorf("create phpmyadmin themes directory: %w", err)
+	}
+
+	workDir, err := os.MkdirTemp(status.InstallPath, "theme-import-")
+	if err != nil {
+		return status, fmt.Errorf("create phpmyadmin theme import workdir: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+
+	archivePath := filepath.Join(workDir, "theme.zip")
+	archiveFile, err := os.Create(archivePath)
+	if err != nil {
+		return status, fmt.Errorf("create phpmyadmin theme archive: %w", err)
+	}
+	if _, err := io.Copy(archiveFile, archive); err != nil {
+		archiveFile.Close()
+		return status, fmt.Errorf("write phpmyadmin theme archive: %w", err)
+	}
+	if err := archiveFile.Close(); err != nil {
+		return status, fmt.Errorf("close phpmyadmin theme archive: %w", err)
+	}
+
+	extractDir := filepath.Join(workDir, "extract")
+	entries, err := extractZipArchive(archivePath, extractDir)
+	if err != nil {
+		return status, err
+	}
+	if len(entries) == 0 {
+		return status, fmt.Errorf("%w: theme archive did not contain any files", ErrInvalidThemeArchive)
+	}
+
+	for _, name := range entries {
+		sourcePath := filepath.Join(extractDir, name)
+		destinationPath := filepath.Join(themesPath, name)
+		if err := ensureWithinBase(themesPath, destinationPath); err != nil {
+			return status, err
+		}
+		if err := os.RemoveAll(destinationPath); err != nil {
+			return status, fmt.Errorf("remove existing phpmyadmin theme path: %w", err)
+		}
+		if err := movePath(sourcePath, destinationPath); err != nil {
+			return status, err
+		}
+	}
+
+	return s.Status(ctx), nil
 }
 
 func installPath() string {
@@ -448,4 +513,184 @@ func generatePassword() (string, error) {
 	}
 
 	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
+}
+
+func extractZipArchive(archivePath, destination string) ([]string, error) {
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		return nil, fmt.Errorf("create phpmyadmin theme extraction directory: %w", err)
+	}
+
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("open phpmyadmin theme archive: %w", err)
+	}
+	defer reader.Close()
+
+	entries := make(map[string]struct{})
+	for _, file := range reader.File {
+		if file == nil || strings.TrimSpace(file.Name) == "" {
+			continue
+		}
+
+		cleanName := filepath.Clean(filepath.FromSlash(file.Name))
+		if filepath.IsAbs(cleanName) || cleanName == "." || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("%w: path %q is invalid", ErrInvalidThemeArchive, file.Name)
+		}
+
+		topEntry := strings.Split(cleanName, string(filepath.Separator))[0]
+		if topEntry == "__MACOSX" {
+			continue
+		}
+		entries[topEntry] = struct{}{}
+
+		targetPath := filepath.Join(destination, cleanName)
+		if err := ensureWithinBase(destination, targetPath); err != nil {
+			return nil, err
+		}
+
+		fileMode := file.Mode()
+		if fileMode&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%w: entry %q is unsupported", ErrInvalidThemeArchive, file.Name)
+		}
+
+		if file.FileInfo().IsDir() {
+			dirPerm := fileMode.Perm()
+			if dirPerm == 0 {
+				dirPerm = 0o755
+			}
+			if err := os.MkdirAll(targetPath, dirPerm); err != nil {
+				return nil, fmt.Errorf("create phpmyadmin theme directory: %w", err)
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return nil, fmt.Errorf("create phpmyadmin theme parent directory: %w", err)
+		}
+
+		source, err := file.Open()
+		if err != nil {
+			return nil, fmt.Errorf("open phpmyadmin theme archive entry: %w", err)
+		}
+
+		filePerm := fileMode.Perm()
+		if filePerm == 0 {
+			filePerm = 0o644
+		}
+
+		destinationFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, filePerm)
+		if err != nil {
+			source.Close()
+			return nil, fmt.Errorf("create phpmyadmin theme file: %w", err)
+		}
+
+		if _, err := io.Copy(destinationFile, source); err != nil {
+			destinationFile.Close()
+			source.Close()
+			return nil, fmt.Errorf("extract phpmyadmin theme file: %w", err)
+		}
+		if err := destinationFile.Close(); err != nil {
+			source.Close()
+			return nil, fmt.Errorf("close phpmyadmin theme file: %w", err)
+		}
+		if err := source.Close(); err != nil {
+			return nil, fmt.Errorf("close phpmyadmin theme archive entry: %w", err)
+		}
+	}
+
+	result := make([]string, 0, len(entries))
+	for name := range entries {
+		result = append(result, name)
+	}
+
+	return result, nil
+}
+
+func movePath(sourcePath, destinationPath string) error {
+	if err := os.Rename(sourcePath, destinationPath); err == nil {
+		return nil
+	}
+
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return fmt.Errorf("inspect phpmyadmin theme path: %w", err)
+	}
+
+	if info.IsDir() {
+		if err := copyDirectory(sourcePath, destinationPath); err != nil {
+			return err
+		}
+	} else {
+		if err := copyFile(sourcePath, destinationPath, info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+
+	if err := os.RemoveAll(sourcePath); err != nil {
+		return fmt.Errorf("remove temporary phpmyadmin theme path: %w", err)
+	}
+
+	return nil
+}
+
+func copyDirectory(sourceDir, destinationDir string) error {
+	if err := os.MkdirAll(destinationDir, 0o755); err != nil {
+		return fmt.Errorf("create phpmyadmin theme destination directory: %w", err)
+	}
+
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return fmt.Errorf("read phpmyadmin theme directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		sourcePath := filepath.Join(sourceDir, entry.Name())
+		destinationPath := filepath.Join(destinationDir, entry.Name())
+
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect phpmyadmin theme entry: %w", err)
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("phpmyadmin theme contains unsupported symlink %q", sourcePath)
+		}
+
+		if entry.IsDir() {
+			if err := copyDirectory(sourcePath, destinationPath); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := copyFile(sourcePath, destinationPath, info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func copyFile(sourcePath, destinationPath string, mode os.FileMode) error {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open phpmyadmin theme file: %w", err)
+	}
+	defer source.Close()
+
+	if err := os.MkdirAll(filepath.Dir(destinationPath), 0o755); err != nil {
+		return fmt.Errorf("create phpmyadmin theme file parent: %w", err)
+	}
+
+	destination, err := os.OpenFile(destinationPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return fmt.Errorf("create phpmyadmin theme destination file: %w", err)
+	}
+	defer destination.Close()
+
+	if _, err := io.Copy(destination, source); err != nil {
+		return fmt.Errorf("copy phpmyadmin theme file: %w", err)
+	}
+
+	return nil
 }
