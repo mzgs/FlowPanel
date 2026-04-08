@@ -607,6 +607,72 @@ func detectVersionActionPlan(version string) versionActionPlan {
 			}
 			return plan
 		}
+		if dnfPath, ok := lookupCommand("dnf"); ok {
+			packages := rpmVersionPackages(version)
+			installArgs := append([]string{dnfPath, "install", "-y"}, packages...)
+			removeArgs := append([]string{dnfPath, "remove", "-y"}, packages...)
+			serviceName := remiFPMServiceName(version)
+			systemctlPath, hasSystemctl := lookupCommand("systemctl")
+			servicePath, hasService := lookupCommand("service")
+
+			plan := versionActionPlan{
+				packageManager: "dnf",
+				installLabel:   fmt.Sprintf("Install PHP %s", version),
+				removeLabel:    fmt.Sprintf("Remove PHP %s", version),
+				startLabel:     fmt.Sprintf("Start PHP %s FPM", version),
+				stopLabel:      fmt.Sprintf("Stop PHP %s FPM", version),
+				restartLabel:   fmt.Sprintf("Restart PHP %s FPM", version),
+				installCmds: [][]string{
+					installArgs,
+				},
+				removeCmds: [][]string{
+					removeArgs,
+				},
+			}
+			if hasSystemctl {
+				plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
+				plan.stopCmds = [][]string{{systemctlPath, "stop", serviceName}}
+				plan.restartCmds = [][]string{{systemctlPath, "restart", serviceName}}
+			} else if hasService {
+				plan.startCmds = [][]string{{servicePath, serviceName, "start"}}
+				plan.stopCmds = [][]string{{servicePath, serviceName, "stop"}}
+				plan.restartCmds = [][]string{{servicePath, serviceName, "restart"}}
+			}
+			return plan
+		}
+		if yumPath, ok := lookupCommand("yum"); ok {
+			packages := rpmVersionPackages(version)
+			installArgs := append([]string{yumPath, "install", "-y"}, packages...)
+			removeArgs := append([]string{yumPath, "remove", "-y"}, packages...)
+			serviceName := remiFPMServiceName(version)
+			systemctlPath, hasSystemctl := lookupCommand("systemctl")
+			servicePath, hasService := lookupCommand("service")
+
+			plan := versionActionPlan{
+				packageManager: "yum",
+				installLabel:   fmt.Sprintf("Install PHP %s", version),
+				removeLabel:    fmt.Sprintf("Remove PHP %s", version),
+				startLabel:     fmt.Sprintf("Start PHP %s FPM", version),
+				stopLabel:      fmt.Sprintf("Stop PHP %s FPM", version),
+				restartLabel:   fmt.Sprintf("Restart PHP %s FPM", version),
+				installCmds: [][]string{
+					installArgs,
+				},
+				removeCmds: [][]string{
+					removeArgs,
+				},
+			}
+			if hasSystemctl {
+				plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
+				plan.stopCmds = [][]string{{systemctlPath, "stop", serviceName}}
+				plan.restartCmds = [][]string{{systemctlPath, "restart", serviceName}}
+			} else if hasService {
+				plan.startCmds = [][]string{{servicePath, serviceName, "start"}}
+				plan.stopCmds = [][]string{{servicePath, serviceName, "stop"}}
+				plan.restartCmds = [][]string{{servicePath, serviceName, "restart"}}
+			}
+			return plan
+		}
 	}
 
 	return versionActionPlan{}
@@ -631,11 +697,37 @@ func aptVersionPackages(version string) []string {
 	}
 }
 
+func rpmVersionPackages(version string) []string {
+	prefix := remiCollectionForVersion(version) + "-php"
+	return []string{
+		prefix + "-fpm",
+		prefix + "-cli",
+		prefix + "-common",
+		prefix + "-opcache",
+		prefix + "-bcmath",
+		prefix + "-mysqlnd",
+		prefix + "-curl",
+		prefix + "-gd",
+		prefix + "-intl",
+		prefix + "-mbstring",
+		prefix + "-xml",
+		prefix + "-process",
+	}
+}
+
 func brewFormulaForVersion(version string) string {
 	if version == "" {
 		return "php"
 	}
 	return "php@" + version
+}
+
+func remiCollectionForVersion(version string) string {
+	return "php" + strings.ReplaceAll(version, ".", "")
+}
+
+func remiFPMServiceName(version string) string {
+	return remiCollectionForVersion(version) + "-php-fpm"
 }
 
 func lookupVersionedPHPBinary(ctx context.Context, version string) (string, bool) {
@@ -661,6 +753,7 @@ func phpBinaryCandidates(version string) []string {
 		"php" + version,
 		filepath.Join("/usr/bin", "php"+version),
 		filepath.Join("/usr/local/bin", "php"+version),
+		filepath.Join("/opt/remi", remiCollectionForVersion(version), "root", "usr", "bin", "php"),
 		filepath.Join("/opt/homebrew/opt", brewFormulaForVersion(version), "bin", "php"),
 		filepath.Join("/usr/local/opt", brewFormulaForVersion(version), "bin", "php"),
 	}
@@ -680,6 +773,7 @@ func fpmBinaryCandidates(version string) []string {
 		filepath.Join("/usr/sbin", "php"+version+"-fpm"),
 		filepath.Join("/usr/local/sbin", "php-fpm"+version),
 		filepath.Join("/usr/local/sbin", "php"+version+"-fpm"),
+		filepath.Join("/opt/remi", remiCollectionForVersion(version), "root", "usr", "sbin", "php-fpm"),
 		filepath.Join("/opt/homebrew/opt", brewFormulaForVersion(version), "sbin", "php-fpm"),
 		filepath.Join("/usr/local/opt", brewFormulaForVersion(version), "sbin", "php-fpm"),
 	}

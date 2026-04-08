@@ -49,7 +49,23 @@ func TestFPMServiceCandidatesVersionedBinary(t *testing.T) {
 
 func TestFPMServiceCandidatesGenericBinary(t *testing.T) {
 	got := fpmServiceCandidates("/usr/sbin/php-fpm")
-	want := []string{"php-fpm"}
+	want := []string{"php-fpm", "php"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fpmServiceCandidates() = %#v, want %#v", got, want)
+	}
+}
+
+func TestFPMServiceCandidatesRemiBinary(t *testing.T) {
+	got := fpmServiceCandidates("/opt/remi/php83/root/usr/sbin/php-fpm")
+	want := []string{"php83-php-fpm", "php-fpm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fpmServiceCandidates() = %#v, want %#v", got, want)
+	}
+}
+
+func TestFPMServiceCandidatesHomebrewBinary(t *testing.T) {
+	got := fpmServiceCandidates("/opt/homebrew/opt/php@8.3/sbin/php-fpm")
+	want := []string{"php-fpm", "php@8.3"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("fpmServiceCandidates() = %#v, want %#v", got, want)
 	}
@@ -80,6 +96,27 @@ func TestAPTInstallPackages(t *testing.T) {
 		if aptPHPPackages[i] != want[i] {
 			t.Fatalf("aptPHPPackages[%d] = %q, want %q", i, aptPHPPackages[i], want[i])
 		}
+	}
+}
+
+func TestRPMInstallPackages(t *testing.T) {
+	got := rpmVersionPackages("8.3")
+	want := []string{
+		"php83-php-fpm",
+		"php83-php-cli",
+		"php83-php-common",
+		"php83-php-opcache",
+		"php83-php-bcmath",
+		"php83-php-mysqlnd",
+		"php83-php-curl",
+		"php83-php-gd",
+		"php83-php-intl",
+		"php83-php-mbstring",
+		"php83-php-xml",
+		"php83-php-process",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("rpmVersionPackages() = %#v, want %#v", got, want)
 	}
 }
 

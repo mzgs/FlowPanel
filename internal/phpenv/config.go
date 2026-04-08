@@ -85,8 +85,13 @@ func (s *Service) UpdateSettingsForVersion(ctx context.Context, version string, 
 	}
 
 	if status.ServiceRunning {
-		if err := restartPHPFPM(ctx, status.FPMPath); err != nil {
-			return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
+		if err := s.RestartVersion(ctx, status.Version); err != nil {
+			if status.FPMPath == "" {
+				return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
+			}
+			if fallbackErr := restartPHPFPM(ctx, status.FPMPath); fallbackErr != nil {
+				return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
+			}
 		}
 	}
 
@@ -476,20 +481,30 @@ func runPHPFPMServiceCommand(ctx context.Context, fpmPath, action string) error 
 func fpmServiceCandidates(fpmPath string) []string {
 	base := strings.TrimSpace(filepath.Base(fpmPath))
 	candidates := []string{}
+	hasVersionSpecificCandidate := false
 	if base != "" {
 		candidates = append(candidates, base)
 	}
 	if matches := regexp.MustCompile(`^php-fpm(\d+(?:\.\d+)?)$`).FindStringSubmatch(base); len(matches) == 2 {
 		candidates = append([]string{"php" + matches[1] + "-fpm"}, candidates...)
+		hasVersionSpecificCandidate = true
 	}
 	if matches := regexp.MustCompile(`^php(\d+(?:\.\d+)?)\-fpm$`).FindStringSubmatch(base); len(matches) == 2 {
 		candidates = append(candidates, "php-fpm"+matches[1])
+		hasVersionSpecificCandidate = true
+	}
+	if matches := regexp.MustCompile(`/php(\d+)/root/usr/sbin/php-fpm$`).FindStringSubmatch(filepath.ToSlash(strings.TrimSpace(fpmPath))); len(matches) == 2 {
+		candidates = append([]string{"php" + matches[1] + "-php-fpm"}, candidates...)
+		hasVersionSpecificCandidate = true
 	}
 	if matches := regexp.MustCompile(`/php@(\d+(?:\.\d+)?)/`).FindStringSubmatch(filepath.ToSlash(strings.TrimSpace(fpmPath))); len(matches) == 2 {
-		candidates = append(candidates, "php@"+matches[1], "php")
+		candidates = append(candidates, "php@"+matches[1])
+		hasVersionSpecificCandidate = true
 	}
-	if len(candidates) == 0 {
+	if !hasVersionSpecificCandidate && len(candidates) == 0 {
 		candidates = append(candidates, "php-fpm", "php")
+	} else if !hasVersionSpecificCandidate && len(candidates) > 0 {
+		candidates = append(candidates, "php")
 	}
 
 	deduped := make([]string, 0, len(candidates))
