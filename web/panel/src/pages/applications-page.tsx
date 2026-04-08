@@ -35,6 +35,7 @@ import {
   PlayerStop,
   RefreshCw,
   RotateCcw,
+  Settings,
   TerminalSquare,
   Trash2,
 } from "@/components/icons/tabler-icons";
@@ -344,6 +345,7 @@ function ApplicationCard({
   badge,
   meta,
   actions,
+  configAction,
 }: {
   icon: ReactNode;
   name: string;
@@ -351,51 +353,66 @@ function ApplicationCard({
   badge: { label: string; variant: "default" | "secondary" | "destructive" | "outline" };
   meta: Array<{ label: string; value: string; mono?: boolean; tone?: "success" | "danger" }>;
   actions: ReactNode;
+  configAction?: ReactNode;
 }) {
   return (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
-        <div className="flex min-w-0 items-start gap-3 px-4 py-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
-          {icon}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-sm font-semibold tracking-tight text-[var(--app-text)]">{name}</h2>
-            <Badge variant={badge.variant}>{badge.label}</Badge>
+      <div className="flex min-w-0 items-start justify-between gap-3 px-4 py-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
+            {icon}
           </div>
-          {summary ? (
-            <div className="mt-1 text-sm font-medium text-[var(--app-text)]">{summary}</div>
-          ) : null}
-          {meta.length > 0 ? (
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-text-muted)]">
-              {meta.map((item) => (
-                <span
-                  key={item.label}
-                  className={cn("truncate", item.mono && "font-mono")}
-                  title={`${item.label}: ${item.value}`}
-                >
-                  {item.label}:{" "}
-                  {item.tone ? (
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        statusMetaBadgeClassName,
-                        item.tone === "success" &&
-                          "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
-                        item.tone === "danger" &&
-                          "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
-                      )}
-                    >
-                      {item.value}
-                    </Badge>
-                  ) : (
-                    item.value
-                  )}
-                </span>
-              ))}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold tracking-tight text-[var(--app-text)]">{name}</h2>
+              <Badge variant={badge.variant}>{badge.label}</Badge>
             </div>
-          ) : null}
+            {summary ? (
+              <div className="mt-1 text-sm font-medium text-[var(--app-text)]">{summary}</div>
+            ) : null}
+            {meta.length > 0 ? (
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-text-muted)]">
+                {meta.map((item) => (
+                  <span
+                    key={item.label}
+                    className={cn("truncate", item.mono && "font-mono")}
+                    title={`${item.label}: ${item.value}`}
+                  >
+                    {item.label}:{" "}
+                    {item.tone ? (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          statusMetaBadgeClassName,
+                          item.tone === "success" &&
+                            "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
+                          item.tone === "danger" &&
+                            "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+                        )}
+                      >
+                        {item.value}
+                      </Badge>
+                    ) : (
+                      item.value
+                    )}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
+        {configAction ?? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 rounded-md text-[var(--app-text-muted)]"
+            aria-label={`Configure ${name}`}
+            title={`Configure ${name}`}
+          >
+            <Settings className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-[var(--app-border)] px-4 py-3">
