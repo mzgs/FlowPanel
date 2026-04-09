@@ -8,7 +8,7 @@ import {
   type PHPRuntimeStatus,
   type UpdatePHPSettingsInput,
 } from "@/api/php";
-import { LoaderCircle } from "@/components/icons/tabler-icons";
+import { CircleCheck, LoaderCircle } from "@/components/icons/tabler-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -210,6 +210,7 @@ export function PHPSettingsDialog({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [installingExtensionId, setInstallingExtensionId] = useState<string | null>(null);
+  const [extensionFilter, setExtensionFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [phpInfoLoaded, setPHPInfoLoaded] = useState(false);
 
@@ -224,6 +225,7 @@ export function PHPSettingsDialog({
     setSavedForm(nextForm);
     setFieldErrors({});
     setInstallingExtensionId(null);
+    setExtensionFilter("");
     setError(null);
     setPHPInfoLoaded(false);
   }, [open, status?.version]);
@@ -296,11 +298,20 @@ export function PHPSettingsDialog({
   const saveDisabled = busy || !dirty || !status?.php_installed;
   const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
   const extensions = [...(status?.extensions ?? [])].sort((left, right) => left.localeCompare(right));
-  const trackedExtensions = phpExtensionCatalog.map((entry) => ({
-    ...entry,
-    installed: isPHPExtensionInstalled(entry, extensions),
-  }));
-  const installedTrackedCount = trackedExtensions.filter((entry) => entry.installed).length;
+  const normalizedExtensionFilter = extensionFilter.trim().toLowerCase();
+  const trackedExtensions = phpExtensionCatalog
+    .map((entry) => ({
+      ...entry,
+      installed: isPHPExtensionInstalled(entry, extensions),
+    }))
+    .filter((entry) => {
+      if (!normalizedExtensionFilter) {
+        return true;
+      }
+
+      const haystack = [entry.label, entry.id, ...(entry.aliases ?? [])].join(" ").toLowerCase();
+      return haystack.includes(normalizedExtensionFilter);
+    });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -594,22 +605,21 @@ export function PHPSettingsDialog({
                     </div>
                   ) : (
                     <>
-                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-sm text-[var(--app-text-muted)]">
-                        <span>
-                          {installedTrackedCount} of {trackedExtensions.length} tracked extensions are installed for{" "}
-                          {runtimeLabel}.
-                        </span>
-                        <span className="text-xs text-[var(--app-text-muted)]/90">
-                          {extensions.length} loaded modules detected.
-                        </span>
-                        {status?.scan_dir ? (
-                          <span className="truncate text-xs text-[var(--app-text-muted)]/90">
-                            Scan dir: {status.scan_dir}
-                          </span>
-                        ) : null}
+                      <div className="max-w-xs">
+                        <Input
+                          value={extensionFilter}
+                          onChange={(event) => setExtensionFilter(event.target.value)}
+                          placeholder="Filter extensions"
+                          className="h-8 text-sm"
+                        />
                       </div>
 
-                      <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                      {trackedExtensions.length === 0 ? (
+                        <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 text-sm text-[var(--app-text-muted)]">
+                          No extensions match this filter.
+                        </div>
+                      ) : (
+                        <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                         {trackedExtensions.map((extension) => (
                           <li
                             key={extension.id}
@@ -623,9 +633,13 @@ export function PHPSettingsDialog({
                               </div>
 
                               {extension.installed ? (
-                                <Badge variant="default" className="h-6 rounded-sm px-2 text-[11px]">
-                                  Installed
-                                </Badge>
+                                <span
+                                  className="inline-flex h-6 w-6 items-center justify-center text-emerald-600 dark:text-emerald-400"
+                                  title="Installed"
+                                  aria-label="Installed"
+                                >
+                                  <CircleCheck className="h-4.5 w-4.5" />
+                                </span>
                               ) : (
                                 <Button
                                   type="button"
@@ -648,7 +662,8 @@ export function PHPSettingsDialog({
                             </div>
                           </li>
                         ))}
-                      </ul>
+                        </ul>
+                      )}
                     </>
                   )}
                 </section>
