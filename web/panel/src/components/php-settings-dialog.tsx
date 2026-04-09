@@ -607,6 +607,11 @@ export function PHPSettingsDialog({
                     </div>
                   ) : (
                     <>
+                      <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-sm text-[var(--app-text-muted)]">
+                        FlowPanel installs supported extensions with PIE. Extensions without a mapped PIE package stay
+                        read-only here.
+                      </div>
+
                       <div className="max-w-xs">
                         <Input
                           value={extensionFilter}

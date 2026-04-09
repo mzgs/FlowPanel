@@ -3,63 +3,60 @@ package phpenv
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"flowpanel/internal/config"
 )
 
 type phpExtensionDefinition struct {
-	id            string
-	aliases       []string
-	peclPackage   string
-	sharedObject  string
-	enableMode    string
-	configureArgs []string
+	id           string
+	aliases      []string
+	piePackage   string
+	sharedObject string
 }
-
-const (
-	phpExtensionEnableModeExtension     = "extension"
-	phpExtensionEnableModeZendExtension = "zend_extension"
-)
 
 var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "ioncube", aliases: []string{"oncube", "ioncubeloader"}},
 	{id: "fileinfo"},
 	{id: "opcache", aliases: []string{"zendopcache"}},
-	{id: "memcached", peclPackage: "memcached"},
-	{id: "redis", peclPackage: "redis"},
-	{id: "mcrypt", peclPackage: "mcrypt"},
-	{id: "apcu", peclPackage: "apcu"},
-	{id: "imagemagick", aliases: []string{"imagick"}, peclPackage: "imagick", sharedObject: "imagick"},
-	{id: "xdebug", peclPackage: "xdebug", enableMode: phpExtensionEnableModeZendExtension},
+	{id: "memcached", piePackage: "php-memcached/php-memcached"},
+	{id: "redis", piePackage: "phpredis/phpredis"},
+	{id: "mcrypt", piePackage: "pecl/mcrypt"},
+	{id: "apcu", piePackage: "apcu/apcu"},
+	{id: "imagemagick", aliases: []string{"imagick"}, piePackage: "imagick/imagick", sharedObject: "imagick"},
+	{id: "xdebug", piePackage: "xdebug/xdebug"},
 	{id: "imap"},
 	{id: "exif"},
 	{id: "intl"},
 	{id: "xsl"},
-	{id: "swoole4", aliases: []string{"swoole"}, peclPackage: "swoole", sharedObject: "swoole"},
-	{id: "swoole5", aliases: []string{"swoole"}, peclPackage: "swoole", sharedObject: "swoole"},
-	{id: "swoole6", aliases: []string{"swoole"}, peclPackage: "swoole", sharedObject: "swoole"},
-	{id: "xlswriter", peclPackage: "xlswriter"},
+	{id: "swoole4", aliases: []string{"swoole"}, piePackage: "swoole/swoole", sharedObject: "swoole"},
+	{id: "swoole5", aliases: []string{"swoole"}, piePackage: "swoole/swoole", sharedObject: "swoole"},
+	{id: "swoole6", aliases: []string{"swoole"}, piePackage: "swoole/swoole", sharedObject: "swoole"},
+	{id: "xlswriter", piePackage: "viest/xlswriter"},
 	{id: "oci8"},
 	{id: "pdooci", aliases: []string{"pdo_oci"}},
-	{id: "swow", peclPackage: "swow"},
-	{id: "pdosqlsrv", aliases: []string{"pdo_sqlsrv"}, peclPackage: "pdo_sqlsrv", sharedObject: "pdo_sqlsrv"},
-	{id: "sqlsrv", peclPackage: "sqlsrv"},
-	{id: "rdkafka", aliases: []string{"rdkakfa"}, peclPackage: "rdkafka"},
-	{id: "yaf", peclPackage: "yaf"},
-	{id: "phpmongodb", aliases: []string{"php_mongodb", "mongodb"}, peclPackage: "mongodb", sharedObject: "mongodb"},
-	{id: "yac", peclPackage: "yac"},
+	{id: "swow", piePackage: "swow/swow-extension", sharedObject: "swow"},
+	{id: "pdosqlsrv", aliases: []string{"pdo_sqlsrv"}},
+	{id: "sqlsrv"},
+	{id: "rdkafka", aliases: []string{"rdkakfa"}, piePackage: "rdkafka/rdkafka"},
+	{id: "yaf"},
+	{id: "phpmongodb", aliases: []string{"php_mongodb", "mongodb"}, piePackage: "mongodb/mongodb-extension", sharedObject: "mongodb"},
+	{id: "yac"},
 	{id: "sg11", aliases: []string{"sourceguardian11"}},
 	{id: "sg14", aliases: []string{"sourceguardian14"}},
 	{id: "sg15", aliases: []string{"sourceguardian15"}},
 	{id: "sg16", aliases: []string{"sourceguardian16"}},
 	{id: "xload"},
 	{id: "pgsql"},
-	{id: "ssh2", peclPackage: "ssh2"},
-	{id: "grpc", peclPackage: "grpc"},
-	{id: "xhprof", peclPackage: "xhprof"},
-	{id: "protobuf", peclPackage: "protobuf"},
+	{id: "ssh2"},
+	{id: "grpc", piePackage: "pie-extensions/grpc"},
+	{id: "xhprof"},
+	{id: "protobuf", piePackage: "pie-extensions/protobuf"},
 	{id: "pdopgsql", aliases: []string{"pdo_pgsql"}},
 	{id: "readline"},
 	{id: "snmp"},
@@ -71,20 +68,13 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "calendar"},
 	{id: "gmp"},
 	{id: "sysvmsg"},
-	{id: "igbinary", peclPackage: "igbinary"},
-	{id: "zmq", peclPackage: "zmq"},
-	{id: "zstd", peclPackage: "zstd"},
-	{id: "smbclient", peclPackage: "smbclient"},
-	{id: "event", peclPackage: "event"},
-	{id: "mailparse", peclPackage: "mailparse"},
-	{id: "yaml", peclPackage: "yaml"},
-}
-
-type phpPECLToolchain struct {
-	phpPath       string
-	peclPath      string
-	phpizePath    string
-	phpConfigPath string
+	{id: "igbinary", piePackage: "igbinary/igbinary"},
+	{id: "zmq"},
+	{id: "zstd", piePackage: "kjdev/zstd"},
+	{id: "smbclient"},
+	{id: "event"},
+	{id: "mailparse", piePackage: "pecl/mailparse"},
+	{id: "yaml"},
 }
 
 func (s *Service) InstallExtension(ctx context.Context, extension string) (Status, error) {
@@ -107,18 +97,18 @@ func (s *Service) InstallExtensionForVersion(ctx context.Context, version, exten
 	}
 
 	requestedExtension := strings.TrimSpace(extension)
-	definition, ok := findPHPExtensionDefinition(extension)
+	definition, ok := findPHPExtensionDefinition(requestedExtension)
 	if !ok {
 		return RuntimeStatus{}, fmt.Errorf("php extension %q is not supported", requestedExtension)
 	}
-	if !definition.supportsPECLInstall() {
-		return RuntimeStatus{}, fmt.Errorf("php extension %q does not support automatic PECL installation", requestedExtension)
+	if !definition.supportsPIEInstall() {
+		return RuntimeStatus{}, fmt.Errorf("php extension %q does not have a configured PIE package", requestedExtension)
 	}
 	if extensionLoaded(runtimeStatus.Extensions, definition) {
 		return runtimeStatus, nil
 	}
 
-	if err := installPHPExtensionWithPECL(ctx, runtimeStatus, definition); err != nil {
+	if err := installPHPExtensionWithPIE(ctx, runtimeStatus, definition); err != nil {
 		return RuntimeStatus{}, err
 	}
 
@@ -162,30 +152,18 @@ func findPHPExtensionDefinition(value string) (phpExtensionDefinition, bool) {
 	return phpExtensionDefinition{}, false
 }
 
-func (d phpExtensionDefinition) supportsPECLInstall() bool {
-	return strings.TrimSpace(d.peclPackage) != ""
-}
-
-func (d phpExtensionDefinition) enableDirective() string {
-	if d.enableMode == phpExtensionEnableModeZendExtension {
-		return phpExtensionEnableModeZendExtension
-	}
-	return phpExtensionEnableModeExtension
-}
-
-func (d phpExtensionDefinition) moduleName() string {
-	return "flowpanel-" + normalizePHPExtensionKey(d.id)
+func (d phpExtensionDefinition) supportsPIEInstall() bool {
+	return strings.TrimSpace(d.piePackage) != ""
 }
 
 func (d phpExtensionDefinition) sharedObjectName() string {
-	name := strings.TrimSpace(d.sharedObject)
-	if name == "" {
-		name = strings.TrimSpace(d.peclPackage)
+	if name := strings.TrimSpace(d.sharedObject); name != "" {
+		return strings.TrimSuffix(name, ".so")
 	}
-	if name == "" {
-		name = strings.TrimSpace(d.id)
+	if name := strings.TrimSpace(d.id); name != "" {
+		return strings.TrimSuffix(name, ".so")
 	}
-	return strings.TrimSuffix(name, ".so")
+	return ""
 }
 
 func extensionLoaded(installed []string, definition phpExtensionDefinition) bool {
@@ -233,90 +211,154 @@ func normalizePHPExtensionKey(value string) string {
 	return builder.String()
 }
 
-func installPHPExtensionWithPECL(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
-	toolchain, err := ensurePECLToolchain(ctx, runtimeStatus.Version, runtimeStatus.PHPPath)
+func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	piePath, err := ensurePIEBinary(ctx)
 	if err != nil {
 		return err
 	}
 
-	buildDir, err := os.MkdirTemp("", "flowpanel-pecl-*")
-	if err != nil {
-		return fmt.Errorf("create pecl build directory: %w", err)
-	}
-	defer os.RemoveAll(buildDir)
-
-	archivePath, err := downloadPECLPackage(ctx, buildDir, toolchain, definition.peclPackage)
-	if err != nil {
-		return err
+	args := []string{
+		"install",
+		"--auto-install-build-tools",
+		"--auto-install-system-dependencies",
 	}
 
-	sourceDir, err := extractPECLPackage(ctx, buildDir, archivePath)
-	if err != nil {
-		return err
+	if runtime.GOOS == "windows" {
+		if runtimeStatus.PHPPath != "" {
+			args = append(args, "--with-php-path="+runtimeStatus.PHPPath)
+		}
+	} else {
+		if phpConfigPath, ok := lookupExecutableCandidates(phpConfigBinaryCandidates(runtimeStatus.Version, runtimeStatus.PHPPath)); ok {
+			args = append(args, "--with-php-config="+phpConfigPath)
+		}
+		if phpizePath, ok := lookupExecutableCandidates(phpizeBinaryCandidates(runtimeStatus.Version, runtimeStatus.PHPPath)); ok {
+			args = append(args, "--with-phpize-path="+phpizePath)
+		}
 	}
 
-	if _, err := runCommandInDir(ctx, sourceDir, toolchain.phpizePath); err != nil {
-		return fmt.Errorf("prepare %s with phpize: %w", definition.peclPackage, err)
-	}
-
-	configureArgs := []string{"--with-php-config=" + toolchain.phpConfigPath}
-	configureArgs = append(configureArgs, definition.configureArgs...)
-	if _, err := runCommandInDir(ctx, sourceDir, "./configure", configureArgs...); err != nil {
-		return fmt.Errorf("configure %s: %w", definition.peclPackage, err)
-	}
-
-	makeJobs := fmt.Sprintf("-j%d", maxInt(1, runtime.NumCPU()))
-	if _, err := runCommandInDir(ctx, sourceDir, "make", makeJobs); err != nil {
-		return fmt.Errorf("build %s: %w", definition.peclPackage, err)
-	}
-	if _, err := runCommandInDir(ctx, sourceDir, "make", "install"); err != nil {
-		return fmt.Errorf("install %s: %w", definition.peclPackage, err)
-	}
-
-	if err := enablePHPExtension(ctx, runtimeStatus, definition); err != nil {
-		return err
+	args = append(args, definition.piePackage)
+	if _, err := runCommand(ctx, piePath, args...); err != nil {
+		return fmt.Errorf("install %s with pie: %w", definition.piePackage, err)
 	}
 
 	return nil
 }
 
-func ensurePECLToolchain(ctx context.Context, version, phpPath string) (phpPECLToolchain, error) {
-	if toolchain, ok := lookupPECLToolchain(version, phpPath); ok {
-		return toolchain, nil
+func ensurePIEBinary(ctx context.Context) (string, error) {
+	if path, ok := lookupCommand("pie"); ok {
+		return path, nil
 	}
 
-	commands := buildPECLToolchainInstallCommands(version)
-	if len(commands) == 0 {
-		return phpPECLToolchain{}, fmt.Errorf("automatic PECL bootstrap for PHP %s is not supported on %s", version, runtime.GOOS)
-	}
-	if err := runCommands(ctx, commands...); err != nil {
-		return phpPECLToolchain{}, fmt.Errorf("install PECL toolchain for PHP %s: %w", version, err)
+	managedPath := managedPIEBinaryPath()
+	if path, ok := lookupCandidateExecutable(managedPath); ok {
+		return path, nil
 	}
 
-	toolchain, ok := lookupPECLToolchain(version, phpPath)
-	if !ok {
-		return phpPECLToolchain{}, fmt.Errorf("the PECL toolchain for PHP %s is not available after installation", version)
+	if err := os.MkdirAll(filepath.Dir(managedPath), 0o755); err != nil {
+		return "", fmt.Errorf("create managed pie directory: %w", err)
 	}
-	return toolchain, nil
+
+	downloadURL, err := latestPIEBinaryDownloadURL()
+	if err != nil {
+		return "", err
+	}
+	if err := downloadPIEBinary(ctx, downloadURL, managedPath); err != nil {
+		return "", err
+	}
+	if _, err := runInspectCommand(ctx, managedPath, "-V"); err != nil {
+		return "", fmt.Errorf("verify downloaded pie binary: %w", err)
+	}
+	return managedPath, nil
 }
 
-func lookupPECLToolchain(version, phpPath string) (phpPECLToolchain, bool) {
-	toolchain := phpPECLToolchain{
-		phpPath: strings.TrimSpace(phpPath),
+func managedPIEBinaryPath() string {
+	name := "pie"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
 	}
-	if toolchain.phpPath == "" {
-		return phpPECLToolchain{}, false
+	return filepath.Join(config.FlowPanelDataPath(), "bin", name)
+}
+
+func latestPIEBinaryDownloadURL() (string, error) {
+	var platform string
+	switch runtime.GOOS {
+	case "linux":
+		platform = "Linux"
+	case "darwin":
+		platform = "macOS"
+	case "windows":
+		platform = "Windows"
+	default:
+		return "", fmt.Errorf("automatic pie bootstrap is not supported on %s", runtime.GOOS)
 	}
 
-	toolchain.peclPath, _ = lookupExecutableCandidates(peclBinaryCandidates(version, phpPath))
-	toolchain.phpizePath, _ = lookupExecutableCandidates(phpizeBinaryCandidates(version, phpPath))
-	toolchain.phpConfigPath, _ = lookupExecutableCandidates(phpConfigBinaryCandidates(version, phpPath))
-
-	if toolchain.peclPath == "" || toolchain.phpizePath == "" || toolchain.phpConfigPath == "" {
-		return toolchain, false
+	var arch string
+	switch runtime.GOARCH {
+	case "amd64":
+		arch = "X64"
+	case "arm64":
+		arch = "ARM64"
+	default:
+		return "", fmt.Errorf("automatic pie bootstrap is not supported on %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	return toolchain, true
+	if platform == "Windows" && arch != "X64" {
+		return "", fmt.Errorf("automatic pie bootstrap is not supported on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	suffix := ""
+	if platform == "Windows" {
+		suffix = ".exe"
+	}
+	return fmt.Sprintf("https://github.com/php/pie/releases/latest/download/pie-%s-%s%s", platform, arch, suffix), nil
+}
+
+func downloadPIEBinary(ctx context.Context, url, destinationPath string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("create pie download request: %w", err)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("download pie binary: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("download pie binary: unexpected status %s", response.Status)
+	}
+
+	tempPath := destinationPath + ".tmp"
+	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	if err != nil {
+		return fmt.Errorf("create temporary pie binary: %w", err)
+	}
+
+	copyErr := error(nil)
+	if _, err := io.Copy(file, response.Body); err != nil {
+		copyErr = fmt.Errorf("write pie binary: %w", err)
+	}
+	closeErr := file.Close()
+	if copyErr != nil {
+		_ = os.Remove(tempPath)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("close temporary pie binary: %w", closeErr)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(tempPath, 0o755); err != nil {
+			_ = os.Remove(tempPath)
+			return fmt.Errorf("mark pie binary executable: %w", err)
+		}
+	}
+	if err := os.Rename(tempPath, destinationPath); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("activate pie binary: %w", err)
+	}
+	return nil
 }
 
 func lookupExecutableCandidates(candidates []string) (string, bool) {
@@ -326,19 +368,6 @@ func lookupExecutableCandidates(candidates []string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func peclBinaryCandidates(version, phpPath string) []string {
-	dir := filepath.Dir(strings.TrimSpace(phpPath))
-	versionNoDots := strings.ReplaceAll(version, ".", "")
-	return dedupeStrings([]string{
-		filepath.Join(dir, "pecl"),
-		filepath.Join(dir, "pecl"+version),
-		filepath.Join(dir, "pecl"+versionNoDots),
-		"pecl" + version,
-		"pecl" + versionNoDots,
-		"pecl",
-	})
 }
 
 func phpizeBinaryCandidates(version, phpPath string) []string {
@@ -365,190 +394,4 @@ func phpConfigBinaryCandidates(version, phpPath string) []string {
 		"php-config" + versionNoDots,
 		"php-config",
 	})
-}
-
-func buildPECLToolchainInstallCommands(version string) [][]string {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return nil
-	}
-
-	if aptGetPath, ok := lookupCommand("apt-get"); ok {
-		packages := dedupeStrings([]string{
-			"php-pear",
-			"php" + version + "-dev",
-			"build-essential",
-			"pkg-config",
-		})
-		return [][]string{
-			{aptGetPath, "update"},
-			append([]string{aptGetPath, "install", "-y"}, packages...),
-		}
-	}
-	if dnfPath, ok := lookupCommand("dnf"); ok {
-		packages := dedupeStrings([]string{
-			remiCollectionForVersion(version) + "-php-pear",
-			remiCollectionForVersion(version) + "-php-devel",
-			"gcc",
-			"make",
-			"autoconf",
-		})
-		return [][]string{
-			append([]string{dnfPath, "install", "-y"}, packages...),
-		}
-	}
-	if yumPath, ok := lookupCommand("yum"); ok {
-		packages := dedupeStrings([]string{
-			remiCollectionForVersion(version) + "-php-pear",
-			remiCollectionForVersion(version) + "-php-devel",
-			"gcc",
-			"make",
-			"autoconf",
-		})
-		return [][]string{
-			append([]string{yumPath, "install", "-y"}, packages...),
-		}
-	}
-
-	return nil
-}
-
-func downloadPECLPackage(ctx context.Context, buildDir string, toolchain phpPECLToolchain, packageName string) (string, error) {
-	if err := runPECLCommand(ctx, buildDir, toolchain, "download", packageName); err != nil {
-		return "", fmt.Errorf("download PECL package %q: %w", packageName, err)
-	}
-
-	matches, err := filepath.Glob(filepath.Join(buildDir, packageName+"-*.tgz"))
-	if err != nil {
-		return "", fmt.Errorf("locate downloaded PECL archive for %q: %w", packageName, err)
-	}
-	if len(matches) == 0 {
-		matches, err = filepath.Glob(filepath.Join(buildDir, "*.tgz"))
-		if err != nil {
-			return "", fmt.Errorf("locate downloaded PECL archive for %q: %w", packageName, err)
-		}
-	}
-	if len(matches) == 0 {
-		return "", fmt.Errorf("download PECL package %q: no archive was created", packageName)
-	}
-
-	return matches[0], nil
-}
-
-func runPECLCommand(ctx context.Context, buildDir string, toolchain phpPECLToolchain, args ...string) error {
-	attempts := []struct {
-		name string
-		args []string
-	}{
-		{name: toolchain.phpPath, args: append([]string{toolchain.peclPath}, args...)},
-	}
-	if toolchain.peclPath != "" {
-		attempts = append(attempts, struct {
-			name string
-			args []string
-		}{name: toolchain.peclPath, args: args})
-	}
-
-	var failures []string
-	for _, attempt := range attempts {
-		if strings.TrimSpace(attempt.name) == "" {
-			continue
-		}
-		if _, err := runCommandInDir(ctx, buildDir, attempt.name, attempt.args...); err == nil {
-			return nil
-		} else {
-			failures = append(failures, err.Error())
-		}
-	}
-
-	if len(failures) == 0 {
-		return fmt.Errorf("no PECL command candidates were generated")
-	}
-	if len(failures) == 1 {
-		return fmt.Errorf("%s", failures[0])
-	}
-	return fmt.Errorf("%s", strings.Join(failures, " | "))
-}
-
-func extractPECLPackage(ctx context.Context, buildDir, archivePath string) (string, error) {
-	if _, err := runCommand(ctx, "tar", "-xf", archivePath, "-C", buildDir); err != nil {
-		return "", fmt.Errorf("extract PECL archive %q: %w", filepath.Base(archivePath), err)
-	}
-
-	entries, err := os.ReadDir(buildDir)
-	if err != nil {
-		return "", fmt.Errorf("list extracted PECL sources: %w", err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		sourceDir := filepath.Join(buildDir, entry.Name())
-		if _, err := os.Stat(filepath.Join(sourceDir, "package.xml")); err == nil {
-			return sourceDir, nil
-		}
-	}
-
-	return "", fmt.Errorf("could not determine extracted PECL source directory for %q", filepath.Base(archivePath))
-}
-
-func enablePHPExtension(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
-	content := renderManagedPHPExtensionConfig(definition)
-
-	if phpenmodPath, ok := lookupCommand("phpenmod"); ok && runtime.GOOS == "linux" {
-		moduleName := definition.moduleName()
-		configPath := filepath.Join("/etc/php", runtimeStatus.Version, "mods-available", moduleName+".ini")
-		if err := writeManagedPHPExtensionConfig(configPath, content); err == nil {
-			if _, err := runCommand(ctx, phpenmodPath, "-v", runtimeStatus.Version, moduleName); err == nil {
-				return nil
-			}
-		}
-	}
-
-	configPath := determineManagedPHPExtensionConfigFile(runtimeStatus.LoadedConfigFile, runtimeStatus.ScanDir, definition)
-	if configPath == "" {
-		return fmt.Errorf("flowpanel could not determine where to enable PHP extension %q", definition.id)
-	}
-	if err := writeManagedPHPExtensionConfig(configPath, content); err != nil {
-		return err
-	}
-	return nil
-}
-
-func renderManagedPHPExtensionConfig(definition phpExtensionDefinition) string {
-	return fmt.Sprintf(
-		"; Managed by FlowPanel.\n; Manual edits may be overwritten.\n%s=%s.so\n",
-		definition.enableDirective(),
-		definition.sharedObjectName(),
-	)
-}
-
-func writeManagedPHPExtensionConfig(path, content string) error {
-	if strings.TrimSpace(path) == "" {
-		return fmt.Errorf("php extension config path is required")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create php extension config directory: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("write php extension config: %w", err)
-	}
-	return nil
-}
-
-func determineManagedPHPExtensionConfigFile(loadedConfigFile, scanDir string, definition phpExtensionDefinition) string {
-	filename := definition.moduleName() + ".ini"
-	if scanDir != "" {
-		return filepath.Join(scanDir, filename)
-	}
-	if loadedConfigFile != "" {
-		return filepath.Join(filepath.Dir(loadedConfigFile), filename)
-	}
-	return ""
-}
-
-func maxInt(left, right int) int {
-	if left > right {
-		return left
-	}
-	return right
 }
