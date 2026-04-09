@@ -441,7 +441,7 @@ export function PHPSettingsDialog({
           ) : null}
 
           {error ? (
-            <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+            <div className="h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
               {error}
             </div>
           ) : null}
