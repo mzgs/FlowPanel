@@ -198,6 +198,22 @@ function formatValue(value?: string) {
   return trimmed ? trimmed : "Unavailable";
 }
 
+function hasBuiltInOpcache(version: string) {
+  const normalized = version.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const [majorRaw, minorRaw] = normalized.split(".");
+  const major = Number.parseInt(majorRaw ?? "", 10);
+  const minor = Number.parseInt(minorRaw ?? "", 10);
+  if (Number.isNaN(major) || Number.isNaN(minor)) {
+    return false;
+  }
+
+  return major > 8 || (major === 8 && minor >= 5);
+}
+
 export function PHPSettingsDialog({
   open,
   onOpenChange,
@@ -334,7 +350,9 @@ export function PHPSettingsDialog({
   const trackedExtensions = phpExtensionCatalog
     .map((entry) => ({
       ...entry,
-      installed: isPHPExtensionInstalled(entry, extensions),
+      installed:
+        (entry.id === "opcache" && hasBuiltInOpcache(version)) ||
+        isPHPExtensionInstalled(entry, extensions),
       installId: entry.installId ?? entry.id,
       installSupported: entry.installSupported ?? true,
     }))
