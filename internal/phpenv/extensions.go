@@ -18,6 +18,7 @@ type phpExtensionDefinition struct {
 	aliases              []string
 	piePackage           string
 	sharedObject         string
+	iniDirective         string
 	requiredDependencies phpExtensionRequiredDependencies
 }
 
@@ -62,7 +63,7 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "uuid", piePackage: "pecl/uuid"},
 	{id: "timezonedb", piePackage: "pecl/timezonedb"},
 	{id: "imagemagick", aliases: []string{"imagick"}, piePackage: "imagick/imagick", sharedObject: "imagick"},
-	{id: "xdebug", piePackage: "xdebug/xdebug"},
+	{id: "xdebug", piePackage: "xdebug/xdebug", iniDirective: "zend_extension"},
 	{id: "imap"},
 	{id: "exif"},
 	{id: "intl"},
@@ -210,6 +211,13 @@ func (d phpExtensionDefinition) sharedObjectName() string {
 	return ""
 }
 
+func (d phpExtensionDefinition) extensionINIDirective() string {
+	if directive := strings.TrimSpace(d.iniDirective); directive != "" {
+		return directive
+	}
+	return "extension"
+}
+
 func extensionLoaded(installed []string, definition phpExtensionDefinition) bool {
 	loaded := make(map[string]struct{}, len(installed))
 	for _, item := range installed {
@@ -256,6 +264,10 @@ func normalizePHPExtensionKey(value string) string {
 }
 
 func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	if phpExtensionSharedObjectInstalled(ctx, runtimeStatus, definition) {
+		return ensurePHPExtensionEnabled(ctx, runtimeStatus, definition)
+	}
+
 	if err := installPHPExtensionRequiredDependencies(ctx, definition); err != nil {
 		return err
 	}
@@ -276,6 +288,9 @@ func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus
 			args = append(args, "--with-php-path="+runtimeStatus.PHPPath)
 		}
 	} else {
+		if runtimeStatus.PHPPath != "" {
+			args = append(args, "--with-php-path="+runtimeStatus.PHPPath)
+		}
 		if phpConfigPath, ok := lookupExecutableCandidates(phpConfigBinaryCandidates(runtimeStatus.Version, runtimeStatus.PHPPath)); ok {
 			args = append(args, "--with-php-config="+phpConfigPath)
 		}
@@ -289,7 +304,154 @@ func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus
 		return fmt.Errorf("install %s with pie: %w", definition.piePackage, err)
 	}
 
+	if err := ensurePHPExtensionEnabled(ctx, runtimeStatus, definition); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func ensurePHPExtensionEnabled(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	if runtimeStatus.PHPPath == "" {
+		return nil
+	}
+
+	if extensionLoadedForPHP(ctx, runtimeStatus.PHPPath, definition) {
+		return nil
+	}
+	if !phpExtensionSharedObjectInstalled(ctx, runtimeStatus, definition) {
+		return fmt.Errorf("enable php extension %q: shared object %s.so is not installed for php %s", definition.id, definition.sharedObjectName(), runtimeStatus.Version)
+	}
+
+	configPaths := phpExtensionEnableConfigPaths(runtimeStatus, definition)
+	if len(configPaths) == 0 {
+		return fmt.Errorf("enable php extension %q: php %s has no writable ini scan directory", definition.id, runtimeStatus.Version)
+	}
+
+	content := []byte(renderPHPExtensionEnableConfig(definition))
+	for _, configPath := range configPaths {
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			return fmt.Errorf("create php extension config directory: %w", err)
+		}
+		if err := os.WriteFile(configPath, content, 0o644); err != nil {
+			return fmt.Errorf("write php extension enable config: %w", err)
+		}
+	}
+
+	if !extensionLoadedForPHP(ctx, runtimeStatus.PHPPath, definition) {
+		return fmt.Errorf("php extension %q enable config was written but is still not loaded for php %s", definition.id, runtimeStatus.Version)
+	}
+
+	return nil
+}
+
+func extensionLoadedForPHP(ctx context.Context, phpPath string, definition phpExtensionDefinition) bool {
+	output, err := runInspectCommand(ctx, phpPath, "-m")
+	if err != nil {
+		return false
+	}
+	return extensionLoaded(parsePHPExtensions(output), definition)
+}
+
+func phpExtensionSharedObjectInstalled(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) bool {
+	path := phpExtensionSharedObjectPath(ctx, runtimeStatus, definition)
+	if path == "" {
+		return false
+	}
+
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func phpExtensionSharedObjectPath(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) string {
+	if runtimeStatus.PHPPath == "" {
+		return ""
+	}
+
+	extensionDir, err := runInspectCommand(ctx, runtimeStatus.PHPPath, "-r", `echo ini_get("extension_dir");`)
+	if err != nil {
+		return ""
+	}
+	extensionDir = strings.TrimSpace(extensionDir)
+	if extensionDir == "" || !filepath.IsAbs(extensionDir) {
+		return ""
+	}
+
+	sharedObject := definition.sharedObjectName()
+	if sharedObject == "" {
+		return ""
+	}
+
+	return filepath.Join(extensionDir, strings.TrimSuffix(sharedObject, ".so")+".so")
+}
+
+func phpExtensionEnableConfigPaths(runtimeStatus RuntimeStatus, definition phpExtensionDefinition) []string {
+	baseDir := strings.TrimSpace(runtimeStatus.ScanDir)
+	if baseDir == "" && runtimeStatus.LoadedConfigFile != "" {
+		baseDir = filepath.Dir(runtimeStatus.LoadedConfigFile)
+	}
+	if baseDir == "" {
+		return nil
+	}
+
+	name := normalizePHPExtensionKey(definition.sharedObjectName())
+	if name == "" {
+		name = normalizePHPExtensionKey(definition.id)
+	}
+	if name == "" {
+		return nil
+	}
+
+	paths := []string{filepath.Join(baseDir, "20-flowpanel-"+name+".ini")}
+	for _, candidate := range phpFPMExtensionConfigDirs(runtimeStatus, baseDir) {
+		paths = append(paths, filepath.Join(candidate, "20-flowpanel-"+name+".ini"))
+	}
+
+	return dedupeStrings(paths)
+}
+
+func phpFPMExtensionConfigDirs(runtimeStatus RuntimeStatus, cliConfigDir string) []string {
+	candidates := make([]string, 0, 3)
+	for _, value := range []string{cliConfigDir, runtimeStatus.LoadedConfigFile} {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		fpmPath := strings.Replace(filepath.ToSlash(value), "/cli/", "/fpm/", 1)
+		if fpmPath == filepath.ToSlash(value) {
+			continue
+		}
+		if strings.HasSuffix(fpmPath, ".ini") {
+			fpmPath = filepath.Dir(fpmPath)
+		}
+		candidates = append(candidates, filepath.FromSlash(fpmPath))
+	}
+
+	if version := NormalizeVersion(runtimeStatus.Version); version != "" && runtimeStatus.FPMPath != "" {
+		candidates = append(candidates, filepath.Join("/etc/php", version, "fpm", "conf.d"))
+	}
+
+	dirs := make([]string, 0, len(candidates))
+	for _, candidate := range dedupeStrings(candidates) {
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			dirs = append(dirs, candidate)
+		}
+	}
+	return dirs
+}
+
+func renderPHPExtensionEnableConfig(definition phpExtensionDefinition) string {
+	sharedObject := definition.sharedObjectName()
+	if sharedObject == "" {
+		sharedObject = definition.id
+	}
+	sharedObject = strings.TrimSuffix(sharedObject, ".so") + ".so"
+
+	var builder strings.Builder
+	builder.WriteString("; Managed by FlowPanel.\n")
+	builder.WriteString("; Enables a PHP extension installed through FlowPanel.\n")
+	builder.WriteString(fmt.Sprintf("%s=%s\n", definition.extensionINIDirective(), sharedObject))
+	return builder.String()
 }
 
 func installPHPExtensionRequiredDependencies(ctx context.Context, definition phpExtensionDefinition) error {
