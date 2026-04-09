@@ -45,6 +45,10 @@ import (
 
 type fakePHPManager struct{}
 
+type phpInfoPHPManager struct {
+	fakePHPManager
+}
+
 type fakeMariaDBManager struct{}
 
 type contextAwarePHPManager struct {
@@ -155,6 +159,26 @@ func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput
 
 func (fakePHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
 	return fakePHPManager{}.StatusForVersion(context.Background(), "8.3"), nil
+}
+
+func (phpInfoPHPManager) Status(context.Context) phpenv.Status {
+	return phpenv.Status{
+		DefaultVersion: "8.3",
+		PHPInstalled:   true,
+		PHPPath:        "/usr/bin/php",
+		Ready:          true,
+		ListenAddress:  "127.0.0.1:9000",
+	}
+}
+
+func (phpInfoPHPManager) StatusForVersion(context.Context, string) phpenv.RuntimeStatus {
+	return phpenv.RuntimeStatus{
+		Version:       "8.3",
+		PHPInstalled:  true,
+		PHPPath:       "/usr/bin/php",
+		Ready:         true,
+		ListenAddress: "127.0.0.1:9000",
+	}
 }
 
 func (m *contextAwarePHPManager) Status(context.Context) phpenv.Status {
@@ -3693,6 +3717,52 @@ func TestPHPRemoveEndpoint(t *testing.T) {
 	}
 	if payload.PHP.PHPInstalled {
 		t.Fatal("php_installed = true, want false")
+	}
+}
+
+func TestPHPInfoEndpoint(t *testing.T) {
+	previousRunner := runPHPInfoCommand
+	runPHPInfoCommand = func(context.Context, string) ([]byte, error) {
+		return []byte("PHP Version => 8.3.6\nSystem => Darwin"), nil
+	}
+	t.Cleanup(func() {
+		runPHPInfoCommand = previousRunner
+	})
+
+	router, _, _ := newStartedTestDomainRouterWithManagers(t, fakeMariaDBManager{}, phpInfoPHPManager{}, fakePHPMyAdminManager{})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/php/info?version=8.3", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("content-type = %q, want text/html", contentType)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "<pre>") {
+		t.Fatalf("body = %q, want preformatted html", body)
+	}
+	if !strings.Contains(body, "PHP Version =&gt; 8.3.6") {
+		t.Fatalf("body = %q, want escaped phpinfo output", body)
+	}
+}
+
+func TestPHPInfoEndpointReturnsServiceUnavailableWhenRuntimeMissing(t *testing.T) {
+	router, _, _ := newStartedTestDomainRouterWithManagers(t, fakeMariaDBManager{}, fakePHPManager{}, fakePHPMyAdminManager{})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/php/info?version=8.3", nil))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusServiceUnavailable, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("content-type = %q, want text/html", contentType)
+	}
+	if !strings.Contains(recorder.Body.String(), "PHP 8.3 is not installed.") {
+		t.Fatalf("body = %q, want unavailable message", recorder.Body.String())
 	}
 }
 

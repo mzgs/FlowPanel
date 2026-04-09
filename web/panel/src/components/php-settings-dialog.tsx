@@ -48,6 +48,10 @@ const phpSettingsSections = [
     id: "runtime-info",
     label: "Runtime info",
   },
+  {
+    id: "php-info",
+    label: "PHP info",
+  },
 ] as const;
 
 type PHPSettingsSectionId = (typeof phpSettingsSections)[number]["id"];
@@ -197,6 +201,7 @@ export function PHPSettingsDialog({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [phpInfoLoaded, setPHPInfoLoaded] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -209,6 +214,7 @@ export function PHPSettingsDialog({
     setSavedForm(nextForm);
     setFieldErrors({});
     setError(null);
+    setPHPInfoLoaded(false);
   }, [open, status?.version]);
 
   function handleFieldChange(field: keyof PHPSettingsFormState, value: string) {
@@ -253,6 +259,7 @@ export function PHPSettingsDialog({
   const busy = saving || isPHPActionState(status?.state);
   const dirty = !sameFormState(form, savedForm);
   const saveDisabled = busy || !dirty || !status?.php_installed;
+  const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -494,7 +501,7 @@ export function PHPSettingsDialog({
                     <FieldError message={fieldErrors.error_reporting} />
                   </div>
                 </section>
-              ) : (
+              ) : activeSection === "runtime-info" ? (
                 <section className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="rounded-lg border border-[var(--app-border)] px-4 py-3">
@@ -536,6 +543,35 @@ export function PHPSettingsDialog({
                     <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 text-sm text-[var(--app-text-muted)]">
                       No runtime issues reported for {runtimeLabel}.
                     </div>
+                  )}
+                </section>
+              ) : (
+                <section className="flex min-h-[520px] flex-col gap-3">
+                  {!status?.php_installed ? (
+                    <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+                      Install the selected PHP runtime before opening PHP info.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-sm text-[var(--app-text-muted)]">
+                        Live output from `phpinfo()` for {runtimeLabel}.
+                      </div>
+                      <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--app-border)] bg-white">
+                        {!phpInfoLoaded ? (
+                          <div className="absolute inset-0 flex items-center justify-center bg-white text-sm text-[var(--app-text-muted)]">
+                            <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                            Loading PHP info...
+                          </div>
+                        ) : null}
+                        <iframe
+                          key={phpInfoSrc}
+                          title={`${runtimeLabel} phpinfo()`}
+                          src={phpInfoSrc}
+                          className="h-full min-h-[520px] w-full border-0"
+                          onLoad={() => setPHPInfoLoaded(true)}
+                        />
+                      </div>
+                    </>
                   )}
                 </section>
               )}

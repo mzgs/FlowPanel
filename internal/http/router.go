@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net"
@@ -48,6 +49,94 @@ import (
 )
 
 const googleDriveOAuthStateSessionKey = "google_drive_oauth_state"
+
+var runPHPInfoCommand = func(ctx context.Context, phpPath string) ([]byte, error) {
+	tempDir, err := os.MkdirTemp("", "flowpanel-phpinfo-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tempDir)
+
+	scriptPath := filepath.Join(tempDir, "index.php")
+	if err := os.WriteFile(scriptPath, []byte("<?php phpinfo();\n"), 0o644); err != nil {
+		return nil, err
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		return nil, err
+	}
+
+	cmd := exec.CommandContext(ctx, phpPath, "-S", address, "-t", tempDir)
+	var serverLog bytes.Buffer
+	cmd.Stdout = &serverLog
+	cmd.Stderr = &serverLog
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+
+	stopServer := func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-waitDone:
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	defer stopServer()
+
+	client := stdhttp.Client{Timeout: 2 * time.Second}
+	targetURL := "http://" + address + "/"
+
+	for {
+		req, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, targetURL, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		response, err := client.Do(req)
+		if err == nil {
+			defer response.Body.Close()
+			body, readErr := io.ReadAll(response.Body)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if response.StatusCode != stdhttp.StatusOK {
+				return nil, fmt.Errorf("php info server returned status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+			}
+			return body, nil
+		}
+
+		select {
+		case waitErr := <-waitDone:
+			if waitErr != nil {
+				logOutput := strings.TrimSpace(serverLog.String())
+				if logOutput != "" {
+					return nil, fmt.Errorf("php info server exited: %w: %s", waitErr, logOutput)
+				}
+				return nil, fmt.Errorf("php info server exited: %w", waitErr)
+			}
+			return nil, errors.New("php info server exited before responding")
+		default:
+		}
+
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+}
 
 type runtimeActionTracker struct {
 	mu      sync.Mutex
@@ -1792,6 +1881,40 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		phpInfoHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeHTML(w, stdhttp.StatusServiceUnavailable, renderPHPInfoErrorDocument("PHP runtime is not configured."))
+				return
+			}
+
+			version := phpActionVersion(r)
+			status := app.PHP.StatusForVersion(r.Context(), version)
+			if !status.PHPInstalled || strings.TrimSpace(status.PHPPath) == "" {
+				message := "The selected PHP runtime is not installed."
+				if strings.TrimSpace(status.Version) != "" {
+					message = fmt.Sprintf("PHP %s is not installed.", status.Version)
+				}
+				writeHTML(w, stdhttp.StatusServiceUnavailable, renderPHPInfoErrorDocument(message))
+				return
+			}
+
+			runCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			defer cancel()
+
+			output, err := runPHPInfoCommand(runCtx, status.PHPPath)
+			if err != nil {
+				app.Logger.Error("generate php info failed",
+					zap.String("version", status.Version),
+					zap.String("php_path", status.PHPPath),
+					zap.Error(err),
+				)
+				writeHTML(w, stdhttp.StatusInternalServerError, renderPHPInfoErrorDocument("PHP info could not be generated."))
+				return
+			}
+
+			writeHTML(w, stdhttp.StatusOK, renderPHPInfoDocument(status.Version, output))
+		})
+
 		phpInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -2119,6 +2242,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 		r.Method(stdhttp.MethodGet, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodHead, "/php", phpStatusHandler)
+		r.Method(stdhttp.MethodGet, "/php/info", phpInfoHandler)
 		r.Method(stdhttp.MethodPost, "/php/install", phpInstallHandler)
 		r.Method(stdhttp.MethodPost, "/php/remove", phpRemoveHandler)
 		r.Method(stdhttp.MethodPost, "/php/start", phpStartHandler)
@@ -4313,6 +4437,52 @@ func writeJSON(w stdhttp.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeHTML(w stdhttp.ResponseWriter, status int, body string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, body)
+}
+
+func renderPHPInfoDocument(version string, output []byte) string {
+	content := strings.TrimSpace(string(output))
+	lowerContent := strings.ToLower(content)
+	if strings.HasPrefix(lowerContent, "<!doctype html") || strings.HasPrefix(lowerContent, "<html") {
+		return content
+	}
+
+	title := "PHP info"
+	if strings.TrimSpace(version) != "" {
+		title = fmt.Sprintf("PHP %s info", version)
+	}
+
+	var builder strings.Builder
+	builder.WriteString("<!doctype html><html><head><meta charset=\"utf-8\">")
+	builder.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+	builder.WriteString("<title>")
+	builder.WriteString(html.EscapeString(title))
+	builder.WriteString("</title>")
+	builder.WriteString("<style>")
+	builder.WriteString("html{color-scheme:light;}body{margin:0;background:#ffffff;color:#111827;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace;}pre{margin:0;padding:16px;white-space:pre-wrap;word-break:break-word;}")
+	builder.WriteString("</style></head><body><pre>")
+	builder.WriteString(html.EscapeString(content))
+	builder.WriteString("</pre></body></html>")
+	return builder.String()
+}
+
+func renderPHPInfoErrorDocument(message string) string {
+	var builder strings.Builder
+	builder.WriteString("<!doctype html><html><head><meta charset=\"utf-8\">")
+	builder.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+	builder.WriteString("<title>PHP info unavailable</title>")
+	builder.WriteString("<style>")
+	builder.WriteString("html{color-scheme:light;}body{margin:0;background:#f8fafc;color:#0f172a;font:14px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;}main{padding:20px;}section{border:1px solid #d0d7de;background:#ffffff;padding:16px;}")
+	builder.WriteString("</style></head><body><main><section>")
+	builder.WriteString(html.EscapeString(strings.TrimSpace(message)))
+	builder.WriteString("</section></main></body></html>")
+	return builder.String()
 }
 
 func decodeJSON(r *stdhttp.Request, payload any) error {
