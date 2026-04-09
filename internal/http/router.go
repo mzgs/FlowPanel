@@ -1867,6 +1867,9 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		phpActionVersion := func(r *stdhttp.Request) string {
 			return strings.TrimSpace(r.URL.Query().Get("version"))
 		}
+		phpActionExtension := func(r *stdhttp.Request) string {
+			return strings.TrimSpace(r.URL.Query().Get("extension"))
+		}
 
 		phpStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {
@@ -2240,6 +2243,67 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		phpExtensionInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime is not configured",
+				})
+				return
+			}
+
+			version := phpActionVersion(r)
+			extension := phpActionExtension(r)
+			if extension == "" {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "extension query parameter is required",
+				})
+				return
+			}
+
+			var (
+				status phpenv.Status
+				err    error
+			)
+			if strings.TrimSpace(version) != "" {
+				_, err = app.PHP.InstallExtensionForVersion(r.Context(), version, extension)
+				status = app.PHP.Status(r.Context())
+			} else {
+				status, err = app.PHP.InstallExtension(r.Context(), extension)
+			}
+			if err != nil {
+				app.Logger.Error("install php extension failed",
+					zap.String("version", version),
+					zap.String("extension", extension),
+					zap.Error(err),
+				)
+				mutationEvent(r.Context(), "runtime", "install", "php_extension", extension, extension, "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			shouldSync := status.Ready
+			if strings.TrimSpace(version) != "" {
+				shouldSync = app.PHP.StatusForVersion(r.Context(), version).Ready
+			}
+			if shouldSync {
+				if err := syncDomainsWithCaddy(r.Context()); err != nil {
+					app.Logger.Error("sync domains after php extension install failed", zap.Error(err))
+					mutationEvent(r.Context(), "runtime", "install", "php_extension", extension, extension, "failed", "PHP extension installed but failed to republish domains.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+						"error": "php extension installed but failed to republish domains",
+					})
+					return
+				}
+			}
+
+			mutationEvent(r.Context(), "runtime", "install", "php_extension", extension, extension, "succeeded", fmt.Sprintf("Installed PHP extension %s.", extension))
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": status,
+			})
+		})
+
 		r.Method(stdhttp.MethodGet, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodHead, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodGet, "/php/info", phpInfoHandler)
@@ -2249,6 +2313,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodPost, "/php/stop", phpStopHandler)
 		r.Method(stdhttp.MethodPost, "/php/restart", phpRestartHandler)
 		r.Method(stdhttp.MethodPut, "/php/settings", phpSettingsUpdateHandler)
+		r.Method(stdhttp.MethodPost, "/php/extensions/install", phpExtensionInstallHandler)
 
 		phpMyAdminStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHPMyAdmin == nil {

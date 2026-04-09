@@ -53,6 +53,8 @@ type Manager interface {
 	StatusForVersion(context.Context, string) RuntimeStatus
 	Install(context.Context) error
 	InstallVersion(context.Context, string) error
+	InstallExtension(context.Context, string) (Status, error)
+	InstallExtensionForVersion(context.Context, string, string) (RuntimeStatus, error)
 	Remove(context.Context) error
 	RemoveVersion(context.Context, string) error
 	Start(context.Context) error
@@ -72,6 +74,7 @@ type RuntimeStatus struct {
 	PHPInstalled      bool     `json:"php_installed"`
 	PHPPath           string   `json:"php_path,omitempty"`
 	PHPVersion        string   `json:"php_version,omitempty"`
+	Extensions        []string `json:"extensions,omitempty"`
 	FPMInstalled      bool     `json:"fpm_installed"`
 	FPMPath           string   `json:"fpm_path,omitempty"`
 	ListenAddress     string   `json:"listen_address,omitempty"`
@@ -105,6 +108,7 @@ type Status struct {
 	PHPInstalled      bool            `json:"php_installed"`
 	PHPPath           string          `json:"php_path,omitempty"`
 	PHPVersion        string          `json:"php_version,omitempty"`
+	Extensions        []string        `json:"extensions,omitempty"`
 	FPMInstalled      bool            `json:"fpm_installed"`
 	FPMPath           string          `json:"fpm_path,omitempty"`
 	ListenAddress     string          `json:"listen_address,omitempty"`
@@ -387,6 +391,11 @@ func (s *Service) inspectVersion(ctx context.Context, version string) RuntimeSta
 		} else {
 			status.Issues = append(status.Issues, err.Error())
 		}
+		if output, err := runInspectCommand(ctx, phpPath, "-m"); err == nil {
+			status.Extensions = parsePHPExtensions(output)
+		} else {
+			status.Issues = append(status.Issues, fmt.Sprintf("inspect php extensions: %v", err))
+		}
 	}
 
 	fpmPath, fpmInstalled := lookupVersionedPHPFPM(ctx, version)
@@ -499,6 +508,7 @@ func copyRuntimeStatus(target *Status, runtimeStatus RuntimeStatus) {
 	target.PHPInstalled = runtimeStatus.PHPInstalled
 	target.PHPPath = runtimeStatus.PHPPath
 	target.PHPVersion = runtimeStatus.PHPVersion
+	target.Extensions = append([]string(nil), runtimeStatus.Extensions...)
 	target.FPMInstalled = runtimeStatus.FPMInstalled
 	target.FPMPath = runtimeStatus.FPMPath
 	target.ListenAddress = runtimeStatus.ListenAddress
@@ -917,6 +927,28 @@ func parsePHPVersion(output string) string {
 	}
 
 	return ""
+}
+
+func parsePHPExtensions(output string) []string {
+	extensions := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			continue
+		}
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		extensions = append(extensions, line)
+	}
+
+	return extensions
 }
 
 func parseFPMListenAddress(output string) string {

@@ -18,6 +18,7 @@ export type PHPRuntimeStatus = {
   php_installed: boolean;
   php_path?: string;
   php_version?: string;
+  extensions?: string[];
   fpm_installed: boolean;
   fpm_path?: string;
   listen_address?: string;
@@ -51,6 +52,7 @@ export type PHPStatus = {
   php_installed: boolean;
   php_path?: string;
   php_version?: string;
+  extensions?: string[];
   fpm_installed: boolean;
   fpm_path?: string;
   listen_address?: string;
@@ -135,6 +137,21 @@ function withVersion(path: string, version?: string): string {
 
 export async function installPHP(version?: string): Promise<PHPStatus> {
   const response = await fetch(withVersion("/api/php/install", version), {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parsePHPResponse(response);
+}
+
+export async function installPHPExtension(extension: string, version?: string): Promise<PHPStatus> {
+  const params = new URLSearchParams();
+  if (version) {
+    params.set("version", version);
+  }
+  params.set("extension", extension);
+
+  const response = await fetch(`/api/php/extensions/install?${params.toString()}`, {
     method: "POST",
     credentials: "include",
   });

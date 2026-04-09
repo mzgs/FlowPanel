@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  installPHPExtension,
   updatePHPSettings,
   type PHPApiError,
   type PHPSettings,
@@ -26,6 +27,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  isPHPExtensionInstalled,
+  phpExtensionCatalog,
+} from "@/lib/php-extension-catalog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -47,6 +52,10 @@ const phpSettingsSections = [
   {
     id: "runtime-info",
     label: "Runtime info",
+  },
+  {
+    id: "extensions",
+    label: "Extensions",
   },
   {
     id: "php-info",
@@ -200,6 +209,7 @@ export function PHPSettingsDialog({
   const [savedForm, setSavedForm] = useState<PHPSettingsFormState>(emptyForm);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [installingExtensionId, setInstallingExtensionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [phpInfoLoaded, setPHPInfoLoaded] = useState(false);
 
@@ -213,6 +223,7 @@ export function PHPSettingsDialog({
     setForm(nextForm);
     setSavedForm(nextForm);
     setFieldErrors({});
+    setInstallingExtensionId(null);
     setError(null);
     setPHPInfoLoaded(false);
   }, [open, status?.version]);
@@ -254,12 +265,42 @@ export function PHPSettingsDialog({
     }
   }
 
+  async function handleInstallExtension(extensionId: string) {
+    if (!status?.php_installed || !version) {
+      return;
+    }
+
+    setInstallingExtensionId(extensionId);
+    setError(null);
+
+    try {
+      const nextStatus = await installPHPExtension(extensionId, version);
+      onStatusChange(nextStatus);
+      toast.success(`${extensionId} install requested for PHP ${version}.`);
+    } catch (installError) {
+      const message =
+        installError instanceof Error && installError.message
+          ? installError.message
+          : `Failed to install ${extensionId}.`;
+      setError(message);
+      toast.error(message);
+    } finally {
+      setInstallingExtensionId(null);
+    }
+  }
+
   const runtimeLabel = version ? `PHP ${version}` : "PHP";
   const backgroundActionLabel = getPHPActionLabel(status?.state);
-  const busy = saving || isPHPActionState(status?.state);
+  const busy = saving || installingExtensionId !== null || isPHPActionState(status?.state);
   const dirty = !sameFormState(form, savedForm);
   const saveDisabled = busy || !dirty || !status?.php_installed;
   const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
+  const extensions = [...(status?.extensions ?? [])].sort((left, right) => left.localeCompare(right));
+  const trackedExtensions = phpExtensionCatalog.map((entry) => ({
+    ...entry,
+    installed: isPHPExtensionInstalled(entry, extensions),
+  }));
+  const installedTrackedCount = trackedExtensions.filter((entry) => entry.installed).length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -543,6 +584,72 @@ export function PHPSettingsDialog({
                     <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 text-sm text-[var(--app-text-muted)]">
                       No runtime issues reported for {runtimeLabel}.
                     </div>
+                  )}
+                </section>
+              ) : activeSection === "extensions" ? (
+                <section className="space-y-4">
+                  {!status?.php_installed ? (
+                    <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+                      Install the selected PHP runtime before viewing extensions.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-sm text-[var(--app-text-muted)]">
+                        <span>
+                          {installedTrackedCount} of {trackedExtensions.length} tracked extensions are installed for{" "}
+                          {runtimeLabel}.
+                        </span>
+                        <span className="text-xs text-[var(--app-text-muted)]/90">
+                          {extensions.length} loaded modules detected.
+                        </span>
+                        {status?.scan_dir ? (
+                          <span className="truncate text-xs text-[var(--app-text-muted)]/90">
+                            Scan dir: {status.scan_dir}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                        {trackedExtensions.map((extension) => (
+                          <li
+                            key={extension.id}
+                            className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-3 py-3"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-[var(--app-text)]">
+                                  {extension.label}
+                                </div>
+                              </div>
+
+                              {extension.installed ? (
+                                <Badge variant="default" className="h-6 rounded-sm px-2 text-[11px]">
+                                  Installed
+                                </Badge>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 rounded-md px-2.5 text-xs"
+                                  onClick={() => void handleInstallExtension(extension.id)}
+                                  disabled={busy}
+                                >
+                                  {installingExtensionId === extension.id ? (
+                                    <>
+                                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                                      Installing
+                                    </>
+                                  ) : (
+                                    "Install"
+                                  )}
+                                </Button>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
                   )}
                 </section>
               ) : (

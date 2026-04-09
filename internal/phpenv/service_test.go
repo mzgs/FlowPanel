@@ -15,6 +15,25 @@ func TestParsePHPVersion(t *testing.T) {
 	}
 }
 
+func TestParsePHPExtensions(t *testing.T) {
+	output := `
+[PHP Modules]
+Core
+ctype
+json
+
+[Zend Modules]
+Zend OPcache
+json
+`
+
+	got := parsePHPExtensions(output)
+	want := []string{"Core", "ctype", "json", "Zend OPcache"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsePHPExtensions() = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseFPMListenAddressTCP(t *testing.T) {
 	output := `
 [30-Mar-2026 20:49:47] NOTICE: [www]

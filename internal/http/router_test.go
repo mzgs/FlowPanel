@@ -65,6 +65,11 @@ type blockingReadyPHPManager struct {
 	releaseInstall chan struct{}
 }
 
+type extensionInstallPHPManager struct {
+	fakePHPManager
+	installedExtension string
+}
+
 type trackingMariaDBManager struct {
 	databases     []mariadb.DatabaseRecord
 	deleted       []string
@@ -158,6 +163,14 @@ func (fakePHPManager) UpdateSettings(context.Context, phpenv.UpdateSettingsInput
 }
 
 func (fakePHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return fakePHPManager{}.StatusForVersion(context.Background(), "8.3"), nil
+}
+
+func (fakePHPManager) InstallExtension(context.Context, string) (phpenv.Status, error) {
+	return fakePHPManager{}.Status(context.Background()), nil
+}
+
+func (fakePHPManager) InstallExtensionForVersion(context.Context, string, string) (phpenv.RuntimeStatus, error) {
 	return fakePHPManager{}.StatusForVersion(context.Background(), "8.3"), nil
 }
 
@@ -261,6 +274,14 @@ func (m *contextAwarePHPManager) UpdateSettingsForVersion(context.Context, strin
 	return m.StatusForVersion(context.Background(), "8.3"), nil
 }
 
+func (m *contextAwarePHPManager) InstallExtension(context.Context, string) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
+}
+
+func (m *contextAwarePHPManager) InstallExtensionForVersion(context.Context, string, string) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
+}
+
 func (m *blockingPHPManager) Status(context.Context) phpenv.Status {
 	return phpenv.Status{
 		DefaultVersion:   "8.3",
@@ -348,6 +369,14 @@ func (m *blockingPHPManager) UpdateSettings(context.Context, phpenv.UpdateSettin
 }
 
 func (m *blockingPHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
+}
+
+func (m *blockingPHPManager) InstallExtension(context.Context, string) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
+}
+
+func (m *blockingPHPManager) InstallExtensionForVersion(context.Context, string, string) (phpenv.RuntimeStatus, error) {
 	return m.StatusForVersion(context.Background(), "8.3"), nil
 }
 
@@ -444,6 +473,14 @@ func (m *blockingReadyPHPManager) UpdateSettings(context.Context, phpenv.UpdateS
 }
 
 func (m *blockingReadyPHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
+}
+
+func (m *blockingReadyPHPManager) InstallExtension(context.Context, string) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
+}
+
+func (m *blockingReadyPHPManager) InstallExtensionForVersion(context.Context, string, string) (phpenv.RuntimeStatus, error) {
 	return m.StatusForVersion(context.Background(), "8.3"), nil
 }
 
@@ -778,6 +815,43 @@ func (m *removablePHPManager) UpdateSettings(context.Context, phpenv.UpdateSetti
 }
 
 func (m *removablePHPManager) UpdateSettingsForVersion(context.Context, string, phpenv.UpdateSettingsInput) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
+}
+
+func (m *removablePHPManager) InstallExtension(context.Context, string) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
+}
+
+func (m *removablePHPManager) InstallExtensionForVersion(context.Context, string, string) (phpenv.RuntimeStatus, error) {
+	return m.StatusForVersion(context.Background(), "8.3"), nil
+}
+
+func (m *extensionInstallPHPManager) Status(context.Context) phpenv.Status {
+	return phpenv.Status{
+		DefaultVersion: "8.3",
+		Ready:          true,
+		ListenAddress:  "127.0.0.1:9000",
+		Extensions:     []string{m.installedExtension},
+	}
+}
+
+func (m *extensionInstallPHPManager) StatusForVersion(context.Context, string) phpenv.RuntimeStatus {
+	return phpenv.RuntimeStatus{
+		Version:       "8.3",
+		Ready:         true,
+		PHPInstalled:  true,
+		PHPPath:       "/usr/bin/php",
+		ListenAddress: "127.0.0.1:9000",
+		Extensions:    []string{m.installedExtension},
+	}
+}
+
+func (m *extensionInstallPHPManager) InstallExtension(context.Context, string) (phpenv.Status, error) {
+	return m.Status(context.Background()), nil
+}
+
+func (m *extensionInstallPHPManager) InstallExtensionForVersion(_ context.Context, _ string, extension string) (phpenv.RuntimeStatus, error) {
+	m.installedExtension = extension
 	return m.StatusForVersion(context.Background(), "8.3"), nil
 }
 
@@ -3763,6 +3837,30 @@ func TestPHPInfoEndpointReturnsServiceUnavailableWhenRuntimeMissing(t *testing.T
 	}
 	if !strings.Contains(recorder.Body.String(), "PHP 8.3 is not installed.") {
 		t.Fatalf("body = %q, want unavailable message", recorder.Body.String())
+	}
+}
+
+func TestPHPExtensionInstallEndpoint(t *testing.T) {
+	manager := &extensionInstallPHPManager{}
+	router, _, _ := newStartedTestDomainRouterWithManagers(t, fakeMariaDBManager{}, manager, fakePHPMyAdminManager{})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/php/extensions/install?version=8.3&extension=redis", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var payload struct {
+		PHP struct {
+			Extensions []string `json:"extensions"`
+		} `json:"php"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.PHP.Extensions) != 1 || payload.PHP.Extensions[0] != "redis" {
+		t.Fatalf("extensions = %#v, want [redis]", payload.PHP.Extensions)
 	}
 }
 
