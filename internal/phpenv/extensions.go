@@ -15,7 +15,7 @@ type phpExtensionDefinition struct {
 }
 
 var phpExtensionDefinitions = []phpExtensionDefinition{
-	{id: "oncube", aliases: []string{"ioncube", "ioncubeloader"}},
+	{id: "ioncube", aliases: []string{"oncube", "ioncubeloader"}},
 	{id: "fileinfo", aptPackages: []string{"php{version}-common", "php-common"}, rpmPackages: []string{"{remi}-php-common"}},
 	{id: "opcache", aliases: []string{"zendopcache"}, aptPackages: []string{"php{version}-opcache", "php-opcache"}, rpmPackages: []string{"{remi}-php-opcache"}},
 	{id: "memcached", aptPackages: []string{"php{version}-memcached", "php-memcached"}, rpmPackages: []string{"{remi}-php-pecl-memcached"}},

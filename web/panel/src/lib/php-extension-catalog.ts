@@ -5,7 +5,7 @@ export type PHPExtensionCatalogEntry = {
 };
 
 export const phpExtensionCatalog: PHPExtensionCatalogEntry[] = [
-  { id: "oncube", label: "onCube", aliases: ["ioncube", "ioncube loader"] },
+  { id: "ioncube", label: "ionCube", aliases: ["oncube", "ioncube loader"] },
   { id: "fileinfo", label: "fileinfo" },
   { id: "opcache", label: "opcache", aliases: ["zend opcache"] },
   { id: "memcached", label: "memcached" },
