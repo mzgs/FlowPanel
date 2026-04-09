@@ -58,6 +58,8 @@ import { toast } from "sonner";
 
 const compactActionButtonClassName = "h-7 gap-1.5 px-2.5 text-xs";
 const statusMetaBadgeClassName = "h-5 rounded-sm px-1.5 py-0 text-[11px] font-medium";
+const postInstallServiceStartWaitMs = 30_000;
+type StatusMetaTone = "success" | "danger" | "info";
 type RemovableApplication =
   | { kind: "php"; version: string }
   | { kind: "mariadb" }
@@ -266,7 +268,7 @@ function ApplicationCard({
   name: string;
   summary: string;
   badge: { label: string; variant: "default" | "secondary" | "destructive" | "outline" };
-  meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: "success" | "danger"; fullWidth?: boolean }>;
+  meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: StatusMetaTone; fullWidth?: boolean }>;
   actions: ReactNode;
   configAction?: ReactNode;
 }) {
@@ -314,7 +316,9 @@ function ApplicationCard({
                             item.tone === "success" &&
                               "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
                             item.tone === "danger" &&
-                              "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+                              "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
+                            item.tone === "info" &&
+                              "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
                           )}
                         >
                           {item.value}
@@ -415,6 +419,15 @@ function phpRuntimeActionKey(action: "install" | "remove" | "start" | "stop" | "
   return `${action}-php-${version}`;
 }
 
+function getPHPInstallActionVersion(runningAction: string | null) {
+  const prefix = "install-php-";
+  if (!runningAction?.startsWith(prefix)) {
+    return null;
+  }
+
+  return runningAction.slice(prefix.length);
+}
+
 function getAvailablePHPVersions(status: PHPStatus | null) {
   const availableVersions = status?.available_versions?.filter((value) => value.trim().length > 0) ?? [];
   if (availableVersions.length > 0) {
@@ -447,6 +460,46 @@ function getSelectedPHPRuntime(status: PHPStatus | null, version: string) {
   }
 
   return runtimes[0];
+}
+
+function getPHPRuntimeByVersion(status: PHPStatus | null, version: string) {
+  const normalizedVersion = version.trim();
+  if (!normalizedVersion) {
+    return null;
+  }
+
+  return (status?.versions ?? []).find((runtime) => runtime.version === normalizedVersion) ?? null;
+}
+
+function shouldWaitForPHPServiceAfterInstall(status: PHPStatus, version: string) {
+  const runtime = getPHPRuntimeByVersion(status, version);
+  return Boolean(runtime?.fpm_installed && !runtime.service_running);
+}
+
+function shouldWaitForMariaDBServiceAfterInstall(status: MariaDBStatus) {
+  return status.server_installed && !status.service_running;
+}
+
+function getPostInstallServiceStartingAction(
+  runningAction: string | null,
+  phpStatus: PHPStatus | null,
+  mariadbStatus: MariaDBStatus | null,
+) {
+  if (runningAction === "install-mariadb" && mariadbStatus && shouldWaitForMariaDBServiceAfterInstall(mariadbStatus)) {
+    return runningAction;
+  }
+
+  const installingPHPVersion = getPHPInstallActionVersion(runningAction);
+  if (!installingPHPVersion) {
+    return null;
+  }
+
+  const installingRuntime = getPHPRuntimeByVersion(phpStatus, installingPHPVersion);
+  if (installingRuntime?.fpm_installed && !installingRuntime.service_running) {
+    return runningAction;
+  }
+
+  return null;
 }
 
 function formatInstalledPHPRuntimeVersion(status: PHPRuntimeStatus | null) {
@@ -495,10 +548,20 @@ function PHPRuntimeCard({
   const busyLabel = getRuntimeActionLabel(status?.state);
   const actionKey = (action: Parameters<typeof phpRuntimeActionKey>[0]) =>
     phpRuntimeActionKey(action, selectedVersion);
+  const serviceStartingAfterInstall =
+    runningAction === actionKey("install") && Boolean(status?.fpm_installed) && !status?.service_running;
   const serviceValue =
-    busyLabel?.replace("...", "") ??
-    (status?.service_running ? "Running" : status?.fpm_installed ? "Installed" : "Stopped");
-  const serviceTone = busyLabel ? undefined : status?.service_running ? "success" : "danger";
+    serviceStartingAfterInstall
+      ? "Service starting..."
+      : busyLabel?.replace("...", "") ??
+        (status?.service_running ? "Running" : status?.fpm_installed ? "Installed" : "Stopped");
+  const serviceTone: StatusMetaTone | undefined = serviceStartingAfterInstall
+    ? "info"
+    : busyLabel
+      ? undefined
+      : status?.service_running
+        ? "success"
+        : "danger";
   const removeEnabled = canRemovePHPRuntime(status);
 
   return (
@@ -536,7 +599,9 @@ function PHPRuntimeCard({
                       serviceTone === "success" &&
                         "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
                       serviceTone === "danger" &&
-                        "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+                        "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300",
+                      serviceTone === "info" &&
+                        "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
                     )}
                   >
                     {serviceValue}
@@ -679,6 +744,11 @@ export function ApplicationsPage() {
   const [phpMyAdminSettingsOpen, setPHPMyAdminSettingsOpen] = useState(false);
 
   const [runningAction, setRunningAction] = useState<string | null>(null);
+  const postInstallServiceStartingAction = getPostInstallServiceStartingAction(
+    runningAction,
+    phpStatus,
+    mariadbStatus,
+  );
 
   async function loadPage(options?: {
     showLoading?: boolean;
@@ -797,11 +867,33 @@ export function ApplicationsPage() {
   }, [phpStatus, selectedPHPVersion]);
 
   useEffect(() => {
+    if (!postInstallServiceStartingAction) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setRunningAction((current) => (current === postInstallServiceStartingAction ? null : current));
+    }, postInstallServiceStartWaitMs);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [postInstallServiceStartingAction]);
+
+  useEffect(() => {
     if (
       runningAction === "install-mariadb" &&
-      (mariadbStatus?.server_installed || mariadbStatus?.client_installed)
+      mariadbStatus?.service_running
     ) {
       setRunningAction(null);
+      return;
+    }
+    const installingPHPVersion = getPHPInstallActionVersion(runningAction);
+    if (installingPHPVersion) {
+      const installingRuntime = getPHPRuntimeByVersion(phpStatus, installingPHPVersion);
+      if (installingRuntime?.service_running || installingRuntime?.ready) {
+        setRunningAction(null);
+      }
       return;
     }
     if (
@@ -844,6 +936,10 @@ export function ApplicationsPage() {
   const phpMyAdminRemoveEnabled = canRemovePHPMyAdmin(phpMyAdminStatus);
   const mariadbBusyLabel = getRuntimeActionLabel(mariadbStatus?.state);
   const phpMyAdminBusyLabel = getRuntimeActionLabel(phpMyAdminStatus?.state);
+  const mariaDBServiceStartingAfterInstall =
+    runningAction === "install-mariadb" &&
+    Boolean(mariadbStatus?.server_installed) &&
+    !mariadbStatus?.service_running;
   const removeDialogDescription =
     removeCandidate?.kind === "php"
       ? `Remove PHP ${removeCandidate.version} from this node? Domains assigned to PHP ${removeCandidate.version} will stop serving until that runtime is installed again.`
@@ -925,11 +1021,13 @@ export function ApplicationsPage() {
       const nextStatus = await installPHP(version);
       setPHPStatus(nextStatus);
       toast.success(`PHP ${version} installed.`);
+      if (!shouldWaitForPHPServiceAfterInstall(nextStatus, version)) {
+        setRunningAction(null);
+      }
     } catch (error) {
       const message = getErrorMessage(error, `Failed to install PHP ${version}.`);
       setPageError(message);
       toast.error(message);
-    } finally {
       setRunningAction(null);
     }
   }
@@ -993,11 +1091,13 @@ export function ApplicationsPage() {
       const nextStatus = await installMariaDB();
       setMariaDBStatus(nextStatus);
       toast.success("MariaDB installed.");
+      if (!shouldWaitForMariaDBServiceAfterInstall(nextStatus)) {
+        setRunningAction(null);
+      }
     } catch (error) {
       const message = getErrorMessage(error, "Failed to install MariaDB.");
       setPageError(message);
       toast.error(message);
-    } finally {
       setRunningAction(null);
     }
   }
@@ -1191,10 +1291,17 @@ export function ApplicationsPage() {
             meta={[
               {
                 label: "Service",
-                value:
-                  mariadbBusyLabel?.replace("...", "") ??
-                  (mariadbStatus?.service_running ? "Running" : "Stopped"),
-                tone: mariadbBusyLabel ? undefined : mariadbStatus?.service_running ? "success" : "danger",
+                value: mariaDBServiceStartingAfterInstall
+                  ? "Service starting..."
+                  : mariadbBusyLabel?.replace("...", "") ??
+                    (mariadbStatus?.service_running ? "Running" : "Stopped"),
+                tone: mariaDBServiceStartingAfterInstall
+                  ? "info"
+                  : mariadbBusyLabel
+                    ? undefined
+                    : mariadbStatus?.service_running
+                      ? "success"
+                      : "danger",
               },
             ]}
             configAction={
