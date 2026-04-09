@@ -4,10 +4,27 @@ export type PHPExtensionCatalogEntry = {
   aliases?: string[];
   installId?: string;
   installSupported?: boolean;
+  requiredDependencies?: PHPExtensionRequiredDependencies;
+};
+
+export type PHPExtensionRequiredDependencies = {
+  apt?: string[];
+  dnf?: string[];
+  homebrew?: string[];
+  yum?: string[];
 };
 
 export const phpExtensionCatalog: PHPExtensionCatalogEntry[] = [
-  { id: "amqp", label: "amqp" },
+  {
+    id: "amqp",
+    label: "amqp",
+    requiredDependencies: {
+      apt: ["librabbitmq-dev"],
+      dnf: ["librabbitmq-devel"],
+      homebrew: ["rabbitmq-c"],
+      yum: ["librabbitmq-devel"],
+    },
+  },
   { id: "apcu", label: "apcu" },
   { id: "calendar", label: "calendar", installSupported: false },
   { id: "ds", label: "ds" },

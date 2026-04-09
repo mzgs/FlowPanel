@@ -62,6 +62,42 @@ func TestAptVersionPackagesSkipsOpcacheForPHP85(t *testing.T) {
 	}
 }
 
+func TestPHPToolCandidatesPreferVersionedBinary(t *testing.T) {
+	t.Parallel()
+
+	phpizeCandidates := phpizeBinaryCandidates("8.4", "/usr/bin/php8.4")
+	if len(phpizeCandidates) == 0 || phpizeCandidates[0] != "/usr/bin/phpize8.4" {
+		t.Fatalf("expected versioned phpize first, got %#v", phpizeCandidates)
+	}
+	if slices.Index(phpizeCandidates, "/usr/bin/phpize8.4") > slices.Index(phpizeCandidates, "/usr/bin/phpize") {
+		t.Fatalf("expected versioned phpize before unversioned phpize, got %#v", phpizeCandidates)
+	}
+
+	phpConfigCandidates := phpConfigBinaryCandidates("8.4", "/usr/bin/php8.4")
+	if len(phpConfigCandidates) == 0 || phpConfigCandidates[0] != "/usr/bin/php-config8.4" {
+		t.Fatalf("expected versioned php-config first, got %#v", phpConfigCandidates)
+	}
+	if slices.Index(phpConfigCandidates, "/usr/bin/php-config8.4") > slices.Index(phpConfigCandidates, "/usr/bin/php-config") {
+		t.Fatalf("expected versioned php-config before unversioned php-config, got %#v", phpConfigCandidates)
+	}
+}
+
+func TestAMQPExtensionDefinesRabbitMQRequiredDependencies(t *testing.T) {
+	t.Parallel()
+
+	definition, ok := findPHPExtensionDefinition("amqp")
+	if !ok {
+		t.Fatal("expected amqp extension definition")
+	}
+
+	if !slices.Contains(definition.requiredDependencies.apt, "librabbitmq-dev") {
+		t.Fatalf("expected amqp apt dependencies to include librabbitmq-dev, got %#v", definition.requiredDependencies.apt)
+	}
+	if !slices.Contains(definition.requiredDependencies.homebrew, "rabbitmq-c") {
+		t.Fatalf("expected amqp homebrew dependencies to include rabbitmq-c, got %#v", definition.requiredDependencies.homebrew)
+	}
+}
+
 type staticError string
 
 func (e staticError) Error() string {

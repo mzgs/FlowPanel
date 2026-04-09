@@ -14,10 +14,18 @@ import (
 )
 
 type phpExtensionDefinition struct {
-	id           string
-	aliases      []string
-	piePackage   string
-	sharedObject string
+	id                   string
+	aliases              []string
+	piePackage           string
+	sharedObject         string
+	requiredDependencies phpExtensionRequiredDependencies
+}
+
+type phpExtensionRequiredDependencies struct {
+	apt      []string
+	dnf      []string
+	homebrew []string
+	yum      []string
 }
 
 var phpExtensionDefinitions = []phpExtensionDefinition{
@@ -42,7 +50,12 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "apcu", piePackage: "apcu/apcu"},
 	{id: "pcov", piePackage: "pecl/pcov"},
 	{id: "ds", piePackage: "php-ds/ext-ds"},
-	{id: "amqp", piePackage: "php-amqp/php-amqp"},
+	{id: "amqp", piePackage: "php-amqp/php-amqp", requiredDependencies: phpExtensionRequiredDependencies{
+		apt:      []string{"librabbitmq-dev"},
+		dnf:      []string{"librabbitmq-devel"},
+		homebrew: []string{"rabbitmq-c"},
+		yum:      []string{"librabbitmq-devel"},
+	}},
 	{id: "parallel", piePackage: "pecl/parallel"},
 	{id: "msgpack", piePackage: "msgpack/msgpack-php"},
 	{id: "zip", piePackage: "pecl/zip"},
@@ -243,6 +256,10 @@ func normalizePHPExtensionKey(value string) string {
 }
 
 func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	if err := installPHPExtensionRequiredDependencies(ctx, definition); err != nil {
+		return err
+	}
+
 	piePath, err := ensurePIEBinary(ctx)
 	if err != nil {
 		return err
@@ -273,6 +290,135 @@ func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus
 	}
 
 	return nil
+}
+
+func installPHPExtensionRequiredDependencies(ctx context.Context, definition phpExtensionDefinition) error {
+	packageManager, packages, ok, err := matchingPHPExtensionRequiredDependency(definition.requiredDependencies)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	commands, err := dependencyInstallCommands(packageManager, packages)
+	if err != nil {
+		return err
+	}
+	if err := runCommands(ctx, commands...); err != nil {
+		return fmt.Errorf(
+			"install system dependencies for php extension %q with %s: %w",
+			definition.id,
+			packageManager,
+			err,
+		)
+	}
+
+	return nil
+}
+
+func matchingPHPExtensionRequiredDependency(dependencies phpExtensionRequiredDependencies) (string, []string, bool, error) {
+	if !dependencies.hasPackages() {
+		return "", nil, false, nil
+	}
+
+	packageManager := phpExtensionDependencyPackageManager()
+	if packageManager == "" {
+		return "", nil, false, fmt.Errorf("install system dependencies: unsupported package manager on %s", runtime.GOOS)
+	}
+
+	packages := dependencies.packagesFor(packageManager)
+	if len(packages) == 0 {
+		return "", nil, false, fmt.Errorf("install system dependencies: no packages configured for %s", packageManager)
+	}
+
+	return packageManager, packages, true, nil
+}
+
+func (d phpExtensionRequiredDependencies) hasPackages() bool {
+	return len(d.apt) > 0 || len(d.dnf) > 0 || len(d.homebrew) > 0 || len(d.yum) > 0
+}
+
+func (d phpExtensionRequiredDependencies) packagesFor(packageManager string) []string {
+	switch strings.TrimSpace(packageManager) {
+	case "apt":
+		return d.apt
+	case "dnf":
+		return d.dnf
+	case "homebrew":
+		return d.homebrew
+	case "yum":
+		return d.yum
+	default:
+		return nil
+	}
+}
+
+func phpExtensionDependencyPackageManager() string {
+	switch runtime.GOOS {
+	case "darwin":
+		if _, ok := lookupCommand("brew"); ok {
+			return "homebrew"
+		}
+	case "linux":
+		if _, ok := lookupCommand("apt-get"); ok {
+			return "apt"
+		}
+		if _, ok := lookupCommand("dnf"); ok {
+			return "dnf"
+		}
+		if _, ok := lookupCommand("yum"); ok {
+			return "yum"
+		}
+	}
+
+	return ""
+}
+
+func dependencyInstallCommands(packageManager string, packages []string) ([][]string, error) {
+	packages = dedupeStrings(packages)
+	if len(packages) == 0 {
+		return nil, nil
+	}
+
+	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
+		return nil, fmt.Errorf("install system dependencies: root privileges are required on linux")
+	}
+
+	switch packageManager {
+	case "apt":
+		aptPath, ok := lookupCommand("apt-get")
+		if !ok {
+			return nil, fmt.Errorf("install system dependencies: apt-get is not available")
+		}
+		installArgs := append([]string{aptPath, "install", "-y"}, packages...)
+		return [][]string{
+			{aptPath, "update"},
+			installArgs,
+		}, nil
+	case "dnf":
+		dnfPath, ok := lookupCommand("dnf")
+		if !ok {
+			return nil, fmt.Errorf("install system dependencies: dnf is not available")
+		}
+		installArgs := append([]string{dnfPath, "install", "-y"}, packages...)
+		return [][]string{installArgs}, nil
+	case "homebrew":
+		brewPath, ok := lookupCommand("brew")
+		if !ok {
+			return nil, fmt.Errorf("install system dependencies: brew is not available")
+		}
+		installArgs := append([]string{brewPath, "install"}, packages...)
+		return [][]string{installArgs}, nil
+	case "yum":
+		yumPath, ok := lookupCommand("yum")
+		if !ok {
+			return nil, fmt.Errorf("install system dependencies: yum is not available")
+		}
+		installArgs := append([]string{yumPath, "install", "-y"}, packages...)
+		return [][]string{installArgs}, nil
+	default:
+		return nil, fmt.Errorf("install system dependencies: unsupported package manager %s", packageManager)
+	}
 }
 
 func ensurePIEBinary(ctx context.Context) (string, error) {
@@ -405,11 +551,11 @@ func phpizeBinaryCandidates(version, phpPath string) []string {
 	dir := filepath.Dir(strings.TrimSpace(phpPath))
 	versionNoDots := strings.ReplaceAll(version, ".", "")
 	return dedupeStrings([]string{
-		filepath.Join(dir, "phpize"),
 		filepath.Join(dir, "phpize"+version),
 		filepath.Join(dir, "phpize"+versionNoDots),
 		"phpize" + version,
 		"phpize" + versionNoDots,
+		filepath.Join(dir, "phpize"),
 		"phpize",
 	})
 }
@@ -418,11 +564,11 @@ func phpConfigBinaryCandidates(version, phpPath string) []string {
 	dir := filepath.Dir(strings.TrimSpace(phpPath))
 	versionNoDots := strings.ReplaceAll(version, ".", "")
 	return dedupeStrings([]string{
-		filepath.Join(dir, "php-config"),
 		filepath.Join(dir, "php-config"+version),
 		filepath.Join(dir, "php-config"+versionNoDots),
 		"php-config" + version,
 		"php-config" + versionNoDots,
+		filepath.Join(dir, "php-config"),
 		"php-config",
 	})
 }
