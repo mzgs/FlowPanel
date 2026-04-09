@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"flowpanel/internal/ftp"
+	"flowpanel/internal/phpenv"
 )
 
 const (
@@ -24,6 +25,7 @@ type Record struct {
 	PanelName               string `json:"panel_name"`
 	PanelURL                string `json:"panel_url"`
 	GitHubToken             string `json:"github_token"`
+	DefaultPHPVersion       string `json:"default_php_version"`
 	FTPEnabled              bool   `json:"ftp_enabled"`
 	FTPHost                 string
 	FTPPort                 int `json:"ftp_port"`
@@ -66,6 +68,7 @@ func (s *Service) Get(ctx context.Context) (Record, error) {
 	if err == nil {
 		record.FTPHost = ftp.DefaultHost()
 		record.FTPPublicIP = ""
+		record.DefaultPHPVersion = phpenv.NormalizeVersion(record.DefaultPHPVersion)
 		record.FTPPassivePorts = normalizeFTPPassivePorts(record.FTPPassivePorts)
 		return record, nil
 	}
@@ -104,6 +107,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	record.GoogleDriveEmail = current.GoogleDriveEmail
 	record.GoogleDriveRefreshToken = current.GoogleDriveRefreshToken
 	record.GoogleDriveConnected = strings.TrimSpace(record.GoogleDriveRefreshToken) != ""
+	record.DefaultPHPVersion = current.DefaultPHPVersion
 
 	if err := s.store.Upsert(ctx, record); err != nil {
 		return Record{}, err
@@ -156,11 +160,36 @@ func (s *Service) ClearGoogleDriveConnection(ctx context.Context) (Record, error
 	return record, nil
 }
 
+func (s *Service) SetDefaultPHPVersion(ctx context.Context, version string) (Record, error) {
+	normalizedVersion := phpenv.NormalizeVersion(version)
+	if normalizedVersion == "" {
+		return Record{}, ValidationErrors{
+			"default_php_version": "Select a supported PHP version.",
+		}
+	}
+
+	record, err := s.Get(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	record.DefaultPHPVersion = normalizedVersion
+
+	if s == nil || s.store == nil {
+		return record, nil
+	}
+	if err := s.store.Upsert(ctx, record); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
 func defaultRecord() Record {
 	return Record{
 		PanelName:            defaultPanelName,
 		PanelURL:             "",
 		GitHubToken:          "",
+		DefaultPHPVersion:    "",
 		FTPEnabled:           false,
 		FTPHost:              "0.0.0.0",
 		FTPPort:              2121,

@@ -234,6 +234,16 @@ func runServer() error {
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
 	settingsService := settings.NewService(settingsStore)
+	phpManager.SetDefaultVersionResolver(func(ctx context.Context, status phpenv.Status) string {
+		record, err := settingsService.Get(ctx)
+		if err != nil {
+			return status.DefaultVersion
+		}
+		if strings.TrimSpace(record.DefaultPHPVersion) == "" {
+			return status.DefaultVersion
+		}
+		return record.DefaultPHPVersion
+	})
 	ftpService := ftp.NewService(ftpStore, domainService)
 	ftpRuntime := ftp.NewRuntime(logger.Named("ftp"), ftpService)
 	googleDriveService := googledrive.NewService(cfg.GoogleDrive)

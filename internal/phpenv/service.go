@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 )
 
 var supportedPHPVersions = []string{
+	"8.5",
 	"8.4",
 	"8.3",
 	"8.2",
@@ -166,7 +168,8 @@ func (v ValidationErrors) Error() string {
 }
 
 type Service struct {
-	logger *zap.Logger
+	logger                 *zap.Logger
+	defaultVersionResolver func(context.Context, Status) string
 }
 
 type versionActionPlan struct {
@@ -191,6 +194,14 @@ func NewService(logger *zap.Logger) *Service {
 	return &Service{
 		logger: logger,
 	}
+}
+
+func (s *Service) SetDefaultVersionResolver(fn func(context.Context, Status) string) {
+	if s == nil {
+		return
+	}
+
+	s.defaultVersionResolver = fn
 }
 
 func SupportedVersions() []string {
@@ -232,8 +243,11 @@ func (s *Service) Status(ctx context.Context) Status {
 		Versions:          runtimes,
 		DefaultVersion:    defaultVersion,
 	}
+	if resolved := s.resolvePreferredDefaultVersion(ctx, status); resolved != "" {
+		status.DefaultVersion = resolved
+	}
 
-	defaultRuntime := findRuntimeStatus(runtimes, defaultVersion)
+	defaultRuntime := findRuntimeStatus(runtimes, status.DefaultVersion)
 	if defaultRuntime.Version == "" && len(runtimes) > 0 {
 		defaultRuntime = runtimes[0]
 	}
@@ -241,6 +255,24 @@ func (s *Service) Status(ctx context.Context) Status {
 	copyRuntimeStatus(&status, defaultRuntime)
 
 	return status
+}
+
+func (s *Service) resolvePreferredDefaultVersion(ctx context.Context, status Status) string {
+	if s == nil || s.defaultVersionResolver == nil {
+		return ""
+	}
+
+	candidate := NormalizeVersion(s.defaultVersionResolver(ctx, status))
+	if candidate == "" {
+		return ""
+	}
+	for _, version := range status.AvailableVersions {
+		if version == candidate {
+			return candidate
+		}
+	}
+
+	return ""
 }
 
 func (s *Service) StatusForVersion(ctx context.Context, version string) RuntimeStatus {
@@ -278,7 +310,19 @@ func (s *Service) InstallVersion(ctx context.Context, version string) error {
 		zap.String("version", target),
 		zap.String("package_manager", plan.packageManager),
 	)
-	return runCommands(ctx, plan.installCmds...)
+	if err := runCommands(ctx, plan.installCmds...); err != nil {
+		if shouldRetryAPTInstallWithOndrej(plan, err) {
+			s.logger.Info("retrying php install after bootstrapping ondrej/php repository",
+				zap.String("version", target),
+			)
+			if bootstrapErr := bootstrapOndrejPHPRepository(ctx); bootstrapErr != nil {
+				return fmt.Errorf("bootstrap ondrej/php repository: %w", bootstrapErr)
+			}
+			return runCommands(ctx, plan.installCmds...)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) Remove(ctx context.Context) error {
@@ -548,6 +592,94 @@ func preferredInstallVersion() string {
 	return supportedPHPVersions[0]
 }
 
+func shouldRetryAPTInstallWithOndrej(plan versionActionPlan, err error) bool {
+	if err == nil || runtime.GOOS != "linux" || plan.packageManager != "apt" {
+		return false
+	}
+	if !isUbuntuLikeLinux() {
+		return false
+	}
+
+	return isMissingAPTPackageError(err)
+}
+
+func isMissingAPTPackageError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unable to locate package") ||
+		strings.Contains(message, "has no installation candidate")
+}
+
+func bootstrapOndrejPHPRepository(ctx context.Context) error {
+	aptPath, ok := lookupCommand("apt-get")
+	if !ok {
+		return errors.New("apt-get is not available")
+	}
+
+	return runCommands(
+		ctx,
+		[]string{aptPath, "update"},
+		[]string{aptPath, "install", "-y", "software-properties-common"},
+		[]string{"add-apt-repository", "-y", "ppa:ondrej/php"},
+		[]string{aptPath, "update"},
+	)
+}
+
+func isUbuntuLikeLinux() bool {
+	info := parseOSReleaseFile("/etc/os-release")
+	if info.id == "ubuntu" {
+		return true
+	}
+
+	for _, item := range strings.Fields(info.idLike) {
+		if item == "ubuntu" {
+			return true
+		}
+	}
+
+	return false
+}
+
+type osReleaseInfo struct {
+	id     string
+	idLike string
+}
+
+func parseOSReleaseFile(path string) osReleaseInfo {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return osReleaseInfo{}
+	}
+
+	var info osReleaseInfo
+	for _, rawLine := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+
+		switch key {
+		case "ID":
+			info.id = strings.ToLower(value)
+		case "ID_LIKE":
+			info.idLike = strings.ToLower(value)
+		}
+	}
+
+	return info
+}
+
 func detectVersionActionPlan(version string) versionActionPlan {
 	version = normalizeRequestedVersion(version)
 
@@ -690,11 +822,10 @@ func detectVersionActionPlan(version string) versionActionPlan {
 
 func aptVersionPackages(version string) []string {
 	prefix := "php" + version
-	return []string{
+	packages := []string{
 		prefix + "-fpm",
 		prefix + "-cli",
 		prefix + "-common",
-		prefix + "-opcache",
 		prefix + "-bcmath",
 		prefix + "-mysql",
 		prefix + "-curl",
@@ -705,15 +836,20 @@ func aptVersionPackages(version string) []string {
 		prefix + "-xml",
 		prefix + "-zip",
 	}
+
+	if phpVersionHasSeparateOpcachePackage(version) {
+		packages = append(packages[:3], append([]string{prefix + "-opcache"}, packages[3:]...)...)
+	}
+
+	return packages
 }
 
 func rpmVersionPackages(version string) []string {
 	prefix := remiCollectionForVersion(version) + "-php"
-	return []string{
+	packages := []string{
 		prefix + "-fpm",
 		prefix + "-cli",
 		prefix + "-common",
-		prefix + "-opcache",
 		prefix + "-bcmath",
 		prefix + "-mysqlnd",
 		prefix + "-curl",
@@ -723,6 +859,34 @@ func rpmVersionPackages(version string) []string {
 		prefix + "-xml",
 		prefix + "-process",
 	}
+
+	if phpVersionHasSeparateOpcachePackage(version) {
+		packages = append(packages[:3], append([]string{prefix + "-opcache"}, packages[3:]...)...)
+	}
+
+	return packages
+}
+
+func phpVersionHasSeparateOpcachePackage(version string) bool {
+	parts := strings.Split(NormalizeVersion(version), ".")
+	if len(parts) != 2 {
+		return true
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return true
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return true
+	}
+
+	if major != 8 {
+		return true
+	}
+
+	return minor < 5
 }
 
 func brewFormulaForVersion(version string) string {

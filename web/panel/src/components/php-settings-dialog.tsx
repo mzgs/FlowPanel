@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   installPHPExtension,
+  setDefaultPHPVersion,
   updatePHPSettings,
   type PHPApiError,
   type PHPSettings,
@@ -70,6 +71,7 @@ type PHPSettingsDialogProps = {
   onOpenChange: (open: boolean) => void;
   status: PHPRuntimeStatus | null;
   version: string;
+  defaultVersion?: string;
   onStatusChange: (status: PHPStatus) => void;
 };
 
@@ -201,6 +203,7 @@ export function PHPSettingsDialog({
   onOpenChange,
   status,
   version,
+  defaultVersion,
   onStatusChange,
 }: PHPSettingsDialogProps) {
   const [activeSection, setActiveSection] =
@@ -209,6 +212,7 @@ export function PHPSettingsDialog({
   const [savedForm, setSavedForm] = useState<PHPSettingsFormState>(emptyForm);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [settingDefault, setSettingDefault] = useState(false);
   const [installingExtensionId, setInstallingExtensionId] = useState<string | null>(null);
   const [extensionFilter, setExtensionFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +228,7 @@ export function PHPSettingsDialog({
     setForm(nextForm);
     setSavedForm(nextForm);
     setFieldErrors({});
+    setSettingDefault(false);
     setInstallingExtensionId(null);
     setExtensionFilter("");
     setError(null);
@@ -291,11 +296,38 @@ export function PHPSettingsDialog({
     }
   }
 
+  async function handleSetDefault() {
+    if (!version || !status?.ready) {
+      return;
+    }
+
+    setSettingDefault(true);
+    setError(null);
+
+    try {
+      const nextStatus = await setDefaultPHPVersion(version);
+      onStatusChange(nextStatus);
+      toast.success(`PHP ${version} is now the default for unpinned PHP sites.`);
+    } catch (setDefaultError) {
+      const message =
+        setDefaultError instanceof Error && setDefaultError.message
+          ? setDefaultError.message
+          : `Failed to set PHP ${version} as the default runtime.`;
+      setError(message);
+      toast.error(message);
+    } finally {
+      setSettingDefault(false);
+    }
+  }
+
   const runtimeLabel = version ? `PHP ${version}` : "PHP";
+  const defaultSelected = version !== "" && defaultVersion?.trim() === version;
   const backgroundActionLabel = getPHPActionLabel(status?.state);
-  const busy = saving || installingExtensionId !== null || isPHPActionState(status?.state);
+  const busy =
+    saving || settingDefault || installingExtensionId !== null || isPHPActionState(status?.state);
   const dirty = !sameFormState(form, savedForm);
   const saveDisabled = busy || !dirty || !status?.php_installed;
+  const setDefaultDisabled = busy || defaultSelected || !status?.ready || !version;
   const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
   const extensions = [...(status?.extensions ?? [])].sort((left, right) => left.localeCompare(right));
   const normalizedExtensionFilter = extensionFilter.trim().toLowerCase();
@@ -318,8 +350,33 @@ export function PHPSettingsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="h-[min(760px,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-5 pt-4 sm:max-w-5xl sm:p-6 sm:pt-5">
-        <DialogHeader className="gap-0.5 pb-0 pe-12">
-          <DialogTitle className="m-0 text-base leading-5">{runtimeLabel} settings</DialogTitle>
+        <DialogHeader className="gap-3 pb-0 pe-12">
+          <div className="flex items-start justify-between gap-3">
+            <DialogTitle className="m-0 text-base leading-5">{runtimeLabel} settings</DialogTitle>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-2 rounded-md px-3 text-xs"
+              onClick={() => void handleSetDefault()}
+              disabled={setDefaultDisabled}
+              title={!status?.ready ? "Start this runtime before making it the site default." : undefined}
+            >
+              {settingDefault ? (
+                <>
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  Setting default
+                </>
+              ) : defaultSelected ? (
+                <>
+                  <CircleCheck className="h-3.5 w-3.5" />
+                  Default for sites
+                </>
+              ) : (
+                "Set as default"
+              )}
+            </Button>
+          </div>
         </DialogHeader>
 
         <div className="mt-2 flex min-h-0 flex-col gap-4">
@@ -340,6 +397,12 @@ export function PHPSettingsDialog({
               <span className="text-[var(--app-text-muted)]">Service</span>
               <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
                 {getPHPServiceLabel(status)}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[var(--app-text-muted)]">Site default</span>
+              <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
+                {defaultSelected ? "Yes" : "No"}
               </Badge>
             </div>
           </div>

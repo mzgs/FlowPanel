@@ -2,6 +2,7 @@ export type PanelSettings = {
   panel_name: string;
   panel_url: string;
   github_token: string;
+  default_php_version: string;
   ftp_enabled: boolean;
   ftp_port: number;
   ftp_passive_ports: string;

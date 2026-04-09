@@ -16,6 +16,7 @@ const (
 	panelNameKey             = panelSettingsKeyPrefix + "panel_name"
 	panelURLKey              = panelSettingsKeyPrefix + "panel_url"
 	gitHubTokenKey           = panelSettingsKeyPrefix + "github_token"
+	defaultPHPVersionKey     = panelSettingsKeyPrefix + "default_php_version"
 	ftpEnabledKey            = panelSettingsKeyPrefix + "ftp_enabled"
 	ftpHostKey               = panelSettingsKeyPrefix + "ftp_host"
 	ftpPortKey               = panelSettingsKeyPrefix + "ftp_port"
@@ -29,6 +30,7 @@ var panelSettingKeys = []string{
 	panelNameKey,
 	panelURLKey,
 	gitHubTokenKey,
+	defaultPHPVersionKey,
 	ftpEnabledKey,
 	ftpHostKey,
 	ftpPortKey,
@@ -85,7 +87,7 @@ func (s *Store) Get(ctx context.Context) (Record, error) {
 	query := fmt.Sprintf(`
 SELECT key, value
 FROM %s
-WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, settingsTableName)
 
 	rows, err := s.db.QueryContext(
@@ -94,6 +96,7 @@ WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		panelNameKey,
 		panelURLKey,
 		gitHubTokenKey,
+		defaultPHPVersionKey,
 		ftpEnabledKey,
 		ftpHostKey,
 		ftpPortKey,
@@ -126,6 +129,8 @@ WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			record.PanelURL = strings.TrimSpace(value)
 		case gitHubTokenKey:
 			record.GitHubToken = strings.TrimSpace(value)
+		case defaultPHPVersionKey:
+			record.DefaultPHPVersion = strings.TrimSpace(value)
 		case ftpEnabledKey:
 			record.FTPEnabled = strings.TrimSpace(value) == "1"
 		case ftpHostKey:
@@ -183,6 +188,7 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 		panelNameKey:          record.PanelName,
 		panelURLKey:           record.PanelURL,
 		gitHubTokenKey:        record.GitHubToken,
+		defaultPHPVersionKey:  record.DefaultPHPVersion,
 		ftpEnabledKey:         boolString(record.FTPEnabled),
 		ftpHostKey:            record.FTPHost,
 		ftpPortKey:            strconv.Itoa(record.FTPPort),

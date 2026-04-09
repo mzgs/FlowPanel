@@ -144,6 +144,15 @@ export async function installPHP(version?: string): Promise<PHPStatus> {
   return parsePHPResponse(response);
 }
 
+export async function setDefaultPHPVersion(version: string): Promise<PHPStatus> {
+  const response = await fetch(withVersion("/api/php/default", version), {
+    method: "PUT",
+    credentials: "include",
+  });
+
+  return parsePHPResponse(response);
+}
+
 export async function installPHPExtension(extension: string, version?: string): Promise<PHPStatus> {
   const params = new URLSearchParams();
   if (version) {

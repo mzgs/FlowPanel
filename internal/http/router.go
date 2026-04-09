@@ -1884,6 +1884,70 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			})
 		})
 
+		phpDefaultHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.PHP == nil || app.Settings == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+					"error": "php runtime settings are not configured",
+				})
+				return
+			}
+
+			version := phpActionVersion(r)
+			if strings.TrimSpace(version) == "" {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "php version is required",
+				})
+				return
+			}
+			version = phpenv.NormalizeVersion(version)
+			if version == "" {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "select a supported php version",
+				})
+				return
+			}
+
+			runtimeStatus := app.PHP.StatusForVersion(r.Context(), version)
+			if !runtimeStatus.Ready {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": fmt.Sprintf("PHP %s must be installed and running before it can be the default.", runtimeStatus.Version),
+				})
+				return
+			}
+
+			if _, err := app.Settings.SetDefaultPHPVersion(r.Context(), runtimeStatus.Version); err != nil {
+				var validation settings.ValidationErrors
+				if errors.As(err, &validation) {
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+						"error":        "validation failed",
+						"field_errors": map[string]string(validation),
+					})
+					return
+				}
+
+				app.Logger.Error("set default php failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "update", "php", runtimeStatus.Version, "Default PHP version", "failed", "Failed to update the default PHP version.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to update the default PHP version",
+				})
+				return
+			}
+
+			if err := syncDomainsWithCaddy(r.Context()); err != nil {
+				app.Logger.Error("sync domains after default php update failed", zap.Error(err))
+				mutationEvent(r.Context(), "runtime", "update", "php", runtimeStatus.Version, "Default PHP version", "failed", "Default PHP version saved but failed to republish domains.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "default php version saved but failed to republish domains",
+				})
+				return
+			}
+
+			mutationEvent(r.Context(), "runtime", "update", "php", runtimeStatus.Version, "Default PHP version", "succeeded", fmt.Sprintf("Set PHP %s as the default runtime.", runtimeStatus.Version))
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"php": trackPHPStatus(app.PHP.Status(r.Context())),
+			})
+		})
+
 		phpInfoHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {
 				writeHTML(w, stdhttp.StatusServiceUnavailable, renderPHPInfoErrorDocument("PHP runtime is not configured."))
@@ -2307,6 +2371,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodHead, "/php", phpStatusHandler)
 		r.Method(stdhttp.MethodGet, "/php/info", phpInfoHandler)
+		r.Method(stdhttp.MethodPut, "/php/default", phpDefaultHandler)
 		r.Method(stdhttp.MethodPost, "/php/install", phpInstallHandler)
 		r.Method(stdhttp.MethodPost, "/php/remove", phpRemoveHandler)
 		r.Method(stdhttp.MethodPost, "/php/start", phpStartHandler)
@@ -4938,6 +5003,7 @@ func writeSettingsResponse(w stdhttp.ResponseWriter, statusCode int, app *app.Ap
 		"panel_name":             record.PanelName,
 		"panel_url":              record.PanelURL,
 		"github_token":           record.GitHubToken,
+		"default_php_version":    record.DefaultPHPVersion,
 		"ftp_enabled":            record.FTPEnabled,
 		"ftp_port":               record.FTPPort,
 		"ftp_passive_ports":      record.FTPPassivePorts,

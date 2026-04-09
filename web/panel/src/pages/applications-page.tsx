@@ -1095,6 +1095,7 @@ export function ApplicationsPage() {
         onOpenChange={setPHPSettingsOpen}
         status={selectedPHPRuntime}
         version={selectedPHPVersion}
+        defaultVersion={phpStatus?.default_version}
         onStatusChange={setPHPStatus}
       />
 
