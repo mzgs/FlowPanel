@@ -885,12 +885,26 @@ func runCommands(ctx context.Context, commands ...[]string) error {
 }
 
 func runCommand(ctx context.Context, name string, args ...string) (string, error) {
+	return runCommandWithOptions(ctx, "", nil, name, args...)
+}
+
+func runCommandInDir(ctx context.Context, dir string, name string, args ...string) (string, error) {
+	return runCommandWithOptions(ctx, dir, nil, name, args...)
+}
+
+func runCommandWithOptions(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
 	runCtx := ctx
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
 
 	cmd := exec.CommandContext(runCtx, name, args...)
+	if strings.TrimSpace(dir) != "" {
+		cmd.Dir = dir
+	}
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output

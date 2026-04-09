@@ -278,7 +278,7 @@ export function PHPSettingsDialog({
     try {
       const nextStatus = await installPHPExtension(extensionId, version);
       onStatusChange(nextStatus);
-      toast.success(`${extensionId} install requested for PHP ${version}.`);
+      toast.success(`${extensionId} installed for PHP ${version}.`);
     } catch (installError) {
       const message =
         installError instanceof Error && installError.message
@@ -303,6 +303,8 @@ export function PHPSettingsDialog({
     .map((entry) => ({
       ...entry,
       installed: isPHPExtensionInstalled(entry, extensions),
+      installId: entry.installId ?? entry.id,
+      installSupported: entry.installSupported ?? true,
     }))
     .filter((entry) => {
       if (!normalizedExtensionFilter) {
@@ -640,16 +642,18 @@ export function PHPSettingsDialog({
                                 >
                                   <CircleCheck className="h-4.5 w-4.5" />
                                 </span>
+                              ) : !extension.installSupported ? (
+                                <span className="h-6 w-6" aria-hidden="true" />
                               ) : (
                                 <Button
                                   type="button"
                                   variant="outline"
                                   size="sm"
                                   className="h-7 rounded-md px-2.5 text-xs"
-                                  onClick={() => void handleInstallExtension(extension.id)}
+                                  onClick={() => void handleInstallExtension(extension.installId)}
                                   disabled={busy}
                                 >
-                                  {installingExtensionId === extension.id ? (
+                                  {installingExtensionId === extension.installId ? (
                                     <>
                                       <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                                       Installing

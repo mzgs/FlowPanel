@@ -3,72 +3,88 @@ package phpenv
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
 
 type phpExtensionDefinition struct {
-	id          string
-	aliases     []string
-	aptPackages []string
-	rpmPackages []string
+	id            string
+	aliases       []string
+	peclPackage   string
+	sharedObject  string
+	enableMode    string
+	configureArgs []string
 }
+
+const (
+	phpExtensionEnableModeExtension     = "extension"
+	phpExtensionEnableModeZendExtension = "zend_extension"
+)
 
 var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "ioncube", aliases: []string{"oncube", "ioncubeloader"}},
-	{id: "fileinfo", aptPackages: []string{"php{version}-common", "php-common"}, rpmPackages: []string{"{remi}-php-common"}},
-	{id: "opcache", aliases: []string{"zendopcache"}, aptPackages: []string{"php{version}-opcache", "php-opcache"}, rpmPackages: []string{"{remi}-php-opcache"}},
-	{id: "memcached", aptPackages: []string{"php{version}-memcached", "php-memcached"}, rpmPackages: []string{"{remi}-php-pecl-memcached"}},
-	{id: "redis", aptPackages: []string{"php{version}-redis", "php-redis"}, rpmPackages: []string{"{remi}-php-pecl-redis"}},
-	{id: "mcrypt", aptPackages: []string{"php{version}-mcrypt", "php-mcrypt"}, rpmPackages: []string{"{remi}-php-pecl-mcrypt"}},
-	{id: "apcu", aptPackages: []string{"php{version}-apcu", "php-apcu"}, rpmPackages: []string{"{remi}-php-pecl-apcu"}},
-	{id: "imagemagick", aliases: []string{"imagick"}, aptPackages: []string{"php{version}-imagick", "php-imagick"}, rpmPackages: []string{"{remi}-php-pecl-imagick"}},
-	{id: "xdebug", aptPackages: []string{"php{version}-xdebug", "php-xdebug"}, rpmPackages: []string{"{remi}-php-pecl-xdebug"}},
-	{id: "imap", aptPackages: []string{"php{version}-imap", "php-imap"}, rpmPackages: []string{"{remi}-php-imap"}},
-	{id: "exif", aptPackages: []string{"php{version}-common", "php-common"}, rpmPackages: []string{"{remi}-php-common"}},
-	{id: "intl", aptPackages: []string{"php{version}-intl", "php-intl"}, rpmPackages: []string{"{remi}-php-intl"}},
-	{id: "xsl", aptPackages: []string{"php{version}-xsl", "php-xsl", "php{version}-xml", "php-xml"}, rpmPackages: []string{"{remi}-php-xml"}},
-	{id: "swoole4", aliases: []string{"swoole"}, aptPackages: []string{"php{version}-swoole", "php-swoole"}, rpmPackages: []string{"{remi}-php-pecl-swoole"}},
-	{id: "swoole5", aliases: []string{"swoole"}, aptPackages: []string{"php{version}-swoole", "php-swoole"}, rpmPackages: []string{"{remi}-php-pecl-swoole"}},
-	{id: "swoole6", aliases: []string{"swoole"}, aptPackages: []string{"php{version}-swoole", "php-swoole"}, rpmPackages: []string{"{remi}-php-pecl-swoole"}},
-	{id: "xlswriter", aptPackages: []string{"php{version}-xlswriter", "php-xlswriter"}, rpmPackages: []string{"{remi}-php-pecl-xlswriter"}},
-	{id: "oci8", aptPackages: []string{"php{version}-oci8", "php-oci8"}, rpmPackages: []string{"{remi}-php-oci8"}},
-	{id: "pdooci", aliases: []string{"pdo_oci"}, aptPackages: []string{"php{version}-oci8", "php-oci8"}, rpmPackages: []string{"{remi}-php-oci8"}},
-	{id: "swow", aptPackages: []string{"php{version}-swow", "php-swow"}, rpmPackages: []string{"{remi}-php-pecl-swow"}},
-	{id: "pdosqlsrv", aliases: []string{"pdo_sqlsrv"}, aptPackages: []string{"php{version}-pdo-sqlsrv", "php-pdo-sqlsrv", "php{version}-sqlsrv", "php-sqlsrv"}, rpmPackages: []string{"{remi}-php-pecl-pdo_sqlsrv"}},
-	{id: "sqlsrv", aptPackages: []string{"php{version}-sqlsrv", "php-sqlsrv"}, rpmPackages: []string{"{remi}-php-pecl-sqlsrv"}},
-	{id: "rdkafka", aliases: []string{"rdkakfa"}, aptPackages: []string{"php{version}-rdkafka", "php-rdkafka"}, rpmPackages: []string{"{remi}-php-pecl-rdkafka"}},
-	{id: "yaf", aptPackages: []string{"php{version}-yaf", "php-yaf"}, rpmPackages: []string{"{remi}-php-pecl-yaf"}},
-	{id: "phpmongodb", aliases: []string{"php_mongodb", "mongodb"}, aptPackages: []string{"php{version}-mongodb", "php-mongodb"}, rpmPackages: []string{"{remi}-php-pecl-mongodb"}},
-	{id: "yac", aptPackages: []string{"php{version}-yac", "php-yac"}, rpmPackages: []string{"{remi}-php-pecl-yac"}},
+	{id: "fileinfo"},
+	{id: "opcache", aliases: []string{"zendopcache"}},
+	{id: "memcached", peclPackage: "memcached"},
+	{id: "redis", peclPackage: "redis"},
+	{id: "mcrypt", peclPackage: "mcrypt"},
+	{id: "apcu", peclPackage: "apcu"},
+	{id: "imagemagick", aliases: []string{"imagick"}, peclPackage: "imagick", sharedObject: "imagick"},
+	{id: "xdebug", peclPackage: "xdebug", enableMode: phpExtensionEnableModeZendExtension},
+	{id: "imap"},
+	{id: "exif"},
+	{id: "intl"},
+	{id: "xsl"},
+	{id: "swoole4", aliases: []string{"swoole"}, peclPackage: "swoole", sharedObject: "swoole"},
+	{id: "swoole5", aliases: []string{"swoole"}, peclPackage: "swoole", sharedObject: "swoole"},
+	{id: "swoole6", aliases: []string{"swoole"}, peclPackage: "swoole", sharedObject: "swoole"},
+	{id: "xlswriter", peclPackage: "xlswriter"},
+	{id: "oci8"},
+	{id: "pdooci", aliases: []string{"pdo_oci"}},
+	{id: "swow", peclPackage: "swow"},
+	{id: "pdosqlsrv", aliases: []string{"pdo_sqlsrv"}, peclPackage: "pdo_sqlsrv", sharedObject: "pdo_sqlsrv"},
+	{id: "sqlsrv", peclPackage: "sqlsrv"},
+	{id: "rdkafka", aliases: []string{"rdkakfa"}, peclPackage: "rdkafka"},
+	{id: "yaf", peclPackage: "yaf"},
+	{id: "phpmongodb", aliases: []string{"php_mongodb", "mongodb"}, peclPackage: "mongodb", sharedObject: "mongodb"},
+	{id: "yac", peclPackage: "yac"},
 	{id: "sg11", aliases: []string{"sourceguardian11"}},
 	{id: "sg14", aliases: []string{"sourceguardian14"}},
 	{id: "sg15", aliases: []string{"sourceguardian15"}},
 	{id: "sg16", aliases: []string{"sourceguardian16"}},
 	{id: "xload"},
-	{id: "pgsql", aptPackages: []string{"php{version}-pgsql", "php-pgsql"}, rpmPackages: []string{"{remi}-php-pgsql"}},
-	{id: "ssh2", aptPackages: []string{"php{version}-ssh2", "php-ssh2"}, rpmPackages: []string{"{remi}-php-pecl-ssh2"}},
-	{id: "grpc", aptPackages: []string{"php{version}-grpc", "php-grpc"}, rpmPackages: []string{"{remi}-php-pecl-grpc"}},
-	{id: "xhprof", aptPackages: []string{"php{version}-xhprof", "php-xhprof"}, rpmPackages: []string{"{remi}-php-pecl-xhprof"}},
-	{id: "protobuf", aptPackages: []string{"php{version}-protobuf", "php-protobuf"}, rpmPackages: []string{"{remi}-php-pecl-protobuf"}},
-	{id: "pdopgsql", aliases: []string{"pdo_pgsql"}, aptPackages: []string{"php{version}-pgsql", "php-pgsql"}, rpmPackages: []string{"{remi}-php-pgsql"}},
-	{id: "readline", aptPackages: []string{"php{version}-readline", "php-readline"}, rpmPackages: []string{"{remi}-php-process"}},
-	{id: "snmp", aptPackages: []string{"php{version}-snmp", "php-snmp"}, rpmPackages: []string{"{remi}-php-snmp"}},
-	{id: "ldap", aptPackages: []string{"php{version}-ldap", "php-ldap"}, rpmPackages: []string{"{remi}-php-ldap"}},
-	{id: "enchant", aptPackages: []string{"php{version}-enchant", "php-enchant"}, rpmPackages: []string{"{remi}-php-enchant"}},
-	{id: "pspell", aptPackages: []string{"php{version}-pspell", "php-pspell"}, rpmPackages: []string{"{remi}-php-pspell"}},
-	{id: "bz2", aptPackages: []string{"php{version}-bz2", "php-bz2"}, rpmPackages: []string{"{remi}-php-bz2"}},
-	{id: "sysvshm", aptPackages: []string{"php{version}-common", "php-common"}, rpmPackages: []string{"{remi}-php-common"}},
-	{id: "calendar", aptPackages: []string{"php{version}-common", "php-common"}, rpmPackages: []string{"{remi}-php-common"}},
-	{id: "gmp", aptPackages: []string{"php{version}-gmp", "php-gmp"}, rpmPackages: []string{"{remi}-php-gmp"}},
-	{id: "sysvmsg", aptPackages: []string{"php{version}-common", "php-common"}, rpmPackages: []string{"{remi}-php-common"}},
-	{id: "igbinary", aptPackages: []string{"php{version}-igbinary", "php-igbinary"}, rpmPackages: []string{"{remi}-php-pecl-igbinary"}},
-	{id: "zmq", aptPackages: []string{"php{version}-zmq", "php-zmq"}, rpmPackages: []string{"{remi}-php-pecl-zmq"}},
-	{id: "zstd", aptPackages: []string{"php{version}-zstd", "php-zstd"}, rpmPackages: []string{"{remi}-php-pecl-zstd"}},
-	{id: "smbclient", aptPackages: []string{"php{version}-smbclient", "php-smbclient"}, rpmPackages: []string{"{remi}-php-pecl-smbclient"}},
-	{id: "event", aptPackages: []string{"php{version}-event", "php-event"}, rpmPackages: []string{"{remi}-php-pecl-event"}},
-	{id: "mailparse", aptPackages: []string{"php{version}-mailparse", "php-mailparse"}, rpmPackages: []string{"{remi}-php-pecl-mailparse"}},
-	{id: "yaml", aptPackages: []string{"php{version}-yaml", "php-yaml"}, rpmPackages: []string{"{remi}-php-pecl-yaml"}},
+	{id: "pgsql"},
+	{id: "ssh2", peclPackage: "ssh2"},
+	{id: "grpc", peclPackage: "grpc"},
+	{id: "xhprof", peclPackage: "xhprof"},
+	{id: "protobuf", peclPackage: "protobuf"},
+	{id: "pdopgsql", aliases: []string{"pdo_pgsql"}},
+	{id: "readline"},
+	{id: "snmp"},
+	{id: "ldap"},
+	{id: "enchant"},
+	{id: "pspell"},
+	{id: "bz2"},
+	{id: "sysvshm"},
+	{id: "calendar"},
+	{id: "gmp"},
+	{id: "sysvmsg"},
+	{id: "igbinary", peclPackage: "igbinary"},
+	{id: "zmq", peclPackage: "zmq"},
+	{id: "zstd", peclPackage: "zstd"},
+	{id: "smbclient", peclPackage: "smbclient"},
+	{id: "event", peclPackage: "event"},
+	{id: "mailparse", peclPackage: "mailparse"},
+	{id: "yaml", peclPackage: "yaml"},
+}
+
+type phpPECLToolchain struct {
+	phpPath       string
+	peclPath      string
+	phpizePath    string
+	phpConfigPath string
 }
 
 func (s *Service) InstallExtension(ctx context.Context, extension string) (Status, error) {
@@ -90,23 +106,19 @@ func (s *Service) InstallExtensionForVersion(ctx context.Context, version, exten
 		return RuntimeStatus{}, fmt.Errorf("php %s is not installed", runtimeStatus.Version)
 	}
 
+	requestedExtension := strings.TrimSpace(extension)
 	definition, ok := findPHPExtensionDefinition(extension)
 	if !ok {
-		return RuntimeStatus{}, fmt.Errorf("php extension %q is not supported", strings.TrimSpace(extension))
+		return RuntimeStatus{}, fmt.Errorf("php extension %q is not supported", requestedExtension)
+	}
+	if !definition.supportsPECLInstall() {
+		return RuntimeStatus{}, fmt.Errorf("php extension %q does not support automatic PECL installation", requestedExtension)
 	}
 	if extensionLoaded(runtimeStatus.Extensions, definition) {
 		return runtimeStatus, nil
 	}
 
-	commands := buildPHPExtensionInstallCommands(runtimeStatus.Version, definition)
-	if len(commands) == 0 {
-		return RuntimeStatus{}, fmt.Errorf(
-			"automatic installation for PHP extension %q is not supported on %s",
-			strings.TrimSpace(extension),
-			runtime.GOOS,
-		)
-	}
-	if err := runAlternativeCommands(ctx, commands); err != nil {
+	if err := installPHPExtensionWithPECL(ctx, runtimeStatus, definition); err != nil {
 		return RuntimeStatus{}, err
 	}
 
@@ -122,7 +134,12 @@ func (s *Service) InstallExtensionForVersion(ctx context.Context, version, exten
 		}
 	}
 
-	return s.StatusForVersion(ctx, runtimeStatus.Version), nil
+	runtimeStatus = s.StatusForVersion(ctx, runtimeStatus.Version)
+	if err := validateInstalledExtension(runtimeStatus, requestedExtension, definition); err != nil {
+		return RuntimeStatus{}, err
+	}
+
+	return runtimeStatus, nil
 }
 
 func findPHPExtensionDefinition(value string) (phpExtensionDefinition, bool) {
@@ -145,6 +162,32 @@ func findPHPExtensionDefinition(value string) (phpExtensionDefinition, bool) {
 	return phpExtensionDefinition{}, false
 }
 
+func (d phpExtensionDefinition) supportsPECLInstall() bool {
+	return strings.TrimSpace(d.peclPackage) != ""
+}
+
+func (d phpExtensionDefinition) enableDirective() string {
+	if d.enableMode == phpExtensionEnableModeZendExtension {
+		return phpExtensionEnableModeZendExtension
+	}
+	return phpExtensionEnableModeExtension
+}
+
+func (d phpExtensionDefinition) moduleName() string {
+	return "flowpanel-" + normalizePHPExtensionKey(d.id)
+}
+
+func (d phpExtensionDefinition) sharedObjectName() string {
+	name := strings.TrimSpace(d.sharedObject)
+	if name == "" {
+		name = strings.TrimSpace(d.peclPackage)
+	}
+	if name == "" {
+		name = strings.TrimSpace(d.id)
+	}
+	return strings.TrimSuffix(name, ".so")
+}
+
 func extensionLoaded(installed []string, definition phpExtensionDefinition) bool {
 	loaded := make(map[string]struct{}, len(installed))
 	for _, item := range installed {
@@ -156,6 +199,9 @@ func extensionLoaded(installed []string, definition phpExtensionDefinition) bool
 	}
 
 	candidates := append([]string{definition.id}, definition.aliases...)
+	if sharedObject := definition.sharedObjectName(); sharedObject != "" {
+		candidates = append(candidates, sharedObject)
+	}
 	for _, candidate := range candidates {
 		if _, ok := loaded[normalizePHPExtensionKey(candidate)]; ok {
 			return true
@@ -163,6 +209,18 @@ func extensionLoaded(installed []string, definition phpExtensionDefinition) bool
 	}
 
 	return false
+}
+
+func validateInstalledExtension(runtimeStatus RuntimeStatus, requestedExtension string, definition phpExtensionDefinition) error {
+	if extensionLoaded(runtimeStatus.Extensions, definition) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"php extension %q was installed but is not loaded for php %s",
+		requestedExtension,
+		runtimeStatus.Version,
+	)
 }
 
 func normalizePHPExtensionKey(value string) string {
@@ -175,60 +233,227 @@ func normalizePHPExtensionKey(value string) string {
 	return builder.String()
 }
 
-func buildPHPExtensionInstallCommands(version string, definition phpExtensionDefinition) [][]string {
-	if aptGetPath, ok := lookupCommand("apt-get"); ok {
-		return buildPackageInstallCommands(aptGetPath, "install", "-y", version, definition.aptPackages)
+func installPHPExtensionWithPECL(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	toolchain, err := ensurePECLToolchain(ctx, runtimeStatus.Version, runtimeStatus.PHPPath)
+	if err != nil {
+		return err
 	}
-	if dnfPath, ok := lookupCommand("dnf"); ok {
-		return buildPackageInstallCommands(dnfPath, "install", "-y", version, definition.rpmPackages)
+
+	buildDir, err := os.MkdirTemp("", "flowpanel-pecl-*")
+	if err != nil {
+		return fmt.Errorf("create pecl build directory: %w", err)
 	}
-	if yumPath, ok := lookupCommand("yum"); ok {
-		return buildPackageInstallCommands(yumPath, "install", "-y", version, definition.rpmPackages)
+	defer os.RemoveAll(buildDir)
+
+	archivePath, err := downloadPECLPackage(ctx, buildDir, toolchain, definition.peclPackage)
+	if err != nil {
+		return err
 	}
+
+	sourceDir, err := extractPECLPackage(ctx, buildDir, archivePath)
+	if err != nil {
+		return err
+	}
+
+	if _, err := runCommandInDir(ctx, sourceDir, toolchain.phpizePath); err != nil {
+		return fmt.Errorf("prepare %s with phpize: %w", definition.peclPackage, err)
+	}
+
+	configureArgs := []string{"--with-php-config=" + toolchain.phpConfigPath}
+	configureArgs = append(configureArgs, definition.configureArgs...)
+	if _, err := runCommandInDir(ctx, sourceDir, "./configure", configureArgs...); err != nil {
+		return fmt.Errorf("configure %s: %w", definition.peclPackage, err)
+	}
+
+	makeJobs := fmt.Sprintf("-j%d", maxInt(1, runtime.NumCPU()))
+	if _, err := runCommandInDir(ctx, sourceDir, "make", makeJobs); err != nil {
+		return fmt.Errorf("build %s: %w", definition.peclPackage, err)
+	}
+	if _, err := runCommandInDir(ctx, sourceDir, "make", "install"); err != nil {
+		return fmt.Errorf("install %s: %w", definition.peclPackage, err)
+	}
+
+	if err := enablePHPExtension(ctx, runtimeStatus, definition); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func buildPackageInstallCommands(path string, action string, confirmation string, version string, templates []string) [][]string {
-	commands := make([][]string, 0, len(templates))
-	for _, template := range templates {
-		pkg := renderExtensionPackageTemplate(template, version)
-		if strings.TrimSpace(pkg) == "" {
-			continue
-		}
-		commands = append(commands, []string{path, action, confirmation, pkg})
+func ensurePECLToolchain(ctx context.Context, version, phpPath string) (phpPECLToolchain, error) {
+	if toolchain, ok := lookupPECLToolchain(version, phpPath); ok {
+		return toolchain, nil
 	}
-	return dedupeCommandSets(commands)
-}
 
-func renderExtensionPackageTemplate(template string, version string) string {
-	replacer := strings.NewReplacer(
-		"{version}", version,
-		"{remi}", remiCollectionForVersion(version),
-	)
-	return replacer.Replace(strings.TrimSpace(template))
-}
-
-func dedupeCommandSets(commands [][]string) [][]string {
-	deduped := make([][]string, 0, len(commands))
-	seen := make(map[string]struct{}, len(commands))
-	for _, command := range commands {
-		key := strings.Join(command, "\x00")
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		deduped = append(deduped, command)
+	commands := buildPECLToolchainInstallCommands(version)
+	if len(commands) == 0 {
+		return phpPECLToolchain{}, fmt.Errorf("automatic PECL bootstrap for PHP %s is not supported on %s", version, runtime.GOOS)
 	}
-	return deduped
+	if err := runCommands(ctx, commands...); err != nil {
+		return phpPECLToolchain{}, fmt.Errorf("install PECL toolchain for PHP %s: %w", version, err)
+	}
+
+	toolchain, ok := lookupPECLToolchain(version, phpPath)
+	if !ok {
+		return phpPECLToolchain{}, fmt.Errorf("the PECL toolchain for PHP %s is not available after installation", version)
+	}
+	return toolchain, nil
 }
 
-func runAlternativeCommands(ctx context.Context, commands [][]string) error {
+func lookupPECLToolchain(version, phpPath string) (phpPECLToolchain, bool) {
+	toolchain := phpPECLToolchain{
+		phpPath: strings.TrimSpace(phpPath),
+	}
+	if toolchain.phpPath == "" {
+		return phpPECLToolchain{}, false
+	}
+
+	toolchain.peclPath, _ = lookupExecutableCandidates(peclBinaryCandidates(version, phpPath))
+	toolchain.phpizePath, _ = lookupExecutableCandidates(phpizeBinaryCandidates(version, phpPath))
+	toolchain.phpConfigPath, _ = lookupExecutableCandidates(phpConfigBinaryCandidates(version, phpPath))
+
+	if toolchain.peclPath == "" || toolchain.phpizePath == "" || toolchain.phpConfigPath == "" {
+		return toolchain, false
+	}
+
+	return toolchain, true
+}
+
+func lookupExecutableCandidates(candidates []string) (string, bool) {
+	for _, candidate := range dedupeStrings(candidates) {
+		if path, ok := lookupCandidateExecutable(candidate); ok {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+func peclBinaryCandidates(version, phpPath string) []string {
+	dir := filepath.Dir(strings.TrimSpace(phpPath))
+	versionNoDots := strings.ReplaceAll(version, ".", "")
+	return dedupeStrings([]string{
+		filepath.Join(dir, "pecl"),
+		filepath.Join(dir, "pecl"+version),
+		filepath.Join(dir, "pecl"+versionNoDots),
+		"pecl" + version,
+		"pecl" + versionNoDots,
+		"pecl",
+	})
+}
+
+func phpizeBinaryCandidates(version, phpPath string) []string {
+	dir := filepath.Dir(strings.TrimSpace(phpPath))
+	versionNoDots := strings.ReplaceAll(version, ".", "")
+	return dedupeStrings([]string{
+		filepath.Join(dir, "phpize"),
+		filepath.Join(dir, "phpize"+version),
+		filepath.Join(dir, "phpize"+versionNoDots),
+		"phpize" + version,
+		"phpize" + versionNoDots,
+		"phpize",
+	})
+}
+
+func phpConfigBinaryCandidates(version, phpPath string) []string {
+	dir := filepath.Dir(strings.TrimSpace(phpPath))
+	versionNoDots := strings.ReplaceAll(version, ".", "")
+	return dedupeStrings([]string{
+		filepath.Join(dir, "php-config"),
+		filepath.Join(dir, "php-config"+version),
+		filepath.Join(dir, "php-config"+versionNoDots),
+		"php-config" + version,
+		"php-config" + versionNoDots,
+		"php-config",
+	})
+}
+
+func buildPECLToolchainInstallCommands(version string) [][]string {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return nil
+	}
+
+	if aptGetPath, ok := lookupCommand("apt-get"); ok {
+		packages := dedupeStrings([]string{
+			"php-pear",
+			"php" + version + "-dev",
+			"build-essential",
+			"pkg-config",
+		})
+		return [][]string{
+			{aptGetPath, "update"},
+			append([]string{aptGetPath, "install", "-y"}, packages...),
+		}
+	}
+	if dnfPath, ok := lookupCommand("dnf"); ok {
+		packages := dedupeStrings([]string{
+			remiCollectionForVersion(version) + "-php-pear",
+			remiCollectionForVersion(version) + "-php-devel",
+			"gcc",
+			"make",
+			"autoconf",
+		})
+		return [][]string{
+			append([]string{dnfPath, "install", "-y"}, packages...),
+		}
+	}
+	if yumPath, ok := lookupCommand("yum"); ok {
+		packages := dedupeStrings([]string{
+			remiCollectionForVersion(version) + "-php-pear",
+			remiCollectionForVersion(version) + "-php-devel",
+			"gcc",
+			"make",
+			"autoconf",
+		})
+		return [][]string{
+			append([]string{yumPath, "install", "-y"}, packages...),
+		}
+	}
+
+	return nil
+}
+
+func downloadPECLPackage(ctx context.Context, buildDir string, toolchain phpPECLToolchain, packageName string) (string, error) {
+	if err := runPECLCommand(ctx, buildDir, toolchain, "download", packageName); err != nil {
+		return "", fmt.Errorf("download PECL package %q: %w", packageName, err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(buildDir, packageName+"-*.tgz"))
+	if err != nil {
+		return "", fmt.Errorf("locate downloaded PECL archive for %q: %w", packageName, err)
+	}
+	if len(matches) == 0 {
+		matches, err = filepath.Glob(filepath.Join(buildDir, "*.tgz"))
+		if err != nil {
+			return "", fmt.Errorf("locate downloaded PECL archive for %q: %w", packageName, err)
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("download PECL package %q: no archive was created", packageName)
+	}
+
+	return matches[0], nil
+}
+
+func runPECLCommand(ctx context.Context, buildDir string, toolchain phpPECLToolchain, args ...string) error {
+	attempts := []struct {
+		name string
+		args []string
+	}{
+		{name: toolchain.phpPath, args: append([]string{toolchain.peclPath}, args...)},
+	}
+	if toolchain.peclPath != "" {
+		attempts = append(attempts, struct {
+			name string
+			args []string
+		}{name: toolchain.peclPath, args: args})
+	}
+
 	var failures []string
-	for _, command := range commands {
-		if len(command) == 0 {
+	for _, attempt := range attempts {
+		if strings.TrimSpace(attempt.name) == "" {
 			continue
 		}
-		if _, err := runCommand(ctx, command[0], command[1:]...); err == nil {
+		if _, err := runCommandInDir(ctx, buildDir, attempt.name, attempt.args...); err == nil {
 			return nil
 		} else {
 			failures = append(failures, err.Error())
@@ -236,11 +461,94 @@ func runAlternativeCommands(ctx context.Context, commands [][]string) error {
 	}
 
 	if len(failures) == 0 {
-		return fmt.Errorf("no installation command candidates were generated")
+		return fmt.Errorf("no PECL command candidates were generated")
 	}
 	if len(failures) == 1 {
-		return fmt.Errorf("php extension install failed: %s", failures[0])
+		return fmt.Errorf("%s", failures[0])
+	}
+	return fmt.Errorf("%s", strings.Join(failures, " | "))
+}
+
+func extractPECLPackage(ctx context.Context, buildDir, archivePath string) (string, error) {
+	if _, err := runCommand(ctx, "tar", "-xf", archivePath, "-C", buildDir); err != nil {
+		return "", fmt.Errorf("extract PECL archive %q: %w", filepath.Base(archivePath), err)
 	}
 
-	return fmt.Errorf("php extension install failed: %s", strings.Join(failures, " | "))
+	entries, err := os.ReadDir(buildDir)
+	if err != nil {
+		return "", fmt.Errorf("list extracted PECL sources: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sourceDir := filepath.Join(buildDir, entry.Name())
+		if _, err := os.Stat(filepath.Join(sourceDir, "package.xml")); err == nil {
+			return sourceDir, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not determine extracted PECL source directory for %q", filepath.Base(archivePath))
+}
+
+func enablePHPExtension(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	content := renderManagedPHPExtensionConfig(definition)
+
+	if phpenmodPath, ok := lookupCommand("phpenmod"); ok && runtime.GOOS == "linux" {
+		moduleName := definition.moduleName()
+		configPath := filepath.Join("/etc/php", runtimeStatus.Version, "mods-available", moduleName+".ini")
+		if err := writeManagedPHPExtensionConfig(configPath, content); err == nil {
+			if _, err := runCommand(ctx, phpenmodPath, "-v", runtimeStatus.Version, moduleName); err == nil {
+				return nil
+			}
+		}
+	}
+
+	configPath := determineManagedPHPExtensionConfigFile(runtimeStatus.LoadedConfigFile, runtimeStatus.ScanDir, definition)
+	if configPath == "" {
+		return fmt.Errorf("flowpanel could not determine where to enable PHP extension %q", definition.id)
+	}
+	if err := writeManagedPHPExtensionConfig(configPath, content); err != nil {
+		return err
+	}
+	return nil
+}
+
+func renderManagedPHPExtensionConfig(definition phpExtensionDefinition) string {
+	return fmt.Sprintf(
+		"; Managed by FlowPanel.\n; Manual edits may be overwritten.\n%s=%s.so\n",
+		definition.enableDirective(),
+		definition.sharedObjectName(),
+	)
+}
+
+func writeManagedPHPExtensionConfig(path, content string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("php extension config path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create php extension config directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write php extension config: %w", err)
+	}
+	return nil
+}
+
+func determineManagedPHPExtensionConfigFile(loadedConfigFile, scanDir string, definition phpExtensionDefinition) string {
+	filename := definition.moduleName() + ".ini"
+	if scanDir != "" {
+		return filepath.Join(scanDir, filename)
+	}
+	if loadedConfigFile != "" {
+		return filepath.Join(filepath.Dir(loadedConfigFile), filename)
+	}
+	return ""
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
