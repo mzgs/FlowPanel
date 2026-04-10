@@ -88,6 +88,27 @@ const emptyForm: PHPSettingsFormState = {
   display_errors: "Off",
 };
 
+function buildExtensionOrder(
+  catalog: PHPExtensionCatalogEntry[],
+  installedExtensions: Set<string>,
+  version: string,
+) {
+  return Object.fromEntries(
+    catalog
+      .slice()
+      .sort((left, right) => {
+        const leftInstalled =
+          (left.id === "opcache" && hasBuiltInOpcache(version)) ||
+          isPHPExtensionInstalled(left, installedExtensions);
+        const rightInstalled =
+          (right.id === "opcache" && hasBuiltInOpcache(version)) ||
+          isPHPExtensionInstalled(right, installedExtensions);
+        return Number(rightInstalled) - Number(leftInstalled) || left.label.localeCompare(right.label);
+      })
+      .map((entry, index) => [entry.id, index]),
+  );
+}
+
 function toFormState(settings?: PHPSettings): PHPSettingsFormState {
   return {
     max_execution_time: settings?.max_execution_time ?? "",
@@ -272,6 +293,7 @@ export function PHPSettingsDialog({
   const [extensionFilter, setExtensionFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [phpInfoLoaded, setPHPInfoLoaded] = useState(false);
+  const [extensionOrder, setExtensionOrder] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!open) {
@@ -288,7 +310,14 @@ export function PHPSettingsDialog({
     setExtensionFilter("");
     setError(null);
     setPHPInfoLoaded(false);
-  }, [open, status?.version]);
+    setExtensionOrder(
+      buildExtensionOrder(
+        extensionCatalog,
+        new Set((status?.extensions ?? []).map(normalizePHPExtensionToken)),
+        version,
+      ),
+    );
+  }, [open, status?.version, version]);
 
   function handleFieldChange(field: keyof PHPSettingsFormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -405,7 +434,12 @@ export function PHPSettingsDialog({
       const haystack = [entry.label, entry.id, ...(entry.aliases ?? [])].join(" ").toLowerCase();
       return haystack.includes(normalizedExtensionFilter);
     })
-    .sort((left, right) => left.label.localeCompare(right.label));
+    .sort(
+      (left, right) =>
+        (extensionOrder[left.id] ?? Number.MAX_SAFE_INTEGER) -
+          (extensionOrder[right.id] ?? Number.MAX_SAFE_INTEGER) ||
+        left.label.localeCompare(right.label),
+    );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
