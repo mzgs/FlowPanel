@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   installPHPExtension,
   setDefaultPHPVersion,
@@ -272,8 +272,6 @@ export function PHPSettingsDialog({
   const [extensionFilter, setExtensionFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [phpInfoLoaded, setPHPInfoLoaded] = useState(false);
-  const sectionViewportRef = useRef<HTMLDivElement | null>(null);
-  const pendingExtensionScrollTopRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -290,33 +288,7 @@ export function PHPSettingsDialog({
     setExtensionFilter("");
     setError(null);
     setPHPInfoLoaded(false);
-    pendingExtensionScrollTopRef.current = null;
   }, [open, status?.version]);
-
-  useLayoutEffect(() => {
-    if (activeSection !== "extensions") {
-      pendingExtensionScrollTopRef.current = null;
-      return;
-    }
-
-    const scrollTop = pendingExtensionScrollTopRef.current;
-    const viewport = sectionViewportRef.current;
-    if (scrollTop === null || !viewport) {
-      return;
-    }
-
-    viewport.scrollTop = scrollTop;
-    const frameId = window.requestAnimationFrame(() => {
-      if (sectionViewportRef.current) {
-        sectionViewportRef.current.scrollTop = scrollTop;
-      }
-      pendingExtensionScrollTopRef.current = null;
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [activeSection, error, installingExtensionId, status]);
 
   function handleFieldChange(field: keyof PHPSettingsFormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -360,7 +332,6 @@ export function PHPSettingsDialog({
       return;
     }
 
-    pendingExtensionScrollTopRef.current = sectionViewportRef.current?.scrollTop ?? null;
     setInstallingExtensionId(extensionId);
     setError(null);
 
@@ -434,11 +405,7 @@ export function PHPSettingsDialog({
       const haystack = [entry.label, entry.id, ...(entry.aliases ?? [])].join(" ").toLowerCase();
       return haystack.includes(normalizedExtensionFilter);
     })
-    .sort(
-      (left, right) =>
-        Number(right.installed) - Number(left.installed) ||
-        left.label.localeCompare(right.label),
-    );
+    .sort((left, right) => left.label.localeCompare(right.label));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -551,7 +518,7 @@ export function PHPSettingsDialog({
               </div>
             </nav>
 
-            <div ref={sectionViewportRef} className="min-h-0 min-w-0 overflow-y-auto pr-1">
+            <div className="min-h-0 min-w-0 overflow-y-auto pr-1">
               {activeSection === "runtime-settings" ? (
                 <section className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
