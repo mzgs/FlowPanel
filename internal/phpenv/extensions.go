@@ -3,19 +3,22 @@ package phpenv
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
 
 type phpExtensionDefinition struct {
-	id           string
-	catalogID    string
-	label        string
-	aliases      []string
-	installID    string
-	aptPackage   string
-	dnfPackage   string
-	sharedObject string
+	id            string
+	catalogID     string
+	label         string
+	aliases       []string
+	installID     string
+	aptPackage    string
+	dnfPackage    string
+	sharedObject  string
+	zendExtension bool
 }
 
 type PHPExtensionCatalogEntry struct {
@@ -44,7 +47,7 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "igbinary", aptPackage: "igbinary", dnfPackage: "pecl-igbinary"},
 	{id: "imagemagick", aliases: []string{"imagick"}, aptPackage: "imagick", dnfPackage: "pecl-imagick-im7", sharedObject: "imagick"},
 	{id: "imap", aptPackage: "imap", dnfPackage: "pecl-imap"},
-	{id: "ioncube", label: "ionCube", aliases: []string{"ioncube loader", "ioncubeloader"}, dnfPackage: "ioncube-loader"},
+	{id: "ioncube", label: "ionCube", aliases: []string{"ioncube loader", "ioncubeloader"}, dnfPackage: "ioncube-loader", zendExtension: true},
 	{id: "intl", aptPackage: "intl", dnfPackage: "intl"},
 	{id: "ldap", aptPackage: "ldap", dnfPackage: "ldap"},
 	{id: "mailparse", aptPackage: "mailparse", dnfPackage: "pecl-mailparse"},
@@ -55,7 +58,7 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "mysqli", aptPackage: "mysql", dnfPackage: "mysqlnd"},
 	{id: "mysqlnd", aptPackage: "mysql", dnfPackage: "mysqlnd"},
 	{id: "oci8"},
-	{id: "opcache", aliases: []string{"zend opcache", "zendopcache"}, aptPackage: "opcache", dnfPackage: "opcache"},
+	{id: "opcache", aliases: []string{"zend opcache", "zendopcache"}, aptPackage: "opcache", dnfPackage: "opcache", zendExtension: true},
 	{id: "openswoole", aptPackage: "openswoole"},
 	{id: "parallel", dnfPackage: "pecl-parallel"},
 	{id: "pcov", aptPackage: "pcov", dnfPackage: "pecl-pcov"},
@@ -79,7 +82,7 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "tidy", aptPackage: "tidy", dnfPackage: "tidy"},
 	{id: "timezonedb", aptPackage: "timezonedb"},
 	{id: "uuid", aptPackage: "uuid", dnfPackage: "pecl-uuid"},
-	{id: "xdebug", aptPackage: "xdebug", dnfPackage: "pecl-xdebug3"},
+	{id: "xdebug", aptPackage: "xdebug", dnfPackage: "pecl-xdebug3", zendExtension: true},
 	{id: "xlswriter", aptPackage: "xlswriter", dnfPackage: "pecl-xlswriter"},
 	{id: "xmlreader", aptPackage: "xml", dnfPackage: "xml"},
 	{id: "xmlwriter", aptPackage: "xml", dnfPackage: "xml"},
@@ -133,6 +136,12 @@ func (s *Service) InstallExtensionForVersion(ctx context.Context, version, exten
 	}
 
 	runtimeStatus = s.StatusForVersion(ctx, runtimeStatus.Version)
+	if !extensionLoaded(runtimeStatus.Extensions, definition) {
+		if _, err := enablePHPExtension(ctx, runtimeStatus, definition); err != nil {
+			return RuntimeStatus{}, err
+		}
+		runtimeStatus = s.StatusForVersion(ctx, runtimeStatus.Version)
+	}
 	if runtimeStatus.ServiceRunning {
 		if err := s.RestartVersion(ctx, runtimeStatus.Version); err != nil {
 			if runtimeStatus.FPMPath == "" {
@@ -145,7 +154,7 @@ func (s *Service) InstallExtensionForVersion(ctx context.Context, version, exten
 	}
 
 	runtimeStatus = s.StatusForVersion(ctx, runtimeStatus.Version)
-	if err := validateInstalledExtension(runtimeStatus, requestedExtension, definition); err != nil {
+	if err := validateInstalledExtension(ctx, runtimeStatus, requestedExtension, definition); err != nil {
 		return RuntimeStatus{}, err
 	}
 
@@ -259,6 +268,9 @@ func (d phpExtensionDefinition) sharedObjectName() string {
 	if name := strings.TrimSpace(d.sharedObject); name != "" {
 		return strings.TrimSuffix(name, ".so")
 	}
+	if name := strings.TrimSpace(d.installID); name != "" {
+		return strings.TrimSuffix(name, ".so")
+	}
 	if name := strings.TrimSpace(d.id); name != "" {
 		return strings.TrimSuffix(name, ".so")
 	}
@@ -288,12 +300,16 @@ func extensionLoaded(installed []string, definition phpExtensionDefinition) bool
 	return false
 }
 
-func validateInstalledExtension(runtimeStatus RuntimeStatus, requestedExtension string, definition phpExtensionDefinition) error {
+func validateInstalledExtension(ctx context.Context, runtimeStatus RuntimeStatus, requestedExtension string, definition phpExtensionDefinition) error {
 	if extensionLoaded(runtimeStatus.Extensions, definition) {
 		return nil
 	}
 
-	return fmt.Errorf("php extension %q was installed but is not loaded for php %s", requestedExtension, runtimeStatus.Version)
+	message := fmt.Sprintf("php extension %q was installed but is not loaded for php %s", requestedExtension, runtimeStatus.Version)
+	if diagnostics := inspectPHPExtensionLoadDiagnostics(ctx, runtimeStatus, definition); diagnostics != "" {
+		message += ": " + diagnostics
+	}
+	return fmt.Errorf("%s", message)
 }
 
 func normalizePHPExtensionKey(value string) string {
@@ -343,4 +359,212 @@ func installPHPExtensionPackage(ctx context.Context, runtimeStatus RuntimeStatus
 	}
 
 	return nil
+}
+
+func enablePHPExtension(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
+	if enabled, err := enablePHPExtensionWithTool(ctx, runtimeStatus, definition); enabled || err != nil {
+		return enabled, err
+	}
+	return writeManagedPHPExtensionConfig(runtimeStatus, definition)
+}
+
+func enablePHPExtensionWithTool(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
+	if strings.TrimSpace(runtimeStatus.PackageManager) != "apt" {
+		return false, nil
+	}
+
+	phpenmodPath, ok := lookupCommand("phpenmod")
+	if !ok {
+		return false, nil
+	}
+
+	args := []string{phpenmodPath}
+	if version := NormalizeVersion(runtimeStatus.Version); version != "" {
+		args = append(args, "-v", version)
+	}
+	if runtimeStatus.FPMInstalled {
+		args = append(args, "-s", "cli,fpm")
+	} else {
+		args = append(args, "-s", "cli")
+	}
+	args = append(args, definition.sharedObjectName())
+
+	if _, err := runCommand(ctx, args[0], args[1:]...); err != nil {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func writeManagedPHPExtensionConfig(runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
+	paths := managedPHPExtensionConfigPaths(runtimeStatus, definition)
+	if len(paths) == 0 {
+		return false, nil
+	}
+
+	content := renderManagedPHPExtensionConfig(definition)
+	wroteConfig := false
+	for _, path := range paths {
+		exists, err := phpExtensionConfigExists(path, definition)
+		if err != nil {
+			return wroteConfig, err
+		}
+		if exists {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return wroteConfig, fmt.Errorf("create php extension config directory: %w", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return wroteConfig, fmt.Errorf("write php extension config: %w", err)
+		}
+		wroteConfig = true
+	}
+
+	return wroteConfig, nil
+}
+
+func managedPHPExtensionConfigPaths(runtimeStatus RuntimeStatus, definition phpExtensionDefinition) []string {
+	moduleName := definition.sharedObjectName()
+	if moduleName == "" {
+		return nil
+	}
+
+	dirs := []string{}
+	if scanDir := strings.TrimSpace(runtimeStatus.ScanDir); scanDir != "" {
+		dirs = append(dirs, scanDir)
+	}
+
+	version := NormalizeVersion(runtimeStatus.Version)
+	switch strings.TrimSpace(runtimeStatus.PackageManager) {
+	case "apt":
+		if version != "" {
+			dirs = append(dirs, filepath.Join("/etc/php", version, "cli", "conf.d"))
+			if runtimeStatus.FPMInstalled {
+				dirs = append(dirs, filepath.Join("/etc/php", version, "fpm", "conf.d"))
+			}
+		}
+	case "dnf", "yum":
+		if version != "" {
+			dirs = append(dirs, filepath.Join("/etc/opt/remi", remiCollectionForVersion(version), "php.d"))
+		}
+		dirs = append(dirs, "/etc/php.d")
+	}
+
+	paths := make([]string, 0, len(dirs))
+	for _, dir := range dedupeStrings(dirs) {
+		paths = append(paths, filepath.Join(dir, "99-flowpanel-"+moduleName+".ini"))
+	}
+	return dedupeStrings(paths)
+}
+
+func renderManagedPHPExtensionConfig(definition phpExtensionDefinition) string {
+	directive := "extension"
+	if definition.zendExtension {
+		directive = "zend_extension"
+	}
+	return fmt.Sprintf("; Managed by FlowPanel.\n%s=%s.so\n", directive, definition.sharedObjectName())
+}
+
+func phpExtensionConfigExists(path string, definition phpExtensionDefinition) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return phpExtensionConfigReferences(string(data), definition), nil
+	}
+	if !os.IsNotExist(err) {
+		return false, fmt.Errorf("read php extension config: %w", err)
+	}
+
+	dir := filepath.Dir(path)
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read php extension config directory: %w", readErr)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ini") {
+			continue
+		}
+		content, entryErr := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if entryErr != nil {
+			return false, fmt.Errorf("read php extension config entry: %w", entryErr)
+		}
+		if phpExtensionConfigReferences(string(content), definition) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func phpExtensionConfigReferences(content string, definition phpExtensionDefinition) bool {
+	contentKey := normalizePHPExtensionKey(content)
+	for _, candidate := range extensionLoadCandidates(definition) {
+		if candidate != "" && strings.Contains(contentKey, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func inspectPHPExtensionLoadDiagnostics(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) string {
+	if runtimeStatus.PHPPath == "" {
+		return ""
+	}
+
+	output, err := runInspectCommand(ctx, runtimeStatus.PHPPath, "-d", "display_startup_errors=1", "-m")
+	if err != nil && strings.TrimSpace(output) == "" {
+		return ""
+	}
+
+	lines := make([]string, 0, 2)
+	seen := map[string]struct{}{}
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+
+		lineKey := normalizePHPExtensionKey(line)
+		isRelevant := strings.Contains(strings.ToLower(line), "unable to load") ||
+			strings.Contains(strings.ToLower(line), "startup") ||
+			strings.Contains(strings.ToLower(line), "warning") ||
+			strings.Contains(strings.ToLower(line), "error")
+		if !isRelevant {
+			continue
+		}
+		for _, candidate := range extensionLoadCandidates(definition) {
+			if candidate != "" && strings.Contains(lineKey, candidate) {
+				if _, ok := seen[line]; ok {
+					break
+				}
+				seen[line] = struct{}{}
+				lines = append(lines, line)
+				break
+			}
+		}
+		if len(lines) == 2 {
+			break
+		}
+	}
+
+	return strings.Join(lines, "; ")
+}
+
+func extensionLoadCandidates(definition phpExtensionDefinition) []string {
+	candidates := append([]string{definition.id}, definition.aliases...)
+	if sharedObject := definition.sharedObjectName(); sharedObject != "" {
+		candidates = append(candidates, sharedObject)
+	}
+
+	keys := make([]string, 0, len(candidates))
+	for _, candidate := range dedupeStrings(candidates) {
+		if key := normalizePHPExtensionKey(candidate); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
