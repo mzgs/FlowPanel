@@ -145,11 +145,10 @@ function normalizePHPExtensionToken(value: string) {
 
 function isPHPExtensionInstalled(
   entry: PHPExtensionCatalogEntry,
-  installedExtensions: string[],
+  installedExtensions: Set<string>,
 ) {
-  const installed = new Set(installedExtensions.map(normalizePHPExtensionToken));
   const candidates = [entry.id, ...(entry.aliases ?? [])].map(normalizePHPExtensionToken);
-  return candidates.some((candidate) => installed.has(candidate));
+  return candidates.some((candidate) => installedExtensions.has(candidate));
 }
 
 function extractVersionNumber(value: string, pattern: RegExp) {
@@ -386,7 +385,7 @@ export function PHPSettingsDialog({
   const setDefaultDisabled = busy || defaultSelected || !status?.ready || !version;
   const packageManager = status?.package_manager?.trim() ?? "";
   const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
-  const extensions = [...(status?.extensions ?? [])].sort((left, right) => left.localeCompare(right));
+  const installedExtensions = new Set((status?.extensions ?? []).map(normalizePHPExtensionToken));
   const normalizedExtensionFilter = extensionFilter.trim().toLowerCase();
   const parsedError = parseCommandError(error);
   const trackedExtensions = extensionCatalog
@@ -394,7 +393,7 @@ export function PHPSettingsDialog({
       ...entry,
       installed:
         (entry.id === "opcache" && hasBuiltInOpcache(version)) ||
-        isPHPExtensionInstalled(entry, extensions),
+        isPHPExtensionInstalled(entry, installedExtensions),
       installId: entry.install_id ?? entry.id,
       installSupported: (entry.install_package_managers ?? []).includes(packageManager),
     }))
@@ -405,7 +404,12 @@ export function PHPSettingsDialog({
 
       const haystack = [entry.label, entry.id, ...(entry.aliases ?? [])].join(" ").toLowerCase();
       return haystack.includes(normalizedExtensionFilter);
-    });
+    })
+    .sort(
+      (left, right) =>
+        Number(right.installed) - Number(left.installed) ||
+        left.label.localeCompare(right.label),
+    );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
