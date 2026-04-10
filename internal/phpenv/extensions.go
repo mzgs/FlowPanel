@@ -11,53 +11,54 @@ type phpExtensionDefinition struct {
 	id           string
 	aliases      []string
 	aptPackage   string
+	dnfPackage   string
 	sharedObject string
 }
 
 var phpExtensionDefinitions = []phpExtensionDefinition{
-	{id: "amqp", aptPackage: "amqp"},
-	{id: "apcu", aptPackage: "apcu"},
-	{id: "bcmath", aptPackage: "bcmath"},
+	{id: "amqp", aptPackage: "amqp", dnfPackage: "pecl-amqp"},
+	{id: "apcu", aptPackage: "apcu", dnfPackage: "pecl-apcu"},
+	{id: "bcmath", aptPackage: "bcmath", dnfPackage: "bcmath"},
 	{id: "bz2", aptPackage: "bz2"},
 	{id: "curl", aptPackage: "curl"},
-	{id: "dba", aptPackage: "dba"},
-	{id: "dom", aptPackage: "xml"},
-	{id: "event", aptPackage: "event"},
-	{id: "gd", aptPackage: "gd"},
-	{id: "igbinary", aptPackage: "igbinary"},
-	{id: "imap", aptPackage: "imap"},
-	{id: "imagemagick", aliases: []string{"imagick"}, aptPackage: "imagick", sharedObject: "imagick"},
-	{id: "intl", aptPackage: "intl"},
-	{id: "ldap", aptPackage: "ldap"},
-	{id: "mailparse", aptPackage: "mailparse"},
-	{id: "mcrypt", aptPackage: "mcrypt"},
-	{id: "mbstring", aptPackage: "mbstring"},
-	{id: "memcached", aptPackage: "memcached"},
-	{id: "msgpack", aptPackage: "msgpack"},
-	{id: "mysqli", aptPackage: "mysql"},
-	{id: "mysqlnd", aptPackage: "mysql"},
-	{id: "opcache", aliases: []string{"zendopcache"}, aptPackage: "opcache"},
-	{id: "pdo_mysql", aptPackage: "mysql"},
-	{id: "pdo_odbc", aptPackage: "odbc"},
-	{id: "pdo_pgsql", aliases: []string{"pdopgsql"}, aptPackage: "pgsql"},
+	{id: "dba", aptPackage: "dba", dnfPackage: "dba"},
+	{id: "dom", aptPackage: "xml", dnfPackage: "xml"},
+	{id: "event", aptPackage: "event", dnfPackage: "pecl-event"},
+	{id: "gd", aptPackage: "gd", dnfPackage: "gd"},
+	{id: "igbinary", aptPackage: "igbinary", dnfPackage: "pecl-igbinary"},
+	{id: "imap", aptPackage: "imap", dnfPackage: "pecl-imap"},
+	{id: "imagemagick", aliases: []string{"imagick"}, aptPackage: "imagick", dnfPackage: "pecl-imagick-im7", sharedObject: "imagick"},
+	{id: "intl", aptPackage: "intl", dnfPackage: "intl"},
+	{id: "ldap", aptPackage: "ldap", dnfPackage: "ldap"},
+	{id: "mailparse", aptPackage: "mailparse", dnfPackage: "pecl-mailparse"},
+	{id: "mcrypt", aptPackage: "mcrypt", dnfPackage: "pecl-mcrypt"},
+	{id: "mbstring", aptPackage: "mbstring", dnfPackage: "mbstring"},
+	{id: "memcached", aptPackage: "memcached", dnfPackage: "pecl-memcached"},
+	{id: "msgpack", aptPackage: "msgpack", dnfPackage: "pecl-msgpack"},
+	{id: "mysqli", aptPackage: "mysql", dnfPackage: "mysqlnd"},
+	{id: "mysqlnd", aptPackage: "mysql", dnfPackage: "mysqlnd"},
+	{id: "opcache", aliases: []string{"zendopcache"}, aptPackage: "opcache", dnfPackage: "opcache"},
+	{id: "pdo_mysql", aptPackage: "mysql", dnfPackage: "mysqlnd"},
+	{id: "pdo_odbc", aptPackage: "odbc", dnfPackage: "odbc"},
+	{id: "pdo_pgsql", aliases: []string{"pdopgsql"}, aptPackage: "pgsql", dnfPackage: "pgsql"},
 	{id: "pdo_sqlite", aptPackage: "sqlite3"},
-	{id: "pgsql", aptPackage: "pgsql"},
-	{id: "phpmongodb", aliases: []string{"php_mongodb", "mongodb"}, aptPackage: "mongodb", sharedObject: "mongodb"},
-	{id: "pcov", aptPackage: "pcov"},
-	{id: "redis", aptPackage: "redis"},
-	{id: "snmp", aptPackage: "snmp"},
-	{id: "soap", aptPackage: "soap"},
+	{id: "pgsql", aptPackage: "pgsql", dnfPackage: "pgsql"},
+	{id: "phpmongodb", aliases: []string{"php_mongodb", "mongodb"}, aptPackage: "mongodb", dnfPackage: "pecl-mongodb", sharedObject: "mongodb"},
+	{id: "pcov", aptPackage: "pcov", dnfPackage: "pecl-pcov"},
+	{id: "redis", aptPackage: "redis", dnfPackage: "pecl-redis6"},
+	{id: "snmp", aptPackage: "snmp", dnfPackage: "snmp"},
+	{id: "soap", aptPackage: "soap", dnfPackage: "soap"},
 	{id: "sqlite3", aptPackage: "sqlite3"},
-	{id: "ssh2", aptPackage: "ssh2"},
-	{id: "tidy", aptPackage: "tidy"},
+	{id: "ssh2", aptPackage: "ssh2", dnfPackage: "pecl-ssh2"},
+	{id: "tidy", aptPackage: "tidy", dnfPackage: "tidy"},
 	{id: "timezonedb", aptPackage: "timezonedb"},
-	{id: "uuid", aptPackage: "uuid"},
-	{id: "xdebug", aptPackage: "xdebug"},
-	{id: "xmlreader", aptPackage: "xml"},
-	{id: "xmlwriter", aptPackage: "xml"},
-	{id: "xsl", aptPackage: "xsl"},
-	{id: "yaml", aptPackage: "yaml"},
-	{id: "zip", aptPackage: "zip"},
+	{id: "uuid", aptPackage: "uuid", dnfPackage: "pecl-uuid"},
+	{id: "xdebug", aptPackage: "xdebug", dnfPackage: "pecl-xdebug3"},
+	{id: "xmlreader", aptPackage: "xml", dnfPackage: "xml"},
+	{id: "xmlwriter", aptPackage: "xml", dnfPackage: "xml"},
+	{id: "xsl", aptPackage: "xsl", dnfPackage: "xml"},
+	{id: "yaml", aptPackage: "yaml", dnfPackage: "pecl-yaml"},
+	{id: "zip", aptPackage: "zip", dnfPackage: "pecl-zip"},
 }
 
 func (s *Service) InstallExtension(ctx context.Context, extension string) (Status, error) {
@@ -84,14 +85,14 @@ func (s *Service) InstallExtensionForVersion(ctx context.Context, version, exten
 	if !ok {
 		return RuntimeStatus{}, fmt.Errorf("php extension %q is not supported", requestedExtension)
 	}
-	if !definition.supportsAPTInstall(runtimeStatus.Version, runtimeStatus.PackageManager) {
+	if !definition.supportsPackageInstall(runtimeStatus.Version, runtimeStatus.PackageManager) {
 		return RuntimeStatus{}, fmt.Errorf("php extension %q does not have a configured distro package for php %s", requestedExtension, runtimeStatus.Version)
 	}
 	if extensionLoaded(runtimeStatus.Extensions, definition) {
 		return runtimeStatus, nil
 	}
 
-	if err := installPHPExtensionWithAPT(ctx, runtimeStatus, definition); err != nil {
+	if err := installPHPExtensionPackage(ctx, runtimeStatus, definition); err != nil {
 		return RuntimeStatus{}, err
 	}
 
@@ -135,8 +136,17 @@ func findPHPExtensionDefinition(value string) (phpExtensionDefinition, bool) {
 	return phpExtensionDefinition{}, false
 }
 
-func (d phpExtensionDefinition) supportsAPTInstall(version, packageManager string) bool {
-	if strings.TrimSpace(d.aptPackage) == "" || strings.TrimSpace(packageManager) != "apt" {
+func (d phpExtensionDefinition) supportsPackageInstall(version, packageManager string) bool {
+	switch strings.TrimSpace(packageManager) {
+	case "apt":
+		if strings.TrimSpace(d.aptPackage) == "" {
+			return false
+		}
+	case "dnf":
+		if strings.TrimSpace(d.dnfPackage) == "" {
+			return false
+		}
+	default:
 		return false
 	}
 	if normalizePHPExtensionKey(d.id) == "opcache" && !phpVersionHasSeparateOpcachePackage(version) {
@@ -145,8 +155,15 @@ func (d phpExtensionDefinition) supportsAPTInstall(version, packageManager strin
 	return true
 }
 
-func (d phpExtensionDefinition) aptPackageName(version string) string {
-	return "php" + NormalizeVersion(version) + "-" + d.aptPackage
+func (d phpExtensionDefinition) packageName(version, packageManager string) string {
+	switch strings.TrimSpace(packageManager) {
+	case "apt":
+		return "php" + NormalizeVersion(version) + "-" + d.aptPackage
+	case "dnf":
+		return remiCollectionForVersion(version) + "-php-" + d.dnfPackage
+	default:
+		return ""
+	}
 }
 
 func (d phpExtensionDefinition) sharedObjectName() string {
@@ -200,20 +217,30 @@ func normalizePHPExtensionKey(value string) string {
 	return builder.String()
 }
 
-func installPHPExtensionWithAPT(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
-	if runtime.GOOS != "linux" || strings.TrimSpace(runtimeStatus.PackageManager) != "apt" {
-		return fmt.Errorf("automatic PHP extension installation is only supported with apt-managed Linux runtimes")
+func installPHPExtensionPackage(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("automatic PHP extension installation is only supported on Linux runtimes")
 	}
 
-	aptPath, ok := lookupCommand("apt-get")
+	packageManager := strings.TrimSpace(runtimeStatus.PackageManager)
+	packageName := definition.packageName(runtimeStatus.Version, packageManager)
+	if packageName == "" {
+		return fmt.Errorf("automatic PHP extension installation is not supported for %s-managed runtimes", packageManager)
+	}
+
+	commandName := packageManager
+	if packageManager == "apt" {
+		commandName = "apt-get"
+	}
+
+	packageManagerPath, ok := lookupCommand(commandName)
 	if !ok {
-		return fmt.Errorf("apt-get is not available")
+		return fmt.Errorf("%s is not available", commandName)
 	}
 
-	packageName := definition.aptPackageName(runtimeStatus.Version)
-	installArgs := []string{aptPath, "install", "-y", packageName}
+	installArgs := []string{packageManagerPath, "install", "-y", packageName}
 	if err := runCommands(ctx, installArgs); err != nil {
-		if shouldRetryAPTInstallWithOndrej(versionActionPlan{packageManager: runtimeStatus.PackageManager}, err) {
+		if packageManager == "apt" && shouldRetryAPTInstallWithOndrej(versionActionPlan{packageManager: runtimeStatus.PackageManager}, err) {
 			if bootstrapErr := bootstrapOndrejPHPRepository(ctx); bootstrapErr != nil {
 				return fmt.Errorf("bootstrap ondrej/php repository: %w", bootstrapErr)
 			}
@@ -223,7 +250,7 @@ func installPHPExtensionWithAPT(ctx context.Context, runtimeStatus RuntimeStatus
 				err = retryErr
 			}
 		}
-		return fmt.Errorf("install %s via apt: %w", packageName, err)
+		return fmt.Errorf("install %s via %s: %w", packageName, packageManager, err)
 	}
 
 	return nil
