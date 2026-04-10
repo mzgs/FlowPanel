@@ -68,7 +68,7 @@ func (s *Service) Record(ctx context.Context, input CreateInput) (Record, error)
 		ResourceID:    normalizeValue(input.ResourceID, "-", 160),
 		ResourceLabel: normalizeValue(input.ResourceLabel, normalizeValue(input.ResourceID, "-", 160), 160),
 		Status:        normalizeValue(input.Status, "succeeded", 20),
-		Message:       normalizeValue(input.Message, "No details recorded.", 400),
+		Message:       normalizeValue(input.Message, "No details recorded.", 0),
 		CreatedAt:     time.Now().UTC(),
 	}
 

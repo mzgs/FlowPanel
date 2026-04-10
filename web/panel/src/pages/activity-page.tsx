@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
 import { fetchEvents, type ActivityEvent } from "@/api/events";
-import { LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
+import { Copy, LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Table,
   TableBody,
@@ -13,6 +21,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
+import { copyTextToClipboard } from "@/lib/utils";
+import { toast } from "sonner";
+
+const messagePreviewLength = 200;
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {
@@ -24,6 +36,18 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 function formatAction(event: ActivityEvent) {
   return `${event.category} / ${event.action}`;
+}
+
+function getMessagePreview(message: string) {
+  if (message.length <= messagePreviewLength) {
+    return message;
+  }
+
+  return `${message.slice(0, messagePreviewLength).trimEnd()}...`;
+}
+
+function hasHiddenMessageContent(message: string) {
+  return message.length > messagePreviewLength;
 }
 
 function getStatusVariant(status: string) {
@@ -39,6 +63,7 @@ export function ActivityPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<ActivityEvent | null>(null);
 
   async function loadEvents(showSpinner: boolean) {
     if (showSpinner) {
@@ -62,6 +87,19 @@ export function ActivityPage() {
   useEffect(() => {
     void loadEvents(false);
   }, []);
+
+  async function handleCopySelectedEventMessage() {
+    if (!selectedEvent) {
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(selectedEvent.message);
+      toast.success("Full log copied.");
+    } catch {
+      toast.error("Failed to copy full log.");
+    }
+  }
 
   return (
     <>
@@ -124,7 +162,22 @@ export function ActivityPage() {
                     <TableCell className="align-top">
                       <Badge variant={getStatusVariant(event.status)}>{event.status}</Badge>
                     </TableCell>
-                    <TableCell className="align-top text-sm text-foreground">{event.message}</TableCell>
+                    <TableCell className="align-top">
+                      <div className="max-w-3xl truncate text-sm text-foreground">
+                        {getMessagePreview(event.message)}
+                      </div>
+                      {hasHiddenMessageContent(event.message) ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="mt-3 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                          onClick={() => setSelectedEvent(event)}
+                        >
+                          Show full log
+                        </Button>
+                      ) : null}
+                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -132,6 +185,54 @@ export function ActivityPage() {
           </Table>
         </section>
       </div>
+
+      <Dialog open={selectedEvent !== null} onOpenChange={(open) => (!open ? setSelectedEvent(null) : null)}>
+        <DialogContent className="h-[min(85vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-4xl">
+          <DialogHeader className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <DialogTitle>{selectedEvent ? `${formatAction(selectedEvent)} log` : "Activity log"}</DialogTitle>
+                <DialogDescription>
+                  {selectedEvent
+                    ? `${selectedEvent.resource_label || selectedEvent.resource_id} • ${formatDateTime(selectedEvent.created_at)}`
+                    : "Full activity event log."}
+                </DialogDescription>
+              </div>
+
+              {selectedEvent ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                  onClick={() => void handleCopySelectedEventMessage()}
+                >
+                  <Copy className="h-4 w-4" />
+                  Copy log
+                </Button>
+              ) : null}
+            </div>
+          </DialogHeader>
+
+          {selectedEvent ? (
+            <div className="flex min-h-0 flex-col bg-[var(--app-surface)]">
+              <div className="border-b border-[var(--app-border)] px-6 py-4 text-sm text-[var(--app-text-muted)]">
+                <span className="font-medium text-[var(--app-text)]">{selectedEvent.status}</span>
+                {" • "}
+                {selectedEvent.actor}
+                {" • "}
+                {selectedEvent.resource_type}
+              </div>
+
+              <ScrollArea className="min-h-0 flex-1 bg-[var(--app-surface)]">
+                <pre className="p-6 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)]">
+                  {selectedEvent.message}
+                </pre>
+              </ScrollArea>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
