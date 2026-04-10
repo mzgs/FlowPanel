@@ -2,6 +2,7 @@ package phpenv
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,34 @@ type phpExtensionDefinition struct {
 	aliases      []string
 	piePackage   string
 	sharedObject string
+}
+
+type phpBuildIdentity struct {
+	version          string
+	versionID        string
+	extensionDir     string
+	phpAPI           string
+	zendExtensionAPI string
+	phpBinary        string
+}
+
+type phpBuildToolchain struct {
+	phpPath       string
+	phpConfigPath string
+	phpizePath    string
+}
+
+type phpConfigIdentity struct {
+	versionID    string
+	extensionDir string
+	phpBinary    string
+}
+
+type phpizeIdentity struct {
+	version          string
+	phpAPI           string
+	zendModuleAPI    string
+	zendExtensionAPI string
 }
 
 var phpExtensionDefinitions = []phpExtensionDefinition{
@@ -260,12 +289,26 @@ func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus
 			args = append(args, "--with-php-path="+runtimeStatus.PHPPath)
 		}
 	} else {
-		if phpConfigPath, ok := lookupExecutableCandidates(phpConfigBinaryCandidates(runtimeStatus.Version, runtimeStatus.PHPPath)); ok {
-			args = append(args, "--with-php-config="+phpConfigPath)
+		toolchain, err := resolvePHPBuildToolchain(ctx, runtimeStatus)
+		if err != nil {
+			attemptedInstall, installErr := installPHPBuildTools(ctx, runtimeStatus)
+			switch {
+			case installErr != nil:
+				return fmt.Errorf("resolve PHP build tools for php %s: %w; install PHP development tools: %v", runtimeStatus.Version, err, installErr)
+			case attemptedInstall:
+				toolchain, err = resolvePHPBuildToolchain(ctx, runtimeStatus)
+				if err != nil {
+					return err
+				}
+			default:
+				return err
+			}
 		}
-		if phpizePath, ok := lookupExecutableCandidates(phpizeBinaryCandidates(runtimeStatus.Version, runtimeStatus.PHPPath)); ok {
-			args = append(args, "--with-phpize-path="+phpizePath)
-		}
+
+		args = append(args,
+			"--with-php-config="+toolchain.phpConfigPath,
+			"--with-phpize-path="+toolchain.phpizePath,
+		)
 	}
 
 	args = append(args, definition.piePackage)
@@ -279,6 +322,311 @@ func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus
 	}
 
 	return nil
+}
+
+func resolvePHPBuildToolchain(ctx context.Context, runtimeStatus RuntimeStatus) (phpBuildToolchain, error) {
+	phpPath := strings.TrimSpace(runtimeStatus.PHPPath)
+	if phpPath == "" {
+		return phpBuildToolchain{}, fmt.Errorf("php %s binary path is unavailable", runtimeStatus.Version)
+	}
+
+	identity, err := inspectPHPBuildIdentity(ctx, phpPath)
+	if err != nil {
+		return phpBuildToolchain{}, fmt.Errorf("inspect php %s build identity from %s: %w", runtimeStatus.Version, phpPath, err)
+	}
+
+	phpConfigPath, err := resolvePHPConfigPath(ctx, identity, phpConfigBinaryCandidates(runtimeStatus.Version, phpPath))
+	if err != nil {
+		return phpBuildToolchain{}, fmt.Errorf("resolve php-config for php %s: %w", runtimeStatus.Version, err)
+	}
+
+	phpizePath, err := resolvePHPizePath(ctx, identity, runtimeStatus.Version, phpizeBinaryCandidates(runtimeStatus.Version, phpPath, phpConfigPath))
+	if err != nil {
+		return phpBuildToolchain{}, fmt.Errorf("resolve phpize for php %s: %w", runtimeStatus.Version, err)
+	}
+
+	return phpBuildToolchain{
+		phpPath:       phpPath,
+		phpConfigPath: phpConfigPath,
+		phpizePath:    phpizePath,
+	}, nil
+}
+
+func inspectPHPBuildIdentity(ctx context.Context, phpPath string) (phpBuildIdentity, error) {
+	payloadOutput, err := runInspectCommand(ctx, phpPath, "-r", `echo json_encode([
+  "version" => PHP_VERSION,
+  "version_id" => (string) PHP_VERSION_ID,
+  "extension_dir" => (string) ini_get("extension_dir"),
+  "php_binary" => PHP_BINARY,
+], JSON_UNESCAPED_SLASHES);`)
+	if err != nil {
+		return phpBuildIdentity{}, err
+	}
+
+	var payload struct {
+		Version      string `json:"version"`
+		VersionID    string `json:"version_id"`
+		ExtensionDir string `json:"extension_dir"`
+		PHPBinary    string `json:"php_binary"`
+	}
+	if err := json.Unmarshal([]byte(payloadOutput), &payload); err != nil {
+		return phpBuildIdentity{}, fmt.Errorf("decode php build identity: %w", err)
+	}
+
+	infoOutput, err := runInspectCommand(ctx, phpPath, "-i")
+	if err != nil {
+		return phpBuildIdentity{}, fmt.Errorf("inspect php api values: %w", err)
+	}
+
+	return phpBuildIdentity{
+		version:          strings.TrimSpace(payload.Version),
+		versionID:        strings.TrimSpace(payload.VersionID),
+		extensionDir:     strings.TrimSpace(payload.ExtensionDir),
+		phpAPI:           parsePHPInfoValue(infoOutput, "PHP API"),
+		zendExtensionAPI: parsePHPInfoValue(infoOutput, "Zend Extension"),
+		phpBinary:        strings.TrimSpace(payload.PHPBinary),
+	}, nil
+}
+
+func resolvePHPConfigPath(ctx context.Context, runtime phpBuildIdentity, candidates []string) (string, error) {
+	resolvedCandidates := existingExecutableCandidates(candidates)
+	if len(resolvedCandidates) == 0 {
+		return "", fmt.Errorf("no php-config executable was found in candidates: %s", strings.Join(candidates, ", "))
+	}
+
+	for _, candidate := range resolvedCandidates {
+		identity, err := inspectPHPConfigIdentity(ctx, candidate)
+		if err != nil {
+			continue
+		}
+		if phpConfigMatchesRuntime(runtime, identity) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("no php-config candidate matched the selected runtime; checked: %s", strings.Join(resolvedCandidates, ", "))
+}
+
+func inspectPHPConfigIdentity(ctx context.Context, phpConfigPath string) (phpConfigIdentity, error) {
+	versionID, err := runInspectCommand(ctx, phpConfigPath, "--vernum")
+	if err != nil {
+		return phpConfigIdentity{}, err
+	}
+
+	extensionDir, err := runInspectCommand(ctx, phpConfigPath, "--extension-dir")
+	if err != nil {
+		return phpConfigIdentity{}, err
+	}
+
+	phpBinary := ""
+	if output, err := runInspectCommand(ctx, phpConfigPath, "--php-binary"); err == nil {
+		phpBinary = output
+	}
+
+	return phpConfigIdentity{
+		versionID:    strings.TrimSpace(versionID),
+		extensionDir: strings.TrimSpace(extensionDir),
+		phpBinary:    strings.TrimSpace(phpBinary),
+	}, nil
+}
+
+func phpConfigMatchesRuntime(runtime phpBuildIdentity, candidate phpConfigIdentity) bool {
+	matched := false
+
+	if runtime.versionID != "" && candidate.versionID != "" {
+		if runtime.versionID != candidate.versionID {
+			return false
+		}
+		matched = true
+	}
+
+	if runtime.extensionDir != "" && candidate.extensionDir != "" {
+		if !pathsEqual(runtime.extensionDir, candidate.extensionDir) {
+			return false
+		}
+		matched = true
+	}
+
+	if runtime.phpBinary != "" && candidate.phpBinary != "" {
+		if !pathsEqual(runtime.phpBinary, candidate.phpBinary) {
+			return false
+		}
+		matched = true
+	}
+
+	return matched
+}
+
+func resolvePHPizePath(ctx context.Context, runtime phpBuildIdentity, version string, candidates []string) (string, error) {
+	resolvedCandidates := existingExecutableCandidates(candidates)
+	if len(resolvedCandidates) == 0 {
+		return "", fmt.Errorf("no phpize executable was found in candidates: %s", strings.Join(candidates, ", "))
+	}
+
+	for _, candidate := range resolvedCandidates {
+		identity, err := inspectPHPizeIdentity(ctx, candidate)
+		if err != nil {
+			continue
+		}
+		if phpizeMatchesRuntime(runtime, version, identity) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("no phpize candidate matched the selected runtime; checked: %s", strings.Join(resolvedCandidates, ", "))
+}
+
+func inspectPHPizeIdentity(ctx context.Context, phpizePath string) (phpizeIdentity, error) {
+	output, err := runInspectCommand(ctx, phpizePath, "--version")
+	if err != nil {
+		return phpizeIdentity{}, err
+	}
+
+	return phpizeIdentity{
+		version:          parseColonValue(output, "PHP Version"),
+		phpAPI:           parseColonValue(output, "PHP Api Version"),
+		zendModuleAPI:    parseColonValue(output, "Zend Module Api No"),
+		zendExtensionAPI: parseColonValue(output, "Zend Extension Api No"),
+	}, nil
+}
+
+func phpizeMatchesRuntime(runtime phpBuildIdentity, version string, candidate phpizeIdentity) bool {
+	matched := false
+
+	if version != "" && candidate.version != "" {
+		if NormalizeVersion(candidate.version) != NormalizeVersion(version) {
+			return false
+		}
+		matched = true
+	}
+
+	if runtime.phpAPI != "" && candidate.phpAPI != "" {
+		if runtime.phpAPI != candidate.phpAPI {
+			return false
+		}
+		matched = true
+	}
+
+	if runtime.phpAPI != "" && candidate.zendModuleAPI != "" {
+		if runtime.phpAPI != candidate.zendModuleAPI {
+			return false
+		}
+		matched = true
+	}
+
+	if runtime.zendExtensionAPI != "" && candidate.zendExtensionAPI != "" {
+		if runtime.zendExtensionAPI != candidate.zendExtensionAPI {
+			return false
+		}
+		matched = true
+	}
+
+	return matched
+}
+
+func installPHPBuildTools(ctx context.Context, runtimeStatus RuntimeStatus) (bool, error) {
+	if runtime.GOOS == "windows" || os.Geteuid() != 0 {
+		return false, nil
+	}
+
+	version := NormalizeVersion(runtimeStatus.Version)
+	if version == "" {
+		return false, nil
+	}
+
+	packageManager := strings.TrimSpace(runtimeStatus.PackageManager)
+	if packageManager == "" {
+		packageManager = detectVersionActionPlan(version).packageManager
+	}
+
+	switch packageManager {
+	case "apt":
+		aptPath, ok := lookupCommand("apt-get")
+		if !ok {
+			return false, nil
+		}
+		_, err := runCommand(ctx, aptPath, "install", "-y", "php"+version+"-dev")
+		return true, err
+	case "dnf":
+		dnfPath, ok := lookupCommand("dnf")
+		if !ok {
+			return false, nil
+		}
+		_, err := runCommand(ctx, dnfPath, "install", "-y", remiCollectionForVersion(version)+"-php-devel")
+		return true, err
+	case "yum":
+		yumPath, ok := lookupCommand("yum")
+		if !ok {
+			return false, nil
+		}
+		_, err := runCommand(ctx, yumPath, "install", "-y", remiCollectionForVersion(version)+"-php-devel")
+		return true, err
+	default:
+		return false, nil
+	}
+}
+
+func existingExecutableCandidates(candidates []string) []string {
+	resolved := make([]string, 0, len(candidates))
+	for _, candidate := range dedupeStrings(candidates) {
+		if path, ok := lookupCandidateExecutable(candidate); ok {
+			resolved = append(resolved, path)
+		}
+	}
+	return dedupeStrings(resolved)
+}
+
+func parsePHPInfoValue(output, key string) string {
+	return parseDelimitedValue(output, key, "=>")
+}
+
+func parseColonValue(output, key string) string {
+	return parseDelimitedValue(output, key, ":")
+}
+
+func parseDelimitedValue(output, key, separator string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		switch separator {
+		case "=>":
+			prefix := key + " =>"
+			if !strings.HasPrefix(line, prefix) {
+				continue
+			}
+			value := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			if extraIndex := strings.Index(value, "=>"); extraIndex >= 0 {
+				value = strings.TrimSpace(value[:extraIndex])
+			}
+			return value
+		case ":":
+			prefix := key + ":"
+			if !strings.HasPrefix(line, prefix) {
+				continue
+			}
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+
+	return ""
+}
+
+func pathsEqual(left, right string) bool {
+	left = normalizeComparablePath(left)
+	right = normalizeComparablePath(right)
+	return left != "" && right != "" && left == right
+}
+
+func normalizeComparablePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+
+	return filepath.Clean(path)
 }
 
 func formatCommandLine(name string, args ...string) string {
@@ -418,28 +766,55 @@ func lookupExecutableCandidates(candidates []string) (string, bool) {
 	return "", false
 }
 
-func phpizeBinaryCandidates(version, phpPath string) []string {
-	dir := filepath.Dir(strings.TrimSpace(phpPath))
+func phpizeBinaryCandidates(version string, paths ...string) []string {
 	versionNoDots := strings.ReplaceAll(version, ".", "")
-	return dedupeStrings([]string{
-		filepath.Join(dir, "phpize"),
-		filepath.Join(dir, "phpize"+version),
-		filepath.Join(dir, "phpize"+versionNoDots),
-		"phpize" + version,
-		"phpize" + versionNoDots,
+	candidates := make([]string, 0)
+	for _, dir := range candidateBinaryDirs(paths...) {
+		candidates = append(candidates,
+			filepath.Join(dir, "phpize"+version),
+			filepath.Join(dir, "phpize"+versionNoDots),
+			filepath.Join(dir, "phpize"),
+		)
+	}
+	candidates = append(candidates,
+		"phpize"+version,
+		"phpize"+versionNoDots,
 		"phpize",
-	})
+	)
+	return dedupeStrings(candidates)
 }
 
-func phpConfigBinaryCandidates(version, phpPath string) []string {
-	dir := filepath.Dir(strings.TrimSpace(phpPath))
+func phpConfigBinaryCandidates(version string, paths ...string) []string {
 	versionNoDots := strings.ReplaceAll(version, ".", "")
-	return dedupeStrings([]string{
-		filepath.Join(dir, "php-config"),
-		filepath.Join(dir, "php-config"+version),
-		filepath.Join(dir, "php-config"+versionNoDots),
-		"php-config" + version,
-		"php-config" + versionNoDots,
+	candidates := make([]string, 0)
+	for _, dir := range candidateBinaryDirs(paths...) {
+		candidates = append(candidates,
+			filepath.Join(dir, "php-config"+version),
+			filepath.Join(dir, "php-config"+versionNoDots),
+			filepath.Join(dir, "php-config"),
+		)
+	}
+	candidates = append(candidates,
+		"php-config"+version,
+		"php-config"+versionNoDots,
 		"php-config",
-	})
+	)
+	return dedupeStrings(candidates)
+}
+
+func candidateBinaryDirs(paths ...string) []string {
+	dirs := make([]string, 0, len(paths)*2)
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+
+		dirs = append(dirs, filepath.Dir(path))
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			dirs = append(dirs, filepath.Dir(resolved))
+		}
+	}
+
+	return dedupeStrings(dirs)
 }
