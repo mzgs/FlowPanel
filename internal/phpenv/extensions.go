@@ -114,9 +114,9 @@ func (s *Service) InstallExtension(ctx context.Context, extension string) (Statu
 }
 
 func (s *Service) InstallExtensionForVersion(ctx context.Context, version, extension string) (RuntimeStatus, error) {
-	runtimeStatus := s.StatusForVersion(ctx, version)
-	if !runtimeStatus.PHPInstalled || runtimeStatus.PHPPath == "" {
-		return RuntimeStatus{}, fmt.Errorf("php %s is not installed", runtimeStatus.Version)
+	initialStatus := s.StatusForVersion(ctx, version)
+	if !initialStatus.PHPInstalled || initialStatus.PHPPath == "" {
+		return RuntimeStatus{}, fmt.Errorf("php %s is not installed", initialStatus.Version)
 	}
 
 	requestedExtension := strings.TrimSpace(extension)
@@ -124,38 +124,51 @@ func (s *Service) InstallExtensionForVersion(ctx context.Context, version, exten
 	if !ok {
 		return RuntimeStatus{}, fmt.Errorf("php extension %q is not supported", requestedExtension)
 	}
-	if !definition.supportsPackageInstall(runtimeStatus.Version, runtimeStatus.PackageManager) {
-		return RuntimeStatus{}, fmt.Errorf("php extension %q does not have a configured distro package for php %s", requestedExtension, runtimeStatus.Version)
+	if !definition.supportsPackageInstall(initialStatus.Version, initialStatus.PackageManager) {
+		return RuntimeStatus{}, fmt.Errorf("php extension %q does not have a configured distro package for php %s", requestedExtension, initialStatus.Version)
 	}
-	if extensionLoaded(runtimeStatus.Extensions, definition) {
-		return runtimeStatus, nil
+	if extensionLoaded(initialStatus.Extensions, definition) {
+		return initialStatus, nil
 	}
+	packageWasInstalled := phpExtensionPackageInstalled(ctx, initialStatus, definition)
 
-	if err := installPHPExtensionPackage(ctx, runtimeStatus, definition); err != nil {
+	if err := installPHPExtensionPackage(ctx, initialStatus, definition); err != nil {
 		return RuntimeStatus{}, err
 	}
 
-	runtimeStatus = s.StatusForVersion(ctx, runtimeStatus.Version)
+	rollbackInstallFailure := func(cause error) (RuntimeStatus, error) {
+		status, rollbackErr := s.rollbackFailedExtensionInstall(ctx, initialStatus, definition, packageWasInstalled)
+		if rollbackErr != nil {
+			return status, fmt.Errorf("%w; FlowPanel could not fully disable %q again: %v", cause, requestedExtension, rollbackErr)
+		}
+		return status, fmt.Errorf("%w; FlowPanel disabled %q again to keep PHP running", cause, requestedExtension)
+	}
+
+	runtimeStatus := s.StatusForVersion(ctx, initialStatus.Version)
 	if !extensionLoaded(runtimeStatus.Extensions, definition) {
 		if _, err := enablePHPExtension(ctx, runtimeStatus, definition); err != nil {
-			return RuntimeStatus{}, err
+			return rollbackInstallFailure(err)
 		}
 		runtimeStatus = s.StatusForVersion(ctx, runtimeStatus.Version)
 	}
-	if runtimeStatus.ServiceRunning {
+	if initialStatus.ServiceRunning {
 		if err := s.RestartVersion(ctx, runtimeStatus.Version); err != nil {
-			if runtimeStatus.FPMPath == "" {
-				return RuntimeStatus{}, fmt.Errorf("php extension installed but failed to restart php-fpm: %w", err)
+			fpmPath := runtimeStatus.FPMPath
+			if fpmPath == "" {
+				fpmPath = initialStatus.FPMPath
 			}
-			if fallbackErr := restartPHPFPM(ctx, runtimeStatus.FPMPath); fallbackErr != nil {
-				return RuntimeStatus{}, fmt.Errorf("php extension installed but failed to restart php-fpm: %w", err)
+			if fpmPath == "" {
+				return rollbackInstallFailure(fmt.Errorf("php extension installed but failed to restart php-fpm: %w", err))
+			}
+			if fallbackErr := restartPHPFPM(ctx, fpmPath); fallbackErr != nil {
+				return rollbackInstallFailure(fmt.Errorf("php extension installed but failed to restart php-fpm: %w", err))
 			}
 		}
 	}
 
 	runtimeStatus = s.StatusForVersion(ctx, runtimeStatus.Version)
 	if err := validateInstalledExtension(ctx, runtimeStatus, requestedExtension, definition); err != nil {
-		return RuntimeStatus{}, err
+		return rollbackInstallFailure(err)
 	}
 
 	return runtimeStatus, nil
@@ -361,11 +374,80 @@ func installPHPExtensionPackage(ctx context.Context, runtimeStatus RuntimeStatus
 	return nil
 }
 
+func removePHPExtensionPackage(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("automatic PHP extension removal is only supported on Linux runtimes")
+	}
+
+	packageManager := strings.TrimSpace(runtimeStatus.PackageManager)
+	packageName := definition.packageName(runtimeStatus.Version, packageManager)
+	if packageName == "" {
+		return fmt.Errorf("automatic PHP extension removal is not supported for %s-managed runtimes", packageManager)
+	}
+
+	commandName := packageManager
+	if packageManager == "apt" {
+		commandName = "apt-get"
+	}
+
+	packageManagerPath, ok := lookupCommand(commandName)
+	if !ok {
+		return fmt.Errorf("%s is not available", commandName)
+	}
+
+	removeArgs := []string{packageManagerPath, "remove", "-y", packageName}
+	if err := runCommands(ctx, removeArgs); err != nil {
+		return fmt.Errorf("remove %s via %s: %w", packageName, packageManager, err)
+	}
+
+	return nil
+}
+
+func phpExtensionPackageInstalled(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) bool {
+	packageName := definition.packageName(runtimeStatus.Version, runtimeStatus.PackageManager)
+	if packageName == "" {
+		return false
+	}
+
+	switch strings.TrimSpace(runtimeStatus.PackageManager) {
+	case "apt":
+		dpkgQueryPath, ok := lookupCommand("dpkg-query")
+		if !ok {
+			return false
+		}
+		output, err := runCommand(ctx, dpkgQueryPath, "-W", "-f=${Status}", packageName)
+		return err == nil && strings.Contains(strings.ToLower(output), "install ok installed")
+	case "dnf", "yum":
+		rpmPath, ok := lookupCommand("rpm")
+		if !ok {
+			return false
+		}
+		_, err := runCommand(ctx, rpmPath, "-q", packageName)
+		return err == nil
+	default:
+		return false
+	}
+}
+
 func enablePHPExtension(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
 	if enabled, err := enablePHPExtensionWithTool(ctx, runtimeStatus, definition); enabled || err != nil {
 		return enabled, err
 	}
 	return writeManagedPHPExtensionConfig(runtimeStatus, definition)
+}
+
+func disablePHPExtension(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	var errs []string
+	if _, err := disablePHPExtensionWithTool(ctx, runtimeStatus, definition); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if _, err := removeManagedPHPExtensionConfig(runtimeStatus, definition); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func enablePHPExtensionWithTool(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
@@ -379,6 +461,34 @@ func enablePHPExtensionWithTool(ctx context.Context, runtimeStatus RuntimeStatus
 	}
 
 	args := []string{phpenmodPath}
+	if version := NormalizeVersion(runtimeStatus.Version); version != "" {
+		args = append(args, "-v", version)
+	}
+	if runtimeStatus.FPMInstalled {
+		args = append(args, "-s", "cli,fpm")
+	} else {
+		args = append(args, "-s", "cli")
+	}
+	args = append(args, definition.sharedObjectName())
+
+	if _, err := runCommand(ctx, args[0], args[1:]...); err != nil {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func disablePHPExtensionWithTool(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
+	if strings.TrimSpace(runtimeStatus.PackageManager) != "apt" {
+		return false, nil
+	}
+
+	phpdismodPath, ok := lookupCommand("phpdismod")
+	if !ok {
+		return false, nil
+	}
+
+	args := []string{phpdismodPath}
 	if version := NormalizeVersion(runtimeStatus.Version); version != "" {
 		args = append(args, "-v", version)
 	}
@@ -422,6 +532,23 @@ func writeManagedPHPExtensionConfig(runtimeStatus RuntimeStatus, definition phpE
 	}
 
 	return wroteConfig, nil
+}
+
+func removeManagedPHPExtensionConfig(runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
+	paths := managedPHPExtensionConfigPaths(runtimeStatus, definition)
+	removedConfig := false
+	for _, path := range paths {
+		if err := os.Remove(path); err == nil {
+			removedConfig = true
+			continue
+		} else if os.IsNotExist(err) {
+			continue
+		} else {
+			return removedConfig, fmt.Errorf("remove php extension config: %w", err)
+		}
+	}
+
+	return removedConfig, nil
 }
 
 func managedPHPExtensionConfigPaths(runtimeStatus RuntimeStatus, definition phpExtensionDefinition) []string {
@@ -552,6 +679,51 @@ func inspectPHPExtensionLoadDiagnostics(ctx context.Context, runtimeStatus Runti
 	}
 
 	return strings.Join(lines, "; ")
+}
+
+func (s *Service) rollbackFailedExtensionInstall(
+	ctx context.Context,
+	initialStatus RuntimeStatus,
+	definition phpExtensionDefinition,
+	packageWasInstalled bool,
+) (RuntimeStatus, error) {
+	runtimeStatus := s.StatusForVersion(ctx, initialStatus.Version)
+	var errs []string
+
+	if err := disablePHPExtension(ctx, runtimeStatus, definition); err != nil {
+		errs = append(errs, fmt.Sprintf("disable extension: %v", err))
+	}
+
+	runtimeStatus = s.StatusForVersion(ctx, initialStatus.Version)
+	diagnostics := inspectPHPExtensionLoadDiagnostics(ctx, runtimeStatus, definition)
+	shouldRemovePackage := !packageWasInstalled || extensionLoaded(runtimeStatus.Extensions, definition) || diagnostics != ""
+	if shouldRemovePackage {
+		if err := removePHPExtensionPackage(ctx, runtimeStatus, definition); err != nil {
+			errs = append(errs, fmt.Sprintf("remove package: %v", err))
+		}
+		runtimeStatus = s.StatusForVersion(ctx, initialStatus.Version)
+	}
+
+	if initialStatus.ServiceRunning {
+		if err := s.RestartVersion(ctx, initialStatus.Version); err != nil {
+			fpmPath := runtimeStatus.FPMPath
+			if fpmPath == "" {
+				fpmPath = initialStatus.FPMPath
+			}
+			if fpmPath == "" {
+				errs = append(errs, fmt.Sprintf("restart php-fpm: %v", err))
+			} else if fallbackErr := restartPHPFPM(ctx, fpmPath); fallbackErr != nil {
+				errs = append(errs, fmt.Sprintf("restart php-fpm: %v", err))
+			}
+		}
+		runtimeStatus = s.StatusForVersion(ctx, initialStatus.Version)
+	}
+
+	if len(errs) > 0 {
+		return runtimeStatus, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+
+	return runtimeStatus, nil
 }
 
 func extensionLoadCandidates(definition phpExtensionDefinition) []string {

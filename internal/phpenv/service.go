@@ -908,8 +908,10 @@ func remiFPMServiceName(version string) string {
 
 func lookupVersionedPHPBinary(ctx context.Context, version string) (string, bool) {
 	for _, candidate := range phpBinaryCandidates(version) {
-		if path, ok := lookupCandidateExecutable(candidate); ok && binaryMatchesVersion(ctx, path, version) {
-			return path, true
+		if path, ok := lookupCandidateExecutable(candidate); ok {
+			if binaryMatchesVersion(ctx, path, version) || executablePathImpliesVersion(path, version) {
+				return path, true
+			}
 		}
 	}
 	return "", false
@@ -917,11 +919,32 @@ func lookupVersionedPHPBinary(ctx context.Context, version string) (string, bool
 
 func lookupVersionedPHPFPM(ctx context.Context, version string) (string, bool) {
 	for _, candidate := range fpmBinaryCandidates(version) {
-		if path, ok := lookupCandidateExecutable(candidate); ok && binaryMatchesVersion(ctx, path, version) {
-			return path, true
+		if path, ok := lookupCandidateExecutable(candidate); ok {
+			if binaryMatchesVersion(ctx, path, version) || executablePathImpliesVersion(path, version) {
+				return path, true
+			}
 		}
 	}
 	return "", false
+}
+
+func executablePathImpliesVersion(path, version string) bool {
+	version = NormalizeVersion(version)
+	if version == "" {
+		return false
+	}
+
+	normalizedPath := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if normalizedPath == "" {
+		return false
+	}
+
+	versionDigits := strings.ReplaceAll(version, ".", "")
+	return strings.Contains(normalizedPath, "php"+version) ||
+		strings.Contains(normalizedPath, "php@"+version) ||
+		strings.Contains(normalizedPath, "php"+versionDigits) ||
+		strings.Contains(normalizedPath, "php-fpm"+version) ||
+		strings.Contains(normalizedPath, "php-fpm"+versionDigits)
 }
 
 func phpBinaryCandidates(version string) []string {

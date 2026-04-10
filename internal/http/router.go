@@ -1870,6 +1870,85 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		phpActionExtension := func(r *stdhttp.Request) string {
 			return strings.TrimSpace(r.URL.Query().Get("extension"))
 		}
+		formatPHPBool := func(value bool) string {
+			if value {
+				return "yes"
+			}
+			return "no"
+		}
+		formatPHPActivityFailureLog := func(ctx context.Context, extension, requestedVersion string, err error) string {
+			var builder strings.Builder
+
+			normalizedVersion := phpenv.NormalizeVersion(requestedVersion)
+			runtimeStatus := phpenv.RuntimeStatus{}
+			if app != nil && app.PHP != nil {
+				if normalizedVersion != "" {
+					runtimeStatus = app.PHP.StatusForVersion(ctx, normalizedVersion)
+				} else {
+					phpStatus := app.PHP.Status(ctx)
+					if phpStatus.DefaultVersion != "" {
+						runtimeStatus = app.PHP.StatusForVersion(ctx, phpStatus.DefaultVersion)
+					}
+				}
+			}
+
+			builder.WriteString("PHP extension installation failed.\n")
+			builder.WriteString(fmt.Sprintf("Extension: %s\n", strings.TrimSpace(extension)))
+			if runtimeStatus.Version != "" {
+				builder.WriteString(fmt.Sprintf("PHP version: %s\n", runtimeStatus.Version))
+			} else if normalizedVersion != "" {
+				builder.WriteString(fmt.Sprintf("PHP version: %s\n", normalizedVersion))
+			}
+			builder.WriteString("\nError:\n")
+			if err != nil {
+				builder.WriteString(strings.TrimSpace(err.Error()))
+			} else {
+				builder.WriteString("No error details were returned.")
+			}
+
+			if runtimeStatus.Version == "" {
+				return builder.String()
+			}
+
+			builder.WriteString("\n\nRuntime snapshot:\n")
+			builder.WriteString(fmt.Sprintf("State: %s\n", runtimeStatus.State))
+			builder.WriteString(fmt.Sprintf("Ready: %s\n", formatPHPBool(runtimeStatus.Ready)))
+			builder.WriteString(fmt.Sprintf("PHP installed: %s\n", formatPHPBool(runtimeStatus.PHPInstalled)))
+			builder.WriteString(fmt.Sprintf("PHP-FPM installed: %s\n", formatPHPBool(runtimeStatus.FPMInstalled)))
+			builder.WriteString(fmt.Sprintf("Service running: %s\n", formatPHPBool(runtimeStatus.ServiceRunning)))
+			if value := strings.TrimSpace(runtimeStatus.Message); value != "" {
+				builder.WriteString(fmt.Sprintf("Status message: %s\n", value))
+			}
+			if value := strings.TrimSpace(runtimeStatus.PHPPath); value != "" {
+				builder.WriteString(fmt.Sprintf("PHP binary: %s\n", value))
+			}
+			if value := strings.TrimSpace(runtimeStatus.FPMPath); value != "" {
+				builder.WriteString(fmt.Sprintf("PHP-FPM binary: %s\n", value))
+			}
+			if value := strings.TrimSpace(runtimeStatus.LoadedConfigFile); value != "" {
+				builder.WriteString(fmt.Sprintf("Loaded config: %s\n", value))
+			}
+			if value := strings.TrimSpace(runtimeStatus.ScanDir); value != "" {
+				builder.WriteString(fmt.Sprintf("Scanned ini dir: %s\n", value))
+			}
+			if value := strings.TrimSpace(runtimeStatus.ManagedConfigFile); value != "" {
+				builder.WriteString(fmt.Sprintf("Managed config: %s\n", value))
+			}
+			if len(runtimeStatus.Issues) > 0 {
+				builder.WriteString("\nReported issues:\n")
+				for _, issue := range runtimeStatus.Issues {
+					issue = strings.TrimSpace(issue)
+					if issue == "" {
+						continue
+					}
+					builder.WriteString("- ")
+					builder.WriteString(issue)
+					builder.WriteString("\n")
+				}
+			}
+
+			return strings.TrimSpace(builder.String())
+		}
 
 		phpStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.PHP == nil {
@@ -2340,7 +2419,16 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("extension", extension),
 					zap.Error(err),
 				)
-				mutationEvent(r.Context(), "runtime", "install", "php_extension", extension, extension, "failed", err.Error())
+				mutationEvent(
+					r.Context(),
+					"runtime",
+					"install",
+					"php_extension",
+					extension,
+					extension,
+					"failed",
+					formatPHPActivityFailureLog(r.Context(), extension, version, err),
+				)
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})

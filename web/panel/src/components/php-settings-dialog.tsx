@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  fetchPHPStatus,
   installPHPExtension,
   setDefaultPHPVersion,
   type PHPExtensionCatalogEntry,
@@ -332,6 +333,14 @@ export function PHPSettingsDialog({
     });
   }
 
+  async function refreshStatus() {
+    try {
+      onStatusChange(await fetchPHPStatus());
+    } catch {
+      // Keep the current error visible when the follow-up refresh also fails.
+    }
+  }
+
   async function handleSave() {
     if (!status || !version) {
       return;
@@ -351,6 +360,7 @@ export function PHPSettingsDialog({
       setFieldErrors(phpError.fieldErrors ?? {});
       setError(phpError.message || "PHP settings could not be saved.");
       toast.error(phpError.message || "PHP settings could not be saved.");
+      await refreshStatus();
     } finally {
       setSaving(false);
     }
@@ -375,6 +385,7 @@ export function PHPSettingsDialog({
           : `Failed to install ${extensionId}.`;
       setError(message);
       toast.error(message);
+      await refreshStatus();
     } finally {
       setInstallingExtensionId(null);
     }
