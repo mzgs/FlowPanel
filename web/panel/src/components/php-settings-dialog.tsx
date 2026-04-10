@@ -372,6 +372,7 @@ export function PHPSettingsDialog({
   const dirty = !sameFormState(form, savedForm);
   const saveDisabled = busy || !dirty || !status?.php_installed;
   const setDefaultDisabled = busy || defaultSelected || !status?.ready || !version;
+  const supportsManagedExtensionInstall = status?.package_manager === "apt";
   const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
   const extensions = [...(status?.extensions ?? [])].sort((left, right) => left.localeCompare(right));
   const normalizedExtensionFilter = extensionFilter.trim().toLowerCase();
@@ -383,7 +384,7 @@ export function PHPSettingsDialog({
         (entry.id === "opcache" && hasBuiltInOpcache(version)) ||
         isPHPExtensionInstalled(entry, extensions),
       installId: entry.installId ?? entry.id,
-      installSupported: entry.installSupported ?? true,
+      installSupported: (entry.installSupported ?? false) && supportsManagedExtensionInstall,
     }))
     .filter((entry) => {
       if (!normalizedExtensionFilter) {
