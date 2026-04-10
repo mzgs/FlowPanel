@@ -9,10 +9,21 @@ import (
 
 type phpExtensionDefinition struct {
 	id           string
+	catalogID    string
+	label        string
 	aliases      []string
+	installID    string
 	aptPackage   string
 	dnfPackage   string
 	sharedObject string
+}
+
+type PHPExtensionCatalogEntry struct {
+	ID                     string   `json:"id"`
+	Label                  string   `json:"label"`
+	Aliases                []string `json:"aliases,omitempty"`
+	InstallID              string   `json:"install_id,omitempty"`
+	InstallPackageManagers []string `json:"install_package_managers,omitempty"`
 }
 
 var phpExtensionDefinitions = []phpExtensionDefinition{
@@ -20,14 +31,20 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "apcu", aptPackage: "apcu", dnfPackage: "pecl-apcu"},
 	{id: "bcmath", aptPackage: "bcmath", dnfPackage: "bcmath"},
 	{id: "bz2", aptPackage: "bz2"},
+	{id: "calendar"},
 	{id: "curl", aptPackage: "curl"},
 	{id: "dba", aptPackage: "dba", dnfPackage: "dba"},
 	{id: "dom", aptPackage: "xml", dnfPackage: "xml"},
+	{id: "ds"},
 	{id: "event", aptPackage: "event", dnfPackage: "pecl-event"},
+	{id: "exif"},
+	{id: "fileinfo"},
 	{id: "gd", aptPackage: "gd", dnfPackage: "gd"},
+	{id: "grpc"},
 	{id: "igbinary", aptPackage: "igbinary", dnfPackage: "pecl-igbinary"},
-	{id: "imap", aptPackage: "imap", dnfPackage: "pecl-imap"},
 	{id: "imagemagick", aliases: []string{"imagick"}, aptPackage: "imagick", dnfPackage: "pecl-imagick-im7", sharedObject: "imagick"},
+	{id: "imap", aptPackage: "imap", dnfPackage: "pecl-imap"},
+	{id: "ioncube", label: "ionCube", aliases: []string{"oncube", "ioncube loader", "ioncubeloader"}},
 	{id: "intl", aptPackage: "intl", dnfPackage: "intl"},
 	{id: "ldap", aptPackage: "ldap", dnfPackage: "ldap"},
 	{id: "mailparse", aptPackage: "mailparse", dnfPackage: "pecl-mailparse"},
@@ -37,28 +54,47 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "msgpack", aptPackage: "msgpack", dnfPackage: "pecl-msgpack"},
 	{id: "mysqli", aptPackage: "mysql", dnfPackage: "mysqlnd"},
 	{id: "mysqlnd", aptPackage: "mysql", dnfPackage: "mysqlnd"},
-	{id: "opcache", aliases: []string{"zendopcache"}, aptPackage: "opcache", dnfPackage: "opcache"},
+	{id: "oci8"},
+	{id: "opcache", aliases: []string{"zend opcache", "zendopcache"}, aptPackage: "opcache", dnfPackage: "opcache"},
+	{id: "openswoole"},
+	{id: "parallel"},
+	{id: "pcov", aptPackage: "pcov", dnfPackage: "pecl-pcov"},
 	{id: "pdo_mysql", aptPackage: "mysql", dnfPackage: "mysqlnd"},
+	{id: "pdo_oci", aliases: []string{"pdooci"}},
 	{id: "pdo_odbc", aptPackage: "odbc", dnfPackage: "odbc"},
 	{id: "pdo_pgsql", aliases: []string{"pdopgsql"}, aptPackage: "pgsql", dnfPackage: "pgsql"},
 	{id: "pdo_sqlite", aptPackage: "sqlite3"},
+	{id: "pdo_sqlsrv", aliases: []string{"pdosqlsrv"}},
 	{id: "pgsql", aptPackage: "pgsql", dnfPackage: "pgsql"},
-	{id: "phpmongodb", aliases: []string{"php_mongodb", "mongodb"}, aptPackage: "mongodb", dnfPackage: "pecl-mongodb", sharedObject: "mongodb"},
-	{id: "pcov", aptPackage: "pcov", dnfPackage: "pecl-pcov"},
+	{id: "phpmongodb", catalogID: "php_mongodb", label: "php_mongodb", aliases: []string{"php_mongodb", "mongodb"}, installID: "mongodb", aptPackage: "mongodb", dnfPackage: "pecl-mongodb", sharedObject: "mongodb"},
+	{id: "protobuf"},
+	{id: "rdkafka", aliases: []string{"rdkakfa"}},
 	{id: "redis", aptPackage: "redis", dnfPackage: "pecl-redis6"},
 	{id: "snmp", aptPackage: "snmp", dnfPackage: "snmp"},
 	{id: "soap", aptPackage: "soap", dnfPackage: "soap"},
 	{id: "sqlite3", aptPackage: "sqlite3"},
 	{id: "ssh2", aptPackage: "ssh2", dnfPackage: "pecl-ssh2"},
+	{id: "swoole", aliases: []string{"swoole4", "swoole5", "swoole6"}},
+	{id: "swow"},
 	{id: "tidy", aptPackage: "tidy", dnfPackage: "tidy"},
 	{id: "timezonedb", aptPackage: "timezonedb"},
 	{id: "uuid", aptPackage: "uuid", dnfPackage: "pecl-uuid"},
 	{id: "xdebug", aptPackage: "xdebug", dnfPackage: "pecl-xdebug3"},
+	{id: "xlswriter"},
 	{id: "xmlreader", aptPackage: "xml", dnfPackage: "xml"},
 	{id: "xmlwriter", aptPackage: "xml", dnfPackage: "xml"},
 	{id: "xsl", aptPackage: "xsl", dnfPackage: "xml"},
 	{id: "yaml", aptPackage: "yaml", dnfPackage: "pecl-yaml"},
 	{id: "zip", aptPackage: "zip", dnfPackage: "pecl-zip"},
+	{id: "zstd"},
+}
+
+func PHPExtensionCatalog() []PHPExtensionCatalogEntry {
+	catalog := make([]PHPExtensionCatalogEntry, 0, len(phpExtensionDefinitions))
+	for _, definition := range phpExtensionDefinitions {
+		catalog = append(catalog, definition.catalogEntry())
+	}
+	return catalog
 }
 
 func (s *Service) InstallExtension(ctx context.Context, extension string) (Status, error) {
@@ -164,6 +200,59 @@ func (d phpExtensionDefinition) packageName(version, packageManager string) stri
 	default:
 		return ""
 	}
+}
+
+func (d phpExtensionDefinition) catalogEntry() PHPExtensionCatalogEntry {
+	return PHPExtensionCatalogEntry{
+		ID:                     d.catalogKey(),
+		Label:                  d.catalogLabel(),
+		Aliases:                append([]string(nil), d.aliases...),
+		InstallID:              d.catalogInstallID(),
+		InstallPackageManagers: d.catalogInstallPackageManagers(),
+	}
+}
+
+func (d phpExtensionDefinition) catalogKey() string {
+	if value := strings.TrimSpace(d.catalogID); value != "" {
+		return value
+	}
+	return strings.TrimSpace(d.id)
+}
+
+func (d phpExtensionDefinition) catalogLabel() string {
+	if value := strings.TrimSpace(d.label); value != "" {
+		return value
+	}
+	return d.catalogKey()
+}
+
+func (d phpExtensionDefinition) catalogInstallID() string {
+	if value := strings.TrimSpace(d.installID); value != "" {
+		return value
+	}
+	if !d.hasManagedInstall() {
+		return ""
+	}
+	return strings.TrimSpace(d.id)
+}
+
+func (d phpExtensionDefinition) catalogInstallPackageManagers() []string {
+	if normalizePHPExtensionKey(d.id) == "opcache" {
+		return nil
+	}
+
+	managers := make([]string, 0, 2)
+	if strings.TrimSpace(d.aptPackage) != "" {
+		managers = append(managers, "apt")
+	}
+	if strings.TrimSpace(d.dnfPackage) != "" {
+		managers = append(managers, "dnf")
+	}
+	return managers
+}
+
+func (d phpExtensionDefinition) hasManagedInstall() bool {
+	return strings.TrimSpace(d.aptPackage) != "" || strings.TrimSpace(d.dnfPackage) != ""
 }
 
 func (d phpExtensionDefinition) sharedObjectName() string {

@@ -1194,6 +1194,7 @@ export function ApplicationsPage() {
         open={phpSettingsOpen}
         onOpenChange={setPHPSettingsOpen}
         status={selectedPHPRuntime}
+        extensionCatalog={phpStatus?.extension_catalog ?? []}
         version={selectedPHPVersion}
         defaultVersion={phpStatus?.default_version}
         onStatusChange={setPHPStatus}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   installPHPExtension,
   setDefaultPHPVersion,
+  type PHPExtensionCatalogEntry,
   updatePHPSettings,
   type PHPApiError,
   type PHPSettings,
@@ -28,10 +29,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  isPHPExtensionInstalled,
-  phpExtensionCatalog,
-} from "@/lib/php-extension-catalog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -70,6 +67,7 @@ type PHPSettingsDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   status: PHPRuntimeStatus | null;
+  extensionCatalog: PHPExtensionCatalogEntry[];
   version: string;
   defaultVersion?: string;
   onStatusChange: (status: PHPStatus) => void;
@@ -139,6 +137,19 @@ function getPHPActionLabel(state?: string | null) {
 
 function isPHPActionState(state?: string | null) {
   return getPHPActionLabel(state) !== null;
+}
+
+function normalizePHPExtensionToken(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function isPHPExtensionInstalled(
+  entry: PHPExtensionCatalogEntry,
+  installedExtensions: string[],
+) {
+  const installed = new Set(installedExtensions.map(normalizePHPExtensionToken));
+  const candidates = [entry.id, ...(entry.aliases ?? [])].map(normalizePHPExtensionToken);
+  return candidates.some((candidate) => installed.has(candidate));
 }
 
 function extractVersionNumber(value: string, pattern: RegExp) {
@@ -246,6 +257,7 @@ export function PHPSettingsDialog({
   open,
   onOpenChange,
   status,
+  extensionCatalog,
   version,
   defaultVersion,
   onStatusChange,
@@ -372,19 +384,19 @@ export function PHPSettingsDialog({
   const dirty = !sameFormState(form, savedForm);
   const saveDisabled = busy || !dirty || !status?.php_installed;
   const setDefaultDisabled = busy || defaultSelected || !status?.ready || !version;
-  const supportsManagedExtensionInstall = status?.package_manager === "apt";
+  const packageManager = status?.package_manager?.trim() ?? "";
   const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
   const extensions = [...(status?.extensions ?? [])].sort((left, right) => left.localeCompare(right));
   const normalizedExtensionFilter = extensionFilter.trim().toLowerCase();
   const parsedError = parseCommandError(error);
-  const trackedExtensions = phpExtensionCatalog
+  const trackedExtensions = extensionCatalog
     .map((entry) => ({
       ...entry,
       installed:
         (entry.id === "opcache" && hasBuiltInOpcache(version)) ||
         isPHPExtensionInstalled(entry, extensions),
-      installId: entry.installId ?? entry.id,
-      installSupported: (entry.installSupported ?? false) && supportsManagedExtensionInstall,
+      installId: entry.install_id ?? entry.id,
+      installSupported: (entry.install_package_managers ?? []).includes(packageManager),
     }))
     .filter((entry) => {
       if (!normalizedExtensionFilter) {

@@ -102,37 +102,38 @@ type RuntimeStatus struct {
 }
 
 type Status struct {
-	Platform          string          `json:"platform"`
-	PackageManager    string          `json:"package_manager,omitempty"`
-	DefaultVersion    string          `json:"default_version,omitempty"`
-	AvailableVersions []string        `json:"available_versions,omitempty"`
-	Versions          []RuntimeStatus `json:"versions,omitempty"`
-	PHPInstalled      bool            `json:"php_installed"`
-	PHPPath           string          `json:"php_path,omitempty"`
-	PHPVersion        string          `json:"php_version,omitempty"`
-	Extensions        []string        `json:"extensions,omitempty"`
-	FPMInstalled      bool            `json:"fpm_installed"`
-	FPMPath           string          `json:"fpm_path,omitempty"`
-	ListenAddress     string          `json:"listen_address,omitempty"`
-	ServiceRunning    bool            `json:"service_running"`
-	Ready             bool            `json:"ready"`
-	State             string          `json:"state"`
-	Message           string          `json:"message"`
-	Issues            []string        `json:"issues,omitempty"`
-	InstallAvailable  bool            `json:"install_available"`
-	InstallLabel      string          `json:"install_label,omitempty"`
-	RemoveAvailable   bool            `json:"remove_available"`
-	RemoveLabel       string          `json:"remove_label,omitempty"`
-	StartAvailable    bool            `json:"start_available"`
-	StartLabel        string          `json:"start_label,omitempty"`
-	StopAvailable     bool            `json:"stop_available,omitempty"`
-	StopLabel         string          `json:"stop_label,omitempty"`
-	RestartAvailable  bool            `json:"restart_available,omitempty"`
-	RestartLabel      string          `json:"restart_label,omitempty"`
-	LoadedConfigFile  string          `json:"loaded_config_file,omitempty"`
-	ScanDir           string          `json:"scan_dir,omitempty"`
-	ManagedConfigFile string          `json:"managed_config_file,omitempty"`
-	Settings          Settings        `json:"settings"`
+	Platform          string                     `json:"platform"`
+	PackageManager    string                     `json:"package_manager,omitempty"`
+	DefaultVersion    string                     `json:"default_version,omitempty"`
+	AvailableVersions []string                   `json:"available_versions,omitempty"`
+	Versions          []RuntimeStatus            `json:"versions,omitempty"`
+	ExtensionCatalog  []PHPExtensionCatalogEntry `json:"extension_catalog,omitempty"`
+	PHPInstalled      bool                       `json:"php_installed"`
+	PHPPath           string                     `json:"php_path,omitempty"`
+	PHPVersion        string                     `json:"php_version,omitempty"`
+	Extensions        []string                   `json:"extensions,omitempty"`
+	FPMInstalled      bool                       `json:"fpm_installed"`
+	FPMPath           string                     `json:"fpm_path,omitempty"`
+	ListenAddress     string                     `json:"listen_address,omitempty"`
+	ServiceRunning    bool                       `json:"service_running"`
+	Ready             bool                       `json:"ready"`
+	State             string                     `json:"state"`
+	Message           string                     `json:"message"`
+	Issues            []string                   `json:"issues,omitempty"`
+	InstallAvailable  bool                       `json:"install_available"`
+	InstallLabel      string                     `json:"install_label,omitempty"`
+	RemoveAvailable   bool                       `json:"remove_available"`
+	RemoveLabel       string                     `json:"remove_label,omitempty"`
+	StartAvailable    bool                       `json:"start_available"`
+	StartLabel        string                     `json:"start_label,omitempty"`
+	StopAvailable     bool                       `json:"stop_available,omitempty"`
+	StopLabel         string                     `json:"stop_label,omitempty"`
+	RestartAvailable  bool                       `json:"restart_available,omitempty"`
+	RestartLabel      string                     `json:"restart_label,omitempty"`
+	LoadedConfigFile  string                     `json:"loaded_config_file,omitempty"`
+	ScanDir           string                     `json:"scan_dir,omitempty"`
+	ManagedConfigFile string                     `json:"managed_config_file,omitempty"`
+	Settings          Settings                   `json:"settings"`
 }
 
 type Settings struct {
@@ -242,6 +243,7 @@ func (s *Service) Status(ctx context.Context) Status {
 		AvailableVersions: availableVersions,
 		Versions:          runtimes,
 		DefaultVersion:    defaultVersion,
+		ExtensionCatalog:  PHPExtensionCatalog(),
 	}
 	if resolved := s.resolvePreferredDefaultVersion(ctx, status); resolved != "" {
 		status.DefaultVersion = resolved

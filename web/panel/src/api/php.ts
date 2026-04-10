@@ -11,6 +11,14 @@ export type PHPSettings = {
   display_errors?: string;
 };
 
+export type PHPExtensionCatalogEntry = {
+  id: string;
+  label: string;
+  aliases?: string[];
+  install_id?: string;
+  install_package_managers?: string[];
+};
+
 export type PHPRuntimeStatus = {
   version: string;
   platform: string;
@@ -49,6 +57,7 @@ export type PHPStatus = {
   default_version?: string;
   available_versions?: string[];
   versions?: PHPRuntimeStatus[];
+  extension_catalog?: PHPExtensionCatalogEntry[];
   php_installed: boolean;
   php_path?: string;
   php_version?: string;
