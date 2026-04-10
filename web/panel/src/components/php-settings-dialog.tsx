@@ -198,6 +198,34 @@ function formatValue(value?: string) {
   return trimmed ? trimmed : "Unavailable";
 }
 
+function parseCommandError(message: string | null) {
+  const normalizedMessage = message?.trim();
+  if (!normalizedMessage) {
+    return { text: "", command: "" };
+  }
+
+  const marker = " (command: ";
+  const markerIndex = normalizedMessage.indexOf(marker);
+  if (markerIndex === -1) {
+    return { text: normalizedMessage, command: "" };
+  }
+
+  const commandStart = markerIndex + marker.length;
+  const commandEnd = normalizedMessage.indexOf("): ", commandStart);
+  if (commandEnd === -1) {
+    return { text: normalizedMessage, command: "" };
+  }
+
+  const prefix = normalizedMessage.slice(0, markerIndex).trim();
+  const command = normalizedMessage.slice(commandStart, commandEnd).trim();
+  const suffix = normalizedMessage.slice(commandEnd + 3).trim();
+  const text = [prefix, suffix].filter(Boolean).join(": ");
+  return {
+    text: text || normalizedMessage,
+    command,
+  };
+}
+
 function hasBuiltInOpcache(version: string) {
   const normalized = version.trim();
   if (!normalized) {
@@ -347,6 +375,7 @@ export function PHPSettingsDialog({
   const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
   const extensions = [...(status?.extensions ?? [])].sort((left, right) => left.localeCompare(right));
   const normalizedExtensionFilter = extensionFilter.trim().toLowerCase();
+  const parsedError = parseCommandError(error);
   const trackedExtensions = phpExtensionCatalog
     .map((entry) => ({
       ...entry,
@@ -441,8 +470,17 @@ export function PHPSettingsDialog({
           ) : null}
 
           {error ? (
-            <div className="h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
-              {error}
+            <div className="h-32 overflow-y-auto rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px]">
+              <div className="whitespace-pre-wrap break-words text-[var(--app-danger)]">
+                {parsedError.text}
+              </div>
+              {parsedError.command ? (
+                <div className="mt-3 rounded-md border border-[var(--app-warning)]/30 bg-[var(--app-surface)] px-3 py-2">
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[12px] leading-5 text-[var(--app-warning)]">
+                    {parsedError.command}
+                  </pre>
+                </div>
+              ) : null}
             </div>
           ) : null}
 

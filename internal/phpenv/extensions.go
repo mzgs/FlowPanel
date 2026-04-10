@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"flowpanel/internal/config"
@@ -269,10 +270,26 @@ func installPHPExtensionWithPIE(ctx context.Context, runtimeStatus RuntimeStatus
 
 	args = append(args, definition.piePackage)
 	if _, err := runCommand(ctx, piePath, args...); err != nil {
-		return fmt.Errorf("install %s with pie: %w", definition.piePackage, err)
+		return fmt.Errorf(
+			"install %s with pie (command: %s): %w",
+			definition.piePackage,
+			formatCommandLine(piePath, args...),
+			err,
+		)
 	}
 
 	return nil
+}
+
+func formatCommandLine(name string, args ...string) string {
+	parts := make([]string, 0, len(args)+1)
+	if strings.TrimSpace(name) != "" {
+		parts = append(parts, strconv.Quote(name))
+	}
+	for _, arg := range args {
+		parts = append(parts, strconv.Quote(arg))
+	}
+	return strings.Join(parts, " ")
 }
 
 func ensurePIEBinary(ctx context.Context) (string, error) {
