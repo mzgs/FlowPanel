@@ -59,13 +59,15 @@ const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
-  { to: "/applications", label: "Applications", icon: Package },
   { to: "/ftp", label: "FTP", icon: Server },
-  { to: "/backups", label: "Backups", icon: HardDrive },
   { to: "/files", label: "Files", icon: FolderOpen },
+  { to: "/applications", label: "Applications", icon: Package },
   { to: "/cron", label: "Cron", icon: Clock },
+
   { to: "/terminal", label: "Terminal", icon: TerminalSquare },
   { to: "/activity", label: "Activity", icon: List },
+  { to: "/backups", label: "Backups", icon: HardDrive },
+
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
