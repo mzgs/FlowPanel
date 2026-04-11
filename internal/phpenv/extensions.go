@@ -39,7 +39,6 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "dba", aptPackage: "dba", dnfPackage: "dba"},
 	{id: "dom", aptPackage: "xml", dnfPackage: "xml"},
 	{id: "ds", aptPackage: "ds", dnfPackage: "pecl-ds"},
-	{id: "event", dnfPackage: "pecl-event"},
 	{id: "exif"},
 	{id: "fileinfo"},
 	{id: "gd", aptPackage: "gd", dnfPackage: "gd"},
