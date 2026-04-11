@@ -431,7 +431,7 @@ func parsePHPIniOutputValue(output, label string) string {
 		if !strings.HasPrefix(line, label+":") {
 			continue
 		}
-		value := strings.TrimSpace(strings.TrimPrefix(line, label+":"))
+		value := normalizePHPIniOutputValue(strings.TrimSpace(strings.TrimPrefix(line, label+":")))
 		switch value {
 		case "", "(none)":
 			return ""
@@ -441,6 +441,16 @@ func parsePHPIniOutputValue(output, label string) string {
 	}
 
 	return ""
+}
+
+func normalizePHPIniOutputValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+			return strings.TrimSpace(value[1 : len(value)-1])
+		}
+	}
+	return value
 }
 
 func determineManagedPHPConfigFile(loadedConfigFile, scanDir string) string {

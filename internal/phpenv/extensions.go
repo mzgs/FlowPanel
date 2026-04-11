@@ -319,22 +319,21 @@ func (d phpExtensionDefinition) sharedObjectName() string {
 }
 
 func extensionLoaded(installed []string, definition phpExtensionDefinition) bool {
-	loaded := make(map[string]struct{}, len(installed))
+	loaded := make([]string, 0, len(installed))
 	for _, item := range installed {
-		key := normalizePHPExtensionKey(item)
-		if key == "" {
-			continue
+		if key := normalizePHPExtensionKey(item); key != "" {
+			loaded = append(loaded, key)
 		}
-		loaded[key] = struct{}{}
 	}
 
-	candidates := append([]string{definition.id}, definition.aliases...)
-	if sharedObject := definition.sharedObjectName(); sharedObject != "" {
-		candidates = append(candidates, sharedObject)
-	}
-	for _, candidate := range candidates {
-		if _, ok := loaded[normalizePHPExtensionKey(candidate)]; ok {
-			return true
+	for _, candidate := range extensionLoadCandidates(definition) {
+		for _, item := range loaded {
+			if item == candidate {
+				return true
+			}
+			if definition.isIONCubeLoader() && strings.Contains(item, "ioncube") && strings.Contains(item, "loader") {
+				return true
+			}
 		}
 	}
 
@@ -345,8 +344,17 @@ func validateInstalledExtension(ctx context.Context, runtimeStatus RuntimeStatus
 	if extensionLoaded(runtimeStatus.Extensions, definition) {
 		return nil
 	}
+	if definition.isIONCubeLoader() && ionCubeLoaderReported(ctx, runtimeStatus) {
+		return nil
+	}
 
 	message := fmt.Sprintf("php extension %q was installed but is not loaded for php %s", requestedExtension, runtimeStatus.Version)
+	if definition.isIONCubeLoader() {
+		if diagnostics := inspectIONCubeLoaderInstallDiagnostics(ctx, runtimeStatus); diagnostics != "" {
+			message += ": " + diagnostics
+			return fmt.Errorf("%s", message)
+		}
+	}
 	if diagnostics := inspectPHPExtensionLoadDiagnostics(ctx, runtimeStatus, definition); diagnostics != "" {
 		message += ": " + diagnostics
 	}
@@ -488,6 +496,9 @@ func disablePHPExtension(ctx context.Context, runtimeStatus RuntimeStatus, defin
 }
 
 func enablePHPExtensionWithTool(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
+	if definition.isIONCubeLoader() {
+		return false, nil
+	}
 	if strings.TrimSpace(runtimeStatus.PackageManager) != "apt" {
 		return false, nil
 	}
@@ -516,6 +527,9 @@ func enablePHPExtensionWithTool(ctx context.Context, runtimeStatus RuntimeStatus
 }
 
 func disablePHPExtensionWithTool(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) (bool, error) {
+	if definition.isIONCubeLoader() {
+		return false, nil
+	}
 	if strings.TrimSpace(runtimeStatus.PackageManager) != "apt" {
 		return false, nil
 	}
@@ -552,12 +566,22 @@ func writeManagedPHPExtensionConfig(runtimeStatus RuntimeStatus, definition phpE
 	content := renderManagedPHPExtensionConfig(runtimeStatus, definition)
 	wroteConfig := false
 	for _, path := range paths {
-		exists, err := phpExtensionConfigExists(path, definition)
-		if err != nil {
-			return wroteConfig, err
-		}
-		if exists {
-			continue
+		if definition.isIONCubeLoader() {
+			currentContent, err := os.ReadFile(path)
+			if err == nil && string(currentContent) == content {
+				continue
+			}
+			if err != nil && !os.IsNotExist(err) {
+				return wroteConfig, fmt.Errorf("read php extension config: %w", err)
+			}
+		} else {
+			exists, err := phpExtensionConfigExists(path, definition)
+			if err != nil {
+				return wroteConfig, err
+			}
+			if exists {
+				continue
+			}
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return wroteConfig, fmt.Errorf("create php extension config directory: %w", err)
@@ -851,10 +875,12 @@ func inspectPHPExtensionLoadDiagnostics(ctx context.Context, runtimeStatus Runti
 		}
 
 		lineKey := normalizePHPExtensionKey(line)
-		isRelevant := strings.Contains(strings.ToLower(line), "unable to load") ||
-			strings.Contains(strings.ToLower(line), "startup") ||
-			strings.Contains(strings.ToLower(line), "warning") ||
-			strings.Contains(strings.ToLower(line), "error")
+		lowerLine := strings.ToLower(line)
+		isRelevant := strings.Contains(lowerLine, "unable to load") ||
+			strings.Contains(lowerLine, "failed loading") ||
+			strings.Contains(lowerLine, "startup") ||
+			strings.Contains(lowerLine, "warning") ||
+			strings.Contains(lowerLine, "error")
 		if !isRelevant {
 			continue
 		}
@@ -874,6 +900,54 @@ func inspectPHPExtensionLoadDiagnostics(ctx context.Context, runtimeStatus Runti
 	}
 
 	return strings.Join(lines, "; ")
+}
+
+func ionCubeLoaderReported(ctx context.Context, runtimeStatus RuntimeStatus) bool {
+	if runtimeStatus.PHPPath == "" {
+		return false
+	}
+
+	output, err := runInspectCommand(ctx, runtimeStatus.PHPPath, "-v")
+	if err != nil {
+		return false
+	}
+
+	key := normalizePHPExtensionKey(output)
+	return strings.Contains(key, "ioncube") && strings.Contains(key, "loader")
+}
+
+func inspectIONCubeLoaderInstallDiagnostics(ctx context.Context, runtimeStatus RuntimeStatus) string {
+	loaderPath := ionCubeLoaderPath(runtimeStatus)
+	if runtimeStatus.PHPPath == "" || loaderPath == "" {
+		return ""
+	}
+
+	info, err := os.Stat(loaderPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Sprintf("loader file was not found at %s", loaderPath)
+		}
+		return fmt.Sprintf("could not inspect loader file %s: %v", loaderPath, err)
+	}
+	if info.IsDir() {
+		return fmt.Sprintf("loader path %s is a directory", loaderPath)
+	}
+
+	output, err := runInspectCommand(ctx, runtimeStatus.PHPPath, "-n", "-d", "display_startup_errors=1", "-d", "zend_extension="+loaderPath, "-v")
+	output = strings.TrimSpace(output)
+	if err == nil {
+		if key := normalizePHPExtensionKey(output); strings.Contains(key, "ioncube") && strings.Contains(key, "loader") {
+			return "ionCube loads correctly when forced directly, so the configured ini activation path did not take effect"
+		}
+		if output != "" {
+			return "direct ionCube smoke test completed but PHP did not report the loader: " + output
+		}
+		return "direct ionCube smoke test completed but PHP did not report the loader"
+	}
+	if output != "" {
+		return "direct ionCube smoke test failed: " + output
+	}
+	return fmt.Sprintf("direct ionCube smoke test failed: %v", err)
 }
 
 func (s *Service) rollbackFailedExtensionInstall(
