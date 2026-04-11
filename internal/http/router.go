@@ -3461,7 +3461,16 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("hostname", hostname),
 					zap.Error(err),
 				)
-				mutationEvent(r.Context(), "domains", "update_php_settings", "domain", record.ID, record.Hostname, "failed", "Saved domain PHP settings but failed to republish routes.")
+				mutationEvent(
+					r.Context(),
+					"domains",
+					"update_php_settings",
+					"domain",
+					record.ID,
+					record.Hostname,
+					"failed",
+					eventErrorMessage("Saved domain PHP settings but failed to republish routes.", err),
+				)
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "domain php settings saved but routes could not be refreshed",
 				})
@@ -3579,7 +3588,16 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("hostname", record.Hostname),
 					zap.Error(err),
 				)
-				mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "failed", "Created domain record but failed to publish it.")
+				mutationEvent(
+					r.Context(),
+					"domains",
+					"create",
+					"domain",
+					record.ID,
+					record.Hostname,
+					"failed",
+					eventErrorMessage("Created domain record but failed to publish it.", err),
+				)
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to publish domain",
 				})
@@ -3671,7 +3689,16 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("hostname", record.Hostname),
 					zap.Error(err),
 				)
-				mutationEvent(r.Context(), "domains", "update", "domain", record.ID, record.Hostname, "failed", "Updated domain record but failed to publish it.")
+				mutationEvent(
+					r.Context(),
+					"domains",
+					"update",
+					"domain",
+					record.ID,
+					record.Hostname,
+					"failed",
+					eventErrorMessage("Updated domain record but failed to publish it.", err),
+				)
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to update domain",
 				})
@@ -3733,7 +3760,16 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					zap.String("hostname", record.Hostname),
 					zap.Error(err),
 				)
-				mutationEvent(r.Context(), "domains", "delete", "domain", record.ID, record.Hostname, "failed", "Deleted domain record but failed to republish routes.")
+				mutationEvent(
+					r.Context(),
+					"domains",
+					"delete",
+					"domain",
+					record.ID,
+					record.Hostname,
+					"failed",
+					eventErrorMessage("Deleted domain record but failed to republish routes.", err),
+				)
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
 					"error": "failed to delete domain",
 				})
@@ -4655,6 +4691,23 @@ func writeJSON(w stdhttp.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func eventErrorMessage(message string, err error) string {
+	message = strings.TrimSpace(message)
+	if err == nil {
+		return message
+	}
+
+	detail := strings.TrimSpace(err.Error())
+	if detail == "" {
+		return message
+	}
+	if message == "" {
+		return detail
+	}
+
+	return message + "\n\nError: " + detail
 }
 
 func writeHTML(w stdhttp.ResponseWriter, status int, body string) {

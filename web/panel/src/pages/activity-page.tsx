@@ -163,7 +163,7 @@ export function ActivityPage() {
                       <Badge variant={getStatusVariant(event.status)}>{event.status}</Badge>
                     </TableCell>
                     <TableCell className="align-top">
-                      <div className="max-w-3xl truncate text-sm text-foreground">
+                      <div className="max-w-3xl text-sm text-foreground whitespace-pre-wrap break-words">
                         {getMessagePreview(event.message)}
                       </div>
                       {hasHiddenMessageContent(event.message) ? (
