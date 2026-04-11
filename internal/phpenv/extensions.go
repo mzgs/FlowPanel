@@ -617,9 +617,17 @@ func managedPHPExtensionConfigPaths(runtimeStatus RuntimeStatus, definition phpE
 
 	paths := make([]string, 0, len(dirs))
 	for _, dir := range dedupeStrings(dirs) {
-		paths = append(paths, filepath.Join(dir, "99-flowpanel-"+moduleName+".ini"))
+		paths = append(paths, filepath.Join(dir, managedPHPExtensionConfigFilename(definition)))
 	}
 	return dedupeStrings(paths)
+}
+
+func managedPHPExtensionConfigFilename(definition phpExtensionDefinition) string {
+	prefix := "99"
+	if definition.isIONCubeLoader() {
+		prefix = "00"
+	}
+	return prefix + "-flowpanel-" + definition.sharedObjectName() + ".ini"
 }
 
 func renderManagedPHPExtensionConfig(runtimeStatus RuntimeStatus, definition phpExtensionDefinition) string {
