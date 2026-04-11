@@ -262,7 +262,7 @@ export function TerminalWindow({
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-[oklch(0.24_0.01_246.79)] px-4 py-3 text-sm text-zinc-300">
+      <div className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-[#101010] px-4 py-3 text-sm text-zinc-300">
         <div className="flex items-center gap-2">
           <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
           <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
