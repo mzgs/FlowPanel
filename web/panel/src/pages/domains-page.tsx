@@ -84,7 +84,7 @@ const domainKinds: DomainKind[] = [
 
 const initialFormState: FormState = {
   hostname: "",
-  kind: "Static site",
+  kind: "Php site",
   target: "",
   cacheEnabled: false,
 };
@@ -817,12 +817,6 @@ export function DomainsPage() {
             ) : null}
 
             <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-              <div className="border-b border-[var(--app-border)] px-6 py-4">
-                <div className="text-[14px] font-medium text-[var(--app-text)]">
-                  Domain list
-                </div>
-              </div>
-
               {loading ? (
                 <div className="px-6 py-10 text-[13px] text-[var(--app-text-muted)]">
                   Loading domains...
