@@ -79,7 +79,6 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "ssh2", aptPackage: "ssh2", dnfPackage: "pecl-ssh2"},
 	{id: "swoole", aliases: []string{"swoole6"}, aptPackage: "swoole"},
 	{id: "tidy", aptPackage: "tidy", dnfPackage: "tidy"},
-	{id: "timezonedb", aptPackage: "timezonedb"},
 	{id: "uuid", aptPackage: "uuid", dnfPackage: "pecl-uuid"},
 	{id: "xdebug", aptPackage: "xdebug", dnfPackage: "pecl-xdebug3", zendExtension: true},
 	{id: "xlswriter", aptPackage: "xlswriter", dnfPackage: "pecl-xlswriter"},
