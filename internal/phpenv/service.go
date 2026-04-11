@@ -63,8 +63,15 @@ type Manager interface {
 	StopVersion(context.Context, string) error
 	Restart(context.Context) error
 	RestartVersion(context.Context, string) error
+	ReadManagedConfigForVersion(context.Context, string) (ManagedConfig, error)
+	UpdateManagedConfigForVersion(context.Context, string, string) (RuntimeStatus, error)
 	UpdateSettings(context.Context, UpdateSettingsInput) (Status, error)
 	UpdateSettingsForVersion(context.Context, string, UpdateSettingsInput) (RuntimeStatus, error)
+}
+
+type ManagedConfig struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 type RuntimeStatus struct {

@@ -11,6 +11,11 @@ export type PHPSettings = {
   display_errors?: string;
 };
 
+export type PHPIniFile = {
+  path: string;
+  content: string;
+};
+
 export type PHPExtensionCatalogEntry = {
   id: string;
   label: string;
@@ -90,6 +95,15 @@ type PHPStatusPayload = {
   php: PHPStatus;
 };
 
+type PHPIniPayload = {
+  ini: PHPIniFile;
+};
+
+type PHPIniUpdatePayload = {
+  php: PHPStatus;
+  ini: PHPIniFile;
+};
+
 export type UpdatePHPSettingsInput = {
   max_execution_time: string;
   max_input_time: string;
@@ -108,8 +122,22 @@ export type PHPApiError = Error & {
 };
 
 async function parsePHPResponse(response: Response): Promise<PHPStatus> {
+  const payload = await parsePayload<PHPStatusPayload>(response, "php request");
+  return payload.php;
+}
+
+export async function fetchPHPStatus(): Promise<PHPStatus> {
+  const response = await fetch("/api/php", {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  return parsePHPResponse(response);
+}
+
+async function parsePayload<T>(response: Response, label: string): Promise<T> {
   if (!response.ok) {
-    let message = `php request failed with status ${response.status}`;
+    let message = `${label} failed with status ${response.status}`;
 
     try {
       const payload = await response.json();
@@ -123,17 +151,7 @@ async function parsePHPResponse(response: Response): Promise<PHPStatus> {
     throw new Error(message);
   }
 
-  const payload = (await response.json()) as PHPStatusPayload;
-  return payload.php;
-}
-
-export async function fetchPHPStatus(): Promise<PHPStatus> {
-  const response = await fetch("/api/php", {
-    credentials: "include",
-    cache: "no-store",
-  });
-
-  return parsePHPResponse(response);
+  return (await response.json()) as T;
 }
 
 function withVersion(path: string, version?: string): string {
@@ -213,6 +231,16 @@ export async function restartPHP(version?: string): Promise<PHPStatus> {
   return parsePHPResponse(response);
 }
 
+export async function fetchPHPIni(version?: string): Promise<PHPIniFile> {
+  const response = await fetch(withVersion("/api/php/ini", version), {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const payload = await parsePayload<PHPIniPayload>(response, "php ini request");
+  return payload.ini;
+}
+
 export async function updatePHPSettings(
   input: UpdatePHPSettingsInput,
   version?: string,
@@ -251,4 +279,20 @@ export async function updatePHPSettings(
   const error = new Error(message) as PHPApiError;
   error.fieldErrors = fieldErrors;
   throw error;
+}
+
+export async function updatePHPIni(
+  content: string,
+  version?: string,
+): Promise<PHPIniUpdatePayload> {
+  const response = await fetch(withVersion("/api/php/ini", version), {
+    method: "PUT",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ content }),
+  });
+
+  return parsePayload<PHPIniUpdatePayload>(response, "php ini request");
 }

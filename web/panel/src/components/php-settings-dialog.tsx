@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import {
+  fetchPHPIni,
   fetchPHPStatus,
   installPHPExtension,
+  type PHPIniFile,
   setDefaultPHPVersion,
   type PHPExtensionCatalogEntry,
   updatePHPSettings,
+  updatePHPIni,
   type PHPApiError,
   type PHPSettings,
   type PHPStatus,
@@ -30,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -55,6 +59,10 @@ const phpSettingsSections = [
   {
     id: "extensions",
     label: "Extensions",
+  },
+  {
+    id: "php-ini",
+    label: "PHP ini",
   },
   {
     id: "php-info",
@@ -294,6 +302,10 @@ export function PHPSettingsDialog({
   const [extensionFilter, setExtensionFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [phpInfoLoaded, setPHPInfoLoaded] = useState(false);
+  const [ini, setIni] = useState<PHPIniFile>({ path: "", content: "" });
+  const [savedIniContent, setSavedIniContent] = useState("");
+  const [iniLoading, setIniLoading] = useState(false);
+  const [iniSaving, setIniSaving] = useState(false);
   const [extensionOrder, setExtensionOrder] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -311,6 +323,10 @@ export function PHPSettingsDialog({
     setExtensionFilter("");
     setError(null);
     setPHPInfoLoaded(false);
+    setIni({ path: status?.loaded_config_file ?? "", content: "" });
+    setSavedIniContent("");
+    setIniLoading(false);
+    setIniSaving(false);
     setExtensionOrder(
       buildExtensionOrder(
         extensionCatalog,
@@ -319,6 +335,48 @@ export function PHPSettingsDialog({
       ),
     );
   }, [open, status?.version, version]);
+
+  useEffect(() => {
+    if (!open || activeSection !== "php-ini") {
+      return;
+    }
+    if (!status?.php_installed || !version) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setIniLoading(true);
+    setError(null);
+
+    void fetchPHPIni(version)
+      .then((nextIni) => {
+        if (cancelled) {
+          return;
+        }
+
+        setIni(nextIni);
+        setSavedIniContent(nextIni.content);
+      })
+      .catch((loadError) => {
+        if (cancelled) {
+          return;
+        }
+
+        const message = getErrorMessage(loadError, "PHP ini could not be loaded.");
+        setError(message);
+        toast.error(message);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIniLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, open, status?.php_installed, version]);
 
   function handleFieldChange(field: keyof PHPSettingsFormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -363,6 +421,30 @@ export function PHPSettingsDialog({
       await refreshStatus();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleIniSave() {
+    if (!status?.php_installed || !version) {
+      return;
+    }
+
+    setIniSaving(true);
+    setError(null);
+
+    try {
+      const next = await updatePHPIni(ini.content, version);
+      onStatusChange(next.php);
+      setIni(next.ini);
+      setSavedIniContent(next.ini.content);
+      toast.success(`PHP ${version} ini saved.`);
+    } catch (saveError) {
+      const message = getErrorMessage(saveError, "PHP ini could not be saved.");
+      setError(message);
+      toast.error(message);
+      await refreshStatus();
+    } finally {
+      setIniSaving(false);
     }
   }
 
@@ -418,11 +500,19 @@ export function PHPSettingsDialog({
   const runtimeLabel = version ? `PHP ${version}` : "PHP";
   const defaultSelected = version !== "" && defaultVersion?.trim() === version;
   const backgroundActionLabel = getPHPActionLabel(status?.state);
-  const busy =
-    saving || settingDefault || installingExtensionId !== null || isPHPActionState(status?.state);
+  const dialogBusy =
+    saving ||
+    iniSaving ||
+    settingDefault ||
+    installingExtensionId !== null ||
+    isPHPActionState(status?.state);
   const dirty = !sameFormState(form, savedForm);
-  const saveDisabled = busy || !dirty || !status?.php_installed;
-  const setDefaultDisabled = busy || defaultSelected || !status?.ready || !version;
+  const iniDirty = ini.content !== savedIniContent;
+  const saveDisabled =
+    activeSection === "php-ini"
+      ? dialogBusy || iniLoading || !iniDirty || !status?.php_installed
+      : dialogBusy || !dirty || !status?.php_installed;
+  const setDefaultDisabled = dialogBusy || defaultSelected || !status?.ready || !version;
   const packageManager = status?.package_manager?.trim() ?? "";
   const phpInfoSrc = version ? `/api/php/info?version=${encodeURIComponent(version)}` : "/api/php/info";
   const installedExtensions = new Set((status?.extensions ?? []).map(normalizePHPExtensionToken));
@@ -573,7 +663,7 @@ export function PHPSettingsDialog({
                       value={form.max_execution_time}
                       onChange={(event) => handleFieldChange("max_execution_time", event.target.value)}
                       placeholder="60"
-                      disabled={busy}
+                      disabled={dialogBusy}
                       aria-invalid={fieldErrors.max_execution_time ? true : undefined}
                     />
                     <p className="text-xs text-[var(--app-text-muted)]">
@@ -589,7 +679,7 @@ export function PHPSettingsDialog({
                       value={form.max_input_time}
                       onChange={(event) => handleFieldChange("max_input_time", event.target.value)}
                       placeholder="60"
-                      disabled={busy}
+                      disabled={dialogBusy}
                       aria-invalid={fieldErrors.max_input_time ? true : undefined}
                     />
                     <p className="text-xs text-[var(--app-text-muted)]">
@@ -605,7 +695,7 @@ export function PHPSettingsDialog({
                       value={form.memory_limit}
                       onChange={(event) => handleFieldChange("memory_limit", event.target.value)}
                       placeholder="256M"
-                      disabled={busy}
+                      disabled={dialogBusy}
                       aria-invalid={fieldErrors.memory_limit ? true : undefined}
                     />
                     <FieldError message={fieldErrors.memory_limit} />
@@ -618,7 +708,7 @@ export function PHPSettingsDialog({
                       value={form.post_max_size}
                       onChange={(event) => handleFieldChange("post_max_size", event.target.value)}
                       placeholder="64M"
-                      disabled={busy}
+                      disabled={dialogBusy}
                       aria-invalid={fieldErrors.post_max_size ? true : undefined}
                     />
                     <FieldError message={fieldErrors.post_max_size} />
@@ -629,7 +719,7 @@ export function PHPSettingsDialog({
                     <Select
                       value={form.file_uploads}
                       onValueChange={(value) => handleFieldChange("file_uploads", value)}
-                      disabled={busy}
+                      disabled={dialogBusy}
                     >
                       <SelectTrigger
                         id="php_file_uploads"
@@ -653,7 +743,7 @@ export function PHPSettingsDialog({
                       value={form.upload_max_filesize}
                       onChange={(event) => handleFieldChange("upload_max_filesize", event.target.value)}
                       placeholder="64M"
-                      disabled={busy}
+                      disabled={dialogBusy}
                       aria-invalid={fieldErrors.upload_max_filesize ? true : undefined}
                     />
                     <FieldError message={fieldErrors.upload_max_filesize} />
@@ -666,7 +756,7 @@ export function PHPSettingsDialog({
                       value={form.max_file_uploads}
                       onChange={(event) => handleFieldChange("max_file_uploads", event.target.value)}
                       placeholder="20"
-                      disabled={busy}
+                      disabled={dialogBusy}
                       aria-invalid={fieldErrors.max_file_uploads ? true : undefined}
                     />
                     <FieldError message={fieldErrors.max_file_uploads} />
@@ -679,7 +769,7 @@ export function PHPSettingsDialog({
                       value={form.default_socket_timeout}
                       onChange={(event) => handleFieldChange("default_socket_timeout", event.target.value)}
                       placeholder="60"
-                      disabled={busy}
+                      disabled={dialogBusy}
                       aria-invalid={fieldErrors.default_socket_timeout ? true : undefined}
                     />
                     <FieldError message={fieldErrors.default_socket_timeout} />
@@ -690,7 +780,7 @@ export function PHPSettingsDialog({
                     <Select
                       value={form.display_errors}
                       onValueChange={(value) => handleFieldChange("display_errors", value)}
-                      disabled={busy}
+                      disabled={dialogBusy}
                     >
                       <SelectTrigger
                         id="php_display_errors"
@@ -712,7 +802,7 @@ export function PHPSettingsDialog({
                     <Select
                       value={form.error_reporting}
                       onValueChange={(value) => handleFieldChange("error_reporting", value)}
-                      disabled={busy}
+                      disabled={dialogBusy}
                     >
                       <SelectTrigger
                         id="php_error_reporting"
@@ -828,7 +918,7 @@ export function PHPSettingsDialog({
                                   size="sm"
                                   className="h-7 rounded-md px-2.5 text-xs"
                                   onClick={() => void handleInstallExtension(extension.installId)}
-                                  disabled={busy}
+                                  disabled={dialogBusy}
                                 >
                                   {installingExtensionId === extension.installId ? (
                                     <>
@@ -845,6 +935,46 @@ export function PHPSettingsDialog({
                         ))}
                         </ul>
                       )}
+                    </>
+                  )}
+                </section>
+              ) : activeSection === "php-ini" ? (
+                <section className="space-y-4">
+                  {!status?.php_installed ? (
+                    <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+                      Install the selected PHP runtime before editing PHP ini overrides.
+                    </div>
+                  ) : iniLoading ? (
+                    <div className="flex min-h-[420px] items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-sm text-[var(--app-text-muted)]">
+                      <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                      Loading PHP ini...
+                    </div>
+                  ) : (
+                    <>
+                      <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3">
+                        <div className="text-xs text-[var(--app-text-muted)]">Loaded file</div>
+                        <div className="mt-1 break-all font-mono text-sm text-[var(--app-text)]">
+                          {formatValue(ini.path || status?.loaded_config_file)}
+                        </div>
+                        <p className="mt-2 text-xs text-[var(--app-text-muted)]">
+                          Edit the loaded `php.ini` for {runtimeLabel}. Saving restarts PHP-FPM
+                          when this runtime is running.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="php_ini_editor">PHP ini content</Label>
+                        <Textarea
+                          id="php_ini_editor"
+                          value={ini.content}
+                          onChange={(event) =>
+                            setIni((current) => ({ ...current, content: event.target.value }))
+                          }
+                          disabled={dialogBusy}
+                          spellCheck={false}
+                          className="min-h-[420px] resize-none rounded-lg border-[var(--app-border)] bg-[var(--app-bg-2)] font-mono text-[13px] leading-5 text-[var(--app-text)]"
+                        />
+                      </div>
                     </>
                   )}
                 </section>
@@ -883,17 +1013,26 @@ export function PHPSettingsDialog({
         </div>
 
         <DialogFooter className="border-t border-[var(--app-border)] pt-4">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={dialogBusy}
+          >
             Close
           </Button>
-          <Button type="button" onClick={() => void handleSave()} disabled={saveDisabled}>
-            {saving ? (
+          <Button
+            type="button"
+            onClick={() => void (activeSection === "php-ini" ? handleIniSave() : handleSave())}
+            disabled={saveDisabled}
+          >
+            {saving || iniSaving ? (
               <>
                 <LoaderCircle className="h-4 w-4 animate-spin" />
                 Saving
               </>
             ) : (
-              "Save settings"
+              activeSection === "php-ini" ? "Save php.ini" : "Save settings"
             )}
           </Button>
         </DialogFooter>

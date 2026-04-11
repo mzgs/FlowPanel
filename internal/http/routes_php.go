@@ -216,6 +216,62 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"php": status})
 	})
 
+	phpINIHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.PHP == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "php runtime is not configured"})
+			return
+		}
+
+		ini, err := a.app.PHP.ReadManagedConfigForVersion(r.Context(), a.phpActionVersion(r))
+		if err != nil {
+			a.app.Logger.Error("read php ini failed", zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"ini": ini})
+	})
+
+	phpINIUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.PHP == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "php runtime is not configured"})
+			return
+		}
+
+		version := a.phpActionVersion(r)
+		var input struct {
+			Content string `json:"content"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		runtimeStatus, err := a.app.PHP.UpdateManagedConfigForVersion(r.Context(), version, input.Content)
+		if err != nil {
+			a.app.Logger.Error("update php ini failed", zap.Error(err))
+			a.mutationEvent(r.Context(), "runtime", "update", "php", "php", "PHP", "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+
+		status := a.app.PHP.Status(r.Context())
+		ini := phpenv.ManagedConfig{Path: runtimeStatus.LoadedConfigFile, Content: input.Content}
+
+		shouldSync := runtimeStatus.Ready
+		if shouldSync {
+			if err := a.syncDomainsWithCaddy(r.Context()); err != nil {
+				a.app.Logger.Error("sync domains after php ini update failed", zap.Error(err))
+				a.mutationEvent(r.Context(), "runtime", "update", "php", "php", "PHP", "failed", "PHP ini saved but failed to republish domains.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "php ini saved but failed to republish domains"})
+				return
+			}
+		}
+
+		a.mutationEvent(r.Context(), "runtime", "update", "php", "php", "PHP", "succeeded", "Updated PHP ini.")
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"php": status, "ini": ini})
+	})
+
 	phpExtensionInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app.PHP == nil {
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "php runtime is not configured"})
@@ -297,7 +353,9 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 		}
 		return a.app.PHP.Restart(ctx)
 	}))
+	r.Method(stdhttp.MethodGet, "/php/ini", phpINIHandler)
 	r.Method(stdhttp.MethodPut, "/php/settings", phpSettingsUpdateHandler)
+	r.Method(stdhttp.MethodPut, "/php/ini", phpINIUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/php/extensions/install", phpExtensionInstallHandler)
 
 	phpMyAdminStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

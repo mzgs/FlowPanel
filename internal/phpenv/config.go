@@ -3,6 +3,7 @@ package phpenv
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,36 @@ type phpConfigInfo struct {
 	settings          Settings
 }
 
+func (s *Service) ReadManagedConfigForVersion(ctx context.Context, version string) (ManagedConfig, error) {
+	status, configInfo, err := s.inspectLoadedConfigTarget(ctx, version)
+	if err != nil {
+		return ManagedConfig{}, err
+	}
+
+	content, err := readPHPConfigContent(configInfo.loadedConfigFile)
+	if err != nil {
+		return ManagedConfig{}, fmt.Errorf("read php ini: %w", err)
+	}
+
+	return ManagedConfig{
+		Path:    firstNonEmpty(status.LoadedConfigFile, configInfo.loadedConfigFile),
+		Content: content,
+	}, nil
+}
+
+func (s *Service) UpdateManagedConfigForVersion(ctx context.Context, version, content string) (RuntimeStatus, error) {
+	status, configInfo, err := s.inspectLoadedConfigTarget(ctx, version)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
+
+	nextStatus, err := s.writePHPConfigFile(ctx, status, configInfo.loadedConfigFile, content)
+	if nextStatus.LoadedConfigFile == "" {
+		nextStatus.LoadedConfigFile = configInfo.loadedConfigFile
+	}
+	return nextStatus, err
+}
+
 func (s *Service) UpdateSettings(ctx context.Context, input UpdateSettingsInput) (Status, error) {
 	runtimeStatus, err := s.UpdateSettingsForVersion(ctx, "", input)
 	if err != nil {
@@ -63,44 +94,17 @@ func (s *Service) UpdateSettingsForVersion(ctx context.Context, version string, 
 		return RuntimeStatus{}, validation
 	}
 
-	status := s.StatusForVersion(ctx, version)
-	if !status.PHPInstalled || status.PHPPath == "" {
-		return RuntimeStatus{}, fmt.Errorf("php %s is not installed", status.Version)
-	}
-
-	configInfo, err := inspectPHPConfig(ctx, status.PHPPath)
+	status, configInfo, err := s.inspectManagedConfigTarget(ctx, version)
 	if err != nil {
 		return RuntimeStatus{}, err
 	}
 
-	if configInfo.managedConfigFile == "" {
-		return RuntimeStatus{}, fmt.Errorf("flowpanel could not determine where to write PHP settings")
-	}
-
 	normalized := NormalizeUpdateSettingsInput(input)
-	if err := os.MkdirAll(filepath.Dir(configInfo.managedConfigFile), 0o755); err != nil {
-		return RuntimeStatus{}, fmt.Errorf("create php config directory: %w", err)
-	}
-	if err := os.WriteFile(configInfo.managedConfigFile, []byte(renderManagedPHPConfig(normalized)), 0o644); err != nil {
-		return RuntimeStatus{}, fmt.Errorf("write php settings: %w", err)
-	}
-
-	if status.ServiceRunning {
-		if err := s.RestartVersion(ctx, status.Version); err != nil {
-			if status.FPMPath == "" {
-				return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
-			}
-			if fallbackErr := restartPHPFPM(ctx, status.FPMPath); fallbackErr != nil {
-				return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
-			}
-		}
-	}
-
-	nextStatus := s.StatusForVersion(ctx, status.Version)
+	nextStatus, err := s.writePHPConfigFile(ctx, status, configInfo.managedConfigFile, renderManagedPHPConfig(normalized))
 	if nextStatus.ManagedConfigFile == "" {
 		nextStatus.ManagedConfigFile = configInfo.managedConfigFile
 	}
-	return nextStatus, nil
+	return nextStatus, err
 }
 
 func ValidateUpdateSettingsInput(input UpdateSettingsInput) ValidationErrors {
@@ -230,6 +234,101 @@ func renderManagedPHPConfig(settings Settings) string {
 	builder.WriteString(fmt.Sprintf("error_reporting = %s\n", settings.ErrorReporting))
 	builder.WriteString(fmt.Sprintf("display_errors = %s\n", settings.DisplayErrors))
 	return builder.String()
+}
+
+func (s *Service) inspectManagedConfigTarget(ctx context.Context, version string) (RuntimeStatus, phpConfigInfo, error) {
+	status := s.StatusForVersion(ctx, version)
+	if !status.PHPInstalled || status.PHPPath == "" {
+		return RuntimeStatus{}, phpConfigInfo{}, fmt.Errorf("php %s is not installed", status.Version)
+	}
+
+	configInfo, err := inspectPHPConfig(ctx, status.PHPPath)
+	if err != nil {
+		return RuntimeStatus{}, phpConfigInfo{}, err
+	}
+	if configInfo.managedConfigFile == "" {
+		return RuntimeStatus{}, phpConfigInfo{}, fmt.Errorf("flowpanel could not determine where to write PHP settings")
+	}
+
+	return status, configInfo, nil
+}
+
+func (s *Service) inspectLoadedConfigTarget(ctx context.Context, version string) (RuntimeStatus, phpConfigInfo, error) {
+	status := s.StatusForVersion(ctx, version)
+	if !status.PHPInstalled || status.PHPPath == "" {
+		return RuntimeStatus{}, phpConfigInfo{}, fmt.Errorf("php %s is not installed", status.Version)
+	}
+
+	configInfo, err := inspectPHPConfig(ctx, status.PHPPath)
+	if err != nil {
+		return RuntimeStatus{}, phpConfigInfo{}, err
+	}
+	if configInfo.loadedConfigFile == "" {
+		return RuntimeStatus{}, phpConfigInfo{}, fmt.Errorf("flowpanel could not determine the loaded php.ini file")
+	}
+
+	return status, configInfo, nil
+}
+
+func (s *Service) writePHPConfigFile(
+	ctx context.Context,
+	status RuntimeStatus,
+	path string,
+	content string,
+) (RuntimeStatus, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return RuntimeStatus{}, fmt.Errorf("create php config directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(normalizePHPConfigContent(content)), 0o644); err != nil {
+		return RuntimeStatus{}, fmt.Errorf("write php settings: %w", err)
+	}
+
+	if status.ServiceRunning {
+		if err := s.RestartVersion(ctx, status.Version); err != nil {
+			if status.FPMPath == "" {
+				return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
+			}
+			if fallbackErr := restartPHPFPM(ctx, status.FPMPath); fallbackErr != nil {
+				return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
+			}
+		}
+	}
+
+	nextStatus := s.StatusForVersion(ctx, status.Version)
+	return nextStatus, nil
+}
+
+func normalizePHPConfigContent(content string) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	if content == "" || strings.HasSuffix(content, "\n") {
+		return content
+	}
+	return content + "\n"
+}
+
+func readPHPConfigContent(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", os.ErrNotExist
+	}
+
+	content, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return strings.ReplaceAll(string(content), "\r\n", "\n"), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func inspectPHPConfig(ctx context.Context, phpPath string) (phpConfigInfo, error) {
