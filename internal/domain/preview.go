@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"io"
 	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -23,14 +27,17 @@ import (
 
 const (
 	// Generate previews at 4x the rendered panel size to keep them crisp when scaled down in the panel UI.
-	defaultDomainPreviewWidth         = 1120
-	defaultDomainPreviewHeight        = 840
-	defaultDomainPreviewCaptureWidth  = 1440
-	defaultDomainPreviewCaptureHeight = 1080
-	defaultDomainPreviewCaptureDelay  = 750 * time.Millisecond
-	defaultDomainPreviewTimeout       = 30 * time.Second
-	defaultDomainPreviewTTL           = 7 * 24 * time.Hour
-	domainPreviewMaxBytes             = 5 << 20
+	defaultDomainPreviewWidth          = 1120
+	defaultDomainPreviewHeight         = 840
+	defaultDomainPreviewCaptureWidth   = 1440
+	defaultDomainPreviewCaptureHeight  = 1080
+	defaultDomainPreviewCaptureDelay   = 750 * time.Millisecond
+	defaultDomainPreviewTimeout        = 30 * time.Second
+	defaultDomainPreviewTTL            = 7 * 24 * time.Hour
+	defaultDomainPreviewInstallTimeout = 10 * time.Minute
+	domainPreviewMaxBytes              = 5 << 20
+	previewChromeDebURL                = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
+	previewChromeRPMURL                = "https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm"
 )
 
 type PreviewGenerator interface {
@@ -38,6 +45,7 @@ type PreviewGenerator interface {
 }
 
 type chromedpPreviewGenerator struct {
+	mu       sync.Mutex
 	execPath string
 }
 
@@ -64,14 +72,8 @@ func defaultPreviewTTL() time.Duration {
 }
 
 func defaultPreviewChromePath() string {
-	if value := strings.TrimSpace(os.Getenv("FLOWPANEL_DOMAIN_PREVIEW_CHROME_PATH")); value != "" {
-		return value
-	}
-
-	for _, candidate := range []string{"chromium", "google-chrome", "chromium-browser"} {
-		if resolved, err := exec.LookPath(candidate); err == nil {
-			return resolved
-		}
+	if resolved, ok := lookupPreviewChromePath(); ok {
+		return resolved
 	}
 
 	return ""
@@ -84,12 +86,361 @@ func defaultPreviewGenerator() PreviewGenerator {
 }
 
 func (g *chromedpPreviewGenerator) Capture(ctx context.Context, targetURL string) ([]byte, error) {
-	screenshot, err := captureWebsiteScreenshot(ctx, g.execPath, targetURL)
+	execPath, err := g.resolveExecPath(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	screenshot, err := captureWebsiteScreenshot(ctx, execPath, targetURL)
 	if err != nil {
 		return nil, err
 	}
 
 	return thumbnailPreviewImage(screenshot)
+}
+
+func (g *chromedpPreviewGenerator) resolveExecPath(ctx context.Context) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if resolved, ok := lookupPreviewChromeCandidate(g.execPath); ok {
+		g.execPath = resolved
+		return resolved, nil
+	}
+
+	if resolved, ok := lookupPreviewChromePath(); ok {
+		g.execPath = resolved
+		return resolved, nil
+	}
+
+	if err := installPreviewChrome(ctx); err != nil {
+		return "", err
+	}
+
+	if resolved, ok := lookupPreviewChromePath(); ok {
+		g.execPath = resolved
+		return resolved, nil
+	}
+
+	return "", errors.New("no supported Chrome or Chromium binary found after installation")
+}
+
+func lookupPreviewChromePath() (string, bool) {
+	for _, candidate := range previewChromeCandidates() {
+		if resolved, ok := lookupPreviewChromeCandidate(candidate); ok {
+			return resolved, true
+		}
+	}
+
+	return "", false
+}
+
+func previewChromeCandidates() []string {
+	candidates := make([]string, 0, 16)
+	if value := strings.TrimSpace(os.Getenv("FLOWPANEL_DOMAIN_PREVIEW_CHROME_PATH")); value != "" {
+		candidates = append(candidates, value)
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		candidates = append(candidates,
+			"/Applications/Chromium.app/Contents/MacOS/Chromium",
+			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		)
+	case "windows":
+		candidates = append(candidates,
+			"chrome",
+			"chrome.exe",
+			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
+			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+			filepath.Join(os.Getenv("USERPROFILE"), `AppData\Local\Google\Chrome\Application\chrome.exe`),
+			filepath.Join(os.Getenv("USERPROFILE"), `AppData\Local\Chromium\Application\chrome.exe`),
+		)
+	default:
+		candidates = append(candidates,
+			"headless_shell",
+			"headless-shell",
+			"chromium",
+			"chromium-browser",
+			"google-chrome",
+			"google-chrome-stable",
+			"google-chrome-beta",
+			"google-chrome-unstable",
+			"/usr/bin/google-chrome",
+			"/usr/bin/google-chrome-stable",
+			"/usr/bin/chromium",
+			"/usr/bin/chromium-browser",
+			"/usr/local/bin/chrome",
+			"/snap/bin/chromium",
+			"chrome",
+		)
+	}
+
+	return candidates
+}
+
+func lookupPreviewChromeCandidate(candidate string) (string, bool) {
+	name := strings.TrimSpace(candidate)
+	if name == "" {
+		return "", false
+	}
+
+	if resolved, err := exec.LookPath(name); err == nil {
+		return resolved, true
+	}
+
+	searchDirs := []string{
+		"/opt/homebrew/bin",
+		"/opt/homebrew/sbin",
+		"/usr/local/bin",
+		"/usr/local/sbin",
+		"/usr/bin",
+		"/usr/sbin",
+		"/snap/bin",
+	}
+	if filepath.IsAbs(name) {
+		searchDirs = nil
+	}
+
+	for _, dir := range searchDirs {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		return path, true
+	}
+
+	info, err := os.Stat(name)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+
+	return name, true
+}
+
+func installPreviewChrome(ctx context.Context) error {
+	if runtime.GOOS != "linux" {
+		return errors.New("no supported Chrome or Chromium binary found")
+	}
+
+	installCtx := ctx
+	if installCtx == nil {
+		installCtx = context.Background()
+	}
+	if _, ok := installCtx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		installCtx, cancel = context.WithTimeout(installCtx, defaultDomainPreviewInstallTimeout)
+		defer cancel()
+	}
+
+	switch {
+	case hasPreviewCommand("apt-get"):
+		return installPreviewChromeWithAPT(installCtx)
+	case hasPreviewCommand("dnf"):
+		return installPreviewChromeWithRPM(installCtx, "dnf")
+	case hasPreviewCommand("yum"):
+		return installPreviewChromeWithRPM(installCtx, "yum")
+	default:
+		return errors.New("automatic Chrome installation requires apt-get, dnf, or yum")
+	}
+}
+
+func installPreviewChromeWithAPT(ctx context.Context) error {
+	aptPath, _ := lookupPreviewChromeCandidate("apt-get")
+	if _, err := runPreviewCommand(ctx, aptPath, "update"); err != nil {
+		return fmt.Errorf("apt-get update: %w", err)
+	}
+
+	packages := []string{"chromium"}
+	if isUbuntuLikeLinux() {
+		packages = append([]string{"chromium-browser"}, packages...)
+	}
+
+	errs := make([]error, 0, len(packages)+1)
+	for _, packageName := range packages {
+		if _, err := runPreviewCommand(ctx, aptPath, "install", "-y", packageName); err == nil {
+			return nil
+		} else {
+			errs = append(errs, fmt.Errorf("apt-get install %s: %w", packageName, err))
+		}
+	}
+
+	if runtime.GOARCH == "amd64" {
+		if err := installDownloadedPreviewChromePackage(ctx, aptPath, previewChromeDebURL, ".deb"); err == nil {
+			return nil
+		} else {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func installPreviewChromeWithRPM(ctx context.Context, manager string) error {
+	managerPath, _ := lookupPreviewChromeCandidate(manager)
+	if _, err := runPreviewCommand(ctx, managerPath, "install", "-y", "chromium"); err == nil {
+		return nil
+	} else if runtime.GOARCH != "amd64" {
+		return fmt.Errorf("%s install chromium: %w", manager, err)
+	}
+
+	if err := installDownloadedPreviewChromePackage(ctx, managerPath, previewChromeRPMURL, ".rpm"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func installDownloadedPreviewChromePackage(ctx context.Context, managerPath string, downloadURL string, extension string) error {
+	packagePath, err := downloadPreviewChromePackage(ctx, downloadURL, extension)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(packagePath)
+
+	switch extension {
+	case ".deb":
+		dpkgPath, ok := lookupPreviewChromeCandidate("dpkg")
+		if !ok {
+			return errors.New("dpkg is not available")
+		}
+
+		if _, err := runPreviewCommand(ctx, dpkgPath, "-i", packagePath); err == nil {
+			return nil
+		}
+
+		if _, err := runPreviewCommand(ctx, managerPath, "install", "-f", "-y"); err != nil {
+			return fmt.Errorf("apt-get install downloaded Chrome package: %w", err)
+		}
+		return nil
+	case ".rpm":
+		if _, err := runPreviewCommand(ctx, managerPath, "install", "-y", packagePath); err != nil {
+			return fmt.Errorf("%s install downloaded Chrome package: %w", filepath.Base(managerPath), err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported preview Chrome package extension %q", extension)
+	}
+}
+
+func downloadPreviewChromePackage(ctx context.Context, downloadURL string, extension string) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("prepare Chrome download request: %w", err)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("download Chrome package: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", fmt.Errorf("download Chrome package: unexpected status %s", response.Status)
+	}
+
+	file, err := os.CreateTemp("", "flowpanel-chrome-*"+extension)
+	if err != nil {
+		return "", fmt.Errorf("create temporary Chrome package file: %w", err)
+	}
+
+	if _, err := io.Copy(file, response.Body); err != nil {
+		file.Close()
+		os.Remove(file.Name())
+		return "", fmt.Errorf("write Chrome package: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(file.Name())
+		return "", fmt.Errorf("close Chrome package file: %w", err)
+	}
+
+	return file.Name(), nil
+}
+
+func hasPreviewCommand(name string) bool {
+	_, ok := lookupPreviewChromeCandidate(name)
+	return ok
+}
+
+type previewOSReleaseInfo struct {
+	id     string
+	idLike string
+}
+
+func isUbuntuLikeLinux() bool {
+	info := parsePreviewOSReleaseFile("/etc/os-release")
+	if info.id == "ubuntu" {
+		return true
+	}
+
+	for _, item := range strings.Fields(info.idLike) {
+		if item == "ubuntu" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func parsePreviewOSReleaseFile(path string) previewOSReleaseInfo {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return previewOSReleaseInfo{}
+	}
+
+	var info previewOSReleaseInfo
+	for _, rawLine := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		switch strings.TrimSpace(key) {
+		case "ID":
+			info.id = strings.ToLower(value)
+		case "ID_LIKE":
+			info.idLike = strings.ToLower(value)
+		}
+	}
+
+	return info
+}
+
+func runPreviewCommand(ctx context.Context, name string, args ...string) (string, error) {
+	runCtx := ctx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+
+	cmd := exec.CommandContext(runCtx, name, args...)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+
+	err := cmd.Run()
+	combinedOutput := strings.TrimSpace(output.String())
+	if err == nil {
+		return combinedOutput, nil
+	}
+
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return combinedOutput, fmt.Errorf("%s timed out", filepath.Base(name))
+	}
+	if errors.Is(runCtx.Err(), context.Canceled) {
+		return combinedOutput, fmt.Errorf("%s was canceled", filepath.Base(name))
+	}
+	if combinedOutput == "" {
+		return combinedOutput, fmt.Errorf("%s failed: %w", filepath.Base(name), err)
+	}
+
+	return combinedOutput, fmt.Errorf("%s failed: %s", filepath.Base(name), combinedOutput)
 }
 
 func captureWebsiteScreenshot(parent context.Context, execPath string, targetURL string) ([]byte, error) {
