@@ -208,7 +208,10 @@ function getSelectedPHPVersion(
   currentVersion?: string | null,
 ) {
   const normalizedCurrent = currentVersion?.trim();
-  if (normalizedCurrent) {
+  if (
+    normalizedCurrent &&
+    status?.versions?.some((runtimeStatus) => runtimeStatus.version === normalizedCurrent)
+  ) {
     return normalizedCurrent;
   }
 
