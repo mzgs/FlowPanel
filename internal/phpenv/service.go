@@ -77,6 +77,7 @@ type RuntimeStatus struct {
 	PHPPath           string   `json:"php_path,omitempty"`
 	PHPVersion        string   `json:"php_version,omitempty"`
 	Extensions        []string `json:"extensions,omitempty"`
+	extensionDir      string
 	FPMInstalled      bool     `json:"fpm_installed"`
 	FPMPath           string   `json:"fpm_path,omitempty"`
 	ListenAddress     string   `json:"listen_address,omitempty"`
@@ -434,6 +435,7 @@ func (s *Service) inspectVersion(ctx context.Context, version string) RuntimeSta
 			status.ScanDir = configInfo.scanDir
 			status.ManagedConfigFile = configInfo.managedConfigFile
 			status.Settings = configInfo.settings
+			status.extensionDir = configInfo.extensionDir
 		} else {
 			status.Issues = append(status.Issues, err.Error())
 		}

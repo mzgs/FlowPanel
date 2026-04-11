@@ -40,6 +40,7 @@ type phpConfigInfo struct {
 	loadedConfigFile  string
 	scanDir           string
 	managedConfigFile string
+	extensionDir      string
 	settings          Settings
 }
 
@@ -242,6 +243,12 @@ func inspectPHPConfig(ctx context.Context, phpPath string) (phpConfigInfo, error
 	info.loadedConfigFile = parsePHPIniOutputValue(iniOutput, "Loaded Configuration File")
 	info.scanDir = parsePHPIniOutputValue(iniOutput, "Scan for additional .ini files in")
 	info.managedConfigFile = determineManagedPHPConfigFile(info.loadedConfigFile, info.scanDir)
+
+	extensionDir, err := runInspectCommand(ctx, phpPath, "-n", "-r", `echo ini_get("extension_dir");`)
+	if err != nil {
+		return info, fmt.Errorf("inspect php extension_dir: %w", err)
+	}
+	info.extensionDir = strings.TrimSpace(extensionDir)
 
 	settingsOutput, err := runInspectCommand(ctx, phpPath, "-r", `echo json_encode([
   "max_execution_time" => ini_get("max_execution_time"),

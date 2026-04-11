@@ -1,8 +1,12 @@
 package phpenv
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -45,7 +49,7 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "igbinary", aptPackage: "igbinary", dnfPackage: "pecl-igbinary"},
 	{id: "imagemagick", aliases: []string{"imagick"}, aptPackage: "imagick", dnfPackage: "pecl-imagick-im7", sharedObject: "imagick"},
 	{id: "imap", aptPackage: "imap", dnfPackage: "pecl-imap"},
-	{id: "ioncube", label: "ionCube", aliases: []string{"ioncube loader", "ioncubeloader"}, dnfPackage: "ioncube-loader", zendExtension: true},
+	{id: "ioncube", label: "ionCube Loader", aliases: []string{"ioncube loader", "ioncubeloader"}, dnfPackage: "ioncube-loader", zendExtension: true},
 	{id: "intl", aptPackage: "intl", dnfPackage: "intl"},
 	{id: "ldap", aptPackage: "ldap", dnfPackage: "ldap"},
 	{id: "mailparse", aptPackage: "mailparse", dnfPackage: "pecl-mailparse"},
@@ -89,6 +93,11 @@ var phpExtensionDefinitions = []phpExtensionDefinition{
 	{id: "zstd", aptPackage: "zstd", dnfPackage: "zstd"},
 }
 
+const (
+	ionCubeLinuxAMD64URL = "https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz"
+	ionCubeLinuxARM64URL = "https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_aarch64.tar.gz"
+)
+
 func PHPExtensionCatalog() []PHPExtensionCatalogEntry {
 	catalog := make([]PHPExtensionCatalogEntry, 0, len(phpExtensionDefinitions))
 	for _, definition := range phpExtensionDefinitions {
@@ -122,7 +131,7 @@ func (s *Service) InstallExtensionForVersion(ctx context.Context, version, exten
 		return RuntimeStatus{}, fmt.Errorf("php extension %q is not supported", requestedExtension)
 	}
 	if !definition.supportsPackageInstall(initialStatus.Version, initialStatus.PackageManager) {
-		return RuntimeStatus{}, fmt.Errorf("php extension %q does not have a configured distro package for php %s", requestedExtension, initialStatus.Version)
+		return RuntimeStatus{}, fmt.Errorf("php extension %q does not have a configured automatic install path for php %s", requestedExtension, initialStatus.Version)
 	}
 	if extensionLoaded(initialStatus.Extensions, definition) {
 		return initialStatus, nil
@@ -191,7 +200,20 @@ func findPHPExtensionDefinition(value string) (phpExtensionDefinition, bool) {
 	return phpExtensionDefinition{}, false
 }
 
+func (d phpExtensionDefinition) isIONCubeLoader() bool {
+	return normalizePHPExtensionKey(d.id) == "ioncube"
+}
+
 func (d phpExtensionDefinition) supportsPackageInstall(version, packageManager string) bool {
+	if d.isIONCubeLoader() {
+		switch strings.TrimSpace(packageManager) {
+		case "apt", "dnf", "yum":
+			return runtime.GOOS == "linux"
+		default:
+			return false
+		}
+	}
+
 	switch strings.TrimSpace(packageManager) {
 	case "apt":
 		if strings.TrimSpace(d.aptPackage) == "" {
@@ -256,6 +278,12 @@ func (d phpExtensionDefinition) catalogInstallID() string {
 }
 
 func (d phpExtensionDefinition) catalogInstallPackageManagers() []string {
+	if d.isIONCubeLoader() {
+		if runtime.GOOS != "linux" {
+			return nil
+		}
+		return []string{"apt", "dnf", "yum"}
+	}
 	if normalizePHPExtensionKey(d.id) == "opcache" {
 		return nil
 	}
@@ -271,6 +299,9 @@ func (d phpExtensionDefinition) catalogInstallPackageManagers() []string {
 }
 
 func (d phpExtensionDefinition) hasManagedInstall() bool {
+	if d.isIONCubeLoader() {
+		return runtime.GOOS == "linux"
+	}
 	return strings.TrimSpace(d.aptPackage) != "" || strings.TrimSpace(d.dnfPackage) != ""
 }
 
@@ -333,6 +364,9 @@ func normalizePHPExtensionKey(value string) string {
 }
 
 func installPHPExtensionPackage(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	if definition.isIONCubeLoader() {
+		return installIONCubeLoader(ctx, runtimeStatus)
+	}
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("automatic PHP extension installation is only supported on Linux runtimes")
 	}
@@ -372,6 +406,9 @@ func installPHPExtensionPackage(ctx context.Context, runtimeStatus RuntimeStatus
 }
 
 func removePHPExtensionPackage(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) error {
+	if definition.isIONCubeLoader() {
+		return removeIONCubeLoader(runtimeStatus)
+	}
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("automatic PHP extension removal is only supported on Linux runtimes")
 	}
@@ -401,6 +438,9 @@ func removePHPExtensionPackage(ctx context.Context, runtimeStatus RuntimeStatus,
 }
 
 func phpExtensionPackageInstalled(ctx context.Context, runtimeStatus RuntimeStatus, definition phpExtensionDefinition) bool {
+	if definition.isIONCubeLoader() {
+		return ionCubeLoaderInstalled(runtimeStatus)
+	}
 	packageName := definition.packageName(runtimeStatus.Version, runtimeStatus.PackageManager)
 	if packageName == "" {
 		return false
@@ -509,7 +549,7 @@ func writeManagedPHPExtensionConfig(runtimeStatus RuntimeStatus, definition phpE
 		return false, nil
 	}
 
-	content := renderManagedPHPExtensionConfig(definition)
+	content := renderManagedPHPExtensionConfig(runtimeStatus, definition)
 	wroteConfig := false
 	for _, path := range paths {
 		exists, err := phpExtensionConfigExists(path, definition)
@@ -582,12 +622,162 @@ func managedPHPExtensionConfigPaths(runtimeStatus RuntimeStatus, definition phpE
 	return dedupeStrings(paths)
 }
 
-func renderManagedPHPExtensionConfig(definition phpExtensionDefinition) string {
+func renderManagedPHPExtensionConfig(runtimeStatus RuntimeStatus, definition phpExtensionDefinition) string {
 	directive := "extension"
+	value := definition.sharedObjectName() + ".so"
 	if definition.zendExtension {
 		directive = "zend_extension"
 	}
-	return fmt.Sprintf("; Managed by FlowPanel.\n%s=%s.so\n", directive, definition.sharedObjectName())
+	if definition.isIONCubeLoader() {
+		if loaderPath := ionCubeLoaderPath(runtimeStatus); loaderPath != "" {
+			value = loaderPath
+		}
+	}
+	return fmt.Sprintf("; Managed by FlowPanel.\n%s=%s\n", directive, value)
+}
+
+func installIONCubeLoader(ctx context.Context, runtimeStatus RuntimeStatus) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("automatic ionCube Loader installation is only supported on Linux runtimes")
+	}
+
+	targetPath := ionCubeLoaderPath(runtimeStatus)
+	if targetPath == "" {
+		return fmt.Errorf("flowpanel could not determine the ionCube Loader target path for php %s", runtimeStatus.Version)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return fmt.Errorf("create php extension directory: %w", err)
+	}
+
+	archiveURL, err := ionCubeLoaderArchiveURL()
+	if err != nil {
+		return err
+	}
+	if err := downloadIONCubeLoader(ctx, archiveURL, filepath.Base(targetPath), targetPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func removeIONCubeLoader(runtimeStatus RuntimeStatus) error {
+	targetPath := ionCubeLoaderPath(runtimeStatus)
+	if targetPath == "" {
+		return fmt.Errorf("flowpanel could not determine the ionCube Loader target path for php %s", runtimeStatus.Version)
+	}
+	if err := os.Remove(targetPath); err == nil || os.IsNotExist(err) {
+		return nil
+	} else {
+		return fmt.Errorf("remove ionCube Loader: %w", err)
+	}
+}
+
+func ionCubeLoaderInstalled(runtimeStatus RuntimeStatus) bool {
+	targetPath := ionCubeLoaderPath(runtimeStatus)
+	if targetPath == "" {
+		return false
+	}
+	info, err := os.Stat(targetPath)
+	return err == nil && !info.IsDir()
+}
+
+func ionCubeLoaderPath(runtimeStatus RuntimeStatus) string {
+	if runtimeStatus.extensionDir == "" {
+		return ""
+	}
+	loaderName := ionCubeLoaderFilename(runtimeStatus.Version)
+	if loaderName == "" {
+		return ""
+	}
+	return filepath.Join(runtimeStatus.extensionDir, loaderName)
+}
+
+func ionCubeLoaderFilename(version string) string {
+	version = NormalizeVersion(version)
+	if version == "" {
+		return ""
+	}
+	return "ioncube_loader_lin_" + version + ".so"
+}
+
+func ionCubeLoaderArchiveURL() (string, error) {
+	switch runtime.GOARCH {
+	case "amd64":
+		return ionCubeLinuxAMD64URL, nil
+	case "arm64":
+		return ionCubeLinuxARM64URL, nil
+	default:
+		return "", fmt.Errorf("automatic ionCube Loader installation is not supported on linux/%s", runtime.GOARCH)
+	}
+}
+
+func downloadIONCubeLoader(ctx context.Context, archiveURL, loaderName, targetPath string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveURL, nil)
+	if err != nil {
+		return fmt.Errorf("prepare ionCube download: %w", err)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("download ionCube Loader: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("download ionCube Loader: unexpected HTTP status %s", response.Status)
+	}
+
+	gzipReader, err := gzip.NewReader(response.Body)
+	if err != nil {
+		return fmt.Errorf("read ionCube archive: %w", err)
+	}
+	defer gzipReader.Close()
+
+	archivePath := "ioncube/" + loaderName
+	reader := tar.NewReader(gzipReader)
+	for {
+		header, err := reader.Next()
+		switch {
+		case err == io.EOF:
+			return fmt.Errorf("download ionCube Loader: %s was not found in the archive", loaderName)
+		case err != nil:
+			return fmt.Errorf("read ionCube archive: %w", err)
+		case header == nil:
+			continue
+		case header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA:
+			continue
+		}
+
+		name := filepath.ToSlash(strings.TrimPrefix(header.Name, "./"))
+		if name != archivePath {
+			continue
+		}
+
+		tempFile, err := os.CreateTemp(filepath.Dir(targetPath), "ioncube-*.so")
+		if err != nil {
+			return fmt.Errorf("create temporary ionCube Loader file: %w", err)
+		}
+		tempPath := tempFile.Name()
+		defer os.Remove(tempPath)
+
+		if _, err := io.Copy(tempFile, reader); err != nil {
+			tempFile.Close()
+			return fmt.Errorf("write ionCube Loader: %w", err)
+		}
+		if err := tempFile.Close(); err != nil {
+			return fmt.Errorf("close ionCube Loader: %w", err)
+		}
+		if err := os.Chmod(tempPath, 0o644); err != nil {
+			return fmt.Errorf("chmod ionCube Loader: %w", err)
+		}
+		if err := os.Rename(tempPath, targetPath); err != nil {
+			return fmt.Errorf("install ionCube Loader: %w", err)
+		}
+		return nil
+	}
 }
 
 func phpExtensionConfigExists(path string, definition phpExtensionDefinition) (bool, error) {
