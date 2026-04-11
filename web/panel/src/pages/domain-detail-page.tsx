@@ -72,7 +72,10 @@ import {
   getDatabaseNameFromBackupRecord,
   getSiteHostnameFromBackupRecord,
 } from "@/lib/backup-records";
-import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
+import {
+  getDocumentRootDisplayPath,
+  getFilesPathFromDomainTarget,
+} from "@/lib/domain-targets";
 import { setPendingFilesPath } from "@/lib/files-navigation";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -739,14 +742,25 @@ export function DomainDetailPage() {
   }, [domain?.hostname, domain?.kind, domain?.php_settings, phpDialogOpen, phpStatus?.state]);
 
   const filesPath = domain
-    ? getFilesPathFromDomainTarget(domain.kind, sitesBasePath, domain.target)
+    ? getFilesPathFromDomainTarget(
+        domain.kind,
+        domain.hostname,
+        sitesBasePath,
+        domain.target,
+      )
     : null;
+  const documentRootDisplayPath = domain
+    ? getDocumentRootDisplayPath(
+        domain.kind,
+        domain.hostname,
+        sitesBasePath,
+        domain.target,
+      )
+    : "";
   const terminalPathLabel = filesPath || "/";
   const composerManifestPath = getComposerManifestPath(filesPath);
   const websiteCopyTargets = allDomains.filter(
-    (record) =>
-      record.hostname !== domain?.hostname &&
-      (record.kind === "Static site" || record.kind === "Php site"),
+    (record) => record.hostname !== domain?.hostname,
   );
 
   useEffect(() => {
@@ -814,7 +828,7 @@ export function DomainDetailPage() {
     };
   }, [composerDialogOpen, composerManifestPath, domain]);
 
-  const showSiteBackups = domain ? isSiteBackedKind(domain.kind) : false;
+  const showSiteBackups = domain !== null;
   const siteBackups = domain
     ? backups.filter(
         (backup) => getSiteHostnameFromBackupRecord(backup) === domain.hostname,
@@ -1185,7 +1199,7 @@ export function DomainDetailPage() {
   }
 
   async function handleCopyWebsite() {
-    if (!domain || !isSiteBackedKind(domain.kind) || websiteCopyPending) {
+    if (!domain || websiteCopyPending) {
       return;
     }
 
@@ -1252,7 +1266,7 @@ export function DomainDetailPage() {
         open={composerDialogOpen && domain !== null}
         onOpenChange={setComposerDialogOpen}
         hostname={domain?.hostname ?? hostname}
-        projectPath={domain?.target ?? ""}
+        projectPath={documentRootDisplayPath}
         hasManifest={composerHasManifest}
         packages={composerPackages}
         loading={composerLoading}
@@ -1375,7 +1389,7 @@ export function DomainDetailPage() {
           }}
         />
       ) : null}
-      {domain && isSiteBackedKind(domain.kind) ? (
+      {domain ? (
         <DomainWebsiteCopyDialog
           open={websiteCopyDialogOpen}
           onOpenChange={(open) => {
@@ -1616,14 +1630,8 @@ export function DomainDetailPage() {
                     }
 
                     if (item.title === "Website Copying" && domain !== null) {
-                      if (!isSiteBackedKind(domain.kind)) {
-                        toast.error(
-                          "Website copying is available only for Static site and Php site domains.",
-                        );
-                        return;
-                      }
                       if (websiteCopyTargets.length === 0) {
-                        toast.error("No other site-backed domains are available to receive a copy.");
+                        toast.error("No other domains are available to receive a copy.");
                         return;
                       }
 
@@ -1650,13 +1658,6 @@ export function DomainDetailPage() {
                       }
 
                       if (item.title === "PHP Composer" && domain !== null) {
-                        if (domain.kind !== "Static site" && domain.kind !== "Php site") {
-                          toast.error(
-                            "Composer is available only for Static site and Php site domains.",
-                          );
-                          return;
-                        }
-
                         setComposerDialogOpen(true);
                         return;
                       }
@@ -1680,13 +1681,6 @@ export function DomainDetailPage() {
                       }
 
                       if (item.title === "Github" && domain !== null) {
-                        if (domain.kind !== "Static site" && domain.kind !== "Php site") {
-                          toast.error(
-                            "GitHub integration is available only for Static site and Php site domains.",
-                          );
-                          return;
-                        }
-
                         setGitHubDialogOpen(true);
                       }
                     }}

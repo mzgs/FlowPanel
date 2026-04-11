@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -101,7 +102,7 @@ func DefaultPassivePorts() string {
 }
 
 func IsSupportedKind(kind domain.Kind) bool {
-	return kind == domain.KindStaticSite || kind == domain.KindPHP
+	return domain.SupportsManagedDocumentRoot(kind)
 }
 
 func NormalizeUsername(value string) string {
@@ -241,7 +242,7 @@ func (s *Service) UpdateDomain(ctx context.Context, domainID string, input Updat
 	}
 	if !IsSupportedKind(record.Kind) {
 		return DomainStatus{}, ValidationErrors{
-			"domain": "FTP is available only for Static site and Php site domains.",
+			"domain": "FTP is not available for this domain.",
 		}
 	}
 
@@ -297,7 +298,7 @@ func (s *Service) ResetPassword(ctx context.Context, domainID string) (DomainSta
 	}
 	if !IsSupportedKind(record.Kind) {
 		return DomainStatus{}, "", ValidationErrors{
-			"domain": "FTP is available only for Static site and Php site domains.",
+			"domain": "FTP is not available for this domain.",
 		}
 	}
 
@@ -404,11 +405,19 @@ func (s *Service) ensurePrimaryDomainAccount(ctx context.Context, record domain.
 	}
 
 	now := s.now().UTC()
+	rootPath, err := domain.ResolveDocumentRoot(s.basePath(), record)
+	if err != nil {
+		return Account{}, err
+	}
+	if err := os.MkdirAll(rootPath, 0o755); err != nil {
+		return Account{}, fmt.Errorf("create ftp root path: %w", err)
+	}
+
 	account = Account{
 		ID:           fmt.Sprintf("ftp-%d", now.UnixNano()),
 		DomainID:     record.ID,
 		Username:     NormalizeUsername(record.Hostname),
-		RootPath:     record.Target,
+		RootPath:     rootPath,
 		Enabled:      false,
 		PasswordHash: "",
 		CreatedAt:    now,
@@ -500,7 +509,7 @@ func (s *Service) validateDomainID(domainID string) (string, ValidationErrors, e
 		return "", validation, nil
 	}
 	if !IsSupportedKind(record.Kind) {
-		validation["domain_id"] = "Select a static or PHP domain."
+		validation["domain_id"] = "Select a valid domain."
 		return "", validation, nil
 	}
 

@@ -841,9 +841,7 @@ func (s *Service) collectSites(hostnames []string) ([]siteArchive, error) {
 	available := make(map[string]struct{}, len(records))
 	sites := make([]siteArchive, 0, len(records))
 	for _, record := range records {
-		switch record.Kind {
-		case domain.KindStaticSite, domain.KindPHP:
-		default:
+		if !domain.SupportsManagedDocumentRoot(record.Kind) {
 			continue
 		}
 
@@ -854,14 +852,22 @@ func (s *Service) collectSites(hostnames []string) ([]siteArchive, error) {
 			}
 		}
 
-		rootPath := strings.TrimSpace(record.Target)
-		if rootPath == "" || !filepath.IsAbs(rootPath) {
-			continue
+		rootPath, err := domain.ResolveDocumentRoot(s.domains.BasePath(), record)
+		if err != nil {
+			return nil, fmt.Errorf("resolve site root for %q: %w", record.Hostname, err)
 		}
 
 		info, err := os.Stat(rootPath)
 		if err != nil {
-			return nil, fmt.Errorf("stat site root for %q: %w", record.Hostname, err)
+			if errors.Is(err, os.ErrNotExist) {
+				if err := os.MkdirAll(rootPath, 0o755); err != nil {
+					return nil, fmt.Errorf("create site root for %q: %w", record.Hostname, err)
+				}
+				info, err = os.Stat(rootPath)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("stat site root for %q: %w", record.Hostname, err)
+			}
 		}
 		if !info.IsDir() {
 			return nil, fmt.Errorf("site root for %q is not a directory", record.Hostname)
@@ -1387,11 +1393,8 @@ func (s *Service) siteRootPath(hostname string) (string, error) {
 			if record.Hostname != hostname {
 				continue
 			}
-			switch record.Kind {
-			case domain.KindStaticSite, domain.KindPHP:
-				if strings.TrimSpace(record.Target) != "" {
-					return record.Target, nil
-				}
+			if domain.SupportsManagedDocumentRoot(record.Kind) {
+				return domain.ResolveDocumentRoot(s.domains.BasePath(), record)
 			}
 		}
 	}

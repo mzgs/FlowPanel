@@ -28,7 +28,7 @@ import (
 const githubActionTimeout = 10 * time.Minute
 
 var (
-	errGitHubUnsupportedDomain        = errors.New("github integration is only available for static and PHP site domains")
+	errGitHubUnsupportedDomain        = errors.New("github integration is not available for this domain")
 	errGitHubMissingToken             = errors.New("set a GitHub token in Settings before connecting a repository")
 	errGitHubMissingRepositoryURL     = errors.New("repository URL is required")
 	errGitHubInvalidRepositoryURL     = errors.New("enter a valid GitHub repository URL")
@@ -82,7 +82,7 @@ type domainGitHubDeployResult struct {
 }
 
 func ensureGitHubIntegrationSupported(record domain.Record) error {
-	if record.Kind != domain.KindStaticSite && record.Kind != domain.KindPHP {
+	if !domain.SupportsManagedDocumentRoot(record.Kind) {
 		return errGitHubUnsupportedDomain
 	}
 
@@ -447,6 +447,7 @@ func generateGitHubWebhookSecret() (string, error) {
 
 func runDomainGitHubDeploy(
 	ctx context.Context,
+	basePath string,
 	record domain.Record,
 	integration domain.GitHubIntegration,
 	token string,
@@ -470,13 +471,16 @@ func runDomainGitHubDeploy(
 		defer cancel()
 	}
 
-	targetPath := strings.TrimSpace(record.Target)
-	if targetPath == "" {
-		return domainGitHubDeployResult{}, errors.New("domain target path is empty")
+	targetPath, err := domain.ResolveDocumentRoot(basePath, record)
+	if err != nil {
+		return domainGitHubDeployResult{}, fmt.Errorf("resolve domain document root: %w", err)
 	}
 	branch := branchForIntegration(integration)
 	if branch == "" {
 		return domainGitHubDeployResult{}, errors.New("github default branch is not configured")
+	}
+	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+		return domainGitHubDeployResult{}, fmt.Errorf("create domain document root: %w", err)
 	}
 
 	gitDir := filepath.Join(targetPath, ".git")

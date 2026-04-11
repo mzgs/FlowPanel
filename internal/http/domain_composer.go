@@ -17,7 +17,7 @@ import (
 const composerActionTimeout = 10 * time.Minute
 
 var (
-	errComposerUnsupportedDomain = errors.New("composer is only available for static and PHP site domains")
+	errComposerUnsupportedDomain = errors.New("composer is not available for this domain")
 	errComposerMissingManifest   = errors.New("composer.json was not found for this domain")
 	errComposerUnavailable       = errors.New("composer is not installed on this server")
 )
@@ -32,14 +32,19 @@ func runDomainComposerAction(
 	if !ok {
 		return domain.Record{}, domain.ErrNotFound
 	}
-	if record.Kind != domain.KindStaticSite && record.Kind != domain.KindPHP {
+	if !domain.SupportsManagedDocumentRoot(record.Kind) {
 		return domain.Record{}, errComposerUnsupportedDomain
 	}
 	if action != "install" && action != "update" {
 		return domain.Record{}, fmt.Errorf("unsupported composer action %q", action)
 	}
 
-	manifestPath := filepath.Join(strings.TrimSpace(record.Target), "composer.json")
+	targetPath, err := domain.ResolveDocumentRoot(domains.BasePath(), record)
+	if err != nil {
+		return domain.Record{}, fmt.Errorf("resolve domain document root: %w", err)
+	}
+
+	manifestPath := filepath.Join(targetPath, "composer.json")
 	if _, err := os.Stat(manifestPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return domain.Record{}, errComposerMissingManifest
@@ -63,7 +68,7 @@ func runDomainComposerAction(
 	}
 
 	cmd := exec.CommandContext(runCtx, composerPath, action, "--no-interaction", "--no-progress")
-	cmd.Dir = strings.TrimSpace(record.Target)
+	cmd.Dir = targetPath
 	cmd.Env = append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1")
 
 	var output bytes.Buffer

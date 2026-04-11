@@ -144,6 +144,56 @@ func defaultSitesBasePath() string {
 	}
 }
 
+func SupportsManagedDocumentRoot(kind Kind) bool {
+	switch kind {
+	case KindStaticSite, KindPHP, KindApp, KindReverseProxy:
+		return true
+	default:
+		return false
+	}
+}
+
+func ResolveDocumentRoot(basePath string, record Record) (string, error) {
+	if !SupportsManagedDocumentRoot(record.Kind) {
+		return "", fmt.Errorf("unsupported domain kind %q", record.Kind)
+	}
+
+	normalizedBasePath := filepath.Clean(strings.TrimSpace(basePath))
+	if normalizedBasePath == "." || normalizedBasePath == "" {
+		return "", errors.New("domain sites base path is not configured")
+	}
+
+	hostname := normalizeHostname(record.Hostname)
+	if hostname == "" {
+		return "", errors.New("domain hostname is required")
+	}
+
+	rootPath := filepath.Join(normalizedBasePath, hostname)
+	switch record.Kind {
+	case KindStaticSite, KindPHP:
+		targetPath := filepath.Clean(strings.TrimSpace(record.Target))
+		if targetPath != "." && targetPath != "" {
+			if !filepath.IsAbs(targetPath) {
+				targetPath = filepath.Join(normalizedBasePath, targetPath)
+			}
+			rootPath = targetPath
+		}
+	}
+
+	relativePath, err := filepath.Rel(normalizedBasePath, rootPath)
+	if err != nil {
+		return "", err
+	}
+	if relativePath == "." {
+		return "", errors.New("refusing to use the sites base path as a document root")
+	}
+	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("document root %q is outside the sites base path", rootPath)
+	}
+
+	return rootPath, nil
+}
+
 func (s *Service) BasePath() string {
 	return s.basePath
 }
@@ -630,21 +680,18 @@ func (s *Service) findRecordByHostnameLocked(hostname string) (int, Record, bool
 }
 
 func (s *Service) deriveTarget(hostname string, kind Kind, target string) (string, error) {
+	siteRoot, err := s.ensureSiteRoot(hostname)
+	if err != nil {
+		return "", err
+	}
+
 	switch kind {
 	case KindStaticSite:
-		siteRoot := filepath.Join(s.basePath, hostname)
-		if err := os.MkdirAll(siteRoot, 0o755); err != nil {
-			return "", fmt.Errorf("create site directory: %w", err)
-		}
 		if err := ensureStaticSiteIndex(siteRoot, hostname); err != nil {
 			return "", err
 		}
 		return siteRoot, nil
 	case KindPHP:
-		siteRoot := filepath.Join(s.basePath, hostname)
-		if err := os.MkdirAll(siteRoot, 0o755); err != nil {
-			return "", fmt.Errorf("create php site directory: %w", err)
-		}
 		if err := ensurePHPSiteIndex(siteRoot, hostname); err != nil {
 			return "", err
 		}
@@ -654,6 +701,15 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 	default:
 		return "", fmt.Errorf("unsupported domain kind %q", kind)
 	}
+}
+
+func (s *Service) ensureSiteRoot(hostname string) (string, error) {
+	siteRoot := filepath.Join(s.basePath, hostname)
+	if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+		return "", fmt.Errorf("create site directory: %w", err)
+	}
+
+	return siteRoot, nil
 }
 
 func ensureStaticSiteIndex(siteRoot string, hostname string) error {

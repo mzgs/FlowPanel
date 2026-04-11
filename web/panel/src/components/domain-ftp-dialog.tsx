@@ -292,11 +292,10 @@ export function DomainFTPDialog({
         ) : ftpStatus && !ftpStatus.supported ? (
           <div className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
             <p className="text-sm text-[var(--app-text)]">
-              FTP is available only for Static site and Php site domains.
+              FTP is not available for this domain.
             </p>
             <p className="text-sm text-[var(--app-text-muted)]">
-              This domain does not have a managed document root, so there is no FTP
-              sandbox to attach an account to.
+              This domain could not be attached to a managed document root.
             </p>
           </div>
         ) : ftpStatus ? (

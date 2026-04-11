@@ -361,9 +361,9 @@ export function DomainsPage() {
     createdBackupDomainId === backupDialogDomain.id;
   const deleteDocumentRootAvailable =
     deleteDomainCandidate !== null &&
-    isSiteBackedKind(deleteDomainCandidate.kind) &&
     getFilesPathFromDomainTarget(
       deleteDomainCandidate.kind,
+      deleteDomainCandidate.hostname,
       sitesBasePath,
       deleteDomainCandidate.target,
     ) !== null;
@@ -544,7 +544,7 @@ export function DomainsPage() {
   }
 
   async function handleCreateBackup(domain: DomainRecord) {
-    if (!isSiteBackedKind(domain.kind) || creatingBackupDomainId !== null) {
+    if (creatingBackupDomainId !== null) {
       return;
     }
 
@@ -838,6 +838,7 @@ export function DomainsPage() {
                       {domains.map((domain) => {
                         const filesPath = getFilesPathFromDomainTarget(
                           domain.kind,
+                          domain.hostname,
                           sitesBasePath,
                           domain.target,
                         );
@@ -875,11 +876,7 @@ export function DomainsPage() {
                             </TableCell>
                             <TableCell>{domain.kind}</TableCell>
                             <TableCell>
-                              {!isSiteBackedKind(domain.kind) ? (
-                                <span className="text-[13px] text-[var(--app-text-muted)]">
-                                  Not available
-                                </span>
-                              ) : backupsLoading ? (
+                              {backupsLoading ? (
                                 <span className="text-[13px] text-[var(--app-text-muted)]">
                                   Loading...
                                 </span>

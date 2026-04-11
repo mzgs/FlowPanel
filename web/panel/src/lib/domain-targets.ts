@@ -6,11 +6,17 @@ function normalizeFilesystemPath(value: string) {
 
 export function getFilesPathFromDomainTarget(
   kind: DomainKind,
+  hostname: string,
   sitesBasePath: string,
   target: string,
 ) {
-  if (kind !== "Static site" && kind !== "Php site") {
+  const normalizedHostname = hostname.trim().toLowerCase().replace(/\.$/, "");
+  if (!normalizedHostname) {
     return null;
+  }
+
+  if (kind === "App" || kind === "Reverse proxy") {
+    return normalizedHostname;
   }
 
   const normalizedBasePath = normalizeFilesystemPath(sitesBasePath);
@@ -30,4 +36,26 @@ export function getFilesPathFromDomainTarget(
   }
 
   return normalizedTargetPath.slice(prefix.length);
+}
+
+export function getDocumentRootDisplayPath(
+  kind: DomainKind,
+  hostname: string,
+  sitesBasePath: string,
+  target: string,
+) {
+  if (kind === "Static site" || kind === "Php site") {
+    return target.trim();
+  }
+
+  const normalizedBasePath = sitesBasePath.trim().replace(/[\\/]+$/, "");
+  const normalizedHostname = hostname.trim().toLowerCase().replace(/\.$/, "");
+  if (!normalizedBasePath) {
+    return normalizedHostname;
+  }
+  if (!normalizedHostname) {
+    return normalizedBasePath;
+  }
+
+  return `${normalizedBasePath}/${normalizedHostname}`;
 }

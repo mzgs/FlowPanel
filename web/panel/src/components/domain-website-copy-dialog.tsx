@@ -65,7 +65,7 @@ export function DomainWebsiteCopyDialog({
         <DialogHeader>
           <DialogTitle>Copy website files</DialogTitle>
           <DialogDescription>
-            Copy the current site contents into another existing site-backed domain.
+            Copy the current site contents into another existing domain.
           </DialogDescription>
         </DialogHeader>
 
@@ -110,7 +110,7 @@ export function DomainWebsiteCopyDialog({
                 <SelectValue
                   placeholder={
                     targets.length === 0
-                      ? "No other site-backed domains available"
+                      ? "No other domains available"
                       : "Select destination domain"
                   }
                 />

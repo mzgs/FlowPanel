@@ -235,7 +235,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 
 		validation := domain.ValidationErrors{}
 		if !isSiteBackedDomainRecord(sourceRecord) {
-			validation["kind"] = "Website copying is available only for Static site and Php site domains."
+			validation["kind"] = "Website copying is not available for this domain."
 		}
 
 		targetHostname := strings.TrimSpace(input.TargetHostname)
@@ -249,7 +249,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			} else {
 				targetRecord = record
 				if !isSiteBackedDomainRecord(targetRecord) {
-					validation["target_hostname"] = "Destination domain must be a Static site or Php site."
+					validation["target_hostname"] = "Destination domain is not available for website copying."
 				}
 				if targetRecord.Hostname == sourceRecord.Hostname {
 					validation["target_hostname"] = "Choose a different destination domain."
@@ -503,7 +503,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			return
 		}
 
-		result, err := runDomainGitHubDeploy(r.Context(), record, *record.GitHub, token)
+		result, err := runDomainGitHubDeploy(r.Context(), a.app.Domains.BasePath(), record, *record.GitHub, token)
 		if err != nil {
 			a.app.Logger.Error("github deploy failed", zap.String("hostname", hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "github_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Failed to deploy %q from GitHub.", record.Hostname))
@@ -573,7 +573,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			return
 		}
 
-		result, err := runDomainGitHubDeploy(r.Context(), record, *record.GitHub, token)
+		result, err := runDomainGitHubDeploy(r.Context(), a.app.Domains.BasePath(), record, *record.GitHub, token)
 		if err != nil {
 			a.app.Logger.Error("github webhook deploy failed", zap.String("hostname", hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Push webhook deployment failed for %q.", record.Hostname))
@@ -1084,36 +1084,11 @@ var (
 )
 
 func isSiteBackedDomainRecord(record domain.Record) bool {
-	return record.Kind == domain.KindStaticSite || record.Kind == domain.KindPHP
+	return domain.SupportsManagedDocumentRoot(record.Kind)
 }
 
 func resolveDomainDocumentRoot(record domain.Record, basePath string) (string, error) {
-	if !isSiteBackedDomainRecord(record) {
-		return "", errors.New("domain is not site-backed")
-	}
-
-	normalizedBasePath := filepath.Clean(strings.TrimSpace(basePath))
-	if normalizedBasePath == "." || normalizedBasePath == "" {
-		return "", errors.New("domain sites base path is not configured")
-	}
-
-	targetPath := filepath.Clean(strings.TrimSpace(record.Target))
-	if targetPath == "." || targetPath == "" {
-		return "", errors.New("domain document root is not configured")
-	}
-
-	relativePath, err := filepath.Rel(normalizedBasePath, targetPath)
-	if err != nil {
-		return "", err
-	}
-	if relativePath == "." {
-		return "", errors.New("refusing to use the sites base path as a document root")
-	}
-	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("document root %q is outside the sites base path", targetPath)
-	}
-
-	return targetPath, nil
+	return domain.ResolveDocumentRoot(basePath, record)
 }
 
 func copyDomainDocumentRoot(source, target domain.Record, basePath string, replaceTargetFiles bool) error {
@@ -1133,6 +1108,9 @@ func copyDomainDocumentRoot(source, target domain.Record, basePath string, repla
 
 	if err := os.MkdirAll(targetPath, 0o755); err != nil {
 		return fmt.Errorf("ensure target document root: %w", err)
+	}
+	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
+		return fmt.Errorf("ensure source document root: %w", err)
 	}
 	if replaceTargetFiles {
 		if err := clearDocumentRootContents(targetPath); err != nil {
