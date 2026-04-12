@@ -10,6 +10,9 @@ import {
 import {
   fetchDomainWordPressStatus,
   fetchDomainWordPressSummary,
+  runDomainWordPressPluginAction,
+  runDomainWordPressThemeAction,
+  type WordPressExtension,
   type WordPressSummary,
   type WordPressStatus,
 } from "@/api/domain-wordpress";
@@ -69,6 +72,7 @@ import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog
 import { PageHeader } from "@/components/page-header";
 import { TerminalWindow } from "@/components/terminal-window";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -279,6 +283,144 @@ type DomainActionItem = {
 
 type WordPressSectionTab = "dashboard" | "plugins" | "themes" | "database";
 type WordPressDetailsSection = Exclude<WordPressSectionTab, "dashboard">;
+type WordPressExtensionListType = "plugin" | "theme";
+type WordPressExtensionAction = "activate" | "deactivate" | "delete";
+
+function getWordPressExtensionLabel(extension: WordPressExtension) {
+  return extension.title?.trim() || extension.name;
+}
+
+function isWordPressPluginActive(status?: string) {
+  return status === "active" || status === "active-network";
+}
+
+function canDeleteWordPressPlugin(status?: string) {
+  return (
+    status !== "active" &&
+    status !== "active-network" &&
+    status !== "must-use" &&
+    status !== "dropin"
+  );
+}
+
+function canDeleteWordPressTheme(status?: string) {
+  return status !== "active";
+}
+
+function getWordPressActionLabel(action: WordPressExtensionAction) {
+  switch (action) {
+    case "activate":
+      return { idle: "Enable", busy: "Enabling", done: "enabled" };
+    case "deactivate":
+      return { idle: "Disable", busy: "Disabling", done: "disabled" };
+    case "delete":
+      return { idle: "Delete", busy: "Deleting", done: "deleted" };
+  }
+}
+
+function WordPressExtensionList({
+  type,
+  items,
+  busy,
+  runningAction,
+  onAction,
+}: {
+  type: WordPressExtensionListType;
+  items: WordPressExtension[];
+  busy: boolean;
+  runningAction: string | null;
+  onAction: (name: string, action: WordPressExtensionAction) => void;
+}) {
+  return (
+    <div className="divide-y divide-[var(--app-border)]">
+      {items.map((item) => {
+        const canEnable =
+          type === "plugin" ? item.status === "inactive" : item.status !== "active";
+        const canDisable =
+          type === "plugin" && isWordPressPluginActive(item.status);
+        const canDelete =
+          type === "plugin"
+            ? canDeleteWordPressPlugin(item.status)
+            : canDeleteWordPressTheme(item.status);
+
+        return (
+          <div
+            key={item.name}
+            className="grid gap-3 py-3 md:grid-cols-[minmax(0,1fr)_120px_120px_auto]"
+          >
+            <div className="min-w-0">
+              <div
+                className="truncate text-sm font-medium text-[var(--app-text)]"
+                title={getWordPressExtensionLabel(item)}
+              >
+                {getWordPressExtensionLabel(item)}
+              </div>
+              <div
+                className="truncate font-mono text-[12px] text-[var(--app-text-muted)]"
+                title={item.name}
+              >
+                {item.name}
+              </div>
+            </div>
+            <div className="text-sm text-[var(--app-text-muted)]">
+              {item.status || "Unknown"}
+            </div>
+            <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
+              {item.version || "Unknown"}
+            </div>
+            <div className="flex flex-wrap gap-2 md:justify-end">
+              {canEnable ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => {
+                    onAction(item.name, "activate");
+                  }}
+                >
+                  {runningAction === `${type}:activate:${item.name}`
+                    ? `${getWordPressActionLabel("activate").busy}...`
+                    : getWordPressActionLabel("activate").idle}
+                </Button>
+              ) : null}
+              {canDisable ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => {
+                    onAction(item.name, "deactivate");
+                  }}
+                >
+                  {runningAction === `${type}:deactivate:${item.name}`
+                    ? `${getWordPressActionLabel("deactivate").busy}...`
+                    : getWordPressActionLabel("deactivate").idle}
+                </Button>
+              ) : null}
+              {canDelete ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() => {
+                    onAction(item.name, "delete");
+                  }}
+                >
+                  {runningAction === `${type}:delete:${item.name}`
+                    ? `${getWordPressActionLabel("delete").busy}...`
+                    : getWordPressActionLabel("delete").idle}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const fileAndDatabaseActions: DomainActionItem[] = [
   {
@@ -569,6 +711,9 @@ export function DomainDetailPage() {
   const [wordPressDetailsErrors, setWordPressDetailsErrors] = useState(
     createWordPressDetailsErrorState,
   );
+  const [wordPressRunningAction, setWordPressRunningAction] = useState<string | null>(
+    null,
+  );
   const createdBackupTimeoutRef = useRef<number | null>(null);
   const restoredBackupTimeoutRef = useRef<number | null>(null);
   const wordPressDetailsRequestRef = useRef(0);
@@ -648,6 +793,7 @@ export function DomainDetailPage() {
     setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
     setWordPressDetailsLoadingSection(null);
     setWordPressDetailsErrors(createWordPressDetailsErrorState());
+    setWordPressRunningAction(null);
     wordPressDetailsRequestRef.current += 1;
 
     async function loadDomain() {
@@ -878,6 +1024,7 @@ export function DomainDetailPage() {
     setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
     setWordPressDetailsLoadingSection(null);
     setWordPressDetailsErrors(createWordPressDetailsErrorState());
+    setWordPressRunningAction(null);
     wordPressDetailsRequestRef.current += 1;
   }, [domain?.hostname]);
 
@@ -1431,6 +1578,52 @@ export function DomainDetailPage() {
     }
   }
 
+  function applyWordPressStatus(nextStatus: WordPressStatus) {
+    setWordPressSummary({
+      cli_available: nextStatus.cli_available,
+      cli_path: nextStatus.cli_path,
+      installed: nextStatus.installed,
+      inspect_error: nextStatus.inspect_error,
+      version: nextStatus.version,
+    });
+    setWordPressDetails(nextStatus);
+    setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState(true));
+    setWordPressDetailsErrors(createWordPressDetailsErrorState());
+    setWordPressDetailsLoadingSection(null);
+  }
+
+  async function handleWordPressExtensionAction(
+    type: WordPressExtensionListType,
+    name: string,
+    action: WordPressExtensionAction,
+  ) {
+    if (!domain || domain.kind !== "Php site") {
+      return;
+    }
+
+    setWordPressRunningAction(`${type}:${action}:${name}`);
+
+    try {
+      const nextStatus =
+        type === "plugin"
+          ? await runDomainWordPressPluginAction(domain.hostname, { name, action })
+          : await runDomainWordPressThemeAction(domain.hostname, { name, action });
+      applyWordPressStatus(nextStatus);
+      toast.success(
+        `${type === "plugin" ? "Plugin" : "Theme"} ${name} ${getWordPressActionLabel(action).done}.`,
+      );
+    } catch (error) {
+      toast.error(
+        getErrorMessage(
+          error,
+          `Failed to ${getWordPressActionLabel(action).idle.toLowerCase()} ${type} ${name}.`,
+        ),
+      );
+    } finally {
+      setWordPressRunningAction(null);
+    }
+  }
+
   return (
     <>
       <DomainBackupRestoreDialog
@@ -1551,17 +1744,8 @@ export function DomainDetailPage() {
         onOpenChange={setWordPressDialogOpen}
         domain={domain?.kind === "Php site" ? domain : null}
         onStatusChange={(status: WordPressStatus) => {
-          setWordPressSummary({
-            cli_available: status.cli_available,
-            cli_path: status.cli_path,
-            installed: status.installed,
-            inspect_error: status.inspect_error,
-            version: status.version,
-          });
-          setWordPressDetails(status);
-          setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState(true));
-          setWordPressDetailsErrors(createWordPressDetailsErrorState());
-          setWordPressDetailsLoadingSection(null);
+          applyWordPressStatus(status);
+          setWordPressRunningAction(null);
         }}
       />
       {domain ? (
@@ -1987,35 +2171,15 @@ export function DomainDetailPage() {
                         </div>
                       ) : wordPressDetails && wordPressSectionTab === "plugins" ? (
                         wordPressDetails.plugins.length > 0 ? (
-                          <div className="divide-y divide-[var(--app-border)]">
-                            {wordPressDetails.plugins.map((plugin) => (
-                              <div
-                                key={plugin.name}
-                                className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_120px_120px]"
-                              >
-                                <div className="min-w-0">
-                                  <div
-                                    className="truncate text-sm font-medium text-[var(--app-text)]"
-                                    title={plugin.title || plugin.name}
-                                  >
-                                    {plugin.title || plugin.name}
-                                  </div>
-                                  <div
-                                    className="truncate font-mono text-[12px] text-[var(--app-text-muted)]"
-                                    title={plugin.name}
-                                  >
-                                    {plugin.name}
-                                  </div>
-                                </div>
-                                <div className="text-sm text-[var(--app-text-muted)]">
-                                  {plugin.status || "Unknown"}
-                                </div>
-                                <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
-                                  {plugin.version || "Unknown"}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
+                          <WordPressExtensionList
+                            type="plugin"
+                            items={wordPressDetails.plugins}
+                            busy={wordPressRunningAction !== null}
+                            runningAction={wordPressRunningAction}
+                            onAction={(name, action) => {
+                              void handleWordPressExtensionAction("plugin", name, action);
+                            }}
+                          />
                         ) : (
                           <p className="text-sm text-[var(--app-text-muted)]">
                             No plugins were detected for this site.
@@ -2023,35 +2187,15 @@ export function DomainDetailPage() {
                         )
                       ) : wordPressDetails && wordPressSectionTab === "themes" ? (
                         wordPressDetails.themes.length > 0 ? (
-                          <div className="divide-y divide-[var(--app-border)]">
-                            {wordPressDetails.themes.map((theme) => (
-                              <div
-                                key={theme.name}
-                                className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_120px_120px]"
-                              >
-                                <div className="min-w-0">
-                                  <div
-                                    className="truncate text-sm font-medium text-[var(--app-text)]"
-                                    title={theme.title || theme.name}
-                                  >
-                                    {theme.title || theme.name}
-                                  </div>
-                                  <div
-                                    className="truncate font-mono text-[12px] text-[var(--app-text-muted)]"
-                                    title={theme.name}
-                                  >
-                                    {theme.name}
-                                  </div>
-                                </div>
-                                <div className="text-sm text-[var(--app-text-muted)]">
-                                  {theme.status || "Unknown"}
-                                </div>
-                                <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
-                                  {theme.version || "Unknown"}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
+                          <WordPressExtensionList
+                            type="theme"
+                            items={wordPressDetails.themes}
+                            busy={wordPressRunningAction !== null}
+                            runningAction={wordPressRunningAction}
+                            onAction={(name, action) => {
+                              void handleWordPressExtensionAction("theme", name, action);
+                            }}
+                          />
                         ) : (
                           <p className="text-sm text-[var(--app-text-muted)]">
                             No themes were detected for this site.
