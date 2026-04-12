@@ -320,7 +320,19 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 
 	domainsWordPressStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hostname := chi.URLParam(r, "hostname")
-		status, _, err := loadWordPressStatus(r.Context(), a.app.Domains, a.app.MariaDB, hostname)
+		section, err := parseWordPressStatusSection(r.URL.Query().Get("section"))
+		if err != nil {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "section must be one of plugins, themes, or database"})
+			return
+		}
+
+		status, _, err := loadWordPressStatusSection(
+			r.Context(),
+			a.app.Domains,
+			a.app.MariaDB,
+			hostname,
+			section,
+		)
 		if err != nil {
 			switch {
 			case errors.Is(err, domain.ErrNotFound):
@@ -335,6 +347,25 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"wordpress": status})
+	})
+
+	domainsWordPressSummaryHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		summary, _, err := loadWordPressSummary(r.Context(), a.app.Domains, hostname)
+		if err != nil {
+			switch {
+			case errors.Is(err, domain.ErrNotFound):
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			case errors.Is(err, errWordPressUnsupportedDomain):
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			default:
+				a.app.Logger.Error("load wordpress summary failed", zap.String("hostname", hostname), zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to inspect wordpress summary"})
+			}
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"wordpress": summary})
 	})
 
 	domainsWordPressInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -1105,6 +1136,8 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/copy", domainsWebsiteCopyHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/install", domainsComposerActionHandler("install"))
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/update", domainsComposerActionHandler("update"))
+	r.Method(stdhttp.MethodGet, "/domains/{hostname}/wordpress/summary", domainsWordPressSummaryHandler)
+	r.Method(stdhttp.MethodHead, "/domains/{hostname}/wordpress/summary", domainsWordPressSummaryHandler)
 	r.Method(stdhttp.MethodGet, "/domains/{hostname}/wordpress", domainsWordPressStatusHandler)
 	r.Method(stdhttp.MethodHead, "/domains/{hostname}/wordpress", domainsWordPressStatusHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/wordpress/install", domainsWordPressInstallHandler)

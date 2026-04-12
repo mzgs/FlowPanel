@@ -67,6 +67,14 @@ type wordPressStatus struct {
 	Databases        []wordPressDatabase  `json:"databases"`
 }
 
+type wordPressSummary struct {
+	CLIAvailable bool   `json:"cli_available"`
+	CLIPath      string `json:"cli_path,omitempty"`
+	Installed    bool   `json:"installed"`
+	InspectError string `json:"inspect_error,omitempty"`
+	Version      string `json:"version,omitempty"`
+}
+
 type wordPressCoreUpdate struct {
 	Version    string `json:"version,omitempty"`
 	UpdateType string `json:"update_type,omitempty"`
@@ -87,6 +95,12 @@ type wordPressDatabase struct {
 	Name     string `json:"name"`
 	Username string `json:"username"`
 	Host     string `json:"host"`
+}
+
+type wordPressDatabaseConfig struct {
+	Name     string
+	Username string
+	Host     string
 }
 
 type wordPressInstallInput struct {
@@ -110,11 +124,45 @@ type wordPressExtensionActionInput struct {
 	Action string `json:"action"`
 }
 
+type wordPressStatusSection string
+
+const (
+	wordPressStatusSectionAll      wordPressStatusSection = "all"
+	wordPressStatusSectionPlugins  wordPressStatusSection = "plugins"
+	wordPressStatusSectionThemes   wordPressStatusSection = "themes"
+	wordPressStatusSectionDatabase wordPressStatusSection = "database"
+)
+
+func parseWordPressStatusSection(value string) (wordPressStatusSection, error) {
+	switch strings.TrimSpace(value) {
+	case "", string(wordPressStatusSectionAll):
+		return wordPressStatusSectionAll, nil
+	case string(wordPressStatusSectionPlugins):
+		return wordPressStatusSectionPlugins, nil
+	case string(wordPressStatusSectionThemes):
+		return wordPressStatusSectionThemes, nil
+	case string(wordPressStatusSectionDatabase):
+		return wordPressStatusSectionDatabase, nil
+	default:
+		return "", fmt.Errorf("invalid wordpress section %q", value)
+	}
+}
+
 func loadWordPressStatus(
 	ctx context.Context,
 	domains *domain.Service,
 	mariadbManager mariadb.Manager,
 	hostname string,
+) (wordPressStatus, domain.Record, error) {
+	return loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, wordPressStatusSectionAll)
+}
+
+func loadWordPressStatusSection(
+	ctx context.Context,
+	domains *domain.Service,
+	mariadbManager mariadb.Manager,
+	hostname string,
+	section wordPressStatusSection,
 ) (wordPressStatus, domain.Record, error) {
 	record, targetPath, err := resolveWordPressDomain(domains, hostname)
 	if err != nil {
@@ -126,7 +174,7 @@ func loadWordPressStatus(
 		SuggestedDBName: suggestedWordPressDatabaseName(hostname),
 		Plugins:         []wordPressExtension{},
 		Themes:          []wordPressExtension{},
-		Databases:       listWordPressDatabases(ctx, mariadbManager, hostname),
+		Databases:       []wordPressDatabase{},
 	}
 	status.ConfigPresent = fileExists(filepath.Join(targetPath, "wp-config.php"))
 	status.CoreFilesPresent = wordPressCoreFilesPresent(targetPath)
@@ -146,43 +194,89 @@ func loadWordPressStatus(
 		return status, record, nil
 	}
 
-	if version, err := runWordPressValueCommand(ctx, targetPath, "core", "version"); err == nil {
-		status.Version = version
-	} else if status.InspectError == "" {
-		status.InspectError = err.Error()
+	if section == wordPressStatusSectionAll || section == wordPressStatusSectionDatabase {
+		status.Databases = listWordPressDatabases(ctx, mariadbManager, targetPath)
 	}
 
-	if siteURL, err := runWordPressValueCommand(ctx, targetPath, "option", "get", "siteurl"); err == nil {
-		status.SiteURL = siteURL
-	} else if status.InspectError == "" {
-		status.InspectError = err.Error()
+	if section == wordPressStatusSectionAll {
+		if version, err := runWordPressValueCommand(ctx, targetPath, "core", "version"); err == nil {
+			status.Version = version
+		} else if status.InspectError == "" {
+			status.InspectError = err.Error()
+		}
+
+		if siteURL, err := runWordPressValueCommand(ctx, targetPath, "option", "get", "siteurl"); err == nil {
+			status.SiteURL = siteURL
+		} else if status.InspectError == "" {
+			status.InspectError = err.Error()
+		}
+
+		if siteTitle, err := runWordPressValueCommand(ctx, targetPath, "option", "get", "blogname"); err == nil {
+			status.SiteTitle = siteTitle
+		} else if status.InspectError == "" {
+			status.InspectError = err.Error()
+		}
+
+		if update, err := loadWordPressCoreUpdate(ctx, targetPath); err == nil {
+			status.CoreUpdate = update
+		} else if status.InspectError == "" {
+			status.InspectError = err.Error()
+		}
 	}
 
-	if siteTitle, err := runWordPressValueCommand(ctx, targetPath, "option", "get", "blogname"); err == nil {
-		status.SiteTitle = siteTitle
-	} else if status.InspectError == "" {
-		status.InspectError = err.Error()
+	if section == wordPressStatusSectionAll || section == wordPressStatusSectionPlugins {
+		if plugins, err := loadWordPressExtensions(ctx, targetPath, "plugin"); err == nil {
+			status.Plugins = plugins
+		} else if status.InspectError == "" {
+			status.InspectError = err.Error()
+		}
 	}
 
-	if update, err := loadWordPressCoreUpdate(ctx, targetPath); err == nil {
-		status.CoreUpdate = update
-	} else if status.InspectError == "" {
-		status.InspectError = err.Error()
-	}
-
-	if plugins, err := loadWordPressExtensions(ctx, targetPath, "plugin"); err == nil {
-		status.Plugins = plugins
-	} else if status.InspectError == "" {
-		status.InspectError = err.Error()
-	}
-
-	if themes, err := loadWordPressExtensions(ctx, targetPath, "theme"); err == nil {
-		status.Themes = themes
-	} else if status.InspectError == "" {
-		status.InspectError = err.Error()
+	if section == wordPressStatusSectionAll || section == wordPressStatusSectionThemes {
+		if themes, err := loadWordPressExtensions(ctx, targetPath, "theme"); err == nil {
+			status.Themes = themes
+		} else if status.InspectError == "" {
+			status.InspectError = err.Error()
+		}
 	}
 
 	return status, record, nil
+}
+
+func loadWordPressSummary(
+	ctx context.Context,
+	domains *domain.Service,
+	hostname string,
+) (wordPressSummary, domain.Record, error) {
+	record, targetPath, err := resolveWordPressDomain(domains, hostname)
+	if err != nil {
+		return wordPressSummary{}, domain.Record{}, err
+	}
+
+	cli, err := resolveWordPressCLI(ctx)
+	if err != nil {
+		return wordPressSummary{}, domain.Record{}, err
+	}
+
+	summary := wordPressSummary{
+		CLIAvailable: true,
+		CLIPath:      cli.path,
+	}
+
+	installed, inspectError := inspectWordPressInstallation(ctx, targetPath)
+	summary.Installed = installed
+	summary.InspectError = inspectError
+	if !installed || inspectError != "" {
+		return summary, record, nil
+	}
+
+	if version, err := runWordPressValueCommand(ctx, targetPath, "core", "version"); err == nil {
+		summary.Version = version
+	} else if summary.InspectError == "" {
+		summary.InspectError = err.Error()
+	}
+
+	return summary, record, nil
 }
 
 func installWordPress(
@@ -415,34 +509,70 @@ func resolveWordPressDomain(domains *domain.Service, hostname string) (domain.Re
 func listWordPressDatabases(
 	ctx context.Context,
 	mariadbManager mariadb.Manager,
-	hostname string,
+	targetPath string,
 ) []wordPressDatabase {
-	if mariadbManager == nil {
+	config, err := loadWordPressDatabaseConfig(ctx, targetPath)
+	if err != nil || strings.TrimSpace(config.Name) == "" {
 		return []wordPressDatabase{}
 	}
 
-	records, err := mariadbManager.ListDatabases(ctx)
-	if err != nil {
-		return []wordPressDatabase{}
+	database := wordPressDatabase{
+		Name:     config.Name,
+		Username: config.Username,
+		Host:     config.Host,
 	}
 
-	databases := make([]wordPressDatabase, 0, len(records))
-	for _, record := range records {
-		if record.Domain != hostname {
-			continue
+	if mariadbManager != nil {
+		records, err := mariadbManager.ListDatabases(ctx)
+		if err == nil {
+			for _, record := range records {
+				if record.Name != config.Name {
+					continue
+				}
+				database = wordPressDatabase{
+					Name:     record.Name,
+					Username: firstNonEmpty(record.Username, config.Username),
+					Host:     firstNonEmpty(record.Host, config.Host),
+				}
+				return []wordPressDatabase{database}
+			}
 		}
-		databases = append(databases, wordPressDatabase{
-			Name:     record.Name,
-			Username: record.Username,
-			Host:     record.Host,
-		})
 	}
 
-	sort.Slice(databases, func(i, j int) bool {
-		return databases[i].Name < databases[j].Name
-	})
+	return []wordPressDatabase{database}
+}
 
-	return databases
+func loadWordPressDatabaseConfig(ctx context.Context, targetPath string) (wordPressDatabaseConfig, error) {
+	name, err := runWordPressValueCommand(ctx, targetPath, "config", "get", "DB_NAME", "--type=constant")
+	if err != nil {
+		return wordPressDatabaseConfig{}, err
+	}
+
+	username, err := runWordPressValueCommand(ctx, targetPath, "config", "get", "DB_USER", "--type=constant")
+	if err != nil {
+		return wordPressDatabaseConfig{}, err
+	}
+
+	host, err := runWordPressValueCommand(ctx, targetPath, "config", "get", "DB_HOST", "--type=constant")
+	if err != nil {
+		return wordPressDatabaseConfig{}, err
+	}
+
+	return wordPressDatabaseConfig{
+		Name:     strings.TrimSpace(name),
+		Username: strings.TrimSpace(username),
+		Host:     strings.TrimSpace(host),
+	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func validateWordPressInstallInput(input wordPressInstallInput, configPresent bool) domain.ValidationErrors {

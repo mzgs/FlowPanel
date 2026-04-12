@@ -8,6 +8,12 @@ import {
   type BackupRecord,
 } from "@/api/backups";
 import {
+  fetchDomainWordPressStatus,
+  fetchDomainWordPressSummary,
+  type WordPressSummary,
+  type WordPressStatus,
+} from "@/api/domain-wordpress";
+import {
   copyDomainWebsite,
   deployDomainGitHubIntegration,
   fetchDomainPreview,
@@ -271,6 +277,9 @@ type DomainActionItem = {
   icon: ActionIcon;
 };
 
+type WordPressSectionTab = "dashboard" | "plugins" | "themes" | "database";
+type WordPressDetailsSection = Exclude<WordPressSectionTab, "dashboard">;
+
 const fileAndDatabaseActions: DomainActionItem[] = [
   {
     title: "Connection Info",
@@ -335,6 +344,50 @@ const devToolActions: DomainActionItem[] = [
 
 const siteBackupTargetKey = "__domain_site_backup__";
 const composerManifestName = "composer.json";
+const wordPressSectionTabs: Array<{
+  value: WordPressSectionTab;
+  label: string;
+}> = [
+  { value: "dashboard", label: "Dashboard" },
+  { value: "plugins", label: "Plugins" },
+  { value: "themes", label: "Themes" },
+  { value: "database", label: "Database" },
+];
+
+function createWordPressDetailsLoadedState(value = false): Record<WordPressDetailsSection, boolean> {
+  return {
+    plugins: value,
+    themes: value,
+    database: value,
+  };
+}
+
+function createWordPressDetailsErrorState(): Record<WordPressDetailsSection, string | null> {
+  return {
+    plugins: null,
+    themes: null,
+    database: null,
+  };
+}
+
+function mergeWordPressSectionDetails(
+  current: WordPressStatus | null,
+  nextStatus: WordPressStatus,
+  section: WordPressDetailsSection,
+): WordPressStatus {
+  if (current === null) {
+    return nextStatus;
+  }
+
+  switch (section) {
+    case "plugins":
+      return { ...current, plugins: nextStatus.plugins };
+    case "themes":
+      return { ...current, themes: nextStatus.themes };
+    case "database":
+      return { ...current, databases: nextStatus.databases };
+  }
+}
 
 function isSiteBackedKind(kind: DomainRecord["kind"]) {
   return kind === "Static site" || kind === "Php site";
@@ -502,9 +555,35 @@ export function DomainDetailPage() {
   const [phpRunningAction, setPHPRunningAction] = useState<"install" | "start" | null>(
     null,
   );
+  const [wordPressSummary, setWordPressSummary] = useState<WordPressSummary | null>(
+    null,
+  );
+  const [wordPressSectionTab, setWordPressSectionTab] =
+    useState<WordPressSectionTab>("dashboard");
+  const [wordPressDetails, setWordPressDetails] = useState<WordPressStatus | null>(null);
+  const [wordPressDetailsLoadedSections, setWordPressDetailsLoadedSections] = useState(
+    createWordPressDetailsLoadedState,
+  );
+  const [wordPressDetailsLoadingSection, setWordPressDetailsLoadingSection] =
+    useState<WordPressDetailsSection | null>(null);
+  const [wordPressDetailsErrors, setWordPressDetailsErrors] = useState(
+    createWordPressDetailsErrorState,
+  );
   const createdBackupTimeoutRef = useRef<number | null>(null);
   const restoredBackupTimeoutRef = useRef<number | null>(null);
+  const wordPressDetailsRequestRef = useRef(0);
   const siteUrl = domain ? getDomainSiteUrl(domain.hostname) : "";
+  const wordPressDetailSection =
+    wordPressSectionTab === "dashboard" ? null : wordPressSectionTab;
+  const currentWordPressDetailsLoaded = wordPressDetailSection
+    ? wordPressDetailsLoadedSections[wordPressDetailSection]
+    : true;
+  const currentWordPressDetailsLoading =
+    wordPressDetailSection !== null &&
+    wordPressDetailsLoadingSection === wordPressDetailSection;
+  const currentWordPressDetailsError = wordPressDetailSection
+    ? wordPressDetailsErrors[wordPressDetailSection]
+    : null;
 
   useEffect(() => {
     let active = true;
@@ -563,6 +642,13 @@ export function DomainDetailPage() {
     setPHPSaving(false);
     setPHPError(null);
     setPHPRunningAction(null);
+    setWordPressSummary(null);
+    setWordPressSectionTab("dashboard");
+    setWordPressDetails(null);
+    setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
+    setWordPressDetailsLoadingSection(null);
+    setWordPressDetailsErrors(createWordPressDetailsErrorState());
+    wordPressDetailsRequestRef.current += 1;
 
     async function loadDomain() {
       const [domainsResult, backupsResult, databasesResult] = await Promise.allSettled([
@@ -755,6 +841,58 @@ export function DomainDetailPage() {
       }
     };
   }, [domain?.hostname, domain?.kind, domain?.php_settings, phpDialogOpen, phpStatus?.state]);
+
+  useEffect(() => {
+    if (!domain || domain.kind !== "Php site") {
+      setWordPressSummary(null);
+      return;
+    }
+
+    let active = true;
+
+    async function loadWordPressStatus() {
+      try {
+        const nextStatus = await fetchDomainWordPressSummary(domain.hostname);
+        if (!active) {
+          return;
+        }
+
+        setWordPressSummary(nextStatus);
+      } catch {
+        if (active) {
+          setWordPressSummary(null);
+        }
+      }
+    }
+
+    void loadWordPressStatus();
+
+    return () => {
+      active = false;
+    };
+  }, [domain?.hostname, domain?.kind]);
+
+  useEffect(() => {
+    setWordPressSectionTab("dashboard");
+    setWordPressDetails(null);
+    setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
+    setWordPressDetailsLoadingSection(null);
+    setWordPressDetailsErrors(createWordPressDetailsErrorState());
+    wordPressDetailsRequestRef.current += 1;
+  }, [domain?.hostname]);
+
+  useEffect(() => {
+    if (
+      !wordPressDetailSection ||
+      !domain ||
+      domain.kind !== "Php site" ||
+      wordPressDetailsLoadedSections[wordPressDetailSection]
+    ) {
+      return;
+    }
+
+    void loadWordPressDetails(wordPressDetailSection);
+  }, [domain?.hostname, domain?.kind, wordPressDetailSection, wordPressDetailsLoadedSections]);
 
   const filesPath = domain
     ? getFilesPathFromDomainTarget(
@@ -1247,6 +1385,52 @@ export function DomainDetailPage() {
     }
   }
 
+  async function loadWordPressDetails(section: WordPressDetailsSection) {
+    if (
+      !domain ||
+      domain.kind !== "Php site" ||
+      wordPressDetailsLoadedSections[section]
+    ) {
+      return;
+    }
+
+    const requestID = wordPressDetailsRequestRef.current + 1;
+    wordPressDetailsRequestRef.current = requestID;
+    setWordPressDetailsLoadingSection(section);
+    setWordPressDetailsErrors((current) => ({
+      ...current,
+      [section]: null,
+    }));
+
+    try {
+      const nextStatus = await fetchDomainWordPressStatus(domain.hostname, { section });
+      if (wordPressDetailsRequestRef.current !== requestID) {
+        return;
+      }
+
+      setWordPressDetails((current) =>
+        mergeWordPressSectionDetails(current, nextStatus, section),
+      );
+      setWordPressDetailsLoadedSections((current) => ({
+        ...current,
+        [section]: true,
+      }));
+    } catch (error) {
+      if (wordPressDetailsRequestRef.current !== requestID) {
+        return;
+      }
+
+      setWordPressDetailsErrors((current) => ({
+        ...current,
+        [section]: getErrorMessage(error, `Failed to load WordPress ${section}.`),
+      }));
+    } finally {
+      if (wordPressDetailsRequestRef.current === requestID) {
+        setWordPressDetailsLoadingSection(null);
+      }
+    }
+  }
+
   return (
     <>
       <DomainBackupRestoreDialog
@@ -1366,6 +1550,19 @@ export function DomainDetailPage() {
         open={wordPressDialogOpen && domain?.kind === "Php site"}
         onOpenChange={setWordPressDialogOpen}
         domain={domain?.kind === "Php site" ? domain : null}
+        onStatusChange={(status: WordPressStatus) => {
+          setWordPressSummary({
+            cli_available: status.cli_available,
+            cli_path: status.cli_path,
+            installed: status.installed,
+            inspect_error: status.inspect_error,
+            version: status.version,
+          });
+          setWordPressDetails(status);
+          setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState(true));
+          setWordPressDetailsErrors(createWordPressDetailsErrorState());
+          setWordPressDetailsLoadingSection(null);
+        }}
       />
       {domain ? (
         <DomainPHPDialog
@@ -1721,6 +1918,181 @@ export function DomainDetailPage() {
                     }}
                   />
                 </div>
+                {wordPressSummary?.installed ? (
+                  <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
+                    <div
+                      role="tablist"
+                      aria-label="WordPress sections"
+                      className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]"
+                    >
+                      <div className="flex min-w-0 overflow-x-auto px-4">
+                        {wordPressSectionTabs.map(({ value, label }) => {
+                          const active = wordPressSectionTab === value;
+
+                          return (
+                            <button
+                              key={value}
+                              role="tab"
+                              type="button"
+                              aria-selected={active}
+                              tabIndex={active ? 0 : -1}
+                              className={cn(
+                                "inline-flex border-b-2 px-1 py-3 text-sm font-medium whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-surface-muted)]",
+                                active
+                                  ? "border-[var(--app-text)] text-[var(--app-text)]"
+                                  : "border-transparent text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
+                              )}
+                              onClick={() => {
+                                setWordPressSectionTab(value);
+                              }}
+                            >
+                              <span>{label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="p-4">
+                      {wordPressSectionTab === "dashboard" ? (
+                        <div className="space-y-1">
+                          <div className="text-sm font-medium text-[var(--app-text)]">
+                            WordPress {wordPressSummary.version || "Unknown"}
+                          </div>
+                          <p className="text-sm text-[var(--app-text-muted)]">
+                            Open Plugins, Themes, or Database to load more details.
+                          </p>
+                        </div>
+                      ) : currentWordPressDetailsLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-[var(--app-text-muted)]">
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                          Loading WordPress {wordPressSectionTab}...
+                        </div>
+                      ) : !currentWordPressDetailsLoaded &&
+                        currentWordPressDetailsError === null ? (
+                        <div className="flex items-center gap-2 text-sm text-[var(--app-text-muted)]">
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                          Loading WordPress {wordPressSectionTab}...
+                        </div>
+                      ) : currentWordPressDetailsError ? (
+                        <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+                          {currentWordPressDetailsError}
+                        </div>
+                      ) : wordPressDetails && wordPressSectionTab === "plugins" ? (
+                        wordPressDetails.plugins.length > 0 ? (
+                          <div className="divide-y divide-[var(--app-border)]">
+                            {wordPressDetails.plugins.map((plugin) => (
+                              <div
+                                key={plugin.name}
+                                className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_120px_120px]"
+                              >
+                                <div className="min-w-0">
+                                  <div
+                                    className="truncate text-sm font-medium text-[var(--app-text)]"
+                                    title={plugin.title || plugin.name}
+                                  >
+                                    {plugin.title || plugin.name}
+                                  </div>
+                                  <div
+                                    className="truncate font-mono text-[12px] text-[var(--app-text-muted)]"
+                                    title={plugin.name}
+                                  >
+                                    {plugin.name}
+                                  </div>
+                                </div>
+                                <div className="text-sm text-[var(--app-text-muted)]">
+                                  {plugin.status || "Unknown"}
+                                </div>
+                                <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
+                                  {plugin.version || "Unknown"}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-[var(--app-text-muted)]">
+                            No plugins were detected for this site.
+                          </p>
+                        )
+                      ) : wordPressDetails && wordPressSectionTab === "themes" ? (
+                        wordPressDetails.themes.length > 0 ? (
+                          <div className="divide-y divide-[var(--app-border)]">
+                            {wordPressDetails.themes.map((theme) => (
+                              <div
+                                key={theme.name}
+                                className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_120px_120px]"
+                              >
+                                <div className="min-w-0">
+                                  <div
+                                    className="truncate text-sm font-medium text-[var(--app-text)]"
+                                    title={theme.title || theme.name}
+                                  >
+                                    {theme.title || theme.name}
+                                  </div>
+                                  <div
+                                    className="truncate font-mono text-[12px] text-[var(--app-text-muted)]"
+                                    title={theme.name}
+                                  >
+                                    {theme.name}
+                                  </div>
+                                </div>
+                                <div className="text-sm text-[var(--app-text-muted)]">
+                                  {theme.status || "Unknown"}
+                                </div>
+                                <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
+                                  {theme.version || "Unknown"}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-[var(--app-text-muted)]">
+                            No themes were detected for this site.
+                          </p>
+                        )
+                      ) : wordPressDetails && wordPressSectionTab === "database" ? (
+                        wordPressDetails.databases.length > 0 ? (
+                          <div className="divide-y divide-[var(--app-border)]">
+                            {wordPressDetails.databases.map((database) => (
+                              <div
+                                key={database.name}
+                                className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px]"
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium text-[var(--app-text)]">
+                                    {database.name}
+                                  </div>
+                                  <div className="text-[12px] text-[var(--app-text-muted)]">
+                                    Database
+                                  </div>
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm text-[var(--app-text-muted)]">
+                                    {database.username}
+                                  </div>
+                                  <div className="text-[12px] text-[var(--app-text-muted)]">
+                                    User
+                                  </div>
+                                </div>
+                                <div className="text-sm text-[var(--app-text-muted)]">
+                                  {database.host || "localhost"}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-[var(--app-text-muted)]">
+                            No linked databases were detected for this site.
+                          </p>
+                        )
+                      ) : (
+                        <p className="text-sm text-[var(--app-text-muted)]">
+                          Open a tab to load WordPress details.
+                        </p>
+                      )}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             </section>
           ) : null}

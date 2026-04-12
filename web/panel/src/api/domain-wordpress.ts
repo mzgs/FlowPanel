@@ -38,6 +38,16 @@ export type WordPressStatus = {
   databases: WordPressDatabase[];
 };
 
+export type WordPressSummary = {
+  cli_available: boolean;
+  cli_path?: string;
+  installed: boolean;
+  inspect_error?: string;
+  version?: string;
+};
+
+export type WordPressStatusSection = "plugins" | "themes" | "database";
+
 export type WordPressInstallInput = {
   database_name: string;
   site_url: string;
@@ -67,11 +77,42 @@ type WordPressStatusPayload = {
   wordpress: WordPressStatus;
 };
 
+type WordPressSummaryPayload = {
+  wordpress: WordPressSummary;
+};
+
+export async function fetchDomainWordPressSummary(
+  hostname: string,
+): Promise<WordPressSummary> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/wordpress/summary`,
+    {
+      credentials: "include",
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readWordPressApiError(response, "load wordpress summary");
+  }
+
+  const payload = (await response.json()) as WordPressSummaryPayload;
+  return payload.wordpress;
+}
+
 export async function fetchDomainWordPressStatus(
   hostname: string,
+  options?: { section?: WordPressStatusSection },
 ): Promise<WordPressStatus> {
+  const searchParams = new URLSearchParams();
+  if (options?.section) {
+    searchParams.set("section", options.section);
+  }
+
   const response = await fetch(
-    `/api/domains/${encodeURIComponent(hostname)}/wordpress`,
+    `/api/domains/${encodeURIComponent(hostname)}/wordpress${
+      searchParams.size > 0 ? `?${searchParams.toString()}` : ""
+    }`,
     {
       credentials: "include",
       cache: "no-store",

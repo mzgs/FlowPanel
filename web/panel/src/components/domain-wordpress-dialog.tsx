@@ -50,6 +50,7 @@ type DomainWordPressDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   domain: DomainRecord | null;
+  onStatusChange?: (status: WordPressStatus) => void;
 };
 
 type InstallFormState = WordPressInstallInput;
@@ -264,6 +265,7 @@ export function DomainWordPressDialog({
   open,
   onOpenChange,
   domain,
+  onStatusChange,
 }: DomainWordPressDialogProps) {
   const activeRef = useRef(false);
   const [status, setStatus] = useState<WordPressStatus | null>(null);
@@ -311,6 +313,7 @@ export function DomainWordPressDialog({
       }
 
       setStatus(nextStatus);
+      onStatusChange?.(nextStatus);
       setInstallForm((current) => (
         current.database_name || nextStatus.installed
           ? current
@@ -401,6 +404,7 @@ export function DomainWordPressDialog({
       }
 
       setStatus(nextStatus);
+      onStatusChange?.(nextStatus);
       toast.success(`WordPress installed for ${domain.hostname}.`);
     } catch (installError) {
       if (!activeRef.current) {
@@ -443,6 +447,7 @@ export function DomainWordPressDialog({
       }
 
       setStatus(nextStatus);
+      onStatusChange?.(nextStatus);
       onSuccess?.();
       toast.success(successMessage);
     } catch (mutationError) {
