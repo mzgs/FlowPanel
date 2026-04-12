@@ -32,6 +32,7 @@ import {
   type PHPStatus,
 } from "@/api/php";
 import {
+  BrandWordpress,
   Copy,
   Database,
   Download,
@@ -57,6 +58,7 @@ import {
 import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { DomainPHPDialog } from "@/components/domain-php-dialog";
+import { DomainWordPressDialog } from "@/components/domain-wordpress-dialog";
 import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
 import { PageHeader } from "@/components/page-header";
 import { TerminalWindow } from "@/components/terminal-window";
@@ -318,6 +320,10 @@ const devToolActions: DomainActionItem[] = [
     icon: Package,
   },
   {
+    title: "WP Toolkit",
+    icon: BrandWordpress,
+  },
+  {
     title: "Github",
     icon: GitBranch,
   },
@@ -441,6 +447,7 @@ export function DomainDetailPage() {
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
   const [phpDialogOpen, setPHPDialogOpen] = useState(false);
   const [terminalDialogOpen, setTerminalDialogOpen] = useState(false);
+  const [wordPressDialogOpen, setWordPressDialogOpen] = useState(false);
   const [websiteCopyDialogOpen, setWebsiteCopyDialogOpen] = useState(false);
   const [websiteCopyTargetHostname, setWebsiteCopyTargetHostname] = useState("");
   const [websiteCopyReplaceTargetFiles, setWebsiteCopyReplaceTargetFiles] =
@@ -516,6 +523,7 @@ export function DomainDetailPage() {
     setGitHubDialogOpen(false);
     setPHPDialogOpen(false);
     setTerminalDialogOpen(false);
+    setWordPressDialogOpen(false);
     setWebsiteCopyDialogOpen(false);
     setWebsiteCopyTargetHostname("");
     setWebsiteCopyReplaceTargetFiles(true);
@@ -769,6 +777,10 @@ export function DomainDetailPage() {
   const websiteCopyTargets = allDomains.filter(
     (record) => record.hostname !== domain?.hostname,
   );
+  const activeDevToolActions =
+    domain?.kind === "Php site"
+      ? devToolActions
+      : devToolActions.filter((item) => item.title !== "WP Toolkit");
 
   useEffect(() => {
     if (!websiteCopyDialogOpen) {
@@ -1350,6 +1362,11 @@ export function DomainDetailPage() {
           void handleDisconnectGitHub();
         }}
       />
+      <DomainWordPressDialog
+        open={wordPressDialogOpen && domain?.kind === "Php site"}
+        onOpenChange={setWordPressDialogOpen}
+        domain={domain?.kind === "Php site" ? domain : null}
+      />
       {domain ? (
         <DomainPHPDialog
           open={phpDialogOpen && domain.kind === "Php site"}
@@ -1653,7 +1670,7 @@ export function DomainDetailPage() {
                 <div className="pt-2">
                   <DomainActionSection
                     title="Dev Tools"
-                    items={devToolActions}
+                    items={activeDevToolActions}
                     onItemClick={(item) => {
                       if (item.title === "PHP" && domain !== null) {
                         if (domain.kind !== "Php site") {
@@ -1667,6 +1684,16 @@ export function DomainDetailPage() {
 
                       if (item.title === "PHP Composer" && domain !== null) {
                         setComposerDialogOpen(true);
+                        return;
+                      }
+
+                      if (item.title === "WP Toolkit" && domain !== null) {
+                        if (domain.kind !== "Php site") {
+                          toast.error("WP Toolkit is available only for PHP site domains.");
+                          return;
+                        }
+
+                        setWordPressDialogOpen(true);
                         return;
                       }
 

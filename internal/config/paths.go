@@ -24,6 +24,10 @@ func BackupsPath() string {
 	return filepath.Join(FLOWPANEL_PATH, "backups")
 }
 
+func BinPath() string {
+	return filepath.Join(FLOWPANEL_PATH, "bin")
+}
+
 func CachePath() string {
 	return filepath.Join(FLOWPANEL_PATH, "cache")
 }
@@ -41,6 +45,15 @@ func EnsureCachePath() error {
 	path := CachePath()
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return fmt.Errorf("create flowpanel cache path %q: %w", path, err)
+	}
+
+	return nil
+}
+
+func EnsureBinPath() error {
+	path := BinPath()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return fmt.Errorf("create flowpanel bin path %q: %w", path, err)
 	}
 
 	return nil

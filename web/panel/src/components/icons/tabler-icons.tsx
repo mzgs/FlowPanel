@@ -23,6 +23,7 @@ export const ArrowUp = pick("IconArrowUp");
 export const AudioWaveform = pick("IconWaveSine", "IconChartSoundwave");
 export const BadgeCheck = pick("IconBadgeCheck");
 export const Bell = pick("IconBell");
+export const BrandWordpress = pick("IconBrandWordpress", "IconBrandWordpressSimple", "IconBrandWordpressFilled");
 export const Bug = pick("IconBug");
 export const Calendar = pick("IconCalendar");
 export const Check = pick("IconCheck");
