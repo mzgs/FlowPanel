@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 const phpErrorReportingOptions = [
   { value: "E_ALL", label: "E_ALL" },
@@ -389,6 +390,23 @@ export function DomainPHPDialog({
               </SelectContent>
             </Select>
             <FieldError message={fieldErrors.error_reporting} />
+          </div>
+
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="php_disable_functions">Disabled functions</Label>
+            <Textarea
+              id="php_disable_functions"
+              value={form.disable_functions ?? ""}
+              onChange={(event) => onFieldChange("disable_functions", event.target.value)}
+              placeholder="exec,shell_exec,system"
+              disabled={busy}
+              aria-invalid={fieldErrors.disable_functions ? true : undefined}
+              className="min-h-24"
+            />
+            <p className="text-xs text-[var(--app-text-muted)]">
+              Comma-separated PHP function names to disable.
+            </p>
+            <FieldError message={fieldErrors.disable_functions} />
           </div>
         </section>
 

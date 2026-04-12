@@ -156,7 +156,20 @@ func NormalizeUpdateSettingsInput(input UpdateSettingsInput) Settings {
 		DefaultSocketTimeout: normalizePHPInteger(input.DefaultSocketTimeout),
 		ErrorReporting:       strings.TrimSpace(input.ErrorReporting),
 		DisplayErrors:        normalizePHPOnOff(input.DisplayErrors),
+		DisableFunctions:     normalizePHPList(input.DisableFunctions),
 	}
+}
+
+func normalizePHPList(value string) string {
+	parts := strings.Split(value, ",")
+	normalized := parts[:0]
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			normalized = append(normalized, part)
+		}
+	}
+	return strings.Join(normalized, ",")
 }
 
 func isValidPHPInteger(value string, allowNegativeOne bool) bool {
@@ -233,6 +246,7 @@ func renderManagedPHPConfig(settings Settings) string {
 	builder.WriteString(fmt.Sprintf("default_socket_timeout = %s\n", settings.DefaultSocketTimeout))
 	builder.WriteString(fmt.Sprintf("error_reporting = %s\n", settings.ErrorReporting))
 	builder.WriteString(fmt.Sprintf("display_errors = %s\n", settings.DisplayErrors))
+	builder.WriteString(fmt.Sprintf("disable_functions = %s\n", settings.DisableFunctions))
 	return builder.String()
 }
 
@@ -360,6 +374,7 @@ func inspectPHPConfig(ctx context.Context, phpPath string) (phpConfigInfo, error
   "default_socket_timeout" => ini_get("default_socket_timeout"),
   "error_reporting" => ini_get("error_reporting"),
   "display_errors" => filter_var(ini_get("display_errors"), FILTER_VALIDATE_BOOLEAN) ? "On" : "Off",
+  "disable_functions" => ini_get("disable_functions"),
 ], JSON_UNESCAPED_SLASHES);`)
 	if err != nil {
 		return info, fmt.Errorf("inspect php ini settings: %w", err)
@@ -381,6 +396,7 @@ func inspectPHPConfig(ctx context.Context, phpPath string) (phpConfigInfo, error
 		DefaultSocketTimeout: payload["default_socket_timeout"],
 		ErrorReporting:       normalizePHPErrorReportingValue(payload["error_reporting"]),
 		DisplayErrors:        payload["display_errors"],
+		DisableFunctions:     payload["disable_functions"],
 	}
 
 	if managed, err := parseManagedPHPConfig(info.managedConfigFile); err == nil {
@@ -436,6 +452,8 @@ func parseManagedPHPConfig(path string) (Settings, error) {
 			settings.ErrorReporting = value
 		case "display_errors":
 			settings.DisplayErrors = value
+		case "disable_functions":
+			settings.DisableFunctions = value
 		}
 	}
 
@@ -472,6 +490,9 @@ func mergeManagedPHPSettings(base, managed Settings) Settings {
 	}
 	if managed.DisplayErrors != "" {
 		base.DisplayErrors = managed.DisplayErrors
+	}
+	if managed.DisableFunctions != "" {
+		base.DisableFunctions = managed.DisableFunctions
 	}
 
 	return base

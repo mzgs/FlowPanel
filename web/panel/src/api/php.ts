@@ -9,6 +9,7 @@ export type PHPSettings = {
   default_socket_timeout?: string;
   error_reporting?: string;
   display_errors?: string;
+  disable_functions?: string;
 };
 
 export type PHPIniFile = {
@@ -115,6 +116,7 @@ export type UpdatePHPSettingsInput = {
   default_socket_timeout: string;
   error_reporting: string;
   display_errors: string;
+  disable_functions: string;
 };
 
 export type PHPApiError = Error & {

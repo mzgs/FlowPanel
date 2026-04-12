@@ -70,6 +70,7 @@ export type UpdateDomainPHPSettingsInput = {
   default_socket_timeout: string;
   error_reporting: string;
   display_errors: string;
+  disable_functions: string;
 };
 
 export type CopyDomainWebsiteInput = {

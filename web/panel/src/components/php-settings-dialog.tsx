@@ -84,6 +84,9 @@ type PHPSettingsDialogProps = {
 
 type PHPSettingsFormState = UpdatePHPSettingsInput;
 
+const defaultDisabledFunctions =
+  "exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec";
+
 const emptyForm: PHPSettingsFormState = {
   max_execution_time: "",
   max_input_time: "",
@@ -95,6 +98,7 @@ const emptyForm: PHPSettingsFormState = {
   default_socket_timeout: "",
   error_reporting: "E_ALL",
   display_errors: "Off",
+  disable_functions: defaultDisabledFunctions,
 };
 
 function buildExtensionOrder(
@@ -130,6 +134,7 @@ function toFormState(settings?: PHPSettings): PHPSettingsFormState {
     default_socket_timeout: settings?.default_socket_timeout ?? "",
     error_reporting: settings?.error_reporting ?? "E_ALL",
     display_errors: settings?.display_errors ?? "Off",
+    disable_functions: settings?.disable_functions ?? defaultDisabledFunctions,
   };
 }
 
@@ -144,7 +149,8 @@ function sameFormState(left: PHPSettingsFormState, right: PHPSettingsFormState) 
     left.max_file_uploads === right.max_file_uploads &&
     left.default_socket_timeout === right.default_socket_timeout &&
     left.error_reporting === right.error_reporting &&
-    left.display_errors === right.display_errors
+    left.display_errors === right.display_errors &&
+    left.disable_functions === right.disable_functions
   );
 }
 
@@ -820,6 +826,23 @@ export function PHPSettingsDialog({
                       </SelectContent>
                     </Select>
                     <FieldError message={fieldErrors.error_reporting} />
+                  </div>
+
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="php_disable_functions">Disabled functions</Label>
+                    <Textarea
+                      id="php_disable_functions"
+                      value={form.disable_functions}
+                      onChange={(event) => handleFieldChange("disable_functions", event.target.value)}
+                      placeholder="exec,shell_exec,system"
+                      disabled={dialogBusy}
+                      aria-invalid={fieldErrors.disable_functions ? true : undefined}
+                      className="min-h-24"
+                    />
+                    <p className="text-xs text-[var(--app-text-muted)]">
+                      Comma-separated PHP function names to disable.
+                    </p>
+                    <FieldError message={fieldErrors.disable_functions} />
                   </div>
                 </section>
               ) : activeSection === "runtime-info" ? (

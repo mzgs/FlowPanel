@@ -101,6 +101,8 @@ const initialGitHubForm: GitHubFormState = {
 };
 
 const defaultPHPErrorReporting = "E_ALL & ~E_NOTICE & ~E_DEPRECATED";
+const defaultDisabledFunctions =
+  "exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec";
 const phpErrorReportingOptions = new Set([
   "E_ALL",
   "E_ALL & ~E_NOTICE",
@@ -148,6 +150,7 @@ const initialPHPSettings: PHPSettings = {
   default_socket_timeout: "",
   error_reporting: defaultPHPErrorReporting,
   display_errors: "Off",
+  disable_functions: defaultDisabledFunctions,
 };
 
 function toPHPSettingsForm(
@@ -167,6 +170,8 @@ function toPHPSettingsForm(
         default_socket_timeout: statusSettings.default_socket_timeout ?? "",
         error_reporting: normalizePHPErrorReporting(statusSettings.error_reporting),
         display_errors: statusSettings.display_errors ?? "Off",
+        disable_functions:
+          statusSettings.disable_functions ?? defaultDisabledFunctions,
       }
     : initialPHPSettings;
 
@@ -188,6 +193,7 @@ function toPHPSettingsForm(
       overrides.error_reporting || base.error_reporting,
     ),
     display_errors: overrides.display_errors || base.display_errors,
+    disable_functions: overrides.disable_functions || base.disable_functions,
   };
 }
 
@@ -202,7 +208,8 @@ function samePHPSettings(left: PHPSettings, right: PHPSettings) {
     left.max_file_uploads === right.max_file_uploads &&
     left.default_socket_timeout === right.default_socket_timeout &&
     left.error_reporting === right.error_reporting &&
-    left.display_errors === right.display_errors
+    left.display_errors === right.display_errors &&
+    left.disable_functions === right.disable_functions
   );
 }
 
@@ -1177,6 +1184,7 @@ export function DomainDetailPage() {
         default_socket_timeout: phpForm.default_socket_timeout ?? "",
         error_reporting: phpForm.error_reporting ?? "",
         display_errors: phpForm.display_errors ?? "Off",
+        disable_functions: phpForm.disable_functions ?? "",
       });
       const nextRuntime = getPHPRuntimeStatus(phpStatus, updatedDomain.php_version);
       const nextForm = toPHPSettingsForm(nextRuntime, updatedDomain.php_settings);

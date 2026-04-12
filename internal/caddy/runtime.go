@@ -654,7 +654,7 @@ func phpFastCGIEnv(settings phpenv.Settings) map[string]string {
 }
 
 func phpSettingsValue(settings phpenv.Settings) string {
-	lines := make([]string, 0, 10)
+	lines := make([]string, 0, 11)
 	appendSetting := func(name, value string) {
 		value = strings.TrimSpace(value)
 		if value == "" {
@@ -673,6 +673,7 @@ func phpSettingsValue(settings phpenv.Settings) string {
 	appendSetting("default_socket_timeout", settings.DefaultSocketTimeout)
 	appendSetting("error_reporting", settings.ErrorReporting)
 	appendSetting("display_errors", settings.DisplayErrors)
+	appendSetting("disable_functions", settings.DisableFunctions)
 
 	return strings.Join(lines, "\n")
 }

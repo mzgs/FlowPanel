@@ -153,6 +153,7 @@ type Settings struct {
 	DefaultSocketTimeout string `json:"default_socket_timeout,omitempty"`
 	ErrorReporting       string `json:"error_reporting,omitempty"`
 	DisplayErrors        string `json:"display_errors,omitempty"`
+	DisableFunctions     string `json:"disable_functions,omitempty"`
 }
 
 type UpdateSettingsInput struct {
@@ -166,6 +167,7 @@ type UpdateSettingsInput struct {
 	DefaultSocketTimeout string `json:"default_socket_timeout"`
 	ErrorReporting       string `json:"error_reporting"`
 	DisplayErrors        string `json:"display_errors"`
+	DisableFunctions     string `json:"disable_functions"`
 }
 
 type ValidationErrors map[string]string
