@@ -1920,36 +1920,43 @@ export function DomainDetailPage() {
                 </div>
                 {wordPressSummary?.installed ? (
                   <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
-                    <div
-                      role="tablist"
-                      aria-label="WordPress sections"
-                      className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]"
-                    >
-                      <div className="flex min-w-0 overflow-x-auto px-4">
-                        {wordPressSectionTabs.map(({ value, label }) => {
-                          const active = wordPressSectionTab === value;
+                    <div className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+                      <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+                        <BrandWordpress
+                          className="h-4 w-4 text-[var(--app-text-muted)]"
+                          stroke={1.8}
+                        />
+                        <div className="text-sm font-medium text-[var(--app-text)]">
+                          WordPress
+                        </div>
+                      </div>
+                      <div role="tablist" aria-label="WordPress sections">
+                        <div className="flex min-w-0 overflow-x-auto px-4">
+                          {wordPressSectionTabs.map(({ value, label }) => {
+                            const active = wordPressSectionTab === value;
 
-                          return (
-                            <button
-                              key={value}
-                              role="tab"
-                              type="button"
-                              aria-selected={active}
-                              tabIndex={active ? 0 : -1}
-                              className={cn(
-                                "inline-flex border-b-2 px-1 py-3 text-sm font-medium whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-surface-muted)]",
-                                active
-                                  ? "border-[var(--app-text)] text-[var(--app-text)]"
-                                  : "border-transparent text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
-                              )}
-                              onClick={() => {
-                                setWordPressSectionTab(value);
-                              }}
-                            >
-                              <span>{label}</span>
-                            </button>
-                          );
-                        })}
+                            return (
+                              <button
+                                key={value}
+                                role="tab"
+                                type="button"
+                                aria-selected={active}
+                                tabIndex={active ? 0 : -1}
+                                className={cn(
+                                  "inline-flex border-b-2 px-1 py-3 text-sm font-medium whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-surface-muted)]",
+                                  active
+                                    ? "border-[var(--app-text)] text-[var(--app-text)]"
+                                    : "border-transparent text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
+                                )}
+                                onClick={() => {
+                                  setWordPressSectionTab(value);
+                                }}
+                              >
+                                <span>{label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
 
