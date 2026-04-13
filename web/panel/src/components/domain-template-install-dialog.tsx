@@ -1,0 +1,528 @@
+import { useEffect, useState } from "react";
+import {
+  installDomainTemplate,
+  type DomainApiError,
+  type DomainTemplateKey,
+  type InstallDomainTemplateInput,
+  type InstallDomainTemplateResult,
+} from "@/api/domains";
+import {
+  BrandWordpress,
+  LoaderCircle,
+  Package,
+} from "@/components/icons/tabler-icons";
+import { PasswordInput } from "@/components/password-input";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { toast } from "sonner";
+
+type DomainTemplateInstallDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  hostname: string;
+  documentRoot: string;
+  onInstalled?: (result: InstallDomainTemplateResult) => void | Promise<void>;
+};
+
+type InstallFormState = InstallDomainTemplateInput;
+
+const generatedPasswordLength = 20;
+
+const templateOptions: Array<{
+  value: DomainTemplateKey;
+  label: string;
+  description: string;
+  packageName?: string;
+}> = [
+  {
+    value: "wordpress",
+    label: "WordPress",
+    description:
+      "Install WordPress with WP-CLI and provision a MariaDB database automatically.",
+  },
+  {
+    value: "laravel",
+    label: "Laravel",
+    description:
+      "Create a fresh Laravel application with Composer and generate the app key.",
+    packageName: "laravel/laravel",
+  },
+  {
+    value: "codeigniter",
+    label: "CodeIgniter",
+    description: "Create a CodeIgniter 4 starter project and set the base URL.",
+    packageName: "codeigniter4/appstarter",
+  },
+  {
+    value: "slim",
+    label: "Slim",
+    description: "Create the Slim skeleton application with Composer.",
+    packageName: "slim/slim-skeleton",
+  },
+];
+
+function createInstallForm(hostname: string): InstallFormState {
+  return {
+    template: "wordpress",
+    clear_document_root: false,
+    app_name: hostname,
+    site_url: hostname ? `https://${hostname}` : "",
+    database_name: "",
+    site_title: hostname,
+    admin_username: "admin",
+    admin_email: hostname ? `admin@${hostname}` : "",
+    admin_password: "",
+    table_prefix: "wp_",
+  };
+}
+
+function generatePassword(length = generatedPasswordLength) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const randomBytes = new Uint8Array(length);
+
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(randomBytes);
+  } else {
+    for (let index = 0; index < randomBytes.length; index += 1) {
+      randomBytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  return Array.from(
+    randomBytes,
+    (value) => alphabet[value % alphabet.length],
+  ).join("");
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallback;
+}
+
+export function DomainTemplateInstallDialog({
+  open,
+  onOpenChange,
+  hostname,
+  documentRoot,
+  onInstalled,
+}: DomainTemplateInstallDialogProps) {
+  const [form, setForm] = useState<InstallFormState>(() =>
+    createInstallForm(hostname),
+  );
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setForm(createInstallForm(hostname));
+      setFieldErrors({});
+      setError(null);
+      setInstalling(false);
+      return;
+    }
+
+    setForm(createInstallForm(hostname));
+    setFieldErrors({});
+    setError(null);
+    setInstalling(false);
+  }, [hostname, open]);
+
+  const selectedTemplate =
+    templateOptions.find((option) => option.value === form.template) ??
+    templateOptions[0];
+  const isWordPress = form.template === "wordpress";
+  const showAppName = form.template === "laravel" || form.template === "slim";
+  const showSiteURL =
+    form.template === "laravel" || form.template === "codeigniter";
+
+  function clearFieldError(field: string) {
+    setFieldErrors((current) => {
+      if (!(field in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }
+
+  function updateForm<K extends keyof InstallFormState>(
+    field: K,
+    value: InstallFormState[K],
+  ) {
+    setError(null);
+    clearFieldError(String(field));
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  async function handleInstall() {
+    setInstalling(true);
+    setError(null);
+    setFieldErrors({});
+
+    try {
+      const result = await installDomainTemplate(hostname, form);
+      await onInstalled?.(result);
+      toast.success(`${selectedTemplate.label} installed for ${hostname}.`);
+      onOpenChange(false);
+    } catch (installError) {
+      const domainError = installError as DomainApiError;
+      setFieldErrors(domainError.fieldErrors ?? {});
+      const message = getErrorMessage(
+        installError,
+        `Failed to install ${selectedTemplate.label}.`,
+      );
+      setError(message);
+      toast.error(message);
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-4 sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{hostname} Install PHP App</DialogTitle>
+          <DialogDescription>
+            Choose a PHP application, review the generated inputs, and install
+            it into this domain&apos;s document root.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="max-h-[80vh] space-y-4 overflow-y-auto pr-1">
+          {error ? (
+            <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
+              {error}
+            </div>
+          ) : null}
+
+          <section className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+              <div className="text-xs text-[var(--app-text-muted)]">
+                Document root
+              </div>
+              <div className="mt-2 break-all font-mono text-[13px] text-[var(--app-text)]">
+                {documentRoot || "Loading..."}
+              </div>
+            </div>
+            <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+              <div className="text-xs text-[var(--app-text-muted)]">
+                Installer
+              </div>
+              <div className="mt-2 flex items-start gap-2">
+                {isWordPress ? (
+                  <BrandWordpress
+                    className="mt-0.5 h-4 w-4 text-[var(--app-text-muted)]"
+                    stroke={1.8}
+                  />
+                ) : (
+                  <Package
+                    className="mt-0.5 h-4 w-4 text-[var(--app-text-muted)]"
+                    stroke={1.8}
+                  />
+                )}
+                <div className="space-y-1">
+                  <div className="text-sm font-medium text-[var(--app-text)]">
+                    {selectedTemplate.label}
+                  </div>
+                  <div className="text-[13px] leading-5 text-[var(--app-text-muted)]">
+                    {selectedTemplate.description}
+                  </div>
+                  {selectedTemplate.packageName ? (
+                    <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
+                      composer create-project {selectedTemplate.packageName}
+                    </div>
+                  ) : (
+                    <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
+                      wp core download && wp core install
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="domain_template_type">Application</Label>
+                <Select
+                  value={form.template}
+                  onValueChange={(value) => {
+                    updateForm("template", value as DomainTemplateKey);
+                  }}
+                  disabled={installing}
+                >
+                  <SelectTrigger id="domain_template_type" className="w-full">
+                    <SelectValue placeholder="Select an application" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templateOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {fieldErrors.template ? (
+                  <p className="text-[12px] text-[var(--app-danger)]">
+                    {fieldErrors.template}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="flex items-center gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 md:mt-7">
+                <Switch
+                  id="domain_template_clear_document_root"
+                  checked={form.clear_document_root}
+                  disabled={installing}
+                  onCheckedChange={(checked) => {
+                    updateForm("clear_document_root", checked);
+                  }}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="domain_template_clear_document_root">
+                    Replace existing files
+                  </Label>
+                  <p className="text-[12px] leading-5 text-[var(--app-text-muted)]">
+                    Clear the current document root before copying the new
+                    application.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {isWordPress ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="template_database_name">Database name</Label>
+                  <Input
+                    id="template_database_name"
+                    value={form.database_name ?? ""}
+                    disabled={installing}
+                    onChange={(event) => {
+                      updateForm("database_name", event.target.value);
+                    }}
+                  />
+                  <p className="text-[12px] leading-5 text-[var(--app-text-muted)]">
+                    FlowPanel will create the database, user, and password
+                    automatically.
+                  </p>
+                  {fieldErrors.database_name ? (
+                    <p className="text-[12px] text-[var(--app-danger)]">
+                      {fieldErrors.database_name}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="template_table_prefix">Table prefix</Label>
+                  <Input
+                    id="template_table_prefix"
+                    value={form.table_prefix ?? ""}
+                    disabled={installing}
+                    onChange={(event) => {
+                      updateForm("table_prefix", event.target.value);
+                    }}
+                  />
+                  {fieldErrors.table_prefix ? (
+                    <p className="text-[12px] text-[var(--app-danger)]">
+                      {fieldErrors.table_prefix}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="template_site_url">Site URL</Label>
+                  <Input
+                    id="template_site_url"
+                    value={form.site_url ?? ""}
+                    disabled={installing}
+                    onChange={(event) => {
+                      updateForm("site_url", event.target.value);
+                    }}
+                  />
+                  {fieldErrors.site_url ? (
+                    <p className="text-[12px] text-[var(--app-danger)]">
+                      {fieldErrors.site_url}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="template_site_title">Site title</Label>
+                  <Input
+                    id="template_site_title"
+                    value={form.site_title ?? ""}
+                    disabled={installing}
+                    onChange={(event) => {
+                      updateForm("site_title", event.target.value);
+                    }}
+                  />
+                  {fieldErrors.site_title ? (
+                    <p className="text-[12px] text-[var(--app-danger)]">
+                      {fieldErrors.site_title}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="template_admin_username">
+                    Admin username
+                  </Label>
+                  <Input
+                    id="template_admin_username"
+                    value={form.admin_username ?? ""}
+                    disabled={installing}
+                    onChange={(event) => {
+                      updateForm("admin_username", event.target.value);
+                    }}
+                  />
+                  {fieldErrors.admin_username ? (
+                    <p className="text-[12px] text-[var(--app-danger)]">
+                      {fieldErrors.admin_username}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="template_admin_email">Admin email</Label>
+                  <Input
+                    id="template_admin_email"
+                    type="email"
+                    value={form.admin_email ?? ""}
+                    disabled={installing}
+                    onChange={(event) => {
+                      updateForm("admin_email", event.target.value);
+                    }}
+                  />
+                  {fieldErrors.admin_email ? (
+                    <p className="text-[12px] text-[var(--app-danger)]">
+                      {fieldErrors.admin_email}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="template_admin_password">
+                    Admin password
+                  </Label>
+                  <PasswordInput
+                    id="template_admin_password"
+                    value={form.admin_password ?? ""}
+                    disabled={installing}
+                    onChange={(event) => {
+                      updateForm("admin_password", event.target.value);
+                    }}
+                    onGeneratePassword={() => {
+                      updateForm("admin_password", generatePassword());
+                    }}
+                  />
+                  {fieldErrors.admin_password ? (
+                    <p className="text-[12px] text-[var(--app-danger)]">
+                      {fieldErrors.admin_password}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2">
+                {showAppName ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="template_app_name">
+                      {form.template === "slim"
+                        ? "Project name"
+                        : "Application name"}
+                    </Label>
+                    <Input
+                      id="template_app_name"
+                      value={form.app_name ?? ""}
+                      disabled={installing}
+                      onChange={(event) => {
+                        updateForm("app_name", event.target.value);
+                      }}
+                    />
+                    {fieldErrors.app_name ? (
+                      <p className="text-[12px] text-[var(--app-danger)]">
+                        {fieldErrors.app_name}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {showSiteURL ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="template_php_site_url">Site URL</Label>
+                    <Input
+                      id="template_php_site_url"
+                      value={form.site_url ?? ""}
+                      disabled={installing}
+                      onChange={(event) => {
+                        updateForm("site_url", event.target.value);
+                      }}
+                    />
+                    {fieldErrors.site_url ? (
+                      <p className="text-[12px] text-[var(--app-danger)]">
+                        {fieldErrors.site_url}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 text-[13px] leading-6 text-[var(--app-text-muted)] md:col-span-2">
+                  {form.template === "laravel"
+                    ? "FlowPanel will create the project with Composer, update APP_NAME and APP_URL, and generate the Laravel app key."
+                    : form.template === "codeigniter"
+                      ? "FlowPanel will create the project with Composer and write the configured base URL into the generated .env file."
+                      : "FlowPanel will create the Slim skeleton with Composer and keep the generated project structure intact."}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                disabled={installing}
+                onClick={() => void handleInstall()}
+              >
+                {installing ? (
+                  <>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    Installing...
+                  </>
+                ) : (
+                  "Install app"
+                )}
+              </Button>
+            </div>
+          </section>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

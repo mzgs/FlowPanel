@@ -1,4 +1,5 @@
 import { type PHPSettings } from "@/api/php";
+import { type WordPressStatus } from "@/api/domain-wordpress";
 
 export type DomainKind = "Static site" | "Php site" | "App" | "Reverse proxy";
 
@@ -76,6 +77,30 @@ export type UpdateDomainPHPSettingsInput = {
 export type CopyDomainWebsiteInput = {
   target_hostname: string;
   replace_target_files: boolean;
+};
+
+export type DomainTemplateKey =
+  | "wordpress"
+  | "laravel"
+  | "codeigniter"
+  | "slim";
+
+export type InstallDomainTemplateInput = {
+  template: DomainTemplateKey;
+  clear_document_root: boolean;
+  app_name?: string;
+  site_url?: string;
+  database_name?: string;
+  site_title?: string;
+  admin_username?: string;
+  admin_email?: string;
+  admin_password?: string;
+  table_prefix?: string;
+};
+
+export type InstallDomainTemplateResult = {
+  template: DomainTemplateKey;
+  wordpress?: WordPressStatus;
 };
 
 export type DomainGitHubDeployResult = {
@@ -329,6 +354,32 @@ export async function copyDomainWebsite(
   if (!response.ok) {
     throw await readDomainApiError(response, "copy website");
   }
+}
+
+export async function installDomainTemplate(
+  hostname: string,
+  input: InstallDomainTemplateInput,
+): Promise<InstallDomainTemplateResult> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/templates/install`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "install php app");
+  }
+
+  const payload = (await response.json()) as {
+    result: InstallDomainTemplateResult;
+  };
+  return payload.result;
 }
 
 export async function fetchDomainPreview(

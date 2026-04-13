@@ -114,11 +114,6 @@ type wordPressInstallInput struct {
 	ClearDocumentRoot bool   `json:"clear_document_root"`
 }
 
-type wordPressInstallExtensionInput struct {
-	Slug     string `json:"slug"`
-	Activate bool   `json:"activate"`
-}
-
 type wordPressExtensionActionInput struct {
 	Name   string `json:"name"`
 	Action string `json:"action"`
@@ -368,79 +363,6 @@ func installWordPress(
 		"--admin_password="+input.AdminPassword,
 	); err != nil {
 		return wordPressStatus{}, record, err
-	}
-
-	return loadWordPressStatus(ctx, domains, mariadbManager, hostname)
-}
-
-func updateWordPressCore(
-	ctx context.Context,
-	domains *domain.Service,
-	mariadbManager mariadb.Manager,
-	hostname string,
-) (wordPressStatus, domain.Record, error) {
-	_, targetPath, err := resolveWordPressDomain(domains, hostname)
-	if err != nil {
-		return wordPressStatus{}, domain.Record{}, err
-	}
-	if _, err := resolveWordPressCLI(ctx); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
-	}
-
-	installed, inspectError := inspectWordPressInstallation(ctx, targetPath)
-	if !installed {
-		if inspectError != "" {
-			return wordPressStatus{}, domain.Record{}, errors.New(inspectError)
-		}
-		return wordPressStatus{}, domain.Record{}, errWordPressNotInstalled
-	}
-
-	if _, _, err := runWordPressCommand(ctx, targetPath, "core", "update"); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
-	}
-	if _, _, err := runWordPressCommand(ctx, targetPath, "core", "update-db"); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
-	}
-
-	return loadWordPressStatus(ctx, domains, mariadbManager, hostname)
-}
-
-func installWordPressExtension(
-	ctx context.Context,
-	domains *domain.Service,
-	mariadbManager mariadb.Manager,
-	hostname string,
-	resource string,
-	input wordPressInstallExtensionInput,
-) (wordPressStatus, domain.Record, error) {
-	_, targetPath, err := resolveWordPressDomain(domains, hostname)
-	if err != nil {
-		return wordPressStatus{}, domain.Record{}, err
-	}
-	if _, err := resolveWordPressCLI(ctx); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
-	}
-	if err := ensureWordPressInstalled(ctx, targetPath); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
-	}
-
-	validation := domain.ValidationErrors{}
-	slug := strings.TrimSpace(input.Slug)
-	if slug == "" {
-		validation["slug"] = fmt.Sprintf("Enter a %s slug.", resource)
-	} else if !wordPressIdentifierPattern.MatchString(slug) {
-		validation["slug"] = fmt.Sprintf("Enter a valid %s slug.", resource)
-	}
-	if len(validation) > 0 {
-		return wordPressStatus{}, domain.Record{}, validation
-	}
-
-	args := []string{resource, "install", slug}
-	if input.Activate {
-		args = append(args, "--activate")
-	}
-	if _, _, err := runWordPressCommand(ctx, targetPath, args...); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
 	}
 
 	return loadWordPressStatus(ctx, domains, mariadbManager, hostname)

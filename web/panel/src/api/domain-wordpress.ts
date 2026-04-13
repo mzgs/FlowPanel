@@ -48,22 +48,6 @@ export type WordPressSummary = {
 
 export type WordPressStatusSection = "plugins" | "themes" | "database";
 
-export type WordPressInstallInput = {
-  database_name: string;
-  site_url: string;
-  site_title: string;
-  admin_username: string;
-  admin_email: string;
-  admin_password: string;
-  table_prefix: string;
-  clear_document_root?: boolean;
-};
-
-export type WordPressInstallExtensionInput = {
-  slug: string;
-  activate: boolean;
-};
-
 export type WordPressExtensionActionInput = {
   name: string;
   action: "activate" | "deactivate" | "delete" | "update";
@@ -122,58 +106,6 @@ export async function fetchDomainWordPressStatus(
   return parseWordPressStatusResponse(response, "load wordpress toolkit");
 }
 
-export async function installDomainWordPress(
-  hostname: string,
-  input: WordPressInstallInput,
-): Promise<WordPressStatus> {
-  const response = await fetch(
-    `/api/domains/${encodeURIComponent(hostname)}/wordpress/install`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(input),
-    },
-  );
-
-  return parseWordPressStatusResponse(response, "install wordpress");
-}
-
-export async function updateDomainWordPressCore(
-  hostname: string,
-): Promise<WordPressStatus> {
-  const response = await fetch(
-    `/api/domains/${encodeURIComponent(hostname)}/wordpress/core/update`,
-    {
-      method: "POST",
-      credentials: "include",
-    },
-  );
-
-  return parseWordPressStatusResponse(response, "update wordpress core");
-}
-
-export async function installDomainWordPressPlugin(
-  hostname: string,
-  input: WordPressInstallExtensionInput,
-): Promise<WordPressStatus> {
-  const response = await fetch(
-    `/api/domains/${encodeURIComponent(hostname)}/wordpress/plugins/install`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(input),
-    },
-  );
-
-  return parseWordPressStatusResponse(response, "install wordpress plugin");
-}
-
 export async function runDomainWordPressPluginAction(
   hostname: string,
   input: WordPressExtensionActionInput,
@@ -190,26 +122,10 @@ export async function runDomainWordPressPluginAction(
     },
   );
 
-  return parseWordPressStatusResponse(response, `wordpress plugin ${input.action}`);
-}
-
-export async function installDomainWordPressTheme(
-  hostname: string,
-  input: WordPressInstallExtensionInput,
-): Promise<WordPressStatus> {
-  const response = await fetch(
-    `/api/domains/${encodeURIComponent(hostname)}/wordpress/themes/install`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(input),
-    },
+  return parseWordPressStatusResponse(
+    response,
+    `wordpress plugin ${input.action}`,
   );
-
-  return parseWordPressStatusResponse(response, "install wordpress theme");
 }
 
 export async function runDomainWordPressThemeAction(
@@ -228,7 +144,10 @@ export async function runDomainWordPressThemeAction(
     },
   );
 
-  return parseWordPressStatusResponse(response, `wordpress theme ${input.action}`);
+  return parseWordPressStatusResponse(
+    response,
+    `wordpress theme ${input.action}`,
+  );
 }
 
 async function parseWordPressStatusResponse(

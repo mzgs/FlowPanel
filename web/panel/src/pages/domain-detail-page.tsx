@@ -22,16 +22,14 @@ import {
   fetchDomainPreview,
   fetchDomains,
   getDomainSiteUrl,
+  type InstallDomainTemplateResult,
   updateDomainPHPSettings,
   type DomainApiError,
   type DomainRecord,
   updateDomainGitHubIntegration,
 } from "@/api/domains";
 import { fetchFileContent } from "@/api/files";
-import {
-  fetchMariaDBDatabases,
-  type MariaDBDatabase,
-} from "@/api/mariadb";
+import { fetchMariaDBDatabases, type MariaDBDatabase } from "@/api/mariadb";
 import {
   fetchPHPStatus,
   installPHP,
@@ -48,6 +46,7 @@ import {
   ExternalLink,
   File,
   FileCode2,
+  FilePlus2,
   Folder,
   FolderOpen,
   GitBranch,
@@ -67,7 +66,7 @@ import {
 import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { DomainPHPDialog } from "@/components/domain-php-dialog";
-import { DomainWordPressDialog } from "@/components/domain-wordpress-dialog";
+import { DomainTemplateInstallDialog } from "@/components/domain-template-install-dialog";
 import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
 import { PageHeader } from "@/components/page-header";
 import { TerminalWindow } from "@/components/terminal-window";
@@ -180,7 +179,9 @@ function toPHPSettingsForm(
         upload_max_filesize: statusSettings.upload_max_filesize ?? "",
         max_file_uploads: statusSettings.max_file_uploads ?? "",
         default_socket_timeout: statusSettings.default_socket_timeout ?? "",
-        error_reporting: normalizePHPErrorReporting(statusSettings.error_reporting),
+        error_reporting: normalizePHPErrorReporting(
+          statusSettings.error_reporting,
+        ),
         display_errors: statusSettings.display_errors ?? "Off",
         disable_functions:
           statusSettings.disable_functions ?? defaultDisabledFunctions,
@@ -197,7 +198,8 @@ function toPHPSettingsForm(
     memory_limit: overrides.memory_limit || base.memory_limit,
     post_max_size: overrides.post_max_size || base.post_max_size,
     file_uploads: overrides.file_uploads || base.file_uploads,
-    upload_max_filesize: overrides.upload_max_filesize || base.upload_max_filesize,
+    upload_max_filesize:
+      overrides.upload_max_filesize || base.upload_max_filesize,
     max_file_uploads: overrides.max_file_uploads || base.max_file_uploads,
     default_socket_timeout:
       overrides.default_socket_timeout || base.default_socket_timeout,
@@ -232,7 +234,9 @@ function getSelectedPHPVersion(
   const normalizedCurrent = currentVersion?.trim();
   if (
     normalizedCurrent &&
-    status?.versions?.some((runtimeStatus) => runtimeStatus.version === normalizedCurrent)
+    status?.versions?.some(
+      (runtimeStatus) => runtimeStatus.version === normalizedCurrent,
+    )
   ) {
     return normalizedCurrent;
   }
@@ -255,8 +259,9 @@ function getPHPRuntimeStatus(
   }
 
   return (
-    status?.versions?.find((runtimeStatus) => runtimeStatus.version === selectedVersion) ??
-    null
+    status?.versions?.find(
+      (runtimeStatus) => runtimeStatus.version === selectedVersion,
+    ) ?? null
   );
 }
 
@@ -335,7 +340,9 @@ function WordPressExtensionList({
     <div className="divide-y divide-[var(--app-border)]">
       {items.map((item) => {
         const canEnable =
-          type === "plugin" ? item.status === "inactive" : item.status !== "active";
+          type === "plugin"
+            ? item.status === "inactive"
+            : item.status !== "active";
         const canDisable =
           type === "plugin" && isWordPressPluginActive(item.status);
         const canDelete =
@@ -455,6 +462,10 @@ const devToolActions: DomainActionItem[] = [
     icon: FileCode2,
   },
   {
+    title: "Install PHP App",
+    icon: FilePlus2,
+  },
+  {
     title: "Logs",
     icon: File,
   },
@@ -469,10 +480,6 @@ const devToolActions: DomainActionItem[] = [
   {
     title: "PHP Composer",
     icon: Package,
-  },
-  {
-    title: "WP Toolkit",
-    icon: BrandWordpress,
   },
   {
     title: "Github",
@@ -496,7 +503,9 @@ const wordPressSectionTabs: Array<{
   { value: "database", label: "Database" },
 ];
 
-function createWordPressDetailsLoadedState(value = false): Record<WordPressDetailsSection, boolean> {
+function createWordPressDetailsLoadedState(
+  value = false,
+): Record<WordPressDetailsSection, boolean> {
   return {
     plugins: value,
     themes: value,
@@ -504,7 +513,10 @@ function createWordPressDetailsLoadedState(value = false): Record<WordPressDetai
   };
 }
 
-function createWordPressDetailsErrorState(): Record<WordPressDetailsSection, string | null> {
+function createWordPressDetailsErrorState(): Record<
+  WordPressDetailsSection,
+  string | null
+> {
   return {
     plugins: null,
     themes: null,
@@ -567,11 +579,17 @@ function parseComposerPackages(content: string) {
   });
 }
 
-async function runComposerAction(hostname: string, action: "install" | "update") {
-  const response = await fetch(`/api/domains/${encodeURIComponent(hostname)}/composer/${action}`, {
-    method: "POST",
-    credentials: "include",
-  });
+async function runComposerAction(
+  hostname: string,
+  action: "install" | "update",
+) {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/composer/${action}`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
 
   if (response.ok) {
     return;
@@ -602,7 +620,9 @@ function DomainActionSection({
 }) {
   return (
     <section className="space-y-2">
-      <h2 className="pl-2 text-base font-semibold text-[var(--app-text)]">{title}</h2>
+      <h2 className="pl-2 text-base font-semibold text-[var(--app-text)]">
+        {title}
+      </h2>
       <div className="grid gap-x-3 gap-y-1.5 md:grid-cols-2 xl:grid-cols-3">
         {items.map(({ title: itemTitle, icon: Icon }) => (
           <button
@@ -641,10 +661,12 @@ export function DomainDetailPage() {
   const [ftpDialogOpen, setFTPDialogOpen] = useState(false);
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
   const [phpDialogOpen, setPHPDialogOpen] = useState(false);
+  const [templateInstallDialogOpen, setTemplateInstallDialogOpen] =
+    useState(false);
   const [terminalDialogOpen, setTerminalDialogOpen] = useState(false);
-  const [wordPressDialogOpen, setWordPressDialogOpen] = useState(false);
   const [websiteCopyDialogOpen, setWebsiteCopyDialogOpen] = useState(false);
-  const [websiteCopyTargetHostname, setWebsiteCopyTargetHostname] = useState("");
+  const [websiteCopyTargetHostname, setWebsiteCopyTargetHostname] =
+    useState("");
   const [websiteCopyReplaceTargetFiles, setWebsiteCopyReplaceTargetFiles] =
     useState(true);
   const [websiteCopyPending, setWebsiteCopyPending] = useState(false);
@@ -653,30 +675,40 @@ export function DomainDetailPage() {
     Record<string, string>
   >({});
   const [composerHasManifest, setComposerHasManifest] = useState(false);
-  const [composerPackages, setComposerPackages] = useState<ComposerPackage[]>([]);
+  const [composerPackages, setComposerPackages] = useState<ComposerPackage[]>(
+    [],
+  );
   const [composerLoading, setComposerLoading] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
   const [composerRunningAction, setComposerRunningAction] = useState<
     "install" | "update" | null
   >(null);
-  const [githubForm, setGitHubForm] = useState<GitHubFormState>(initialGitHubForm);
-  const [savedGitHubForm, setSavedGitHubForm] = useState<GitHubFormState>(initialGitHubForm);
+  const [githubForm, setGitHubForm] =
+    useState<GitHubFormState>(initialGitHubForm);
+  const [savedGitHubForm, setSavedGitHubForm] =
+    useState<GitHubFormState>(initialGitHubForm);
   const [githubSaving, setGitHubSaving] = useState(false);
   const [githubDeploying, setGitHubDeploying] = useState(false);
   const [githubError, setGitHubError] = useState<string | null>(null);
   const [githubFeedback, setGitHubFeedback] = useState<string | null>(null);
-  const [githubFieldErrors, setGitHubFieldErrors] = useState<Record<string, string>>(
-    {},
-  );
-  const [creatingBackupTarget, setCreatingBackupTarget] = useState<string | null>(
+  const [githubFieldErrors, setGitHubFieldErrors] = useState<
+    Record<string, string>
+  >({});
+  const [creatingBackupTarget, setCreatingBackupTarget] = useState<
+    string | null
+  >(null);
+  const [createdBackupTarget, setCreatedBackupTarget] = useState<string | null>(
     null,
   );
-  const [createdBackupTarget, setCreatedBackupTarget] = useState<string | null>(null);
   const [restoringBackupName, setRestoringBackupName] = useState<string | null>(
     null,
   );
-  const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
-  const [deletingBackupName, setDeletingBackupName] = useState<string | null>(null);
+  const [restoredBackupName, setRestoredBackupName] = useState<string | null>(
+    null,
+  );
+  const [deletingBackupName, setDeletingBackupName] = useState<string | null>(
+    null,
+  );
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [previewError, setPreviewError] = useState(false);
@@ -689,31 +721,33 @@ export function DomainDetailPage() {
   const [phpVersion, setPHPVersion] = useState("");
   const [savedPHPVersion, setSavedPHPVersion] = useState("");
   const [phpForm, setPHPForm] = useState<PHPSettings>(initialPHPSettings);
-  const [savedPHPForm, setSavedPHPForm] = useState<PHPSettings>(initialPHPSettings);
-  const [phpFieldErrors, setPHPFieldErrors] = useState<Record<string, string>>({});
+  const [savedPHPForm, setSavedPHPForm] =
+    useState<PHPSettings>(initialPHPSettings);
+  const [phpFieldErrors, setPHPFieldErrors] = useState<Record<string, string>>(
+    {},
+  );
   const [phpLoading, setPHPLoading] = useState(false);
   const [phpSaving, setPHPSaving] = useState(false);
   const [phpError, setPHPError] = useState<string | null>(null);
-  const [phpRunningAction, setPHPRunningAction] = useState<"install" | "start" | null>(
-    null,
-  );
-  const [wordPressSummary, setWordPressSummary] = useState<WordPressSummary | null>(
-    null,
-  );
+  const [phpRunningAction, setPHPRunningAction] = useState<
+    "install" | "start" | null
+  >(null);
+  const [wordPressSummary, setWordPressSummary] =
+    useState<WordPressSummary | null>(null);
   const [wordPressSectionTab, setWordPressSectionTab] =
     useState<WordPressSectionTab>("dashboard");
-  const [wordPressDetails, setWordPressDetails] = useState<WordPressStatus | null>(null);
-  const [wordPressDetailsLoadedSections, setWordPressDetailsLoadedSections] = useState(
-    createWordPressDetailsLoadedState,
-  );
+  const [wordPressDetails, setWordPressDetails] =
+    useState<WordPressStatus | null>(null);
+  const [wordPressDetailsLoadedSections, setWordPressDetailsLoadedSections] =
+    useState(createWordPressDetailsLoadedState);
   const [wordPressDetailsLoadingSection, setWordPressDetailsLoadingSection] =
     useState<WordPressDetailsSection | null>(null);
   const [wordPressDetailsErrors, setWordPressDetailsErrors] = useState(
     createWordPressDetailsErrorState,
   );
-  const [wordPressRunningAction, setWordPressRunningAction] = useState<string | null>(
-    null,
-  );
+  const [wordPressRunningAction, setWordPressRunningAction] = useState<
+    string | null
+  >(null);
   const createdBackupTimeoutRef = useRef<number | null>(null);
   const restoredBackupTimeoutRef = useRef<number | null>(null);
   const wordPressDetailsRequestRef = useRef(0);
@@ -746,8 +780,8 @@ export function DomainDetailPage() {
     setFTPDialogOpen(false);
     setGitHubDialogOpen(false);
     setPHPDialogOpen(false);
+    setTemplateInstallDialogOpen(false);
     setTerminalDialogOpen(false);
-    setWordPressDialogOpen(false);
     setWebsiteCopyDialogOpen(false);
     setWebsiteCopyTargetHostname("");
     setWebsiteCopyReplaceTargetFiles(true);
@@ -797,19 +831,21 @@ export function DomainDetailPage() {
     wordPressDetailsRequestRef.current += 1;
 
     async function loadDomain() {
-      const [domainsResult, backupsResult, databasesResult] = await Promise.allSettled([
-        fetchDomains(),
-        fetchBackups(),
-        fetchMariaDBDatabases(),
-      ]);
+      const [domainsResult, backupsResult, databasesResult] =
+        await Promise.allSettled([
+          fetchDomains(),
+          fetchBackups(),
+          fetchMariaDBDatabases(),
+        ]);
       if (!active) {
         return;
       }
 
       if (domainsResult.status === "fulfilled") {
         const matchedDomain =
-          domainsResult.value.domains.find((record) => record.hostname === hostname) ??
-          null;
+          domainsResult.value.domains.find(
+            (record) => record.hostname === hostname,
+          ) ?? null;
         const nextGitHubForm = toGitHubFormState(matchedDomain);
 
         setSitesBasePath(domainsResult.value.sites_base_path);
@@ -819,9 +855,16 @@ export function DomainDetailPage() {
         setSavedGitHubForm(nextGitHubForm);
         setGitHubError(null);
         setGitHubFieldErrors({});
-        setLoadError(matchedDomain ? null : "The selected domain could not be found.");
+        setLoadError(
+          matchedDomain ? null : "The selected domain could not be found.",
+        );
       } else {
-        setLoadError(getErrorMessage(domainsResult.reason, "Failed to load domain details."));
+        setLoadError(
+          getErrorMessage(
+            domainsResult.reason,
+            "Failed to load domain details.",
+          ),
+        );
       }
 
       const backupErrors: string[] = [];
@@ -847,7 +890,9 @@ export function DomainDetailPage() {
         );
       }
 
-      setBackupDataError(backupErrors.length > 0 ? backupErrors.join(" ") : null);
+      setBackupDataError(
+        backupErrors.length > 0 ? backupErrors.join(" ") : null,
+      );
       setLoading(false);
       setBackupDataLoading(false);
     }
@@ -911,7 +956,9 @@ export function DomainDetailPage() {
 
         setPreviewLoaded(false);
         setPreviewError(!previewUrl);
-        setPreviewErrorMessage(getErrorMessage(error, "Preview is unavailable right now."));
+        setPreviewErrorMessage(
+          getErrorMessage(error, "Preview is unavailable right now."),
+        );
         setPreviewRefreshing(false);
       }
     }
@@ -951,7 +998,10 @@ export function DomainDetailPage() {
           return;
         }
         setPHPStatus(nextStatus);
-        const nextVersion = getSelectedPHPVersion(nextStatus, domain?.php_version);
+        const nextVersion = getSelectedPHPVersion(
+          nextStatus,
+          domain?.php_version,
+        );
         const nextRuntime = getPHPRuntimeStatus(nextStatus, nextVersion);
         const nextForm = toPHPSettingsForm(nextRuntime, domain?.php_settings);
         setPHPVersion(nextVersion);
@@ -986,7 +1036,13 @@ export function DomainDetailPage() {
         window.clearInterval(intervalId);
       }
     };
-  }, [domain?.hostname, domain?.kind, domain?.php_settings, phpDialogOpen, phpStatus?.state]);
+  }, [
+    domain?.hostname,
+    domain?.kind,
+    domain?.php_settings,
+    phpDialogOpen,
+    phpStatus?.state,
+  ]);
 
   useEffect(() => {
     if (!domain || domain.kind !== "Php site") {
@@ -1039,7 +1095,12 @@ export function DomainDetailPage() {
     }
 
     void loadWordPressDetails(wordPressDetailSection);
-  }, [domain?.hostname, domain?.kind, wordPressDetailSection, wordPressDetailsLoadedSections]);
+  }, [
+    domain?.hostname,
+    domain?.kind,
+    wordPressDetailSection,
+    wordPressDetailsLoadedSections,
+  ]);
 
   const filesPath = domain
     ? getFilesPathFromDomainTarget(
@@ -1065,7 +1126,7 @@ export function DomainDetailPage() {
   const activeDevToolActions =
     domain?.kind === "Php site"
       ? devToolActions
-      : devToolActions.filter((item) => item.title !== "WP Toolkit");
+      : devToolActions.filter((item) => item.title !== "Install PHP App");
 
   useEffect(() => {
     if (!websiteCopyDialogOpen) {
@@ -1114,10 +1175,15 @@ export function DomainDetailPage() {
           return;
         }
 
-        const message = getErrorMessage(error, "Failed to load Composer details.");
+        const message = getErrorMessage(
+          error,
+          "Failed to load Composer details.",
+        );
         setComposerHasManifest(false);
         setComposerPackages([]);
-        setComposerError(message === "file or directory not found" ? null : message);
+        setComposerError(
+          message === "file or directory not found" ? null : message,
+        );
       } finally {
         if (active) {
           setComposerLoading(false);
@@ -1199,7 +1265,10 @@ export function DomainDetailPage() {
       toast.success(`Created backup ${record.name}.`);
     } catch (error) {
       toast.error(
-        getErrorMessage(error, `Failed to create backup for ${domain.hostname}.`),
+        getErrorMessage(
+          error,
+          `Failed to create backup for ${domain.hostname}.`,
+        ),
       );
     } finally {
       setCreatingBackupTarget(null);
@@ -1231,12 +1300,16 @@ export function DomainDetailPage() {
       }
       setCreatedBackupTarget(name);
       createdBackupTimeoutRef.current = window.setTimeout(() => {
-        setCreatedBackupTarget((current) => (current === name ? null : current));
+        setCreatedBackupTarget((current) =>
+          current === name ? null : current,
+        );
         createdBackupTimeoutRef.current = null;
       }, 1500);
       toast.success(`Created local backup ${record.name}.`);
     } catch (error) {
-      toast.error(getErrorMessage(error, `Failed to create local backup for ${name}.`));
+      toast.error(
+        getErrorMessage(error, `Failed to create local backup for ${name}.`),
+      );
     } finally {
       setCreatingBackupTarget(null);
     }
@@ -1263,7 +1336,9 @@ export function DomainDetailPage() {
 
       if (
         domain &&
-        result.restored_sites?.some((restoredHostname) => restoredHostname === domain.hostname)
+        result.restored_sites?.some(
+          (restoredHostname) => restoredHostname === domain.hostname,
+        )
       ) {
         setPreviewRefreshing(true);
         setPreviewError(false);
@@ -1296,7 +1371,11 @@ export function DomainDetailPage() {
   }
 
   async function handleComposerAction(action: "install" | "update") {
-    if (!domain || composerManifestPath === null || composerRunningAction !== null) {
+    if (
+      !domain ||
+      composerManifestPath === null ||
+      composerRunningAction !== null
+    ) {
       return;
     }
 
@@ -1310,7 +1389,10 @@ export function DomainDetailPage() {
       setComposerPackages(parseComposerPackages(file.content));
       toast.success(`composer ${action} finished for ${domain.hostname}.`);
     } catch (error) {
-      const message = getErrorMessage(error, `Failed to run composer ${action}.`);
+      const message = getErrorMessage(
+        error,
+        `Failed to run composer ${action}.`,
+      );
       setComposerError(message);
       toast.error(message);
     } finally {
@@ -1329,11 +1411,14 @@ export function DomainDetailPage() {
     setGitHubFieldErrors({});
 
     try {
-      const updatedDomain = await updateDomainGitHubIntegration(domain.hostname, {
-        repository_url: nextForm.repositoryUrl.trim(),
-        auto_deploy_on_push: nextForm.autoDeployOnPush,
-        post_fetch_script: nextForm.postFetchScript.trim(),
-      });
+      const updatedDomain = await updateDomainGitHubIntegration(
+        domain.hostname,
+        {
+          repository_url: nextForm.repositoryUrl.trim(),
+          auto_deploy_on_push: nextForm.autoDeployOnPush,
+          post_fetch_script: nextForm.postFetchScript.trim(),
+        },
+      );
       const nextGitHubForm = toGitHubFormState(updatedDomain);
       setDomain(updatedDomain);
       setGitHubForm(nextGitHubForm);
@@ -1345,11 +1430,15 @@ export function DomainDetailPage() {
       );
       return updatedDomain;
     } catch (error) {
-      const message = getErrorMessage(error, "Failed to save GitHub integration.");
+      const message = getErrorMessage(
+        error,
+        "Failed to save GitHub integration.",
+      );
       setGitHubError(message);
       setGitHubFieldErrors(
         typeof error === "object" && error !== null && "fieldErrors" in error
-          ? ((error as { fieldErrors?: Record<string, string> }).fieldErrors ?? {})
+          ? ((error as { fieldErrors?: Record<string, string> }).fieldErrors ??
+              {})
           : {},
       );
       toast.error(message);
@@ -1483,8 +1572,14 @@ export function DomainDetailPage() {
         display_errors: phpForm.display_errors ?? "Off",
         disable_functions: phpForm.disable_functions ?? "",
       });
-      const nextRuntime = getPHPRuntimeStatus(phpStatus, updatedDomain.php_version);
-      const nextForm = toPHPSettingsForm(nextRuntime, updatedDomain.php_settings);
+      const nextRuntime = getPHPRuntimeStatus(
+        phpStatus,
+        updatedDomain.php_version,
+      );
+      const nextForm = toPHPSettingsForm(
+        nextRuntime,
+        updatedDomain.php_settings,
+      );
       setDomain(updatedDomain);
       setPHPVersion(updatedDomain.php_version ?? "");
       setSavedPHPVersion(updatedDomain.php_version ?? "");
@@ -1495,7 +1590,8 @@ export function DomainDetailPage() {
     } catch (error) {
       const phpSettingsError = error as DomainApiError;
       setPHPFieldErrors(phpSettingsError.fieldErrors ?? {});
-      const message = phpSettingsError.message || "PHP settings could not be saved.";
+      const message =
+        phpSettingsError.message || "PHP settings could not be saved.";
       setPHPError(message);
       toast.error(message);
     } finally {
@@ -1550,7 +1646,9 @@ export function DomainDetailPage() {
     }));
 
     try {
-      const nextStatus = await fetchDomainWordPressStatus(domain.hostname, { section });
+      const nextStatus = await fetchDomainWordPressStatus(domain.hostname, {
+        section,
+      });
       if (wordPressDetailsRequestRef.current !== requestID) {
         return;
       }
@@ -1569,7 +1667,10 @@ export function DomainDetailPage() {
 
       setWordPressDetailsErrors((current) => ({
         ...current,
-        [section]: getErrorMessage(error, `Failed to load WordPress ${section}.`),
+        [section]: getErrorMessage(
+          error,
+          `Failed to load WordPress ${section}.`,
+        ),
       }));
     } finally {
       if (wordPressDetailsRequestRef.current === requestID) {
@@ -1610,6 +1711,54 @@ export function DomainDetailPage() {
     setWordPressDetailsLoadingSection(null);
   }
 
+  async function refreshWordPressSummaryAfterTemplateInstall(
+    prefetchedStatus?: WordPressStatus | null,
+  ) {
+    if (prefetchedStatus) {
+      applyWordPressStatus(prefetchedStatus);
+      setWordPressSectionTab("dashboard");
+    }
+
+    if (!domain || domain.kind !== "Php site") {
+      setWordPressSummary(null);
+      setWordPressDetails(null);
+      setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
+      setWordPressDetailsLoadingSection(null);
+      setWordPressDetailsErrors(createWordPressDetailsErrorState());
+      setWordPressRunningAction(null);
+      return;
+    }
+
+    try {
+      const nextSummary = await fetchDomainWordPressSummary(domain.hostname);
+      setWordPressSummary(nextSummary);
+      if (!nextSummary.installed) {
+        setWordPressSectionTab("dashboard");
+        setWordPressDetails(null);
+        setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
+        setWordPressDetailsLoadingSection(null);
+        setWordPressDetailsErrors(createWordPressDetailsErrorState());
+        setWordPressRunningAction(null);
+      }
+    } catch {
+      setWordPressSummary(null);
+      setWordPressSectionTab("dashboard");
+      setWordPressDetails(null);
+      setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
+      setWordPressDetailsLoadingSection(null);
+      setWordPressDetailsErrors(createWordPressDetailsErrorState());
+      setWordPressRunningAction(null);
+    }
+  }
+
+  async function handleTemplateInstalled(result: InstallDomainTemplateResult) {
+    setPreviewRefreshing(true);
+    setPreviewError(false);
+    setPreviewErrorMessage(null);
+    setPreviewRefreshToken(Date.now());
+    await refreshWordPressSummaryAfterTemplateInstall(result.wordpress ?? null);
+  }
+
   async function handleWordPressExtensionAction(
     type: WordPressExtensionListType,
     name: string,
@@ -1624,9 +1773,18 @@ export function DomainDetailPage() {
     try {
       const nextStatus =
         type === "plugin"
-          ? await runDomainWordPressPluginAction(domain.hostname, { name, action })
-          : await runDomainWordPressThemeAction(domain.hostname, { name, action });
-      applyWordPressSectionStatus(nextStatus, type === "plugin" ? "plugins" : "themes");
+          ? await runDomainWordPressPluginAction(domain.hostname, {
+              name,
+              action,
+            })
+          : await runDomainWordPressThemeAction(domain.hostname, {
+              name,
+              action,
+            });
+      applyWordPressSectionStatus(
+        nextStatus,
+        type === "plugin" ? "plugins" : "themes",
+      );
       toast.success(
         `${type === "plugin" ? "Plugin" : "Theme"} ${name} ${getWordPressActionLabel(action).done}.`,
       );
@@ -1656,7 +1814,9 @@ export function DomainDetailPage() {
         onCreateSiteBackup={() => {
           void handleCreateSiteBackup();
         }}
-        createSiteBackupDisabled={creatingBackupTarget !== null || !showSiteBackups}
+        createSiteBackupDisabled={
+          creatingBackupTarget !== null || !showSiteBackups
+        }
         createSiteBackupBusy={creatingBackupTarget === siteBackupTargetKey}
         createSiteBackupDone={createdBackupTarget === siteBackupTargetKey}
         onCreateDatabaseBackup={(name) => {
@@ -1665,7 +1825,9 @@ export function DomainDetailPage() {
         createDatabaseBackupDisabled={creatingBackupTarget !== null}
         creatingDatabaseBackupName={creatingBackupTarget}
         createdDatabaseBackupName={
-          createdBackupTarget === siteBackupTargetKey ? null : createdBackupTarget
+          createdBackupTarget === siteBackupTargetKey
+            ? null
+            : createdBackupTarget
         }
         onRestoreBackup={(name) => {
           void handleRestoreBackup(name);
@@ -1694,6 +1856,15 @@ export function DomainDetailPage() {
           void handleComposerAction("update");
         }}
       />
+      {domain ? (
+        <DomainTemplateInstallDialog
+          open={templateInstallDialogOpen}
+          onOpenChange={setTemplateInstallDialogOpen}
+          hostname={domain.hostname}
+          documentRoot={documentRootDisplayPath}
+          onInstalled={(result) => handleTemplateInstalled(result)}
+        />
+      ) : null}
       <DomainFTPDialog
         open={ftpDialogOpen && domain !== null}
         domain={domain}
@@ -1755,15 +1926,6 @@ export function DomainDetailPage() {
         }}
         onDisconnect={() => {
           void handleDisconnectGitHub();
-        }}
-      />
-      <DomainWordPressDialog
-        open={wordPressDialogOpen && domain?.kind === "Php site"}
-        onOpenChange={setWordPressDialogOpen}
-        domain={domain?.kind === "Php site" ? domain : null}
-        onStatusChange={(status: WordPressStatus) => {
-          applyWordPressStatus(status);
-          setWordPressRunningAction(null);
         }}
       />
       {domain ? (
@@ -1869,7 +2031,11 @@ export function DomainDetailPage() {
           ) : domain ? (
             <span className="flex flex-wrap items-center gap-3">
               <span>{domain.hostname}</span>
-              <Badge asChild variant="outline" className="rounded-full align-middle">
+              <Badge
+                asChild
+                variant="outline"
+                className="rounded-full align-middle"
+              >
                 <a
                   href={siteUrl}
                   target="_blank"
@@ -1936,7 +2102,9 @@ export function DomainDetailPage() {
                               onError={() => {
                                 setPreviewLoaded(false);
                                 setPreviewError(true);
-                                setPreviewErrorMessage("Preview image could not be displayed.");
+                                setPreviewErrorMessage(
+                                  "Preview image could not be displayed.",
+                                );
                                 setPreviewRefreshing(false);
                               }}
                             />
@@ -1953,7 +2121,8 @@ export function DomainDetailPage() {
                                 </p>
                                 <p className="mt-1 text-xs text-[var(--app-text-muted)]">
                                   {previewError
-                                    ? previewErrorMessage ?? "Preview is unavailable right now."
+                                    ? (previewErrorMessage ??
+                                      "Preview is unavailable right now.")
                                     : previewRefreshing
                                       ? "Refreshing preview..."
                                       : "Loading cached preview..."}
@@ -2016,7 +2185,11 @@ export function DomainDetailPage() {
                     <div>
                       <dt className="text-[var(--app-text-muted)]">Caching</dt>
                       <dd className="mt-1 font-medium text-[var(--app-text)]">
-                        {domain ? (domain.cache_enabled ? "Enabled" : "Disabled") : "..."}
+                        {domain
+                          ? domain.cache_enabled
+                            ? "Enabled"
+                            : "Disabled"
+                          : "..."}
                       </dd>
                     </div>
                   </dl>
@@ -2055,7 +2228,9 @@ export function DomainDetailPage() {
 
                     if (item.title === "Website Copying" && domain !== null) {
                       if (websiteCopyTargets.length === 0) {
-                        toast.error("No other domains are available to receive a copy.");
+                        toast.error(
+                          "No other domains are available to receive a copy.",
+                        );
                         return;
                       }
 
@@ -2073,7 +2248,9 @@ export function DomainDetailPage() {
                     onItemClick={(item) => {
                       if (item.title === "PHP" && domain !== null) {
                         if (domain.kind !== "Php site") {
-                          toast.error("PHP settings are available only for PHP site domains.");
+                          toast.error(
+                            "PHP settings are available only for PHP site domains.",
+                          );
                           return;
                         }
 
@@ -2081,18 +2258,20 @@ export function DomainDetailPage() {
                         return;
                       }
 
-                      if (item.title === "PHP Composer" && domain !== null) {
-                        setComposerDialogOpen(true);
-                        return;
-                      }
-
-                      if (item.title === "WP Toolkit" && domain !== null) {
+                      if (item.title === "Install PHP App" && domain !== null) {
                         if (domain.kind !== "Php site") {
-                          toast.error("WP Toolkit is available only for PHP site domains.");
+                          toast.error(
+                            "PHP app installation is available only for PHP site domains.",
+                          );
                           return;
                         }
 
-                        setWordPressDialogOpen(true);
+                        setTemplateInstallDialogOpen(true);
+                        return;
+                      }
+
+                      if (item.title === "PHP Composer" && domain !== null) {
+                        setComposerDialogOpen(true);
                         return;
                       }
 
@@ -2106,7 +2285,9 @@ export function DomainDetailPage() {
 
                       if (item.title === "Terminal" && domain !== null) {
                         if (filesPath === null) {
-                          toast.error("Terminal is unavailable for this domain.");
+                          toast.error(
+                            "Terminal is unavailable for this domain.",
+                          );
                           return;
                         }
 
@@ -2169,7 +2350,8 @@ export function DomainDetailPage() {
                             WordPress {wordPressSummary.version || "Unknown"}
                           </div>
                           <p className="text-sm text-[var(--app-text-muted)]">
-                            Open Plugins, Themes, or Database to load more details.
+                            Open Plugins, Themes, or Database to load more
+                            details.
                           </p>
                         </div>
                       ) : currentWordPressDetailsLoading ? (
@@ -2187,7 +2369,8 @@ export function DomainDetailPage() {
                         <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-4 text-[13px] text-[var(--app-danger)]">
                           {currentWordPressDetailsError}
                         </div>
-                      ) : wordPressDetails && wordPressSectionTab === "plugins" ? (
+                      ) : wordPressDetails &&
+                        wordPressSectionTab === "plugins" ? (
                         wordPressDetails.plugins.length > 0 ? (
                           <WordPressExtensionList
                             type="plugin"
@@ -2195,7 +2378,11 @@ export function DomainDetailPage() {
                             busy={wordPressRunningAction !== null}
                             runningAction={wordPressRunningAction}
                             onAction={(name, action) => {
-                              void handleWordPressExtensionAction("plugin", name, action);
+                              void handleWordPressExtensionAction(
+                                "plugin",
+                                name,
+                                action,
+                              );
                             }}
                           />
                         ) : (
@@ -2203,7 +2390,8 @@ export function DomainDetailPage() {
                             No plugins were detected for this site.
                           </p>
                         )
-                      ) : wordPressDetails && wordPressSectionTab === "themes" ? (
+                      ) : wordPressDetails &&
+                        wordPressSectionTab === "themes" ? (
                         wordPressDetails.themes.length > 0 ? (
                           <WordPressExtensionList
                             type="theme"
@@ -2211,7 +2399,11 @@ export function DomainDetailPage() {
                             busy={wordPressRunningAction !== null}
                             runningAction={wordPressRunningAction}
                             onAction={(name, action) => {
-                              void handleWordPressExtensionAction("theme", name, action);
+                              void handleWordPressExtensionAction(
+                                "theme",
+                                name,
+                                action,
+                              );
                             }}
                           />
                         ) : (
@@ -2219,7 +2411,8 @@ export function DomainDetailPage() {
                             No themes were detected for this site.
                           </p>
                         )
-                      ) : wordPressDetails && wordPressSectionTab === "database" ? (
+                      ) : wordPressDetails &&
+                        wordPressSectionTab === "database" ? (
                         wordPressDetails.databases.length > 0 ? (
                           <div className="divide-y divide-[var(--app-border)]">
                             {wordPressDetails.databases.map((database) => (
