@@ -77,13 +77,33 @@ const templateOptions: Array<{
   },
 ];
 
+function suggestWordPressDatabaseName(hostname: string) {
+  const normalized = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, "")
+    .replace(/^www\./, "");
+
+  if (!normalized) {
+    return "wp_site";
+  }
+
+  const sanitized = normalized
+    .replace(/[.-]/g, "_")
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return `wp_${sanitized || "site"}`;
+}
+
 function createInstallForm(hostname: string): InstallFormState {
   return {
     template: "wordpress",
     clear_document_root: false,
     app_name: hostname,
     site_url: hostname ? `https://${hostname}` : "",
-    database_name: "",
+    database_name: suggestWordPressDatabaseName(hostname),
     site_title: hostname,
     admin_username: "admin",
     admin_email: hostname ? `admin@${hostname}` : "",
@@ -176,6 +196,28 @@ export function DomainTemplateInstallDialog({
     setForm((current) => ({
       ...current,
       [field]: value,
+    }));
+  }
+
+  function updateTemplate(template: DomainTemplateKey) {
+    setError(null);
+    setFieldErrors((current) => {
+      if (!current.template && !current.database_name) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next.template;
+      delete next.database_name;
+      return next;
+    });
+    setForm((current) => ({
+      ...current,
+      template,
+      database_name:
+        template === "wordpress" && !(current.database_name ?? "").trim()
+          ? suggestWordPressDatabaseName(hostname)
+          : current.database_name,
     }));
   }
 
@@ -274,7 +316,7 @@ export function DomainTemplateInstallDialog({
                 <Select
                   value={form.template}
                   onValueChange={(value) => {
-                    updateForm("template", value as DomainTemplateKey);
+                    updateTemplate(value as DomainTemplateKey);
                   }}
                   disabled={installing}
                 >

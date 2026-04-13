@@ -33,7 +33,6 @@ export type WordPressStatus = {
   cli_available: boolean;
   cli_path?: string;
   document_root: string;
-  suggested_database_name?: string;
   config_present: boolean;
   core_files_present: boolean;
   installed: boolean;

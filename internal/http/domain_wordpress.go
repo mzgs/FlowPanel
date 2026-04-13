@@ -28,7 +28,6 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/mariadb"
 
-	"golang.org/x/net/publicsuffix"
 )
 
 const wordPressActionTimeout = 10 * time.Minute
@@ -55,7 +54,6 @@ type wordPressStatus struct {
 	CLIAvailable     bool                 `json:"cli_available"`
 	CLIPath          string               `json:"cli_path,omitempty"`
 	DocumentRoot     string               `json:"document_root"`
-	SuggestedDBName  string               `json:"suggested_database_name,omitempty"`
 	ConfigPresent    bool                 `json:"config_present"`
 	CoreFilesPresent bool                 `json:"core_files_present"`
 	Installed        bool                 `json:"installed"`
@@ -183,11 +181,10 @@ func loadWordPressStatusSection(
 	}
 
 	status := wordPressStatus{
-		DocumentRoot:    targetPath,
-		SuggestedDBName: suggestedWordPressDatabaseName(hostname),
-		Plugins:         []wordPressExtension{},
-		Themes:          []wordPressExtension{},
-		Databases:       []wordPressDatabase{},
+		DocumentRoot: targetPath,
+		Plugins:      []wordPressExtension{},
+		Themes:       []wordPressExtension{},
+		Databases:    []wordPressDatabase{},
 	}
 	status.ConfigPresent = fileExists(filepath.Join(targetPath, "wp-config.php"))
 	status.CoreFilesPresent = wordPressCoreFilesPresent(targetPath)
@@ -908,29 +905,6 @@ func generateWordPressRandomString(byteLength int) (string, error) {
 	}
 
 	return hex.EncodeToString(randomBytes), nil
-}
-
-func suggestedWordPressDatabaseName(hostname string) string {
-	normalized := strings.TrimSpace(strings.ToLower(hostname))
-	normalized = strings.TrimSuffix(normalized, ".")
-	normalized = strings.TrimPrefix(normalized, "www.")
-	if normalized == "" {
-		return "wp_site"
-	}
-
-	if suffix, _ := publicsuffix.PublicSuffix(normalized); suffix != "" {
-		trimmed := strings.TrimSuffix(normalized, "."+suffix)
-		if trimmed != "" && trimmed != normalized {
-			normalized = trimmed
-		}
-	}
-
-	sanitized := sanitizeWordPressIdentifier(normalized)
-	if sanitized == "" {
-		sanitized = "site"
-	}
-
-	return "wp_" + sanitized
 }
 
 func sanitizeWordPressIdentifier(value string) string {
