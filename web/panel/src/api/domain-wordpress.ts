@@ -26,6 +26,7 @@ export type WordPressExtensionSearchResult = {
   version?: string;
   author?: string;
   last_updated?: string;
+  thumbnail_url?: string;
 };
 
 export type WordPressStatus = {

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	nethttp "net/http"
 	"net/mail"
@@ -46,6 +47,7 @@ var (
 	wordPressIdentifierPattern  = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 	wordPressTablePrefixPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 	wordPressUserPattern        = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	wordPressHTMLTagPattern     = regexp.MustCompile(`<[^>]+>`)
 	wordPressCLIMu              sync.Mutex
 )
 
@@ -124,11 +126,12 @@ type wordPressExtensionInstallInput struct {
 }
 
 type wordPressExtensionSearchResult struct {
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	Version     string `json:"version,omitempty"`
-	Author      string `json:"author,omitempty"`
-	LastUpdated string `json:"last_updated,omitempty"`
+	Name         string `json:"name"`
+	Slug         string `json:"slug"`
+	Version      string `json:"version,omitempty"`
+	Author       string `json:"author,omitempty"`
+	LastUpdated  string `json:"last_updated,omitempty"`
+	ThumbnailURL string `json:"thumbnail_url,omitempty"`
 }
 
 type wordPressStatusSection string
@@ -139,6 +142,8 @@ const (
 	wordPressStatusSectionThemes   wordPressStatusSection = "themes"
 	wordPressStatusSectionDatabase wordPressStatusSection = "database"
 	wordPressSearchResultsPerPage                         = "20"
+	wordPressPluginSearchURL                              = "https://api.wordpress.org/plugins/info/1.2/"
+	wordPressThemeSearchURL                               = "https://api.wordpress.org/themes/info/1.2/"
 )
 
 func parseWordPressStatusSection(value string) (wordPressStatusSection, error) {
@@ -461,22 +466,17 @@ func searchWordPressExtensions(
 		return nil, record, validation
 	}
 
-	output, _, err := runWordPressCommand(
-		ctx,
-		targetPath,
-		resource,
-		"search",
-		normalizedQuery,
-		"--per-page="+wordPressSearchResultsPerPage,
-		"--format=json",
-	)
+	var results []wordPressExtensionSearchResult
+	switch resource {
+	case "plugin":
+		results, err = loadWordPressPluginSearchResults(ctx, normalizedQuery)
+	case "theme":
+		results, err = loadWordPressThemeSearchResults(ctx, normalizedQuery)
+	default:
+		err = fmt.Errorf("unsupported WordPress resource %q", resource)
+	}
 	if err != nil {
 		return nil, record, err
-	}
-
-	var results []wordPressExtensionSearchResult
-	if err := json.Unmarshal(output, &results); err != nil {
-		return nil, record, fmt.Errorf("parse WordPress %s search results: %w", resource, err)
 	}
 
 	return results, record, nil
@@ -522,6 +522,166 @@ func installWordPressExtension(
 	}
 
 	return loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, section)
+}
+
+type wordPressPluginSearchResponse struct {
+	Plugins []struct {
+		Name        string            `json:"name"`
+		Slug        string            `json:"slug"`
+		Version     string            `json:"version"`
+		Author      string            `json:"author"`
+		LastUpdated string            `json:"last_updated"`
+		Icons       map[string]string `json:"icons"`
+	} `json:"plugins"`
+}
+
+type wordPressThemeSearchResponse struct {
+	Themes []struct {
+		Name          string `json:"name"`
+		Slug          string `json:"slug"`
+		Version       string `json:"version"`
+		LastUpdated   string `json:"last_updated"`
+		ScreenshotURL string `json:"screenshot_url"`
+		Author        struct {
+			DisplayName string `json:"display_name"`
+			Author      string `json:"author"`
+		} `json:"author"`
+	} `json:"themes"`
+}
+
+func loadWordPressPluginSearchResults(
+	ctx context.Context,
+	query string,
+) ([]wordPressExtensionSearchResult, error) {
+	searchURL, err := url.Parse(wordPressPluginSearchURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse WordPress plugin search URL: %w", err)
+	}
+
+	params := searchURL.Query()
+	params.Set("action", "query_plugins")
+	params.Set("request[search]", query)
+	params.Set("request[per_page]", wordPressSearchResultsPerPage)
+	params.Set("request[fields][icons]", "1")
+	searchURL.RawQuery = params.Encode()
+
+	var response wordPressPluginSearchResponse
+	if err := fetchWordPressSearchResponse(ctx, searchURL.String(), &response); err != nil {
+		return nil, err
+	}
+
+	results := make([]wordPressExtensionSearchResult, 0, len(response.Plugins))
+	for _, plugin := range response.Plugins {
+		results = append(results, wordPressExtensionSearchResult{
+			Name:         strings.TrimSpace(plugin.Name),
+			Slug:         strings.TrimSpace(plugin.Slug),
+			Version:      strings.TrimSpace(plugin.Version),
+			Author:       normalizeWordPressAuthor(plugin.Author),
+			LastUpdated:  strings.TrimSpace(plugin.LastUpdated),
+			ThumbnailURL: pickWordPressPluginIcon(plugin.Icons),
+		})
+	}
+
+	return results, nil
+}
+
+func loadWordPressThemeSearchResults(
+	ctx context.Context,
+	query string,
+) ([]wordPressExtensionSearchResult, error) {
+	searchURL, err := url.Parse(wordPressThemeSearchURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse WordPress theme search URL: %w", err)
+	}
+
+	params := searchURL.Query()
+	params.Set("action", "query_themes")
+	params.Set("request[search]", query)
+	params.Set("request[per_page]", wordPressSearchResultsPerPage)
+	searchURL.RawQuery = params.Encode()
+
+	var response wordPressThemeSearchResponse
+	if err := fetchWordPressSearchResponse(ctx, searchURL.String(), &response); err != nil {
+		return nil, err
+	}
+
+	results := make([]wordPressExtensionSearchResult, 0, len(response.Themes))
+	for _, theme := range response.Themes {
+		results = append(results, wordPressExtensionSearchResult{
+			Name:         strings.TrimSpace(theme.Name),
+			Slug:         strings.TrimSpace(theme.Slug),
+			Version:      strings.TrimSpace(theme.Version),
+			Author:       firstNonEmpty(strings.TrimSpace(theme.Author.DisplayName), strings.TrimSpace(theme.Author.Author)),
+			LastUpdated:  strings.TrimSpace(theme.LastUpdated),
+			ThumbnailURL: normalizeWordPressAssetURL(theme.ScreenshotURL),
+		})
+	}
+
+	return results, nil
+}
+
+func fetchWordPressSearchResponse(ctx context.Context, requestURL string, target any) error {
+	runCtx := ctx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	if _, ok := runCtx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(runCtx, 30*time.Second)
+		defer cancel()
+	}
+
+	request, err := nethttp.NewRequestWithContext(runCtx, nethttp.MethodGet, requestURL, nil)
+	if err != nil {
+		return fmt.Errorf("create WordPress search request: %w", err)
+	}
+
+	response, err := nethttp.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("request WordPress search results: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != nethttp.StatusOK {
+		return fmt.Errorf("request WordPress search results failed with status %d", response.StatusCode)
+	}
+
+	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
+		return fmt.Errorf("decode WordPress search results: %w", err)
+	}
+
+	return nil
+}
+
+func pickWordPressPluginIcon(icons map[string]string) string {
+	for _, key := range []string{"2x", "1x", "svg", "default"} {
+		if value := normalizeWordPressAssetURL(icons[key]); value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func normalizeWordPressAuthor(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+
+	return strings.TrimSpace(html.UnescapeString(wordPressHTMLTagPattern.ReplaceAllString(trimmed, "")))
+}
+
+func normalizeWordPressAssetURL(value string) string {
+	trimmed := strings.TrimSpace(value)
+	switch {
+	case trimmed == "":
+		return ""
+	case strings.HasPrefix(trimmed, "//"):
+		return "https:" + trimmed
+	default:
+		return trimmed
+	}
 }
 
 func resolveWordPressDomain(domains *domain.Service, hostname string) (domain.Record, string, error) {

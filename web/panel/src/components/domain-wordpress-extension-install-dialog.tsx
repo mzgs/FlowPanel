@@ -41,6 +41,36 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function WordPressExtensionSearchThumbnail({
+  item,
+}: {
+  item: WordPressExtensionSearchResult;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const showImage = Boolean(item.thumbnail_url) && !imageFailed;
+
+  return (
+    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-surface)]">
+      {showImage ? (
+        <img
+          src={item.thumbnail_url}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          onError={() => {
+            setImageFailed(true);
+          }}
+        />
+      ) : (
+        <BrandWordpress
+          className="h-5 w-5 text-[var(--app-text-muted)]"
+          stroke={1.8}
+        />
+      )}
+    </div>
+  );
+}
+
 export function DomainWordPressExtensionInstallDialog({
   open,
   onOpenChange,
@@ -231,8 +261,9 @@ export function DomainWordPressExtensionInstallDialog({
                   return (
                     <div
                       key={item.slug}
-                      className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto]"
+                      className="grid gap-3 px-4 py-4 md:grid-cols-[56px_minmax(0,1fr)_auto]"
                     >
+                      <WordPressExtensionSearchThumbnail item={item} />
                       <div className="min-w-0 space-y-1">
                         <div className="flex min-w-0 items-center gap-2">
                           <div
