@@ -67,6 +67,7 @@ import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { DomainPHPDialog } from "@/components/domain-php-dialog";
 import { DomainTemplateInstallDialog } from "@/components/domain-template-install-dialog";
+import { DomainWordPressExtensionInstallDialog } from "@/components/domain-wordpress-extension-install-dialog";
 import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
 import { PageHeader } from "@/components/page-header";
 import { TerminalWindow } from "@/components/terminal-window";
@@ -289,7 +290,7 @@ type DomainActionItem = {
 type WordPressSectionTab = "dashboard" | "plugins" | "themes" | "database";
 type WordPressDetailsSection = Exclude<WordPressSectionTab, "dashboard">;
 type WordPressExtensionListType = "plugin" | "theme";
-type WordPressExtensionAction = "activate" | "deactivate" | "delete";
+type WordPressExtensionAction = "activate" | "deactivate" | "delete" | "update";
 
 function getWordPressExtensionLabel(extension: WordPressExtension) {
   return extension.title?.trim() || extension.name;
@@ -320,6 +321,8 @@ function getWordPressActionLabel(action: WordPressExtensionAction) {
       return { idle: "Disable", busy: "Disabling", done: "disabled" };
     case "delete":
       return { idle: "Delete", busy: "Deleting", done: "deleted" };
+    case "update":
+      return { idle: "Update", busy: "Updating", done: "updated" };
   }
 }
 
@@ -349,6 +352,9 @@ function WordPressExtensionList({
           type === "plugin"
             ? canDeleteWordPressPlugin(item.status)
             : canDeleteWordPressTheme(item.status);
+        const updateVersion = item.update_version?.trim();
+        const canUpdate =
+          item.update === "available" || Boolean(updateVersion);
 
         return (
           <div
@@ -373,9 +379,30 @@ function WordPressExtensionList({
               {item.status || "Unknown"}
             </div>
             <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
-              {item.version || "Unknown"}
+              <div>{item.version || "Unknown"}</div>
+              {canUpdate ? (
+                <div className="mt-1 text-[11px] text-[var(--app-text-muted)]">
+                  Update {updateVersion ? `to ${updateVersion}` : "available"}
+                </div>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2 md:justify-end">
+              {canUpdate ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => {
+                    onAction(item.name, "update");
+                  }}
+                >
+                  {runningAction === `${type}:update:${item.name}`
+                    ? `${getWordPressActionLabel("update").busy}...`
+                    : updateVersion
+                      ? `Update to ${updateVersion}`
+                      : getWordPressActionLabel("update").idle}
+                </Button>
+              ) : null}
               {canEnable ? (
                 <Button
                   type="button"
@@ -748,6 +775,9 @@ export function DomainDetailPage() {
   const [wordPressRunningAction, setWordPressRunningAction] = useState<
     string | null
   >(null);
+  const [wordPressInstallDialogType, setWordPressInstallDialogType] = useState<
+    WordPressExtensionListType | null
+  >(null);
   const createdBackupTimeoutRef = useRef<number | null>(null);
   const restoredBackupTimeoutRef = useRef<number | null>(null);
   const wordPressDetailsRequestRef = useRef(0);
@@ -828,6 +858,7 @@ export function DomainDetailPage() {
     setWordPressDetailsLoadingSection(null);
     setWordPressDetailsErrors(createWordPressDetailsErrorState());
     setWordPressRunningAction(null);
+    setWordPressInstallDialogType(null);
     wordPressDetailsRequestRef.current += 1;
 
     async function loadDomain() {
@@ -1081,6 +1112,7 @@ export function DomainDetailPage() {
     setWordPressDetailsLoadingSection(null);
     setWordPressDetailsErrors(createWordPressDetailsErrorState());
     setWordPressRunningAction(null);
+    setWordPressInstallDialogType(null);
     wordPressDetailsRequestRef.current += 1;
   }, [domain?.hostname]);
 
@@ -1800,8 +1832,37 @@ export function DomainDetailPage() {
     }
   }
 
+  function getWordPressInstallDialogItems(type: WordPressExtensionListType) {
+    if (type === "plugin") {
+      return wordPressDetails?.plugins ?? [];
+    }
+
+    return wordPressDetails?.themes ?? [];
+  }
+
   return (
     <>
+      <DomainWordPressExtensionInstallDialog
+        open={wordPressInstallDialogType !== null && domain !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setWordPressInstallDialogType(null);
+          }
+        }}
+        hostname={domain?.hostname ?? hostname}
+        type={wordPressInstallDialogType ?? "plugin"}
+        installedItems={getWordPressInstallDialogItems(
+          wordPressInstallDialogType ?? "plugin",
+        )}
+        onInstalled={(status) => {
+          applyWordPressSectionStatus(
+            status,
+            (wordPressInstallDialogType ?? "plugin") === "plugin"
+              ? "plugins"
+              : "themes",
+          );
+        }}
+      />
       <DomainBackupRestoreDialog
         open={backupDialogOpen && domain !== null}
         onOpenChange={setBackupDialogOpen}
@@ -2371,46 +2432,92 @@ export function DomainDetailPage() {
                         </div>
                       ) : wordPressDetails &&
                         wordPressSectionTab === "plugins" ? (
-                        wordPressDetails.plugins.length > 0 ? (
-                          <WordPressExtensionList
-                            type="plugin"
-                            items={wordPressDetails.plugins}
-                            busy={wordPressRunningAction !== null}
-                            runningAction={wordPressRunningAction}
-                            onAction={(name, action) => {
-                              void handleWordPressExtensionAction(
-                                "plugin",
-                                name,
-                                action,
-                              );
-                            }}
-                          />
-                        ) : (
-                          <p className="text-sm text-[var(--app-text-muted)]">
-                            No plugins were detected for this site.
-                          </p>
-                        )
+                        <div className="space-y-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-medium text-[var(--app-text)]">
+                                Plugins
+                              </div>
+                              <div className="text-sm text-[var(--app-text-muted)]">
+                                {wordPressDetails.plugins.length} installed
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={wordPressRunningAction !== null}
+                              onClick={() => {
+                                setWordPressInstallDialogType("plugin");
+                              }}
+                            >
+                              Add New Plugin
+                            </Button>
+                          </div>
+                          {wordPressDetails.plugins.length > 0 ? (
+                            <WordPressExtensionList
+                              type="plugin"
+                              items={wordPressDetails.plugins}
+                              busy={wordPressRunningAction !== null}
+                              runningAction={wordPressRunningAction}
+                              onAction={(name, action) => {
+                                void handleWordPressExtensionAction(
+                                  "plugin",
+                                  name,
+                                  action,
+                                );
+                              }}
+                            />
+                          ) : (
+                            <p className="text-sm text-[var(--app-text-muted)]">
+                              No plugins were detected for this site.
+                            </p>
+                          )}
+                        </div>
                       ) : wordPressDetails &&
                         wordPressSectionTab === "themes" ? (
-                        wordPressDetails.themes.length > 0 ? (
-                          <WordPressExtensionList
-                            type="theme"
-                            items={wordPressDetails.themes}
-                            busy={wordPressRunningAction !== null}
-                            runningAction={wordPressRunningAction}
-                            onAction={(name, action) => {
-                              void handleWordPressExtensionAction(
-                                "theme",
-                                name,
-                                action,
-                              );
-                            }}
-                          />
-                        ) : (
-                          <p className="text-sm text-[var(--app-text-muted)]">
-                            No themes were detected for this site.
-                          </p>
-                        )
+                        <div className="space-y-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-medium text-[var(--app-text)]">
+                                Themes
+                              </div>
+                              <div className="text-sm text-[var(--app-text-muted)]">
+                                {wordPressDetails.themes.length} installed
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={wordPressRunningAction !== null}
+                              onClick={() => {
+                                setWordPressInstallDialogType("theme");
+                              }}
+                            >
+                              Add New Theme
+                            </Button>
+                          </div>
+                          {wordPressDetails.themes.length > 0 ? (
+                            <WordPressExtensionList
+                              type="theme"
+                              items={wordPressDetails.themes}
+                              busy={wordPressRunningAction !== null}
+                              runningAction={wordPressRunningAction}
+                              onAction={(name, action) => {
+                                void handleWordPressExtensionAction(
+                                  "theme",
+                                  name,
+                                  action,
+                                );
+                              }}
+                            />
+                          ) : (
+                            <p className="text-sm text-[var(--app-text-muted)]">
+                              No themes were detected for this site.
+                            </p>
+                          )}
+                        </div>
                       ) : wordPressDetails &&
                         wordPressSectionTab === "database" ? (
                         wordPressDetails.databases.length > 0 ? (

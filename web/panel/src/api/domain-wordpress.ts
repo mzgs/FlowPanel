@@ -20,6 +20,14 @@ export type WordPressExtension = {
   auto_update?: string;
 };
 
+export type WordPressExtensionSearchResult = {
+  name: string;
+  slug: string;
+  version?: string;
+  author?: string;
+  last_updated?: string;
+};
+
 export type WordPressStatus = {
   cli_available: boolean;
   cli_path?: string;
@@ -53,6 +61,10 @@ export type WordPressExtensionActionInput = {
   action: "activate" | "deactivate" | "delete" | "update";
 };
 
+export type WordPressExtensionInstallInput = {
+  slug: string;
+};
+
 export type WordPressApiError = Error & {
   fieldErrors?: Record<string, string>;
 };
@@ -63,6 +75,10 @@ type WordPressStatusPayload = {
 
 type WordPressSummaryPayload = {
   wordpress: WordPressSummary;
+};
+
+type WordPressExtensionSearchPayload = {
+  results: WordPressExtensionSearchResult[];
 };
 
 export async function fetchDomainWordPressSummary(
@@ -147,6 +163,53 @@ export async function runDomainWordPressThemeAction(
   return parseWordPressStatusResponse(
     response,
     `wordpress theme ${input.action}`,
+  );
+}
+
+export async function searchDomainWordPressExtensions(
+  hostname: string,
+  type: "plugin" | "theme",
+  query: string,
+): Promise<WordPressExtensionSearchResult[]> {
+  const searchParams = new URLSearchParams();
+  searchParams.set("q", query);
+
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/wordpress/${type === "plugin" ? "plugins" : "themes"}/search?${searchParams.toString()}`,
+    {
+      credentials: "include",
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readWordPressApiError(response, `search wordpress ${type}s`);
+  }
+
+  const payload = (await response.json()) as WordPressExtensionSearchPayload;
+  return payload.results;
+}
+
+export async function installDomainWordPressExtension(
+  hostname: string,
+  type: "plugin" | "theme",
+  input: WordPressExtensionInstallInput,
+): Promise<WordPressStatus> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/wordpress/${type === "plugin" ? "plugins" : "themes"}/install`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+
+  return parseWordPressStatusResponse(
+    response,
+    `install wordpress ${type} ${input.slug}`,
   );
 }
 

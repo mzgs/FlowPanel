@@ -446,6 +446,81 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 	}
 
+	domainsWordPressExtensionSearchHandler := func(resource string) stdhttp.HandlerFunc {
+		return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostname := chi.URLParam(r, "hostname")
+			results, _, err := searchWordPressExtensions(
+				r.Context(),
+				a.app.Domains,
+				hostname,
+				resource,
+				r.URL.Query().Get("q"),
+			)
+			if err != nil {
+				switch {
+				case errors.Is(err, domain.ErrNotFound):
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+				case errors.Is(err, errWordPressUnsupportedDomain), errors.Is(err, errWordPressNotInstalled):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+				case errors.Is(err, errWordPressCLIUnavailable):
+					writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+				default:
+					var validation domain.ValidationErrors
+					if errors.As(err, &validation) {
+						writeValidationFailed(w, map[string]string(validation))
+						return
+					}
+
+					a.app.Logger.Error("search wordpress extension failed", zap.String("hostname", hostname), zap.String("resource", resource), zap.Error(err))
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+				}
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"results": results})
+		}
+	}
+
+	domainsWordPressExtensionInstallHandler := func(resource string) stdhttp.HandlerFunc {
+		return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			hostname := chi.URLParam(r, "hostname")
+			var input wordPressExtensionInstallInput
+			if err := decodeJSON(r, &input); err != nil {
+				writeInvalidRequestBody(w)
+				return
+			}
+
+			status, record, err := installWordPressExtension(r.Context(), a.app.Domains, a.app.MariaDB, hostname, resource, input)
+			if err != nil {
+				switch {
+				case errors.Is(err, domain.ErrNotFound):
+					writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+				case errors.Is(err, errWordPressUnsupportedDomain), errors.Is(err, errWordPressNotInstalled):
+					writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+				case errors.Is(err, errWordPressCLIUnavailable):
+					writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+				default:
+					var validation domain.ValidationErrors
+					if errors.As(err, &validation) {
+						writeValidationFailed(w, map[string]string(validation))
+						return
+					}
+
+					a.app.Logger.Error("install wordpress extension failed", zap.String("hostname", hostname), zap.String("resource", resource), zap.String("slug", input.Slug), zap.Error(err))
+					a.mutationEvent(r.Context(), "domains", "wordpress_"+resource+"_install", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Failed to install WordPress %s %q for %q.", resource, input.Slug, hostname))
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+				}
+				return
+			}
+
+			if err := a.app.Domains.InvalidatePreview(record.Hostname); err != nil {
+				a.app.Logger.Warn("invalidate wordpress preview failed", zap.String("hostname", record.Hostname), zap.Error(err))
+			}
+			a.mutationEvent(r.Context(), "domains", "wordpress_"+resource+"_install", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Installed WordPress %s %q for %q.", resource, input.Slug, record.Hostname))
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"wordpress": status})
+		}
+	}
+
 	domainsGitHubUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hostname := chi.URLParam(r, "hostname")
 		record, ok := a.app.Domains.FindByHostname(hostname)
@@ -1075,6 +1150,10 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodHead, "/domains/{hostname}/wordpress/summary", domainsWordPressSummaryHandler)
 	r.Method(stdhttp.MethodGet, "/domains/{hostname}/wordpress", domainsWordPressStatusHandler)
 	r.Method(stdhttp.MethodHead, "/domains/{hostname}/wordpress", domainsWordPressStatusHandler)
+	r.Method(stdhttp.MethodGet, "/domains/{hostname}/wordpress/plugins/search", domainsWordPressExtensionSearchHandler("plugin"))
+	r.Method(stdhttp.MethodGet, "/domains/{hostname}/wordpress/themes/search", domainsWordPressExtensionSearchHandler("theme"))
+	r.Method(stdhttp.MethodPost, "/domains/{hostname}/wordpress/plugins/install", domainsWordPressExtensionInstallHandler("plugin"))
+	r.Method(stdhttp.MethodPost, "/domains/{hostname}/wordpress/themes/install", domainsWordPressExtensionInstallHandler("theme"))
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/wordpress/plugins/action", domainsWordPressExtensionActionHandler("plugin"))
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/wordpress/themes/action", domainsWordPressExtensionActionHandler("theme"))
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/php-settings", domainsPHPSettingsUpdateHandler)

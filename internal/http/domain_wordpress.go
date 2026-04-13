@@ -119,6 +119,18 @@ type wordPressExtensionActionInput struct {
 	Action string `json:"action"`
 }
 
+type wordPressExtensionInstallInput struct {
+	Slug string `json:"slug"`
+}
+
+type wordPressExtensionSearchResult struct {
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Version     string `json:"version,omitempty"`
+	Author      string `json:"author,omitempty"`
+	LastUpdated string `json:"last_updated,omitempty"`
+}
+
 type wordPressStatusSection string
 
 const (
@@ -126,6 +138,7 @@ const (
 	wordPressStatusSectionPlugins  wordPressStatusSection = "plugins"
 	wordPressStatusSectionThemes   wordPressStatusSection = "themes"
 	wordPressStatusSectionDatabase wordPressStatusSection = "database"
+	wordPressSearchResultsPerPage                         = "20"
 )
 
 func parseWordPressStatusSection(value string) (wordPressStatusSection, error) {
@@ -414,6 +427,98 @@ func runWordPressExtensionAction(
 		section = wordPressStatusSectionPlugins
 	case "theme":
 		section = wordPressStatusSectionThemes
+	}
+
+	return loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, section)
+}
+
+func searchWordPressExtensions(
+	ctx context.Context,
+	domains *domain.Service,
+	hostname string,
+	resource string,
+	query string,
+) ([]wordPressExtensionSearchResult, domain.Record, error) {
+	record, targetPath, err := resolveWordPressDomain(domains, hostname)
+	if err != nil {
+		return nil, domain.Record{}, err
+	}
+	if _, err := resolveWordPressCLI(ctx); err != nil {
+		return nil, record, err
+	}
+	if err := ensureWordPressInstalled(ctx, targetPath); err != nil {
+		return nil, record, err
+	}
+
+	normalizedQuery := strings.TrimSpace(query)
+	validation := domain.ValidationErrors{}
+	if normalizedQuery == "" {
+		validation["q"] = "Enter a search term."
+	} else if len([]rune(normalizedQuery)) < 2 {
+		validation["q"] = "Enter at least 2 characters."
+	}
+	if len(validation) > 0 {
+		return nil, record, validation
+	}
+
+	output, _, err := runWordPressCommand(
+		ctx,
+		targetPath,
+		resource,
+		"search",
+		normalizedQuery,
+		"--per-page="+wordPressSearchResultsPerPage,
+		"--format=json",
+	)
+	if err != nil {
+		return nil, record, err
+	}
+
+	var results []wordPressExtensionSearchResult
+	if err := json.Unmarshal(output, &results); err != nil {
+		return nil, record, fmt.Errorf("parse WordPress %s search results: %w", resource, err)
+	}
+
+	return results, record, nil
+}
+
+func installWordPressExtension(
+	ctx context.Context,
+	domains *domain.Service,
+	mariadbManager mariadb.Manager,
+	hostname string,
+	resource string,
+	input wordPressExtensionInstallInput,
+) (wordPressStatus, domain.Record, error) {
+	record, targetPath, err := resolveWordPressDomain(domains, hostname)
+	if err != nil {
+		return wordPressStatus{}, domain.Record{}, err
+	}
+	if _, err := resolveWordPressCLI(ctx); err != nil {
+		return wordPressStatus{}, record, err
+	}
+	if err := ensureWordPressInstalled(ctx, targetPath); err != nil {
+		return wordPressStatus{}, record, err
+	}
+
+	slug := strings.TrimSpace(input.Slug)
+	validation := domain.ValidationErrors{}
+	if slug == "" {
+		validation["slug"] = fmt.Sprintf("Select a %s to install.", resource)
+	} else if !wordPressIdentifierPattern.MatchString(slug) {
+		validation["slug"] = fmt.Sprintf("Select a valid %s slug.", resource)
+	}
+	if len(validation) > 0 {
+		return wordPressStatus{}, record, validation
+	}
+
+	if _, _, err := runWordPressCommand(ctx, targetPath, resource, "install", slug); err != nil {
+		return wordPressStatus{}, record, err
+	}
+
+	section := wordPressStatusSectionThemes
+	if resource == "plugin" {
+		section = wordPressStatusSectionPlugins
 	}
 
 	return loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, section)
