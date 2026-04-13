@@ -136,6 +136,25 @@ function getActionSuccessLabel(action: "activate" | "deactivate" | "delete" | "u
   }
 }
 
+function mergeWordPressStatus(
+  current: WordPressStatus | null,
+  nextStatus: WordPressStatus,
+  section?: "plugins" | "themes" | "database",
+): WordPressStatus {
+  if (!section || current === null) {
+    return nextStatus;
+  }
+
+  switch (section) {
+    case "plugins":
+      return { ...current, plugins: nextStatus.plugins };
+    case "themes":
+      return { ...current, themes: nextStatus.themes };
+    case "database":
+      return { ...current, databases: nextStatus.databases };
+  }
+}
+
 function WordPressExtensionsTable({
   type,
   items,
@@ -436,6 +455,7 @@ export function DomainWordPressDialog({
     successMessage: string,
     onValidationError?: (fieldErrors: Record<string, string>) => void,
     onSuccess?: () => void,
+    section?: "plugins" | "themes" | "database",
   ) {
     setRunningAction(actionKey);
     setError(null);
@@ -446,8 +466,9 @@ export function DomainWordPressDialog({
         return;
       }
 
-      setStatus(nextStatus);
-      onStatusChange?.(nextStatus);
+      const mergedStatus = mergeWordPressStatus(status, nextStatus, section);
+      setStatus(mergedStatus);
+      onStatusChange?.(mergedStatus);
       onSuccess?.();
       toast.success(successMessage);
     } catch (mutationError) {
@@ -535,6 +556,9 @@ export function DomainWordPressDialog({
       `plugin:${action}:${name}`,
       () => runDomainWordPressPluginAction(domain.hostname, { name, action }),
       `Plugin ${name} ${getActionSuccessLabel(action)}.`,
+      undefined,
+      undefined,
+      "plugins",
     );
   }
 
@@ -550,6 +574,9 @@ export function DomainWordPressDialog({
       `theme:${action}:${name}`,
       () => runDomainWordPressThemeAction(domain.hostname, { name, action }),
       `Theme ${name} ${getActionSuccessLabel(action)}.`,
+      undefined,
+      undefined,
+      "themes",
     );
   }
 

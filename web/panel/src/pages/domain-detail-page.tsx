@@ -1592,6 +1592,24 @@ export function DomainDetailPage() {
     setWordPressDetailsLoadingSection(null);
   }
 
+  function applyWordPressSectionStatus(
+    nextStatus: WordPressStatus,
+    section: WordPressDetailsSection,
+  ) {
+    setWordPressDetails((current) =>
+      mergeWordPressSectionDetails(current, nextStatus, section),
+    );
+    setWordPressDetailsLoadedSections((current) => ({
+      ...current,
+      [section]: true,
+    }));
+    setWordPressDetailsErrors((current) => ({
+      ...current,
+      [section]: null,
+    }));
+    setWordPressDetailsLoadingSection(null);
+  }
+
   async function handleWordPressExtensionAction(
     type: WordPressExtensionListType,
     name: string,
@@ -1608,7 +1626,7 @@ export function DomainDetailPage() {
         type === "plugin"
           ? await runDomainWordPressPluginAction(domain.hostname, { name, action })
           : await runDomainWordPressThemeAction(domain.hostname, { name, action });
-      applyWordPressStatus(nextStatus);
+      applyWordPressSectionStatus(nextStatus, type === "plugin" ? "plugins" : "themes");
       toast.success(
         `${type === "plugin" ? "Plugin" : "Theme"} ${name} ${getWordPressActionLabel(action).done}.`,
       );

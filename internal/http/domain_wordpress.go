@@ -486,7 +486,15 @@ func runWordPressExtensionAction(
 		return wordPressStatus{}, domain.Record{}, err
 	}
 
-	return loadWordPressStatus(ctx, domains, mariadbManager, hostname)
+	section := wordPressStatusSectionAll
+	switch resource {
+	case "plugin":
+		section = wordPressStatusSectionPlugins
+	case "theme":
+		section = wordPressStatusSectionThemes
+	}
+
+	return loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, section)
 }
 
 func resolveWordPressDomain(domains *domain.Service, hostname string) (domain.Record, string, error) {
