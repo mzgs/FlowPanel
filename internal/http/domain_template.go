@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +28,6 @@ type domainTemplateInstallInput struct {
 	Template          string `json:"template"`
 	ClearDocumentRoot bool   `json:"clear_document_root"`
 	AppName           string `json:"app_name"`
-	SiteURL           string `json:"site_url"`
 	DatabaseName      string `json:"database_name"`
 	SiteTitle         string `json:"site_title"`
 	AdminUsername     string `json:"admin_username"`
@@ -70,7 +68,6 @@ func installDomainTemplate(
 	if templateKey == "wordpress" {
 		status, record, err := installWordPress(ctx, domains, mariadbManager, hostname, wordPressInstallInput{
 			DatabaseName:      input.DatabaseName,
-			SiteURL:           input.SiteURL,
 			SiteTitle:         input.SiteTitle,
 			AdminUsername:     input.AdminUsername,
 			AdminEmail:        input.AdminEmail,
@@ -99,7 +96,7 @@ func installDomainTemplate(
 	}
 
 	definition := domainTemplateDefinitions[templateKey]
-	if err := installComposerTemplate(ctx, targetPath, templateKey, definition, input); err != nil {
+	if err := installComposerTemplate(ctx, targetPath, hostname, templateKey, definition, input); err != nil {
 		return domainTemplateInstallResult{}, record, err
 	}
 
@@ -131,7 +128,6 @@ func validateDomainTemplateInstallInput(
 	case "wordpress":
 		return validateWordPressInstallInput(wordPressInstallInput{
 			DatabaseName:  input.DatabaseName,
-			SiteURL:       input.SiteURL,
 			SiteTitle:     input.SiteTitle,
 			AdminUsername: input.AdminUsername,
 			AdminEmail:    input.AdminEmail,
@@ -139,11 +135,11 @@ func validateDomainTemplateInstallInput(
 			TablePrefix:   input.TablePrefix,
 		}, false)
 	case "laravel":
-		return validateTemplateAppInput(input, true, true)
+		return validateTemplateAppInput(input, true)
 	case "codeigniter":
-		return validateTemplateAppInput(input, false, true)
+		return nil
 	case "slim":
-		return validateTemplateAppInput(input, true, false)
+		return validateTemplateAppInput(input, true)
 	default:
 		return domain.ValidationErrors{
 			"template": "Select a supported application.",
@@ -154,23 +150,11 @@ func validateDomainTemplateInstallInput(
 func validateTemplateAppInput(
 	input domainTemplateInstallInput,
 	requireAppName bool,
-	requireSiteURL bool,
 ) domain.ValidationErrors {
 	validation := domain.ValidationErrors{}
 
 	if requireAppName && strings.TrimSpace(input.AppName) == "" {
 		validation["app_name"] = "Application name is required."
-	}
-
-	if requireSiteURL {
-		siteURL := strings.TrimSpace(input.SiteURL)
-		if siteURL == "" {
-			validation["site_url"] = "Site URL is required."
-		} else if parsedURL, err := url.Parse(siteURL); err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-			validation["site_url"] = "Enter a full site URL starting with http:// or https://."
-		} else if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-			validation["site_url"] = "Enter a full site URL starting with http:// or https://."
-		}
 	}
 
 	return validation
@@ -179,6 +163,7 @@ func validateTemplateAppInput(
 func installComposerTemplate(
 	ctx context.Context,
 	targetPath string,
+	hostname string,
 	templateKey string,
 	definition domainTemplateDefinition,
 	input domainTemplateInstallInput,
@@ -246,7 +231,7 @@ func installComposerTemplate(
 		}
 	}
 
-	if err := finalizeComposerTemplateInstall(runCtx, templateKey, stagePath, input); err != nil {
+	if err := finalizeComposerTemplateInstall(runCtx, hostname, templateKey, stagePath, input); err != nil {
 		return err
 	}
 
@@ -273,15 +258,16 @@ func installComposerTemplate(
 
 func finalizeComposerTemplateInstall(
 	ctx context.Context,
+	hostname string,
 	templateKey string,
 	stagePath string,
 	input domainTemplateInstallInput,
 ) error {
 	switch templateKey {
 	case "laravel":
-		return finalizeLaravelInstall(ctx, stagePath, input)
+		return finalizeLaravelInstall(ctx, hostname, stagePath, input)
 	case "codeigniter":
-		return finalizeCodeIgniterInstall(stagePath, input)
+		return finalizeCodeIgniterInstall(hostname, stagePath)
 	case "slim":
 		return finalizeSlimInstall(stagePath, input)
 	default:
@@ -291,6 +277,7 @@ func finalizeComposerTemplateInstall(
 
 func finalizeLaravelInstall(
 	ctx context.Context,
+	hostname string,
 	stagePath string,
 	input domainTemplateInstallInput,
 ) error {
@@ -302,7 +289,7 @@ func finalizeLaravelInstall(
 		if err := upsertEnvValue(envPath, "APP_NAME", quoteEnvValue(input.AppName)); err != nil {
 			return fmt.Errorf("update Laravel app name: %w", err)
 		}
-		if err := upsertEnvValue(envPath, "APP_URL", strings.TrimSpace(input.SiteURL)); err != nil {
+		if err := upsertEnvValue(envPath, "APP_URL", quoteEnvValue(defaultTemplateSiteURL(hostname))); err != nil {
 			return fmt.Errorf("update Laravel app url: %w", err)
 		}
 	}
@@ -331,7 +318,7 @@ func finalizeLaravelInstall(
 	return nil
 }
 
-func finalizeCodeIgniterInstall(stagePath string, input domainTemplateInstallInput) error {
+func finalizeCodeIgniterInstall(hostname string, stagePath string) error {
 	envPath := filepath.Join(stagePath, ".env")
 	if err := ensureTemplateFile(envPath, filepath.Join(stagePath, "env")); err != nil {
 		return err
@@ -340,7 +327,7 @@ func finalizeCodeIgniterInstall(stagePath string, input domainTemplateInstallInp
 		return nil
 	}
 
-	return upsertINIValue(envPath, "app.baseURL", quoteINIValue(ensureTrailingSlash(input.SiteURL)))
+	return upsertINIValue(envPath, "app.baseURL", quoteINIValue(ensureTrailingSlash(defaultTemplateSiteURL(hostname))))
 }
 
 func finalizeSlimInstall(stagePath string, input domainTemplateInstallInput) error {
@@ -431,4 +418,12 @@ func ensureTrailingSlash(value string) string {
 		return trimmed
 	}
 	return trimmed + "/"
+}
+
+func defaultTemplateSiteURL(hostname string) string {
+	trimmed := strings.TrimSpace(hostname)
+	if trimmed == "" {
+		return ""
+	}
+	return "https://" + trimmed
 }

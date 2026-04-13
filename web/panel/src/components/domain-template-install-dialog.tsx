@@ -7,9 +7,7 @@ import {
   type InstallDomainTemplateResult,
 } from "@/api/domains";
 import {
-  BrandWordpress,
   LoaderCircle,
-  Package,
 } from "@/components/icons/tabler-icons";
 import { PasswordInput } from "@/components/password-input";
 import { Button } from "@/components/ui/button";
@@ -29,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { toast } from "sonner";
 
 type DomainTemplateInstallDialogProps = {
@@ -100,9 +98,8 @@ function suggestWordPressDatabaseName(hostname: string) {
 function createInstallForm(hostname: string): InstallFormState {
   return {
     template: "wordpress",
-    clear_document_root: false,
+    clear_document_root: true,
     app_name: hostname,
-    site_url: hostname ? `https://${hostname}` : "",
     database_name: suggestWordPressDatabaseName(hostname),
     site_title: hostname,
     admin_username: "admin",
@@ -151,6 +148,7 @@ export function DomainTemplateInstallDialog({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [confirmInstallOpen, setConfirmInstallOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -158,6 +156,7 @@ export function DomainTemplateInstallDialog({
       setFieldErrors({});
       setError(null);
       setInstalling(false);
+      setConfirmInstallOpen(false);
       return;
     }
 
@@ -165,6 +164,7 @@ export function DomainTemplateInstallDialog({
     setFieldErrors({});
     setError(null);
     setInstalling(false);
+    setConfirmInstallOpen(false);
   }, [hostname, open]);
 
   const selectedTemplate =
@@ -172,8 +172,6 @@ export function DomainTemplateInstallDialog({
     templateOptions[0];
   const isWordPress = form.template === "wordpress";
   const showAppName = form.template === "laravel" || form.template === "slim";
-  const showSiteURL =
-    form.template === "laravel" || form.template === "codeigniter";
 
   function clearFieldError(field: string) {
     setFieldErrors((current) => {
@@ -222,6 +220,7 @@ export function DomainTemplateInstallDialog({
   }
 
   async function handleInstall() {
+    setConfirmInstallOpen(false);
     setInstalling(true);
     setError(null);
     setFieldErrors({});
@@ -263,100 +262,43 @@ export function DomainTemplateInstallDialog({
             </div>
           ) : null}
 
-          <section className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
-              <div className="text-xs text-[var(--app-text-muted)]">
-                Document root
-              </div>
-              <div className="mt-2 break-all font-mono text-[13px] text-[var(--app-text)]">
-                {documentRoot || "Loading..."}
-              </div>
-            </div>
-            <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
-              <div className="text-xs text-[var(--app-text-muted)]">
-                Installer
-              </div>
-              <div className="mt-2 flex items-start gap-2">
-                {isWordPress ? (
-                  <BrandWordpress
-                    className="mt-0.5 h-4 w-4 text-[var(--app-text-muted)]"
-                    stroke={1.8}
-                  />
-                ) : (
-                  <Package
-                    className="mt-0.5 h-4 w-4 text-[var(--app-text-muted)]"
-                    stroke={1.8}
-                  />
-                )}
-                <div className="space-y-1">
-                  <div className="text-sm font-medium text-[var(--app-text)]">
-                    {selectedTemplate.label}
-                  </div>
-                  <div className="text-[13px] leading-5 text-[var(--app-text-muted)]">
-                    {selectedTemplate.description}
-                  </div>
-                  {selectedTemplate.packageName ? (
-                    <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
-                      composer create-project {selectedTemplate.packageName}
-                    </div>
-                  ) : (
-                    <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
-                      wp core download && wp core install
-                    </div>
-                  )}
-                </div>
-              </div>
+          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+            <div className="space-y-2">
+              <Label htmlFor="domain_template_type">Application</Label>
+              <Select
+                value={form.template}
+                onValueChange={(value) => {
+                  updateTemplate(value as DomainTemplateKey);
+                }}
+                disabled={installing}
+              >
+                <SelectTrigger id="domain_template_type" className="w-full">
+                  <SelectValue placeholder="Select an application" />
+                </SelectTrigger>
+                <SelectContent>
+                  {templateOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {fieldErrors.template ? (
+                <p className="text-[12px] text-[var(--app-danger)]">
+                  {fieldErrors.template}
+                </p>
+              ) : null}
             </div>
           </section>
 
           <section className="space-y-4 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="domain_template_type">Application</Label>
-                <Select
-                  value={form.template}
-                  onValueChange={(value) => {
-                    updateTemplate(value as DomainTemplateKey);
-                  }}
-                  disabled={installing}
-                >
-                  <SelectTrigger id="domain_template_type" className="w-full">
-                    <SelectValue placeholder="Select an application" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {templateOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {fieldErrors.template ? (
-                  <p className="text-[12px] text-[var(--app-danger)]">
-                    {fieldErrors.template}
-                  </p>
-                ) : null}
+            <div className="space-y-1">
+              <div className="text-sm font-medium text-[var(--app-text)]">
+                {selectedTemplate.label} settings
               </div>
-
-              <div className="flex items-center gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 md:mt-7">
-                <Switch
-                  id="domain_template_clear_document_root"
-                  checked={form.clear_document_root}
-                  disabled={installing}
-                  onCheckedChange={(checked) => {
-                    updateForm("clear_document_root", checked);
-                  }}
-                />
-                <div className="space-y-1">
-                  <Label htmlFor="domain_template_clear_document_root">
-                    Replace existing files
-                  </Label>
-                  <p className="text-[12px] leading-5 text-[var(--app-text-muted)]">
-                    Clear the current document root before copying the new
-                    application.
-                  </p>
-                </div>
-              </div>
+              <p className="text-[13px] leading-5 text-[var(--app-text-muted)]">
+                {selectedTemplate.description}
+              </p>
             </div>
 
             {isWordPress ? (
@@ -395,23 +337,6 @@ export function DomainTemplateInstallDialog({
                   {fieldErrors.table_prefix ? (
                     <p className="text-[12px] text-[var(--app-danger)]">
                       {fieldErrors.table_prefix}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="template_site_url">Site URL</Label>
-                  <Input
-                    id="template_site_url"
-                    value={form.site_url ?? ""}
-                    disabled={installing}
-                    onChange={(event) => {
-                      updateForm("site_url", event.target.value);
-                    }}
-                  />
-                  {fieldErrors.site_url ? (
-                    <p className="text-[12px] text-[var(--app-danger)]">
-                      {fieldErrors.site_url}
                     </p>
                   ) : null}
                 </div>
@@ -491,16 +416,16 @@ export function DomainTemplateInstallDialog({
                     </p>
                   ) : null}
                 </div>
+
+                <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 text-[13px] leading-6 text-[var(--app-text-muted)] md:col-span-2">
+                  {`FlowPanel will download WordPress, use https://${hostname} as the site URL, create the database automatically, and finish the WP-CLI install with your admin details.`}
+                </div>
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
                 {showAppName ? (
                   <div className="space-y-2">
-                    <Label htmlFor="template_app_name">
-                      {form.template === "slim"
-                        ? "Project name"
-                        : "Application name"}
-                    </Label>
+                    <Label htmlFor="template_app_name">Application name</Label>
                     <Input
                       id="template_app_name"
                       value={form.app_name ?? ""}
@@ -517,31 +442,12 @@ export function DomainTemplateInstallDialog({
                   </div>
                 ) : null}
 
-                {showSiteURL ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="template_php_site_url">Site URL</Label>
-                    <Input
-                      id="template_php_site_url"
-                      value={form.site_url ?? ""}
-                      disabled={installing}
-                      onChange={(event) => {
-                        updateForm("site_url", event.target.value);
-                      }}
-                    />
-                    {fieldErrors.site_url ? (
-                      <p className="text-[12px] text-[var(--app-danger)]">
-                        {fieldErrors.site_url}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
-
                 <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 text-[13px] leading-6 text-[var(--app-text-muted)] md:col-span-2">
                   {form.template === "laravel"
-                    ? "FlowPanel will create the project with Composer, update APP_NAME and APP_URL, and generate the Laravel app key."
+                    ? `FlowPanel will create the project with Composer, set APP_NAME, use https://${hostname} as APP_URL, and generate the Laravel app key.`
                     : form.template === "codeigniter"
-                      ? "FlowPanel will create the project with Composer and write the configured base URL into the generated .env file."
-                      : "FlowPanel will create the Slim skeleton with Composer and keep the generated project structure intact."}
+                      ? `FlowPanel will create the project with Composer and write https://${hostname}/ into the generated .env file as the base URL.`
+                      : "FlowPanel will create the Slim skeleton with Composer, set APP_NAME, and keep the generated project structure intact."}
                 </div>
               </div>
             )}
@@ -550,7 +456,9 @@ export function DomainTemplateInstallDialog({
               <Button
                 type="button"
                 disabled={installing}
-                onClick={() => void handleInstall()}
+                onClick={() => {
+                  setConfirmInstallOpen(true);
+                }}
               >
                 {installing ? (
                   <>
@@ -565,6 +473,24 @@ export function DomainTemplateInstallDialog({
           </section>
         </div>
       </DialogContent>
+
+      <ActionConfirmDialog
+        open={confirmInstallOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !installing) {
+            setConfirmInstallOpen(false);
+          }
+        }}
+        title={`Install ${selectedTemplate.label}`}
+        desc={`Installing ${selectedTemplate.label} will delete the current site content in ${documentRoot || "the document root"} before the new application is copied.`}
+        confirmText="Install app"
+        destructive
+        isLoading={installing}
+        handleConfirm={() => {
+          void handleInstall();
+        }}
+        className="sm:max-w-md"
+      />
     </Dialog>
   );
 }

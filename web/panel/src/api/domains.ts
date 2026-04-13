@@ -89,7 +89,6 @@ export type InstallDomainTemplateInput = {
   template: DomainTemplateKey;
   clear_document_root: boolean;
   app_name?: string;
-  site_url?: string;
   database_name?: string;
   site_title?: string;
   admin_username?: string;

@@ -27,7 +27,6 @@ import (
 	"flowpanel/internal/config"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/mariadb"
-
 )
 
 const wordPressActionTimeout = 10 * time.Minute
@@ -105,7 +104,6 @@ type wordPressDatabaseConfig struct {
 
 type wordPressInstallInput struct {
 	DatabaseName      string `json:"database_name"`
-	SiteURL           string `json:"site_url"`
 	SiteTitle         string `json:"site_title"`
 	AdminUsername     string `json:"admin_username"`
 	AdminEmail        string `json:"admin_email"`
@@ -371,7 +369,7 @@ func installWordPress(
 		targetPath,
 		"core",
 		"install",
-		"--url="+strings.TrimSpace(input.SiteURL),
+		"--url="+defaultTemplateSiteURL(hostname),
 		"--title="+strings.TrimSpace(input.SiteTitle),
 		"--admin_user="+strings.TrimSpace(input.AdminUsername),
 		"--admin_email="+strings.TrimSpace(input.AdminEmail),
@@ -771,7 +769,6 @@ func validateWordPressInstallInput(input wordPressInstallInput, configPresent bo
 	validation := domain.ValidationErrors{}
 
 	databaseName := strings.TrimSpace(input.DatabaseName)
-	siteURL := strings.TrimSpace(input.SiteURL)
 	siteTitle := strings.TrimSpace(input.SiteTitle)
 	adminUsername := strings.TrimSpace(input.AdminUsername)
 	adminEmail := strings.TrimSpace(input.AdminEmail)
@@ -784,14 +781,6 @@ func validateWordPressInstallInput(input wordPressInstallInput, configPresent bo
 		} else if isReservedWordPressDatabaseName(databaseName) {
 			validation["database_name"] = "Choose a different database name."
 		}
-	}
-
-	if siteURL == "" {
-		validation["site_url"] = "Site URL is required."
-	} else if parsedURL, err := url.Parse(siteURL); err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		validation["site_url"] = "Enter a full site URL starting with http:// or https://."
-	} else if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		validation["site_url"] = "Enter a full site URL starting with http:// or https://."
 	}
 
 	if siteTitle == "" {
