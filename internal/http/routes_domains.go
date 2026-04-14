@@ -333,7 +333,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
 			case errors.Is(err, errDomainTemplateUnsupportedDomain), errors.Is(err, errDomainTemplateInstallDirectoryDirty), errors.Is(err, errWordPressAlreadyInstalled), errors.Is(err, errWordPressInstallDirectoryDirty):
 				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
-			case errors.Is(err, errComposerUnavailable), errors.Is(err, errWordPressCLIUnavailable), errors.Is(err, errWordPressDatabaseUnavailable):
+			case errors.Is(err, errComposerUnavailable), errors.Is(err, errWordPressCLIUnavailable), errors.Is(err, errWordPressDatabaseUnavailable), errors.Is(err, errDomainTemplateDatabaseUnavailable):
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 			default:
 				var validation domain.ValidationErrors

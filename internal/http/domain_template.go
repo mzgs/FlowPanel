@@ -3,6 +3,9 @@ package httpx
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +25,7 @@ const domainTemplateActionTimeout = 10 * time.Minute
 var (
 	errDomainTemplateUnsupportedDomain     = errors.New("PHP app installation is available only for PHP site domains")
 	errDomainTemplateInstallDirectoryDirty = errors.New("document root is not empty, so installation was refused")
+	errDomainTemplateDatabaseUnavailable   = errors.New("MariaDB is not configured on this server")
 )
 
 type domainTemplateInstallInput struct {
@@ -46,8 +50,17 @@ type domainTemplateDefinition struct {
 }
 
 var domainTemplateDefinitions = map[string]domainTemplateDefinition{
+	"symfony": {
+		packageName: "symfony/skeleton",
+	},
 	"laravel": {
 		packageName: "laravel/laravel",
+	},
+	"octobercms": {
+		packageName: "october/october",
+	},
+	"cakephp": {
+		packageName: "cakephp/app",
 	},
 	"codeigniter": {
 		packageName: "codeigniter4/appstarter",
@@ -96,7 +109,7 @@ func installDomainTemplate(
 	}
 
 	definition := domainTemplateDefinitions[templateKey]
-	if err := installComposerTemplate(ctx, targetPath, hostname, templateKey, definition, input); err != nil {
+	if err := installComposerTemplate(ctx, mariadbManager, targetPath, hostname, templateKey, definition, input); err != nil {
 		return domainTemplateInstallResult{}, record, err
 	}
 
@@ -134,12 +147,18 @@ func validateDomainTemplateInstallInput(
 			AdminPassword: input.AdminPassword,
 			TablePrefix:   input.TablePrefix,
 		}, false)
+	case "symfony":
+		return nil
 	case "laravel":
-		return validateTemplateAppInput(input, true)
+		return validateTemplateInstallFields(input, true, false)
+	case "octobercms":
+		return validateTemplateInstallFields(input, true, true)
+	case "cakephp":
+		return nil
 	case "codeigniter":
 		return nil
 	case "slim":
-		return validateTemplateAppInput(input, true)
+		return validateTemplateInstallFields(input, true, false)
 	default:
 		return domain.ValidationErrors{
 			"template": "Select a supported application.",
@@ -147,14 +166,18 @@ func validateDomainTemplateInstallInput(
 	}
 }
 
-func validateTemplateAppInput(
+func validateTemplateInstallFields(
 	input domainTemplateInstallInput,
 	requireAppName bool,
+	requireDatabase bool,
 ) domain.ValidationErrors {
 	validation := domain.ValidationErrors{}
 
 	if requireAppName && strings.TrimSpace(input.AppName) == "" {
 		validation["app_name"] = "Application name is required."
+	}
+	if requireDatabase && strings.TrimSpace(input.DatabaseName) == "" {
+		validation["database_name"] = "Database name is required."
 	}
 
 	return validation
@@ -162,6 +185,7 @@ func validateTemplateAppInput(
 
 func installComposerTemplate(
 	ctx context.Context,
+	mariadbManager mariadb.Manager,
 	targetPath string,
 	hostname string,
 	templateKey string,
@@ -202,36 +226,23 @@ func installComposerTemplate(
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(
+	composerEnv := append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1")
+	if err := runTemplateCommand(
 		runCtx,
+		stageRoot,
+		composerEnv,
+		"template installation",
 		composerPath,
 		"create-project",
 		"--no-interaction",
 		"--no-progress",
 		definition.packageName,
 		stagePath,
-	)
-	cmd.Env = append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1")
-
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-
-	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(output.String())
-		switch {
-		case errors.Is(runCtx.Err(), context.DeadlineExceeded):
-			return fmt.Errorf("template installation timed out")
-		case errors.Is(runCtx.Err(), context.Canceled):
-			return fmt.Errorf("template installation was canceled")
-		case message != "":
-			return fmt.Errorf("template installation failed: %s", message)
-		default:
-			return fmt.Errorf("template installation failed: %w", err)
-		}
+	); err != nil {
+		return err
 	}
 
-	if err := finalizeComposerTemplateInstall(runCtx, hostname, templateKey, stagePath, input); err != nil {
+	if err := finalizeComposerTemplateInstall(runCtx, mariadbManager, hostname, templateKey, stagePath, input); err != nil {
 		return err
 	}
 
@@ -258,14 +269,21 @@ func installComposerTemplate(
 
 func finalizeComposerTemplateInstall(
 	ctx context.Context,
+	mariadbManager mariadb.Manager,
 	hostname string,
 	templateKey string,
 	stagePath string,
 	input domainTemplateInstallInput,
 ) error {
 	switch templateKey {
+	case "symfony":
+		return finalizeSymfonyInstall(ctx, stagePath)
 	case "laravel":
 		return finalizeLaravelInstall(ctx, hostname, stagePath, input)
+	case "octobercms":
+		return finalizeOctoberCMSInstall(ctx, mariadbManager, hostname, stagePath, input)
+	case "cakephp":
+		return nil
 	case "codeigniter":
 		return finalizeCodeIgniterInstall(hostname, stagePath)
 	case "slim":
@@ -273,6 +291,25 @@ func finalizeComposerTemplateInstall(
 	default:
 		return nil
 	}
+}
+
+func finalizeSymfonyInstall(ctx context.Context, stagePath string) error {
+	composerPath, err := exec.LookPath("composer")
+	if err != nil {
+		return errComposerUnavailable
+	}
+
+	return runTemplateCommand(
+		ctx,
+		stagePath,
+		append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1"),
+		"symfony setup",
+		composerPath,
+		"require",
+		"--no-interaction",
+		"--no-progress",
+		"webapp",
+	)
 }
 
 func finalizeLaravelInstall(
@@ -299,23 +336,16 @@ func finalizeLaravelInstall(
 		return fmt.Errorf("php is required to finish Laravel setup")
 	}
 
-	cmd := exec.CommandContext(ctx, phpPath, "artisan", "key:generate", "--force")
-	cmd.Dir = stagePath
-	cmd.Env = os.Environ()
-
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-
-	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(output.String())
-		if message != "" {
-			return fmt.Errorf("laravel setup failed: %s", message)
-		}
-		return fmt.Errorf("laravel setup failed: %w", err)
-	}
-
-	return nil
+	return runTemplateCommand(
+		ctx,
+		stagePath,
+		os.Environ(),
+		"laravel setup",
+		phpPath,
+		"artisan",
+		"key:generate",
+		"--force",
+	)
 }
 
 func finalizeCodeIgniterInstall(hostname string, stagePath string) error {
@@ -346,6 +376,78 @@ func finalizeSlimInstall(stagePath string, input domainTemplateInstallInput) err
 	}
 
 	return nil
+}
+
+func finalizeOctoberCMSInstall(
+	ctx context.Context,
+	mariadbManager mariadb.Manager,
+	hostname string,
+	stagePath string,
+	input domainTemplateInstallInput,
+) error {
+	envPath := filepath.Join(stagePath, ".env")
+	if err := ensureTemplateFile(envPath, filepath.Join(stagePath, ".env.example")); err != nil {
+		return err
+	}
+
+	database, err := createDomainTemplateDatabase(
+		ctx,
+		mariadbManager,
+		hostname,
+		strings.TrimSpace(input.DatabaseName),
+		"ocu",
+	)
+	if err != nil {
+		return err
+	}
+
+	if fileExists(envPath) {
+		updates := map[string]string{
+			"APP_NAME":      quoteEnvValue(input.AppName),
+			"APP_URL":       quoteEnvValue(defaultTemplateSiteURL(hostname)),
+			"DB_CONNECTION": quoteEnvValue("mysql"),
+			"DB_HOST":       quoteEnvValue(defaultTemplateDatabaseHost(database.Host)),
+			"DB_PORT":       quoteEnvValue("3306"),
+			"DB_DATABASE":   quoteEnvValue(database.Name),
+			"DB_USERNAME":   quoteEnvValue(database.Username),
+			"DB_PASSWORD":   quoteEnvValue(database.Password),
+		}
+
+		for key, value := range updates {
+			if err := upsertEnvValue(envPath, key, value); err != nil {
+				return fmt.Errorf("update October CMS %s: %w", strings.ToLower(key), err)
+			}
+		}
+	}
+
+	phpPath, err := exec.LookPath("php")
+	if err != nil {
+		return fmt.Errorf("php is required to finish October CMS setup")
+	}
+
+	if err := runTemplateCommand(
+		ctx,
+		stagePath,
+		os.Environ(),
+		"october cms setup",
+		phpPath,
+		"artisan",
+		"key:generate",
+		"--force",
+	); err != nil {
+		return err
+	}
+
+	return runTemplateCommand(
+		ctx,
+		stagePath,
+		os.Environ(),
+		"october cms setup",
+		phpPath,
+		"artisan",
+		"october:migrate",
+		"--force",
+	)
 }
 
 func ensureTemplateFile(destinationPath string, sourcePath string) error {
@@ -420,10 +522,155 @@ func ensureTrailingSlash(value string) string {
 	return trimmed + "/"
 }
 
+func defaultTemplateDatabaseHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "localhost"
+	}
+
+	return host
+}
+
 func defaultTemplateSiteURL(hostname string) string {
 	trimmed := strings.TrimSpace(hostname)
 	if trimmed == "" {
 		return ""
 	}
 	return "https://" + trimmed
+}
+
+func runTemplateCommand(
+	ctx context.Context,
+	dir string,
+	env []string,
+	failureLabel string,
+	command string,
+	args ...string,
+) error {
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(output.String())
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			return fmt.Errorf("%s timed out", failureLabel)
+		case errors.Is(ctx.Err(), context.Canceled):
+			return fmt.Errorf("%s was canceled", failureLabel)
+		case message != "":
+			return fmt.Errorf("%s failed: %s", failureLabel, message)
+		default:
+			return fmt.Errorf("%s failed: %w", failureLabel, err)
+		}
+	}
+
+	return nil
+}
+
+func createDomainTemplateDatabase(
+	ctx context.Context,
+	mariadbManager mariadb.Manager,
+	hostname string,
+	name string,
+	usernamePrefix string,
+) (mariadb.DatabaseRecord, error) {
+	if mariadbManager == nil {
+		return mariadb.DatabaseRecord{}, errDomainTemplateDatabaseUnavailable
+	}
+
+	username, err := generateTemplateDatabaseUsername(name, usernamePrefix)
+	if err != nil {
+		return mariadb.DatabaseRecord{}, fmt.Errorf("generate database username: %w", err)
+	}
+	password, err := generateTemplateDatabasePassword()
+	if err != nil {
+		return mariadb.DatabaseRecord{}, fmt.Errorf("generate database password: %w", err)
+	}
+
+	record, err := mariadbManager.CreateDatabase(ctx, mariadb.CreateDatabaseInput{
+		Name:     name,
+		Username: username,
+		Password: password,
+		Domain:   hostname,
+	})
+	if err == nil {
+		return record, nil
+	}
+
+	var validation mariadb.ValidationErrors
+	switch {
+	case errors.As(err, &validation):
+		templateValidation := domain.ValidationErrors{}
+		if message := strings.TrimSpace(validation["name"]); message != "" {
+			templateValidation["database_name"] = message
+		}
+		if len(templateValidation) > 0 {
+			return mariadb.DatabaseRecord{}, templateValidation
+		}
+	case errors.Is(err, mariadb.ErrDatabaseAlreadyExists):
+		return mariadb.DatabaseRecord{}, domain.ValidationErrors{
+			"database_name": "This database already exists.",
+		}
+	}
+
+	return mariadb.DatabaseRecord{}, err
+}
+
+func generateTemplateDatabaseUsername(databaseName string, usernamePrefix string) (string, error) {
+	base := sanitizeTemplateIdentifier(databaseName)
+	if base == "" {
+		base = "site"
+	}
+	if len(base) > 12 {
+		base = base[:12]
+	}
+
+	suffix, err := generateTemplateRandomString(wordPressDatabaseUsernameBytes)
+	if err != nil {
+		return "", err
+	}
+
+	return usernamePrefix + "_" + base + "_" + strings.ToLower(suffix), nil
+}
+
+func generateTemplateDatabasePassword() (string, error) {
+	randomBytes := make([]byte, wordPressDatabasePasswordBytes)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+
+	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
+}
+
+func generateTemplateRandomString(byteLength int) (string, error) {
+	randomBytes := make([]byte, byteLength)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(randomBytes), nil
+}
+
+func sanitizeTemplateIdentifier(value string) string {
+	replacer := strings.NewReplacer(".", "_", "-", "_")
+	sanitized := replacer.Replace(strings.TrimSpace(strings.ToLower(value)))
+	sanitized = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, sanitized)
+
+	return strings.Trim(squeezeUnderscores(sanitized), "_")
 }

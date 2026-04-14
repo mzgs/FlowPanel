@@ -81,7 +81,10 @@ export type CopyDomainWebsiteInput = {
 
 export type DomainTemplateKey =
   | "wordpress"
+  | "symfony"
   | "laravel"
+  | "octobercms"
+  | "cakephp"
   | "codeigniter"
   | "slim";
 

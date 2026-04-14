@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -489,10 +491,11 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 		if strings.TrimSpace(fastCGIAddress) == "" {
 			return nil, false, fmt.Errorf("php-fpm is not configured for %q", record.Hostname)
 		}
+		root := effectivePHPWebRoot(record.Target)
 
 		originHandlers = append(originHandlers,
 			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
-				Routes: phpSubrouteRoutes(record.Target, fastCGIAddress, record.PHPSettings),
+				Routes: phpSubrouteRoutes(root, fastCGIAddress, record.PHPSettings),
 			}, "handler", "subroute", nil),
 		)
 	case domain.KindApp:
@@ -571,6 +574,32 @@ func routeForPanel(config panelRouteConfig) caddyhttp.Route {
 		},
 		Terminal: true,
 	}
+}
+
+func effectivePHPWebRoot(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return root
+	}
+
+	if pathExists(filepath.Join(root, "index.php")) || pathExists(filepath.Join(root, "index.html")) {
+		return root
+	}
+
+	publicRoot := filepath.Join(root, "public")
+	if pathExists(filepath.Join(publicRoot, "index.php")) {
+		return publicRoot
+	}
+
+	return root
+}
+
+func pathExists(path string) bool {
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+
+	return false
 }
 
 func phpSubrouteRoutes(root, fastCGIAddress string, settings phpenv.Settings) caddyhttp.RouteList {

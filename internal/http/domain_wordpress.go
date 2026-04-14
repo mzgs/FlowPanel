@@ -3,9 +3,6 @@ package httpx
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -819,100 +816,28 @@ func createWordPressDatabase(
 	hostname string,
 	name string,
 ) (mariadb.DatabaseRecord, error) {
-	if mariadbManager == nil {
+	record, err := createDomainTemplateDatabase(ctx, mariadbManager, hostname, name, "wpu")
+	if errors.Is(err, errDomainTemplateDatabaseUnavailable) {
 		return mariadb.DatabaseRecord{}, errWordPressDatabaseUnavailable
 	}
 
-	username, err := generateWordPressDatabaseUsername(name)
-	if err != nil {
-		return mariadb.DatabaseRecord{}, fmt.Errorf("generate WordPress database username: %w", err)
-	}
-	password, err := generateWordPressDatabasePassword()
-	if err != nil {
-		return mariadb.DatabaseRecord{}, fmt.Errorf("generate WordPress database password: %w", err)
-	}
-
-	record, err := mariadbManager.CreateDatabase(ctx, mariadb.CreateDatabaseInput{
-		Name:     name,
-		Username: username,
-		Password: password,
-		Domain:   hostname,
-	})
-	if err == nil {
-		return record, nil
-	}
-
-	var validation mariadb.ValidationErrors
-	switch {
-	case errors.As(err, &validation):
-		wordPressValidation := domain.ValidationErrors{}
-		if message := strings.TrimSpace(validation["name"]); message != "" {
-			wordPressValidation["database_name"] = message
-		}
-		if len(wordPressValidation) > 0 {
-			return mariadb.DatabaseRecord{}, wordPressValidation
-		}
-	case errors.Is(err, mariadb.ErrDatabaseAlreadyExists):
-		return mariadb.DatabaseRecord{}, domain.ValidationErrors{
-			"database_name": "This database already exists.",
-		}
-	}
-
-	return mariadb.DatabaseRecord{}, err
+	return record, err
 }
 
 func generateWordPressDatabaseUsername(databaseName string) (string, error) {
-	base := sanitizeWordPressIdentifier(strings.TrimPrefix(databaseName, "wp_"))
-	if base == "" {
-		base = "site"
-	}
-	if len(base) > 12 {
-		base = base[:12]
-	}
-
-	suffix, err := generateWordPressRandomString(wordPressDatabaseUsernameBytes)
-	if err != nil {
-		return "", err
-	}
-
-	return "wpu_" + base + "_" + strings.ToLower(suffix), nil
+	return generateTemplateDatabaseUsername(strings.TrimPrefix(databaseName, "wp_"), "wpu")
 }
 
 func generateWordPressDatabasePassword() (string, error) {
-	randomBytes := make([]byte, wordPressDatabasePasswordBytes)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return "", err
-	}
-
-	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
+	return generateTemplateDatabasePassword()
 }
 
 func generateWordPressRandomString(byteLength int) (string, error) {
-	randomBytes := make([]byte, byteLength)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(randomBytes), nil
+	return generateTemplateRandomString(byteLength)
 }
 
 func sanitizeWordPressIdentifier(value string) string {
-	replacer := strings.NewReplacer(".", "_", "-", "_")
-	sanitized := replacer.Replace(strings.TrimSpace(strings.ToLower(value)))
-	sanitized = strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z':
-			return r
-		case r >= '0' && r <= '9':
-			return r
-		case r == '_':
-			return r
-		default:
-			return '_'
-		}
-	}, sanitized)
-
-	return strings.Trim(squeezeUnderscores(sanitized), "_")
+	return sanitizeTemplateIdentifier(value)
 }
 
 func squeezeUnderscores(value string) string {

@@ -55,11 +55,31 @@ const templateOptions: Array<{
       "Install WordPress with WP-CLI and provision a MariaDB database automatically.",
   },
   {
+    value: "symfony",
+    label: "Symfony",
+    description:
+      "Create a Symfony project with Composer and install the standard webapp package set.",
+    packageName: "symfony/skeleton",
+  },
+  {
     value: "laravel",
     label: "Laravel",
     description:
       "Create a fresh Laravel application with Composer and generate the app key.",
     packageName: "laravel/laravel",
+  },
+  {
+    value: "octobercms",
+    label: "October CMS",
+    description:
+      "Create an October CMS project, provision a MariaDB database, and run the initial migrations.",
+    packageName: "october/october",
+  },
+  {
+    value: "cakephp",
+    label: "CakePHP",
+    description: "Create a fresh CakePHP application with Composer.",
+    packageName: "cakephp/app",
   },
   {
     value: "codeigniter",
@@ -76,6 +96,14 @@ const templateOptions: Array<{
 ];
 
 function suggestWordPressDatabaseName(hostname: string) {
+  return suggestTemplateDatabaseName(hostname, "wp");
+}
+
+function suggestOctoberCMSDatabaseName(hostname: string) {
+  return suggestTemplateDatabaseName(hostname, "october");
+}
+
+function suggestTemplateDatabaseName(hostname: string, prefix: string) {
   const normalized = hostname
     .trim()
     .toLowerCase()
@@ -83,7 +111,7 @@ function suggestWordPressDatabaseName(hostname: string) {
     .replace(/^www\./, "");
 
   if (!normalized) {
-    return "wp_site";
+    return `${prefix}_site`;
   }
 
   const sanitized = normalized
@@ -92,7 +120,21 @@ function suggestWordPressDatabaseName(hostname: string) {
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
 
-  return `wp_${sanitized || "site"}`;
+  return `${prefix}_${sanitized || "site"}`;
+}
+
+function getSuggestedDatabaseName(
+  template: DomainTemplateKey,
+  hostname: string,
+) {
+  switch (template) {
+    case "wordpress":
+      return suggestWordPressDatabaseName(hostname);
+    case "octobercms":
+      return suggestOctoberCMSDatabaseName(hostname);
+    default:
+      return "";
+  }
 }
 
 function createInstallForm(hostname: string): InstallFormState {
@@ -171,7 +213,11 @@ export function DomainTemplateInstallDialog({
     templateOptions.find((option) => option.value === form.template) ??
     templateOptions[0];
   const isWordPress = form.template === "wordpress";
-  const showAppName = form.template === "laravel" || form.template === "slim";
+  const isOctoberCMS = form.template === "octobercms";
+  const showAppName =
+    form.template === "laravel" ||
+    form.template === "slim" ||
+    form.template === "octobercms";
 
   function clearFieldError(field: string) {
     setFieldErrors((current) => {
@@ -209,13 +255,28 @@ export function DomainTemplateInstallDialog({
       delete next.database_name;
       return next;
     });
+    const previousTemplate = form.template;
     setForm((current) => ({
       ...current,
       template,
-      database_name:
-        template === "wordpress" && !(current.database_name ?? "").trim()
-          ? suggestWordPressDatabaseName(hostname)
-          : current.database_name,
+      database_name: (() => {
+        const currentValue = (current.database_name ?? "").trim();
+        const previousSuggestion = getSuggestedDatabaseName(
+          previousTemplate,
+          hostname,
+        );
+        const nextSuggestion = getSuggestedDatabaseName(template, hostname);
+
+        if (!nextSuggestion) {
+          return current.database_name;
+        }
+
+        if (!currentValue || currentValue === previousSuggestion) {
+          return nextSuggestion;
+        }
+
+        return current.database_name;
+      })(),
     }));
   }
 
@@ -442,12 +503,43 @@ export function DomainTemplateInstallDialog({
                   </div>
                 ) : null}
 
+                {isOctoberCMS ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="template_october_database_name">
+                      Database name
+                    </Label>
+                    <Input
+                      id="template_october_database_name"
+                      value={form.database_name ?? ""}
+                      disabled={installing}
+                      onChange={(event) => {
+                        updateForm("database_name", event.target.value);
+                      }}
+                    />
+                    <p className="text-[12px] leading-5 text-[var(--app-text-muted)]">
+                      FlowPanel will create the MariaDB database, username, and
+                      password automatically.
+                    </p>
+                    {fieldErrors.database_name ? (
+                      <p className="text-[12px] text-[var(--app-danger)]">
+                        {fieldErrors.database_name}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 text-[13px] leading-6 text-[var(--app-text-muted)] md:col-span-2">
-                  {form.template === "laravel"
-                    ? `FlowPanel will create the project with Composer, set APP_NAME, use https://${hostname} as APP_URL, and generate the Laravel app key.`
-                    : form.template === "codeigniter"
-                      ? `FlowPanel will create the project with Composer and write https://${hostname}/ into the generated .env file as the base URL.`
-                      : "FlowPanel will create the Slim skeleton with Composer, set APP_NAME, and keep the generated project structure intact."}
+                  {form.template === "symfony"
+                    ? "FlowPanel will create the Symfony skeleton with Composer, install the standard webapp packages, and keep the generated project structure intact."
+                    : form.template === "laravel"
+                      ? `FlowPanel will create the project with Composer, set APP_NAME, use https://${hostname} as APP_URL, and generate the Laravel app key.`
+                      : form.template === "octobercms"
+                        ? `FlowPanel will create the October CMS project with Composer, set APP_NAME and https://${hostname} as APP_URL, provision the database automatically, generate the app key, and run the initial October migrations.`
+                        : form.template === "cakephp"
+                          ? "FlowPanel will create the CakePHP application with Composer and keep the generated project structure intact."
+                          : form.template === "codeigniter"
+                            ? `FlowPanel will create the project with Composer and write https://${hostname}/ into the generated .env file as the base URL.`
+                            : "FlowPanel will create the Slim skeleton with Composer, set APP_NAME, and keep the generated project structure intact."}
                 </div>
               </div>
             )}
