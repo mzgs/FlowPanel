@@ -18,6 +18,7 @@ import (
 	"flowpanel/internal/domain"
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/phpenv"
 )
 
 const domainTemplateActionTimeout = 10 * time.Minute
@@ -74,12 +75,13 @@ func installDomainTemplate(
 	ctx context.Context,
 	domains *domain.Service,
 	mariadbManager mariadb.Manager,
+	php phpenv.Manager,
 	hostname string,
 	input domainTemplateInstallInput,
-) (domainTemplateInstallResult, domain.Record, error) {
+) (domainTemplateInstallResult, domain.Record, bool, error) {
 	templateKey := strings.TrimSpace(strings.ToLower(input.Template))
 	if templateKey == "wordpress" {
-		status, record, err := installWordPress(ctx, domains, mariadbManager, hostname, wordPressInstallInput{
+		status, record, executedAsWorker, err := installWordPress(ctx, domains, mariadbManager, php, hostname, wordPressInstallInput{
 			DatabaseName:      input.DatabaseName,
 			SiteTitle:         input.SiteTitle,
 			AdminUsername:     input.AdminUsername,
@@ -89,31 +91,32 @@ func installDomainTemplate(
 			ClearDocumentRoot: input.ClearDocumentRoot,
 		})
 		if err != nil {
-			return domainTemplateInstallResult{}, record, err
+			return domainTemplateInstallResult{}, record, false, err
 		}
 
 		return domainTemplateInstallResult{
 			Template:  templateKey,
 			WordPress: &status,
-		}, record, nil
+		}, record, executedAsWorker, nil
 	}
 
 	record, targetPath, err := resolveDomainTemplateDomain(domains, hostname)
 	if err != nil {
-		return domainTemplateInstallResult{}, domain.Record{}, err
+		return domainTemplateInstallResult{}, domain.Record{}, false, err
 	}
 
 	validation := validateDomainTemplateInstallInput(templateKey, input)
 	if len(validation) > 0 {
-		return domainTemplateInstallResult{}, record, validation
+		return domainTemplateInstallResult{}, record, false, validation
 	}
 
 	definition := domainTemplateDefinitions[templateKey]
-	if err := installComposerTemplate(ctx, mariadbManager, targetPath, hostname, templateKey, definition, input); err != nil {
-		return domainTemplateInstallResult{}, record, err
+	executedAsWorker, err := installComposerTemplate(ctx, mariadbManager, php, record.PHPVersion, targetPath, hostname, templateKey, definition, input)
+	if err != nil {
+		return domainTemplateInstallResult{}, record, false, err
 	}
 
-	return domainTemplateInstallResult{Template: templateKey}, record, nil
+	return domainTemplateInstallResult{Template: templateKey}, record, executedAsWorker, nil
 }
 
 func resolveDomainTemplateDomain(domains *domain.Service, hostname string) (domain.Record, string, error) {
@@ -186,32 +189,34 @@ func validateTemplateInstallFields(
 func installComposerTemplate(
 	ctx context.Context,
 	mariadbManager mariadb.Manager,
+	php phpenv.Manager,
+	phpVersion string,
 	targetPath string,
 	hostname string,
 	templateKey string,
 	definition domainTemplateDefinition,
 	input domainTemplateInstallInput,
-) error {
+) (bool, error) {
 	composerPath, err := exec.LookPath("composer")
 	if err != nil {
-		return errComposerUnavailable
+		return false, errComposerUnavailable
 	}
 
 	if err := os.MkdirAll(targetPath, 0o755); err != nil {
-		return fmt.Errorf("ensure document root: %w", err)
+		return false, fmt.Errorf("ensure document root: %w", err)
 	}
 
 	empty, err := directoryIsEmpty(targetPath)
 	if err != nil {
-		return fmt.Errorf("inspect document root: %w", err)
+		return false, fmt.Errorf("inspect document root: %w", err)
 	}
 	if !empty && !input.ClearDocumentRoot {
-		return errDomainTemplateInstallDirectoryDirty
+		return false, errDomainTemplateInstallDirectoryDirty
 	}
 
 	stageRoot, err := os.MkdirTemp("", "flowpanel-template-*")
 	if err != nil {
-		return fmt.Errorf("create template staging directory: %w", err)
+		return false, fmt.Errorf("create template staging directory: %w", err)
 	}
 	defer os.RemoveAll(stageRoot)
 
@@ -227,8 +232,10 @@ func installComposerTemplate(
 	}
 
 	composerEnv := append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1")
-	if err := runTemplateCommand(
+	executedAsWorker, err := runTemplateCommand(
 		runCtx,
+		php,
+		phpVersion,
 		stageRoot,
 		composerEnv,
 		"template installation",
@@ -238,38 +245,48 @@ func installComposerTemplate(
 		"--no-progress",
 		definition.packageName,
 		stagePath,
-	); err != nil {
-		return err
+	)
+	if err != nil {
+		return false, err
 	}
 
-	if err := finalizeComposerTemplateInstall(runCtx, mariadbManager, hostname, templateKey, stagePath, input); err != nil {
-		return err
+	if err := finalizeComposerTemplateInstall(runCtx, mariadbManager, php, phpVersion, hostname, templateKey, stagePath, input); err != nil {
+		return false, err
 	}
 
 	if input.ClearDocumentRoot {
 		if err := clearDocumentRootContents(targetPath); err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	entries, err := os.ReadDir(stagePath)
 	if err != nil {
-		return fmt.Errorf("read staged template files: %w", err)
+		return false, fmt.Errorf("read staged template files: %w", err)
 	}
+	copiedPaths := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		sourcePath := filepath.Join(stagePath, entry.Name())
 		destinationPath := filepath.Join(targetPath, entry.Name())
 		if err := filesvc.CopyPath(sourcePath, destinationPath); err != nil {
-			return fmt.Errorf("copy template file %q: %w", entry.Name(), err)
+			return false, fmt.Errorf("copy template file %q: %w", entry.Name(), err)
+		}
+		copiedPaths = append(copiedPaths, destinationPath)
+	}
+	if executedAsWorker && len(copiedPaths) > 0 {
+		if err := ensurePHPWorkerOwnership(runCtx, php, phpVersion, true, copiedPaths...); err != nil {
+			return false, err
 		}
 	}
 
-	return nil
+	return executedAsWorker, nil
 }
 
 func finalizeComposerTemplateInstall(
 	ctx context.Context,
 	mariadbManager mariadb.Manager,
+	php phpenv.Manager,
+	phpVersion string,
 	hostname string,
 	templateKey string,
 	stagePath string,
@@ -277,11 +294,11 @@ func finalizeComposerTemplateInstall(
 ) error {
 	switch templateKey {
 	case "symfony":
-		return finalizeSymfonyInstall(ctx, stagePath)
+		return finalizeSymfonyInstall(ctx, php, phpVersion, stagePath)
 	case "laravel":
-		return finalizeLaravelInstall(ctx, hostname, stagePath, input)
+		return finalizeLaravelInstall(ctx, php, phpVersion, hostname, stagePath, input)
 	case "octobercms":
-		return finalizeOctoberCMSInstall(ctx, mariadbManager, hostname, stagePath, input)
+		return finalizeOctoberCMSInstall(ctx, mariadbManager, php, phpVersion, hostname, stagePath, input)
 	case "cakephp":
 		return nil
 	case "codeigniter":
@@ -293,14 +310,16 @@ func finalizeComposerTemplateInstall(
 	}
 }
 
-func finalizeSymfonyInstall(ctx context.Context, stagePath string) error {
+func finalizeSymfonyInstall(ctx context.Context, php phpenv.Manager, phpVersion string, stagePath string) error {
 	composerPath, err := exec.LookPath("composer")
 	if err != nil {
 		return errComposerUnavailable
 	}
 
-	return runTemplateCommand(
+	_, err = runTemplateCommand(
 		ctx,
+		php,
+		phpVersion,
 		stagePath,
 		append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1"),
 		"symfony setup",
@@ -310,24 +329,41 @@ func finalizeSymfonyInstall(ctx context.Context, stagePath string) error {
 		"--no-progress",
 		"webapp",
 	)
+	return err
 }
 
 func finalizeLaravelInstall(
 	ctx context.Context,
+	php phpenv.Manager,
+	phpVersion string,
 	hostname string,
 	stagePath string,
 	input domainTemplateInstallInput,
 ) error {
+	if err := ensureTemplatePHPExtensions(ctx, php, phpVersion, "pdo_sqlite", "sqlite3"); err != nil {
+		return fmt.Errorf("prepare Laravel PHP extensions: %w", err)
+	}
+
 	envPath := filepath.Join(stagePath, ".env")
 	if err := ensureTemplateFile(envPath, filepath.Join(stagePath, ".env.example")); err != nil {
 		return err
 	}
+	if err := ensureLaravelSQLiteDatabase(stagePath); err != nil {
+		return err
+	}
 	if fileExists(envPath) {
-		if err := upsertEnvValue(envPath, "APP_NAME", quoteEnvValue(input.AppName)); err != nil {
-			return fmt.Errorf("update Laravel app name: %w", err)
+		updates := map[string]string{
+			"APP_NAME":         quoteEnvValue(input.AppName),
+			"APP_URL":          quoteEnvValue(defaultTemplateSiteURL(hostname)),
+			"DB_CONNECTION":    quoteEnvValue("sqlite"),
+			"SESSION_DRIVER":   quoteEnvValue("file"),
+			"CACHE_STORE":      quoteEnvValue("file"),
+			"QUEUE_CONNECTION": quoteEnvValue("sync"),
 		}
-		if err := upsertEnvValue(envPath, "APP_URL", quoteEnvValue(defaultTemplateSiteURL(hostname))); err != nil {
-			return fmt.Errorf("update Laravel app url: %w", err)
+		for key, value := range updates {
+			if err := upsertEnvValue(envPath, key, value); err != nil {
+				return fmt.Errorf("update Laravel %s: %w", strings.ToLower(key), err)
+			}
 		}
 	}
 
@@ -336,8 +372,10 @@ func finalizeLaravelInstall(
 		return fmt.Errorf("php is required to finish Laravel setup")
 	}
 
-	return runTemplateCommand(
+	_, err = runTemplateCommand(
 		ctx,
+		php,
+		phpVersion,
 		stagePath,
 		os.Environ(),
 		"laravel setup",
@@ -346,6 +384,75 @@ func finalizeLaravelInstall(
 		"key:generate",
 		"--force",
 	)
+	return err
+}
+
+func ensureLaravelSQLiteDatabase(stagePath string) error {
+	databaseDir := filepath.Join(stagePath, "database")
+	if err := os.MkdirAll(databaseDir, 0o755); err != nil {
+		return fmt.Errorf("create Laravel database directory: %w", err)
+	}
+
+	databasePath := filepath.Join(databaseDir, "database.sqlite")
+	if fileExists(databasePath) {
+		return nil
+	}
+	if err := os.WriteFile(databasePath, []byte{}, 0o644); err != nil {
+		return fmt.Errorf("create Laravel sqlite database: %w", err)
+	}
+
+	return nil
+}
+
+func ensureTemplatePHPExtensions(ctx context.Context, php phpenv.Manager, version string, extensions ...string) error {
+	if php == nil {
+		return nil
+	}
+
+	status := php.StatusForVersion(ctx, version)
+	for _, extension := range extensions {
+		extension = strings.TrimSpace(extension)
+		if extension == "" || extensionLoaded(status.Extensions, findTemplateExtensionAliases(extension)...) {
+			continue
+		}
+
+		nextStatus, err := php.InstallExtensionForVersion(ctx, version, extension)
+		if err != nil {
+			return err
+		}
+		status = nextStatus
+	}
+
+	return nil
+}
+
+func findTemplateExtensionAliases(extension string) []string {
+	switch extension {
+	case "pdo_sqlite":
+		return []string{"pdo_sqlite", "sqlite3"}
+	case "sqlite3":
+		return []string{"sqlite3", "pdo_sqlite"}
+	default:
+		return []string{extension}
+	}
+}
+
+func extensionLoaded(loaded []string, names ...string) bool {
+	if len(loaded) == 0 || len(names) == 0 {
+		return false
+	}
+
+	seen := make(map[string]struct{}, len(loaded))
+	for _, extension := range loaded {
+		seen[strings.ToLower(strings.TrimSpace(extension))] = struct{}{}
+	}
+	for _, name := range names {
+		if _, ok := seen[strings.ToLower(strings.TrimSpace(name))]; ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 func finalizeCodeIgniterInstall(hostname string, stagePath string) error {
@@ -381,6 +488,8 @@ func finalizeSlimInstall(stagePath string, input domainTemplateInstallInput) err
 func finalizeOctoberCMSInstall(
 	ctx context.Context,
 	mariadbManager mariadb.Manager,
+	php phpenv.Manager,
+	phpVersion string,
 	hostname string,
 	stagePath string,
 	input domainTemplateInstallInput,
@@ -425,29 +534,46 @@ func finalizeOctoberCMSInstall(
 		return fmt.Errorf("php is required to finish October CMS setup")
 	}
 
-	if err := runTemplateCommand(
-		ctx,
-		stagePath,
-		os.Environ(),
-		"october cms setup",
-		phpPath,
-		"artisan",
-		"key:generate",
-		"--force",
-	); err != nil {
+	runOctober := func(args ...string) error {
+		commandArgs := append([]string{"artisan"}, args...)
+		_, err := runTemplateCommand(
+			ctx,
+			php,
+			phpVersion,
+			stagePath,
+			os.Environ(),
+			"october cms setup",
+			phpPath,
+			commandArgs...,
+		)
 		return err
 	}
 
-	return runTemplateCommand(
-		ctx,
-		stagePath,
-		os.Environ(),
-		"october cms setup",
-		phpPath,
-		"artisan",
-		"october:migrate",
-		"--force",
-	)
+	for _, args := range [][]string{
+		{"key:generate", "--force"},
+		{"october:migrate", "--force"},
+	} {
+		if err := runOctober(args...); err != nil {
+			return err
+		}
+	}
+
+	if fileExists(filepath.Join(stagePath, "themes", "demo")) {
+		if err := runOctober("theme:seed", "demo", "--root"); err != nil {
+			return err
+		}
+	}
+
+	for _, args := range [][]string{
+		{"tailor:migrate"},
+		{"optimize:clear"},
+	} {
+		if err := runOctober(args...); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func ensureTemplateFile(destinationPath string, sourcePath string) error {
@@ -541,35 +667,53 @@ func defaultTemplateSiteURL(hostname string) string {
 
 func runTemplateCommand(
 	ctx context.Context,
+	php phpenv.Manager,
+	phpVersion string,
 	dir string,
 	env []string,
 	failureLabel string,
 	command string,
 	args ...string,
-) error {
-	cmd := exec.CommandContext(ctx, command, args...)
-	cmd.Dir = dir
-	cmd.Env = env
+) (bool, error) {
+	run := func(useWorker bool) (bool, string, error) {
+		cmd := exec.CommandContext(ctx, command, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		executedAsWorker := false
+		if useWorker {
+			var err error
+			executedAsWorker, err = configureCommandForPHPWorker(ctx, php, phpVersion, cmd)
+			if err != nil {
+				return false, "", err
+			}
+		}
 
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+		var output bytes.Buffer
+		cmd.Stdout = &output
+		cmd.Stderr = &output
 
-	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(output.String())
+		err := cmd.Run()
+		return executedAsWorker, strings.TrimSpace(output.String()), err
+	}
+
+	executedAsWorker, message, err := run(true)
+	if err != nil && executedAsWorker && shouldRetryWithoutPHPWorker(err) {
+		executedAsWorker, message, err = run(false)
+	}
+	if err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			return fmt.Errorf("%s timed out", failureLabel)
+			return false, fmt.Errorf("%s timed out", failureLabel)
 		case errors.Is(ctx.Err(), context.Canceled):
-			return fmt.Errorf("%s was canceled", failureLabel)
+			return false, fmt.Errorf("%s was canceled", failureLabel)
 		case message != "":
-			return fmt.Errorf("%s failed: %s", failureLabel, message)
+			return false, fmt.Errorf("%s failed: %s", failureLabel, message)
 		default:
-			return fmt.Errorf("%s failed: %w", failureLabel, err)
+			return false, fmt.Errorf("%s failed: %w", failureLabel, err)
 		}
 	}
 
-	return nil
+	return executedAsWorker, nil
 }
 
 func createDomainTemplateDatabase(

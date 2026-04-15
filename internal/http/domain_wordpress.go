@@ -24,6 +24,7 @@ import (
 	"flowpanel/internal/config"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/phpenv"
 )
 
 const wordPressActionTimeout = 10 * time.Minute
@@ -288,46 +289,51 @@ func installWordPress(
 	ctx context.Context,
 	domains *domain.Service,
 	mariadbManager mariadb.Manager,
+	php phpenv.Manager,
 	hostname string,
 	input wordPressInstallInput,
-) (wordPressStatus, domain.Record, error) {
+) (wordPressStatus, domain.Record, bool, error) {
 	record, targetPath, err := resolveWordPressDomain(domains, hostname)
 	if err != nil {
-		return wordPressStatus{}, domain.Record{}, err
+		return wordPressStatus{}, domain.Record{}, false, err
 	}
 	if _, err := resolveWordPressCLI(ctx); err != nil {
-		return wordPressStatus{}, record, err
+		return wordPressStatus{}, record, false, err
 	}
 
 	configPresent := fileExists(filepath.Join(targetPath, "wp-config.php"))
 	validation := validateWordPressInstallInput(input, configPresent)
 	if len(validation) > 0 {
-		return wordPressStatus{}, record, validation
+		return wordPressStatus{}, record, false, validation
 	}
 
 	installed, inspectError := inspectWordPressInstallation(ctx, targetPath)
 	if installed {
-		return wordPressStatus{}, record, errWordPressAlreadyInstalled
+		return wordPressStatus{}, record, false, errWordPressAlreadyInstalled
 	}
 	if inspectError != "" {
-		return wordPressStatus{}, record, errors.New(inspectError)
+		return wordPressStatus{}, record, false, errors.New(inspectError)
 	}
+
+	executedAsWorker := false
 
 	if !wordPressCoreFilesPresent(targetPath) {
 		empty, err := directoryIsEmpty(targetPath)
 		if err != nil {
-			return wordPressStatus{}, record, fmt.Errorf("inspect document root: %w", err)
+			return wordPressStatus{}, record, false, fmt.Errorf("inspect document root: %w", err)
 		}
 		if !empty {
 			if !input.ClearDocumentRoot {
-				return wordPressStatus{}, record, errWordPressInstallDirectoryDirty
+				return wordPressStatus{}, record, false, errWordPressInstallDirectoryDirty
 			}
 			if err := clearDocumentRootContents(targetPath); err != nil {
-				return wordPressStatus{}, record, fmt.Errorf("clear document root: %w", err)
+				return wordPressStatus{}, record, false, fmt.Errorf("clear document root: %w", err)
 			}
 		}
-		if _, _, err := runWordPressCommand(ctx, targetPath, "core", "download"); err != nil {
-			return wordPressStatus{}, record, err
+		if _, _, ranAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.PHPVersion, targetPath, "core", "download"); err != nil {
+			return wordPressStatus{}, record, false, err
+		} else if ranAsWorker {
+			executedAsWorker = true
 		}
 	}
 
@@ -335,7 +341,7 @@ func installWordPress(
 	if !configPresent {
 		database, err = createWordPressDatabase(ctx, mariadbManager, hostname, strings.TrimSpace(input.DatabaseName))
 		if err != nil {
-			return wordPressStatus{}, record, err
+			return wordPressStatus{}, record, false, err
 		}
 	}
 
@@ -356,13 +362,17 @@ func installWordPress(
 		if database.Password != "" {
 			args = append(args, "--dbpass="+database.Password)
 		}
-		if _, _, err := runWordPressCommand(ctx, targetPath, args...); err != nil {
-			return wordPressStatus{}, record, err
+		if _, _, ranAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.PHPVersion, targetPath, args...); err != nil {
+			return wordPressStatus{}, record, false, err
+		} else if ranAsWorker {
+			executedAsWorker = true
 		}
 	}
 
-	if _, _, err := runWordPressCommand(
+	if _, _, ranAsWorker, err := runWordPressCommandWithWorker(
 		ctx,
+		php,
+		record.PHPVersion,
 		targetPath,
 		"core",
 		"install",
@@ -372,29 +382,33 @@ func installWordPress(
 		"--admin_email="+strings.TrimSpace(input.AdminEmail),
 		"--admin_password="+input.AdminPassword,
 	); err != nil {
-		return wordPressStatus{}, record, err
+		return wordPressStatus{}, record, false, err
+	} else if ranAsWorker {
+		executedAsWorker = true
 	}
 
-	return loadWordPressStatus(ctx, domains, mariadbManager, hostname)
+	status, _, err := loadWordPressStatus(ctx, domains, mariadbManager, hostname)
+	return status, record, executedAsWorker, err
 }
 
 func runWordPressExtensionAction(
 	ctx context.Context,
 	domains *domain.Service,
 	mariadbManager mariadb.Manager,
+	php phpenv.Manager,
 	hostname string,
 	resource string,
 	input wordPressExtensionActionInput,
-) (wordPressStatus, domain.Record, error) {
+) (wordPressStatus, domain.Record, bool, error) {
 	_, targetPath, err := resolveWordPressDomain(domains, hostname)
 	if err != nil {
-		return wordPressStatus{}, domain.Record{}, err
+		return wordPressStatus{}, domain.Record{}, false, err
 	}
 	if _, err := resolveWordPressCLI(ctx); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
+		return wordPressStatus{}, domain.Record{}, false, err
 	}
 	if err := ensureWordPressInstalled(ctx, targetPath); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
+		return wordPressStatus{}, domain.Record{}, false, err
 	}
 
 	validation := domain.ValidationErrors{}
@@ -411,11 +425,16 @@ func runWordPressExtensionAction(
 		validation["action"] = "Select a valid action."
 	}
 	if len(validation) > 0 {
-		return wordPressStatus{}, domain.Record{}, validation
+		return wordPressStatus{}, domain.Record{}, false, validation
 	}
 
-	if _, _, err := runWordPressCommand(ctx, targetPath, resource, action, name); err != nil {
-		return wordPressStatus{}, domain.Record{}, err
+	record, ok := domains.FindByHostname(hostname)
+	if !ok {
+		return wordPressStatus{}, domain.Record{}, false, domain.ErrNotFound
+	}
+	_, _, executedAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.PHPVersion, targetPath, resource, action, name)
+	if err != nil {
+		return wordPressStatus{}, domain.Record{}, false, err
 	}
 
 	section := wordPressStatusSectionAll
@@ -426,7 +445,8 @@ func runWordPressExtensionAction(
 		section = wordPressStatusSectionThemes
 	}
 
-	return loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, section)
+	status, record, err := loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, section)
+	return status, record, executedAsWorker, err
 }
 
 func searchWordPressExtensions(
@@ -478,19 +498,20 @@ func installWordPressExtension(
 	ctx context.Context,
 	domains *domain.Service,
 	mariadbManager mariadb.Manager,
+	php phpenv.Manager,
 	hostname string,
 	resource string,
 	input wordPressExtensionInstallInput,
-) (wordPressStatus, domain.Record, error) {
+) (wordPressStatus, domain.Record, bool, error) {
 	record, targetPath, err := resolveWordPressDomain(domains, hostname)
 	if err != nil {
-		return wordPressStatus{}, domain.Record{}, err
+		return wordPressStatus{}, domain.Record{}, false, err
 	}
 	if _, err := resolveWordPressCLI(ctx); err != nil {
-		return wordPressStatus{}, record, err
+		return wordPressStatus{}, record, false, err
 	}
 	if err := ensureWordPressInstalled(ctx, targetPath); err != nil {
-		return wordPressStatus{}, record, err
+		return wordPressStatus{}, record, false, err
 	}
 
 	slug := strings.TrimSpace(input.Slug)
@@ -501,11 +522,12 @@ func installWordPressExtension(
 		validation["slug"] = fmt.Sprintf("Select a valid %s slug.", resource)
 	}
 	if len(validation) > 0 {
-		return wordPressStatus{}, record, validation
+		return wordPressStatus{}, record, false, validation
 	}
 
-	if _, _, err := runWordPressCommand(ctx, targetPath, resource, "install", slug); err != nil {
-		return wordPressStatus{}, record, err
+	_, _, executedAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.PHPVersion, targetPath, resource, "install", slug)
+	if err != nil {
+		return wordPressStatus{}, record, false, err
 	}
 
 	section := wordPressStatusSectionThemes
@@ -513,7 +535,8 @@ func installWordPressExtension(
 		section = wordPressStatusSectionPlugins
 	}
 
-	return loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, section)
+	status, record, err := loadWordPressStatusSection(ctx, domains, mariadbManager, hostname, section)
+	return status, record, executedAsWorker, err
 }
 
 type wordPressPluginSearchResponse struct {
@@ -965,9 +988,20 @@ func runWordPressCommand(
 	targetPath string,
 	args ...string,
 ) ([]byte, string, error) {
+	output, combined, _, err := runWordPressCommandWithWorker(ctx, nil, "", targetPath, args...)
+	return output, combined, err
+}
+
+func runWordPressCommandWithWorker(
+	ctx context.Context,
+	php phpenv.Manager,
+	version string,
+	targetPath string,
+	args ...string,
+) ([]byte, string, bool, error) {
 	cli, err := resolveWordPressCLI(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 
 	runCtx := ctx
@@ -981,22 +1015,38 @@ func runWordPressCommand(
 	}
 
 	commandArgs := append([]string{"--allow-root", "--path=" + targetPath}, args...)
-	cmd := exec.CommandContext(runCtx, cli.execPath, commandArgs...)
-	cmd.Dir = targetPath
-	cmd.Env = os.Environ()
+	run := func(useWorker bool) ([]byte, string, bool, error) {
+		cmd := exec.CommandContext(runCtx, cli.execPath, commandArgs...)
+		cmd.Dir = targetPath
+		cmd.Env = os.Environ()
+		executedAsWorker := false
+		if useWorker {
+			var err error
+			executedAsWorker, err = configureCommandForPHPWorker(runCtx, php, version, cmd)
+			if err != nil {
+				return nil, "", false, err
+			}
+		}
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
 
-	err = cmd.Run()
-	output := strings.TrimSpace(strings.Join([]string{stdout.String(), stderr.String()}, "\n"))
-	if err != nil {
-		return stdout.Bytes(), output, formatWordPressCommandError(runCtx, args, output, err)
+		err := cmd.Run()
+		output := strings.TrimSpace(strings.Join([]string{stdout.String(), stderr.String()}, "\n"))
+		return stdout.Bytes(), output, executedAsWorker, err
 	}
 
-	return stdout.Bytes(), output, nil
+	stdoutBytes, output, executedAsWorker, err := run(true)
+	if err != nil && executedAsWorker && shouldRetryWithoutPHPWorker(err) {
+		stdoutBytes, output, executedAsWorker, err = run(false)
+	}
+	if err != nil {
+		return stdoutBytes, output, false, formatWordPressCommandError(runCtx, args, output, err)
+	}
+
+	return stdoutBytes, output, executedAsWorker, nil
 }
 
 type wordPressCLI struct {

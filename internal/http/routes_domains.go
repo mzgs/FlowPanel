@@ -296,7 +296,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	domainsComposerActionHandler := func(action string) stdhttp.HandlerFunc {
 		return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			hostname := chi.URLParam(r, "hostname")
-			record, err := runDomainComposerAction(r.Context(), a.app.Domains, hostname, action)
+			record, executedAsWorker, err := runDomainComposerAction(r.Context(), a.app.Domains, a.app.PHP, hostname, action)
 			if err != nil {
 				switch {
 				case errors.Is(err, domain.ErrNotFound):
@@ -313,6 +313,14 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				return
 			}
 
+			if !executedAsWorker {
+				if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+					a.app.Logger.Error("apply php worker ownership after composer action failed", zap.String("hostname", record.Hostname), zap.String("action", action), zap.Error(err))
+					a.mutationEvent(r.Context(), "domains", "composer_"+action, "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Composer %s finished but php-fpm ownership could not be updated for %q.", action, record.Hostname))
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "composer finished but php-fpm ownership could not be updated"})
+					return
+				}
+			}
 			a.mutationEvent(r.Context(), "domains", "composer_"+action, "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Ran composer %s for %q.", action, record.Hostname))
 			writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
 		}
@@ -326,7 +334,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			return
 		}
 
-		result, record, err := installDomainTemplate(r.Context(), a.app.Domains, a.app.MariaDB, hostname, input)
+		result, record, executedAsWorker, err := installDomainTemplate(r.Context(), a.app.Domains, a.app.MariaDB, a.app.PHP, hostname, input)
 		if err != nil {
 			switch {
 			case errors.Is(err, domain.ErrNotFound):
@@ -349,6 +357,14 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			return
 		}
 
+		if !executedAsWorker {
+			if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+				a.app.Logger.Error("apply php worker ownership after template install failed", zap.String("hostname", record.Hostname), zap.String("template", result.Template), zap.Error(err))
+				a.mutationEvent(r.Context(), "domains", "template_install", "domain", record.ID, record.Hostname, "failed", "Template install finished but php-fpm ownership could not be updated.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "template install finished but php-fpm ownership could not be updated"})
+				return
+			}
+		}
 		if err := a.app.Domains.InvalidatePreview(record.Hostname); err != nil {
 			a.app.Logger.Warn("invalidate domain preview after template install failed", zap.String("hostname", record.Hostname), zap.Error(err))
 		}
@@ -415,7 +431,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				return
 			}
 
-			status, record, err := runWordPressExtensionAction(r.Context(), a.app.Domains, a.app.MariaDB, hostname, resource, input)
+			status, record, executedAsWorker, err := runWordPressExtensionAction(r.Context(), a.app.Domains, a.app.MariaDB, a.app.PHP, hostname, resource, input)
 			if err != nil {
 				switch {
 				case errors.Is(err, domain.ErrNotFound):
@@ -438,6 +454,14 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				return
 			}
 
+			if !executedAsWorker {
+				if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+					a.app.Logger.Error("apply php worker ownership after wordpress extension action failed", zap.String("hostname", record.Hostname), zap.Error(err))
+					a.mutationEvent(r.Context(), "domains", "wordpress_"+resource+"_"+input.Action, "domain", record.ID, record.Hostname, "failed", "WordPress action finished but php-fpm ownership could not be updated.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "wordpress action finished but php-fpm ownership could not be updated"})
+					return
+				}
+			}
 			if err := a.app.Domains.InvalidatePreview(record.Hostname); err != nil {
 				a.app.Logger.Warn("invalidate wordpress preview failed", zap.String("hostname", record.Hostname), zap.Error(err))
 			}
@@ -490,7 +514,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				return
 			}
 
-			status, record, err := installWordPressExtension(r.Context(), a.app.Domains, a.app.MariaDB, hostname, resource, input)
+			status, record, executedAsWorker, err := installWordPressExtension(r.Context(), a.app.Domains, a.app.MariaDB, a.app.PHP, hostname, resource, input)
 			if err != nil {
 				switch {
 				case errors.Is(err, domain.ErrNotFound):
@@ -513,6 +537,14 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				return
 			}
 
+			if !executedAsWorker {
+				if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+					a.app.Logger.Error("apply php worker ownership after wordpress extension install failed", zap.String("hostname", record.Hostname), zap.Error(err))
+					a.mutationEvent(r.Context(), "domains", "wordpress_"+resource+"_install", "domain", record.ID, record.Hostname, "failed", "WordPress install finished but php-fpm ownership could not be updated.")
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "wordpress install finished but php-fpm ownership could not be updated"})
+					return
+				}
+			}
 			if err := a.app.Domains.InvalidatePreview(record.Hostname); err != nil {
 				a.app.Logger.Warn("invalidate wordpress preview failed", zap.String("hostname", record.Hostname), zap.Error(err))
 			}
@@ -867,6 +899,19 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				a.mutationEvent(r.Context(), "domains", "create", "domain", strings.TrimSpace(input.Hostname), strings.TrimSpace(input.Hostname), "failed", "Failed to create domain.")
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to create domain"})
 			}
+			return
+		}
+
+		if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+			_, removed, rollbackErr := a.app.Domains.Delete(r.Context(), record.ID)
+			if rollbackErr != nil {
+				a.app.Logger.Error("rollback created domain after ownership update failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
+			} else if !removed {
+				a.app.Logger.Error("rollback created domain after ownership update missing", zap.String("domain_id", record.ID))
+			}
+			a.app.Logger.Error("apply php worker ownership after domain create failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "failed", "Created domain record but failed to set php-fpm ownership on the document root.")
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to set php-fpm ownership on the document root"})
 			return
 		}
 

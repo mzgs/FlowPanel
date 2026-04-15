@@ -409,15 +409,16 @@ func (s *Service) SetPermissions(relPath string, permissions string, recursive b
 	return nil
 }
 
-func (s *Service) Upload(relPath string, headers []*multipart.FileHeader) error {
+func (s *Service) Upload(relPath string, headers []*multipart.FileHeader) ([]string, error) {
 	parentAbsolutePath, _, entryType, err := s.resolveExisting(relPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if entryType != EntryTypeDirectory {
-		return ErrDirectoryExpected
+		return nil, ErrDirectoryExpected
 	}
 
+	createdPaths := make([]string, 0, len(headers))
 	for _, header := range headers {
 		if header == nil {
 			continue
@@ -425,25 +426,26 @@ func (s *Service) Upload(relPath string, headers []*multipart.FileHeader) error 
 
 		baseName, err := validateBaseName(header.Filename)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		targetPath := filepath.Join(parentAbsolutePath, filepath.FromSlash(baseName))
 		if err := ensureWithinRoot(s.rootPath, targetPath); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := os.Stat(targetPath); err == nil {
-			return fs.ErrExist
+			return nil, fs.ErrExist
 		} else if !errors.Is(err, fs.ErrNotExist) {
-			return err
+			return nil, err
 		}
 
 		if err := copyUploadedFile(targetPath, header); err != nil {
-			return err
+			return nil, err
 		}
+		createdPaths = append(createdPaths, targetPath)
 	}
 
-	return nil
+	return createdPaths, nil
 }
 
 func (s *Service) DownloadPath(relPath string) (string, string, func(), error) {

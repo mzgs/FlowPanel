@@ -181,8 +181,19 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 			return
 		}
 
-		if err := a.app.Files.Upload(r.FormValue("path"), r.MultipartForm.File["files"]); err != nil {
+		createdPaths, err := a.app.Files.Upload(r.FormValue("path"), r.MultipartForm.File["files"])
+		if err != nil {
 			writeFileError(w, err)
+			return
+		}
+		uploadDirectory, _, err := a.app.Files.ResolveDirectory(r.FormValue("path"))
+		if err != nil {
+			writeFileError(w, err)
+			return
+		}
+		if err := ensurePHPUploadWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, uploadDirectory, createdPaths); err != nil {
+			a.app.Logger.Error("apply php worker ownership after upload failed", zap.String("path", uploadDirectory), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "files uploaded but php-fpm ownership could not be updated"})
 			return
 		}
 

@@ -27,7 +27,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { toast } from "sonner";
 
 type DomainTemplateInstallDialogProps = {
@@ -190,7 +189,6 @@ export function DomainTemplateInstallDialog({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
-  const [confirmInstallOpen, setConfirmInstallOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -198,7 +196,6 @@ export function DomainTemplateInstallDialog({
       setFieldErrors({});
       setError(null);
       setInstalling(false);
-      setConfirmInstallOpen(false);
       return;
     }
 
@@ -206,7 +203,6 @@ export function DomainTemplateInstallDialog({
     setFieldErrors({});
     setError(null);
     setInstalling(false);
-    setConfirmInstallOpen(false);
   }, [hostname, open]);
 
   const selectedTemplate =
@@ -281,7 +277,6 @@ export function DomainTemplateInstallDialog({
   }
 
   async function handleInstall() {
-    setConfirmInstallOpen(false);
     setInstalling(true);
     setError(null);
     setFieldErrors({});
@@ -534,7 +529,7 @@ export function DomainTemplateInstallDialog({
                     : form.template === "laravel"
                       ? `FlowPanel will create the project with Composer, set APP_NAME, use https://${hostname} as APP_URL, and generate the Laravel app key.`
                       : form.template === "octobercms"
-                        ? `FlowPanel will create the October CMS project with Composer, set APP_NAME and https://${hostname} as APP_URL, provision the database automatically, generate the app key, and run the initial October migrations.`
+                        ? `FlowPanel will create the October CMS project with Composer, set APP_NAME and https://${hostname} as APP_URL, provision the database automatically, generate the app key, finish the October and Tailor migrations, and seed the bundled demo theme so the first visit works.`
                         : form.template === "cakephp"
                           ? "FlowPanel will create the CakePHP application with Composer and keep the generated project structure intact."
                           : form.template === "codeigniter"
@@ -544,12 +539,17 @@ export function DomainTemplateInstallDialog({
               </div>
             )}
 
-            <div className="flex justify-end">
+            <div className="flex flex-col items-end gap-2">
+              <p className="text-right text-[12px] text-[var(--app-danger)]">
+                Old site content in{" "}
+                {documentRoot || "the document root"} will be removed before
+                installation.
+              </p>
               <Button
                 type="button"
                 disabled={installing}
                 onClick={() => {
-                  setConfirmInstallOpen(true);
+                  void handleInstall();
                 }}
               >
                 {installing ? (
@@ -565,24 +565,6 @@ export function DomainTemplateInstallDialog({
           </section>
         </div>
       </DialogContent>
-
-      <ActionConfirmDialog
-        open={confirmInstallOpen}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen && !installing) {
-            setConfirmInstallOpen(false);
-          }
-        }}
-        title={`Install ${selectedTemplate.label}`}
-        desc={`Installing ${selectedTemplate.label} will delete the current site content in ${documentRoot || "the document root"} before the new application is copied.`}
-        confirmText="Install app"
-        destructive
-        isLoading={installing}
-        handleConfirm={() => {
-          void handleInstall();
-        }}
-        className="sm:max-w-md"
-      />
     </Dialog>
   );
 }

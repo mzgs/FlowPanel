@@ -51,6 +51,7 @@ var versionPattern = regexp.MustCompile(`\b(\d+\.\d+)`)
 type Manager interface {
 	Status(context.Context) Status
 	StatusForVersion(context.Context, string) RuntimeStatus
+	WorkerIdentity(context.Context, string) (WorkerIdentity, error)
 	Install(context.Context) error
 	InstallVersion(context.Context, string) error
 	InstallExtension(context.Context, string) (Status, error)
@@ -72,6 +73,11 @@ type Manager interface {
 type ManagedConfig struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
+}
+
+type WorkerIdentity struct {
+	User  string `json:"user,omitempty"`
+	Group string `json:"group,omitempty"`
 }
 
 type RuntimeStatus struct {
@@ -308,6 +314,28 @@ func (s *Service) StatusForVersion(ctx context.Context, version string) RuntimeS
 
 func (s *Service) Install(ctx context.Context) error {
 	return s.InstallVersion(ctx, "")
+}
+
+func (s *Service) WorkerIdentity(ctx context.Context, version string) (WorkerIdentity, error) {
+	runtimeStatus := s.StatusForVersion(ctx, version)
+	if !runtimeStatus.FPMInstalled || strings.TrimSpace(runtimeStatus.FPMPath) == "" {
+		return WorkerIdentity{}, fmt.Errorf("php-fpm is not configured for PHP %s", s.resolveActionVersion(ctx, version))
+	}
+
+	output, err := runInspectCommand(ctx, runtimeStatus.FPMPath, "-tt")
+	if err != nil {
+		return WorkerIdentity{}, fmt.Errorf("inspect php-fpm worker identity: %w", err)
+	}
+
+	identity := parseFPMWorkerIdentity(output)
+	if identity.User == "" {
+		return WorkerIdentity{}, fmt.Errorf("php-fpm worker user is not configured for PHP %s", runtimeStatus.Version)
+	}
+	if identity.Group == "" {
+		identity.Group = identity.User
+	}
+
+	return identity, nil
 }
 
 func (s *Service) InstallVersion(ctx context.Context, version string) error {
@@ -878,6 +906,7 @@ func aptVersionPackages(version string) []string {
 		prefix + "-common",
 		prefix + "-bcmath",
 		prefix + "-mysql",
+		prefix + "-sqlite3",
 		prefix + "-curl",
 		prefix + "-gd",
 		prefix + "-intl",
@@ -902,6 +931,7 @@ func rpmVersionPackages(version string) []string {
 		prefix + "-common",
 		prefix + "-bcmath",
 		prefix + "-mysqlnd",
+		prefix + "-sqlite3",
 		prefix + "-curl",
 		prefix + "-gd",
 		prefix + "-intl",
@@ -1223,6 +1253,39 @@ func parseFPMListenAddress(output string) string {
 	}
 
 	return ""
+}
+
+func parseFPMWorkerIdentity(output string) WorkerIdentity {
+	identity := WorkerIdentity{}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case identity.User == "" && strings.Contains(line, "user ="):
+			identity.User = parseFPMDirectiveValue(line, "user =")
+		case identity.Group == "" && strings.Contains(line, "group ="):
+			identity.Group = parseFPMDirectiveValue(line, "group =")
+		}
+		if identity.User != "" && identity.Group != "" {
+			break
+		}
+	}
+
+	return identity
+}
+
+func parseFPMDirectiveValue(line, marker string) string {
+	parts := strings.SplitN(line, marker, 2)
+	if len(parts) != 2 {
+		return ""
+	}
+
+	value := strings.TrimSpace(parts[1])
+	value = strings.Trim(value, `"`)
+	if cut := strings.Index(value, ";"); cut >= 0 {
+		value = strings.TrimSpace(value[:cut])
+	}
+
+	return value
 }
 
 func canDialFastCGI(address string) bool {
