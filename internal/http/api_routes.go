@@ -10,6 +10,7 @@ import (
 	eventlog "flowpanel/internal/events"
 	"flowpanel/internal/golang"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/nodejs"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
 
@@ -36,6 +37,7 @@ func (a *apiRoutes) register(r chi.Router) {
 
 	a.registerBackupRoutes(r)
 	a.registerGoRoutes(r)
+	a.registerNodeJSRoutes(r)
 	a.registerMariaDBRoutes(r)
 	a.registerPHPRoutes(r)
 	a.registerDomainRoutes(r)
@@ -205,6 +207,31 @@ func (a *apiRoutes) trackGoStatus(status golang.Status) golang.Status {
 		}
 		status.State = "removing"
 		status.Message = "Go removal is running in the background."
+	default:
+		return status
+	}
+
+	status.InstallAvailable = false
+	status.RemoveAvailable = false
+	return status
+}
+
+func (a *apiRoutes) trackNodeJSStatus(status nodejs.Status) nodejs.Status {
+	switch a.runtimeActions.Current("nodejs") {
+	case "install":
+		if status.Installed {
+			a.runtimeActions.End("nodejs", "install")
+			return status
+		}
+		status.State = "installing"
+		status.Message = "Node.js installation is running in the background."
+	case "remove":
+		if !status.Installed {
+			a.runtimeActions.End("nodejs", "remove")
+			return status
+		}
+		status.State = "removing"
+		status.Message = "Node.js removal is running in the background."
 	default:
 		return status
 	}

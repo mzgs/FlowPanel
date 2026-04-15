@@ -506,8 +506,6 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/events", eventsListHandler)
 		r.Method(stdhttp.MethodHead, "/events", eventsListHandler)
 
-		api.registerBackupRoutes(r)
-
 		cronListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.Cron == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -704,12 +702,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/system", systemStatusHandler)
 		r.Method(stdhttp.MethodHead, "/system", systemStatusHandler)
 
-		api.registerGoRoutes(r)
-		api.registerMariaDBRoutes(r)
-
-		api.registerPHPRoutes(r)
-		api.registerDomainRoutes(r)
-		api.registerFileRoutes(r)
+		api.register(r)
 
 		r.NotFound(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusNotFound, map[string]any{

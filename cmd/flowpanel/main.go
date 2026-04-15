@@ -28,6 +28,7 @@ import (
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/logging"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/nodejs"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/settings"
@@ -232,6 +233,7 @@ func runServer() error {
 	}
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
 	golangManager := golang.NewService(logger.Named("golang"))
+	nodeJSManager := nodejs.NewService(logger.Named("nodejs"))
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
@@ -283,6 +285,7 @@ func runServer() error {
 		scheduler,
 		caddyRuntime,
 		golangManager,
+		nodeJSManager,
 		mariadbManager,
 		phpManager,
 		phpMyAdminManager,

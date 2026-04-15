@@ -6,6 +6,12 @@ import {
   type GolangStatus,
 } from "@/api/golang";
 import {
+  fetchNodeJSStatus,
+  installNodeJS,
+  removeNodeJS,
+  type NodeJSStatus,
+} from "@/api/nodejs";
+import {
   fetchMariaDBStatus,
   installMariaDB,
   removeMariaDB,
@@ -74,6 +80,7 @@ const applicationLogos = {
     className: "h-7 w-full",
   },
   go: { src: "/application-icons/go.png", alt: "Go logo", className: "h-7 w-full" },
+  nodejs: { src: "/application-icons/nodejs.svg", alt: "Node.js logo", className: "h-7 w-full" },
 } as const;
 
 type StatusMetaTone = "success" | "danger" | "info";
@@ -81,7 +88,8 @@ type RemovableApplication =
   | { kind: "php"; version: string }
   | { kind: "mariadb" }
   | { kind: "phpmyadmin" }
-  | { kind: "golang" };
+  | { kind: "golang" }
+  | { kind: "nodejs" };
 type RuntimeState = string | null | undefined;
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -274,6 +282,44 @@ function getGolangBadge(status: GolangStatus | null) {
   return { label: "Not installed", variant: "outline" as const };
 }
 
+function formatNodeJSValue(status: NodeJSStatus | null) {
+  if (!status) {
+    return "Unavailable";
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
+  if (status.installed && status.version?.trim()) {
+    return status.version.trim();
+  }
+
+  if (status.installed) {
+    return "Installed";
+  }
+
+  return "";
+}
+
+function getNodeJSBadge(status: NodeJSStatus | null) {
+  if (!status) {
+    return { label: "Unavailable", variant: "outline" as const };
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
+  }
+
+  if (status.installed) {
+    return { label: "Installed", variant: "default" as const };
+  }
+
+  return { label: "Not installed", variant: "outline" as const };
+}
+
 function getPHPMyAdminServiceStatus(status: PHPMyAdminStatus | null) {
   const actionLabel = getRuntimeActionLabel(status?.state);
   if (actionLabel) {
@@ -312,6 +358,14 @@ function canRemovePHPMyAdmin(status: PHPMyAdminStatus | null) {
 }
 
 function canRemoveGolang(status: GolangStatus | null) {
+  if (!status) {
+    return false;
+  }
+
+  return status.remove_available;
+}
+
+function canRemoveNodeJS(status: NodeJSStatus | null) {
   if (!status) {
     return false;
   }
@@ -483,10 +537,11 @@ function ApplicationsPageSkeleton() {
       duration={1.3}
     >
       <div className="space-y-5 px-4 pb-6 sm:px-6 lg:px-8">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <ApplicationCardSkeleton />
-          <ApplicationCardSkeleton />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <ApplicationCardSkeleton showConfigAction />
+          <ApplicationCardSkeleton showConfigAction />
+          <ApplicationCardSkeleton showConfigAction />
+          <ApplicationCardSkeleton />
           <ApplicationCardSkeleton />
         </div>
       </div>
@@ -818,6 +873,7 @@ export function ApplicationsPage() {
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [golangStatus, setGolangStatus] = useState<GolangStatus | null>(null);
+  const [nodeJSStatus, setNodeJSStatus] = useState<NodeJSStatus | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
   const [phpSettingsOpen, setPHPSettingsOpen] = useState(false);
   const [mariaDBSettingsOpen, setMariaDBSettingsOpen] = useState(false);
@@ -845,11 +901,12 @@ export function ApplicationsPage() {
     setPageError(null);
 
     const nextErrors: string[] = [];
-    const [phpResult, mariadbResult, phpMyAdminResult, golangResult] = await Promise.allSettled([
+    const [phpResult, mariadbResult, phpMyAdminResult, golangResult, nodeJSResult] = await Promise.allSettled([
       fetchPHPStatus(),
       fetchMariaDBStatus(),
       fetchPHPMyAdminStatus(),
       fetchGolangStatus(),
+      fetchNodeJSStatus(),
     ]);
     if (options?.ignoreIfUnmounted?.()) {
       return;
@@ -881,6 +938,13 @@ export function ApplicationsPage() {
     } else {
       setGolangStatus(null);
       nextErrors.push(getErrorMessage(golangResult.reason, "Failed to inspect Go."));
+    }
+
+    if (nodeJSResult.status === "fulfilled") {
+      setNodeJSStatus(nodeJSResult.value);
+    } else {
+      setNodeJSStatus(null);
+      nextErrors.push(getErrorMessage(nodeJSResult.reason, "Failed to inspect Node.js."));
     }
 
     setPageError(nextErrors.length > 0 ? nextErrors.join(" ") : null);
@@ -919,7 +983,8 @@ export function ApplicationsPage() {
       !isRuntimeActionState(phpStatus?.state) &&
       !isRuntimeActionState(mariadbStatus?.state) &&
       !isRuntimeActionState(phpMyAdminStatus?.state) &&
-      !isRuntimeActionState(golangStatus?.state)
+      !isRuntimeActionState(golangStatus?.state) &&
+      !isRuntimeActionState(nodeJSStatus?.state)
     ) {
       return;
     }
@@ -931,7 +996,7 @@ export function ApplicationsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state, golangStatus?.state]);
+  }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state, golangStatus?.state, nodeJSStatus?.state]);
 
   useEffect(() => {
     const availableVersions = getAvailablePHPVersions(phpStatus);
@@ -1023,8 +1088,17 @@ export function ApplicationsPage() {
     if (runningAction === "remove-golang" && golangStatus && !golangStatus.installed) {
       setRemoveCandidate((current) => (current?.kind === "golang" ? null : current));
       setRunningAction(null);
+      return;
     }
-  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus, golangStatus]);
+    if (runningAction === "install-nodejs" && nodeJSStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-nodejs" && nodeJSStatus && !nodeJSStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "nodejs" ? null : current));
+      setRunningAction(null);
+    }
+  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus, golangStatus, nodeJSStatus]);
 
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
   const phpMyAdminServiceStatus = getPHPMyAdminServiceStatus(phpMyAdminStatus);
@@ -1033,9 +1107,11 @@ export function ApplicationsPage() {
   const mariaDBRemoveEnabled = canRemoveMariaDB(mariadbStatus);
   const phpMyAdminRemoveEnabled = canRemovePHPMyAdmin(phpMyAdminStatus);
   const golangRemoveEnabled = canRemoveGolang(golangStatus);
+  const nodeJSRemoveEnabled = canRemoveNodeJS(nodeJSStatus);
   const mariadbBusyLabel = getRuntimeActionLabel(mariadbStatus?.state);
   const phpMyAdminBusyLabel = getRuntimeActionLabel(phpMyAdminStatus?.state);
   const golangBusyLabel = getRuntimeActionLabel(golangStatus?.state);
+  const nodeJSBusyLabel = getRuntimeActionLabel(nodeJSStatus?.state);
   const mariaDBServiceStartingAfterInstall =
     runningAction === "install-mariadb" &&
     Boolean(mariadbStatus?.server_installed) &&
@@ -1047,8 +1123,10 @@ export function ApplicationsPage() {
         ? "Remove MariaDB from this node? Existing databases may become unavailable until MariaDB is installed again."
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin from this node? The browser database client will no longer be available."
-          : removeCandidate?.kind === "golang"
-            ? "Remove Go from this node? Deployments and scripts that rely on the Go toolchain will stop working until it is installed again."
+        : removeCandidate?.kind === "golang"
+          ? "Remove Go from this node? Deployments and scripts that rely on the Go toolchain will stop working until it is installed again."
+          : removeCandidate?.kind === "nodejs"
+            ? "Remove Node.js from this node? Applications and build steps that rely on the Node.js runtime will stop working until it is installed again."
           : "Remove this runtime?";
   const removeDialogTitle =
     removeCandidate?.kind === "php"
@@ -1057,8 +1135,10 @@ export function ApplicationsPage() {
         ? "Remove MariaDB"
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin"
-          : removeCandidate?.kind === "golang"
-            ? "Remove Go"
+        : removeCandidate?.kind === "golang"
+          ? "Remove Go"
+          : removeCandidate?.kind === "nodejs"
+            ? "Remove Node.js"
           : "Remove application";
   const removeDialogConfirmText =
     removeCandidate?.kind === "php"
@@ -1067,8 +1147,10 @@ export function ApplicationsPage() {
         ? "Remove MariaDB"
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin"
-          : removeCandidate?.kind === "golang"
-            ? "Remove Go"
+        : removeCandidate?.kind === "golang"
+          ? "Remove Go"
+          : removeCandidate?.kind === "nodejs"
+            ? "Remove Node.js"
           : "Remove";
 
   async function handleRemoveApplication() {
@@ -1083,9 +1165,11 @@ export function ApplicationsPage() {
         ? phpRuntimeActionKey("remove", target.version)
         : target.kind === "mariadb"
           ? "remove-mariadb"
-          : target.kind === "phpmyadmin"
-            ? "remove-phpmyadmin"
-            : "remove-golang";
+        : target.kind === "phpmyadmin"
+          ? "remove-phpmyadmin"
+          : target.kind === "golang"
+            ? "remove-golang"
+            : "remove-nodejs";
     setRunningAction(action);
     setPageError(null);
 
@@ -1107,10 +1191,14 @@ export function ApplicationsPage() {
           const nextStatus = await removePHPMyAdmin();
           setPHPMyAdminStatus(nextStatus);
           toast.success(!nextStatus.installed ? "phpMyAdmin removed." : "phpMyAdmin removal started.");
-        } else {
+        } else if (target.kind === "golang") {
           const nextStatus = await removeGolang();
           setGolangStatus(nextStatus);
           toast.success(!nextStatus.installed ? "Go removed." : "Go removal started.");
+        } else {
+          const nextStatus = await removeNodeJS();
+          setNodeJSStatus(nextStatus);
+          toast.success(!nextStatus.installed ? "Node.js removed." : "Node.js removal started.");
         }
       }
     } catch (error) {
@@ -1121,7 +1209,9 @@ export function ApplicationsPage() {
             ? "Failed to remove MariaDB."
             : target.kind === "phpmyadmin"
               ? "Failed to remove phpMyAdmin."
-              : "Failed to remove Go.";
+              : target.kind === "golang"
+                ? "Failed to remove Go."
+                : "Failed to remove Node.js.";
       const message = getErrorMessage(error, fallback);
       setPageError(message);
       toast.error(message);
@@ -1303,6 +1393,23 @@ export function ApplicationsPage() {
     }
   }
 
+  async function handleNodeJSInstall() {
+    setRunningAction("install-nodejs");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installNodeJS();
+      setNodeJSStatus(nextStatus);
+      toast.success("Node.js installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install Node.js.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
   if (loading) {
     return (
       <>
@@ -1356,7 +1463,8 @@ export function ApplicationsPage() {
             runningAction === phpRuntimeActionKey("remove", removeCandidate.version)) ||
           (removeCandidate?.kind === "mariadb" && runningAction === "remove-mariadb") ||
           (removeCandidate?.kind === "phpmyadmin" && runningAction === "remove-phpmyadmin") ||
-          (removeCandidate?.kind === "golang" && runningAction === "remove-golang")
+          (removeCandidate?.kind === "golang" && runningAction === "remove-golang") ||
+          (removeCandidate?.kind === "nodejs" && runningAction === "remove-nodejs")
         }
         handleConfirm={() => {
           void handleRemoveApplication();
@@ -1389,7 +1497,7 @@ export function ApplicationsPage() {
           </section>
         ) : null}
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <PHPRuntimeCard
             status={selectedPHPRuntime}
             availableVersions={phpVersions}
@@ -1697,6 +1805,69 @@ export function ApplicationsPage() {
                   title={golangRemoveEnabled ? undefined : "Automatic Go removal is only available for installed runtimes supported by this environment."}
                 >
                   {runningAction === "remove-golang" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  Remove
+                </Button>
+              </>
+            }
+          />
+
+          <ApplicationCard
+            icon={<ApplicationLogo app="nodejs" />}
+            name="Node.js"
+            summary={formatNodeJSValue(nodeJSStatus)}
+            badge={getNodeJSBadge(nodeJSStatus)}
+            meta={[
+              { label: "Toolchain", value: nodeJSStatus?.binary_path?.trim() || "node", mono: true },
+              ...(nodeJSStatus?.npm_path?.trim()
+                ? [{ label: "NPM", value: nodeJSStatus.npm_path.trim(), mono: true }]
+                : []),
+              ...(nodeJSStatus?.package_manager
+                ? [{ label: "Package manager", value: nodeJSStatus.package_manager }]
+                : []),
+            ]}
+            configAction={null}
+            actions={
+              <>
+                {nodeJSBusyLabel ? (
+                  <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    {nodeJSBusyLabel}
+                  </Button>
+                ) : null}
+                {nodeJSStatus?.install_available ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className={compactActionButtonClassName}
+                    onClick={() => {
+                      void handleNodeJSInstall();
+                    }}
+                    disabled={runningAction !== null}
+                  >
+                    {runningAction === "install-nodejs" ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Package className="h-4 w-4" />
+                    )}
+                    {nodeJSStatus.install_label ?? "Install Node.js"}
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={compactActionButtonClassName}
+                  onClick={() => {
+                    setRemoveCandidate({ kind: "nodejs" });
+                  }}
+                  disabled={runningAction !== null || !nodeJSRemoveEnabled}
+                  title={nodeJSRemoveEnabled ? undefined : "Automatic Node.js removal is only available for installed runtimes supported by this environment."}
+                >
+                  {runningAction === "remove-nodejs" ? (
                     <LoaderCircle className="h-4 w-4 animate-spin" />
                   ) : (
                     <Trash2 className="h-4 w-4" />

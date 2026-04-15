@@ -14,6 +14,7 @@ import (
 	"flowpanel/internal/golang"
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/nodejs"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/settings"
@@ -31,6 +32,7 @@ type App struct {
 	Cron        *cron.Scheduler
 	Caddy       *caddy.Runtime
 	Golang      golang.Manager
+	NodeJS      nodejs.Manager
 	MariaDB     mariadb.Manager
 	PHP         phpenv.Manager
 	PHPMyAdmin  phpmyadmin.Manager
@@ -52,6 +54,7 @@ func New(
 	scheduler *cron.Scheduler,
 	caddyRuntime *caddy.Runtime,
 	golangManager golang.Manager,
+	nodeJSManager nodejs.Manager,
 	mariadbManager mariadb.Manager,
 	phpManager phpenv.Manager,
 	phpMyAdminManager phpmyadmin.Manager,
@@ -72,6 +75,7 @@ func New(
 		Cron:        scheduler,
 		Caddy:       caddyRuntime,
 		Golang:      golangManager,
+		NodeJS:      nodeJSManager,
 		MariaDB:     mariadbManager,
 		PHP:         phpManager,
 		PHPMyAdmin:  phpMyAdminManager,
