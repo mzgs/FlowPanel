@@ -537,7 +537,7 @@ function ApplicationsPageSkeleton() {
       duration={1.3}
     >
       <div className="space-y-5 px-4 pb-6 sm:px-6 lg:px-8">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <ApplicationCardSkeleton showConfigAction />
           <ApplicationCardSkeleton showConfigAction />
           <ApplicationCardSkeleton showConfigAction />
@@ -1497,7 +1497,7 @@ export function ApplicationsPage() {
           </section>
         ) : null}
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <PHPRuntimeCard
             status={selectedPHPRuntime}
             availableVersions={phpVersions}
