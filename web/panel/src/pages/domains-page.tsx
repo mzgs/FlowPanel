@@ -89,6 +89,10 @@ const initialFormState: FormState = {
   cacheEnabled: false,
 };
 
+function getDefaultTarget(kind: DomainKind) {
+  return kind === "Reverse proxy" ? "http://127.0.0.1:8080" : "";
+}
+
 const initialDeleteDomainOptions = {
   deleteDatabase: false,
   deleteDocumentRoot: false,
@@ -1160,7 +1164,10 @@ export function DomainsPage() {
                         setForm((current) => ({
                           ...current,
                           kind,
-                          target: "",
+                          target:
+                            current.kind === kind
+                              ? current.target
+                              : getDefaultTarget(kind),
                         }));
                         setErrors((current) => ({
                           ...current,
