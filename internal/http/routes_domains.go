@@ -281,8 +281,11 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			return
 		}
 
-		if err := a.app.Domains.InvalidatePreview(targetRecord.Hostname); err != nil {
-			a.app.Logger.Warn("invalidate copied domain preview failed", zap.String("hostname", targetRecord.Hostname), zap.Error(err))
+		if err := a.refreshDomainRoutingAfterContentChange(r.Context(), targetRecord.Hostname); err != nil {
+			a.app.Logger.Error("republish copied domain failed", zap.String("hostname", targetRecord.Hostname), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "copy", "website", sourceRecord.Hostname, sourceRecord.Hostname, "failed", eventErrorMessage("Copied website files but failed to republish routes.", err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "website copied but routes could not be refreshed"})
+			return
 		}
 
 		a.mutationEvent(r.Context(), "domains", "copy", "website", sourceRecord.Hostname, sourceRecord.Hostname, "succeeded", fmt.Sprintf(`Copied website files from %q to %q.`, sourceRecord.Hostname, targetRecord.Hostname))
@@ -365,8 +368,11 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				return
 			}
 		}
-		if err := a.app.Domains.InvalidatePreview(record.Hostname); err != nil {
-			a.app.Logger.Warn("invalidate domain preview after template install failed", zap.String("hostname", record.Hostname), zap.Error(err))
+		if err := a.refreshDomainRoutingAfterContentChange(r.Context(), record.Hostname); err != nil {
+			a.app.Logger.Error("republish domain after template install failed", zap.String("hostname", record.Hostname), zap.String("template", result.Template), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "template_install", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Template install finished but failed to republish routes.", err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "template install finished but routes could not be refreshed"})
+			return
 		}
 		a.mutationEvent(r.Context(), "domains", "template_install", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Installed %q for %q.", result.Template, record.Hostname))
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"result": result})

@@ -44,6 +44,27 @@ func (a *apiRoutes) syncDomainsWithCaddy(ctx context.Context) error {
 	return syncDomainsWithCurrentSettings(ctx, a.app)
 }
 
+func (a *apiRoutes) refreshDomainRoutingAfterContentChange(ctx context.Context, hostnames ...string) error {
+	if err := a.syncDomainsWithCaddy(ctx); err != nil {
+		return err
+	}
+	if a == nil || a.app == nil || a.app.Domains == nil {
+		return nil
+	}
+
+	for _, hostname := range hostnames {
+		hostname = strings.TrimSpace(hostname)
+		if hostname == "" {
+			continue
+		}
+		if err := a.app.Domains.InvalidatePreview(hostname); err != nil {
+			a.app.Logger.Warn("invalidate domain preview after content change failed", zap.String("hostname", hostname), zap.Error(err))
+		}
+	}
+
+	return nil
+}
+
 func (a *apiRoutes) recordEvent(ctx context.Context, input eventlog.CreateInput) {
 	if a == nil || a.app == nil || a.app.Events == nil {
 		return
