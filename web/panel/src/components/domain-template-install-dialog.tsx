@@ -145,7 +145,7 @@ function createInstallForm(hostname: string): InstallFormState {
     site_title: hostname,
     admin_username: "admin",
     admin_email: hostname ? `admin@${hostname}` : "",
-    admin_password: "",
+    admin_password: generatePassword(),
     table_prefix: "wp_",
   };
 }
@@ -214,6 +214,23 @@ export function DomainTemplateInstallDialog({
     form.template === "laravel" ||
     form.template === "slim" ||
     form.template === "octobercms";
+  const installSummary =
+    form.template === "wordpress"
+      ? `FlowPanel will download WordPress, use https://${hostname} as the site URL, create the database automatically, and finish the WP-CLI install with your admin details.`
+      : form.template === "symfony"
+        ? "FlowPanel will create the Symfony skeleton with Composer, install the standard webapp packages, and keep the generated project structure intact."
+        : form.template === "laravel"
+          ? `FlowPanel will create the project with Composer, set APP_NAME, use https://${hostname} as APP_URL, and generate the Laravel app key.`
+          : form.template === "octobercms"
+            ? `FlowPanel will create the October CMS project with Composer, set APP_NAME and https://${hostname} as APP_URL, provision the database automatically, generate the app key, finish the October and Tailor migrations, and seed the bundled demo theme so the first visit works.`
+            : form.template === "cakephp"
+              ? "FlowPanel will create the CakePHP application with Composer and keep the generated project structure intact."
+              : form.template === "codeigniter"
+                ? `FlowPanel will create the project with Composer and write https://${hostname}/ into the generated .env file as the base URL.`
+                : "FlowPanel will create the Slim skeleton with Composer, set APP_NAME, and keep the generated project structure intact.";
+  const documentRootSummary = `Old site content in ${
+    documentRoot || "the document root"
+  } will be removed before installation.`;
 
   function clearFieldError(field: string) {
     setFieldErrors((current) => {
@@ -459,6 +476,7 @@ export function DomainTemplateInstallDialog({
                     id="template_admin_password"
                     value={form.admin_password ?? ""}
                     disabled={installing}
+                    defaultVisible
                     onChange={(event) => {
                       updateForm("admin_password", event.target.value);
                     }}
@@ -474,7 +492,7 @@ export function DomainTemplateInstallDialog({
                 </div>
 
                 <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 text-[13px] leading-6 text-[var(--app-text-muted)] md:col-span-2">
-                  {`FlowPanel will download WordPress, use https://${hostname} as the site URL, create the database automatically, and finish the WP-CLI install with your admin details.`}
+                  {installSummary} {documentRootSummary}
                 </div>
               </div>
             ) : (
@@ -524,27 +542,12 @@ export function DomainTemplateInstallDialog({
                 ) : null}
 
                 <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 text-[13px] leading-6 text-[var(--app-text-muted)] md:col-span-2">
-                  {form.template === "symfony"
-                    ? "FlowPanel will create the Symfony skeleton with Composer, install the standard webapp packages, and keep the generated project structure intact."
-                    : form.template === "laravel"
-                      ? `FlowPanel will create the project with Composer, set APP_NAME, use https://${hostname} as APP_URL, and generate the Laravel app key.`
-                      : form.template === "octobercms"
-                        ? `FlowPanel will create the October CMS project with Composer, set APP_NAME and https://${hostname} as APP_URL, provision the database automatically, generate the app key, finish the October and Tailor migrations, and seed the bundled demo theme so the first visit works.`
-                        : form.template === "cakephp"
-                          ? "FlowPanel will create the CakePHP application with Composer and keep the generated project structure intact."
-                          : form.template === "codeigniter"
-                            ? `FlowPanel will create the project with Composer and write https://${hostname}/ into the generated .env file as the base URL.`
-                            : "FlowPanel will create the Slim skeleton with Composer, set APP_NAME, and keep the generated project structure intact."}
+                  {installSummary} {documentRootSummary}
                 </div>
               </div>
             )}
 
-            <div className="flex flex-col items-end gap-2">
-              <p className="text-right text-[12px] text-[var(--app-danger)]">
-                Old site content in{" "}
-                {documentRoot || "the document root"} will be removed before
-                installation.
-              </p>
+            <div className="flex items-end justify-end">
               <Button
                 type="button"
                 disabled={installing}
