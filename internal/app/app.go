@@ -17,6 +17,7 @@ import (
 	"flowpanel/internal/nodejs"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
+	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
 
 	"github.com/alexedwards/scs/v2"
@@ -33,6 +34,7 @@ type App struct {
 	Caddy       *caddy.Runtime
 	Golang      golang.Manager
 	NodeJS      nodejs.Manager
+	PM2         pm2.Manager
 	MariaDB     mariadb.Manager
 	PHP         phpenv.Manager
 	PHPMyAdmin  phpmyadmin.Manager
@@ -55,6 +57,7 @@ func New(
 	caddyRuntime *caddy.Runtime,
 	golangManager golang.Manager,
 	nodeJSManager nodejs.Manager,
+	pm2Manager pm2.Manager,
 	mariadbManager mariadb.Manager,
 	phpManager phpenv.Manager,
 	phpMyAdminManager phpmyadmin.Manager,
@@ -76,6 +79,7 @@ func New(
 		Caddy:       caddyRuntime,
 		Golang:      golangManager,
 		NodeJS:      nodeJSManager,
+		PM2:         pm2Manager,
 		MariaDB:     mariadbManager,
 		PHP:         phpManager,
 		PHPMyAdmin:  phpMyAdminManager,

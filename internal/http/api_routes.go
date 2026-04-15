@@ -13,6 +13,7 @@ import (
 	"flowpanel/internal/nodejs"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
+	"flowpanel/internal/pm2"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -38,6 +39,7 @@ func (a *apiRoutes) register(r chi.Router) {
 	a.registerBackupRoutes(r)
 	a.registerGoRoutes(r)
 	a.registerNodeJSRoutes(r)
+	a.registerPM2Routes(r)
 	a.registerMariaDBRoutes(r)
 	a.registerPHPRoutes(r)
 	a.registerDomainRoutes(r)
@@ -232,6 +234,31 @@ func (a *apiRoutes) trackNodeJSStatus(status nodejs.Status) nodejs.Status {
 		}
 		status.State = "removing"
 		status.Message = "Node.js removal is running in the background."
+	default:
+		return status
+	}
+
+	status.InstallAvailable = false
+	status.RemoveAvailable = false
+	return status
+}
+
+func (a *apiRoutes) trackPM2Status(status pm2.Status) pm2.Status {
+	switch a.runtimeActions.Current("pm2") {
+	case "install":
+		if status.Installed {
+			a.runtimeActions.End("pm2", "install")
+			return status
+		}
+		status.State = "installing"
+		status.Message = "PM2 installation is running in the background."
+	case "remove":
+		if !status.Installed {
+			a.runtimeActions.End("pm2", "remove")
+			return status
+		}
+		status.State = "removing"
+		status.Message = "PM2 removal is running in the background."
 	default:
 		return status
 	}

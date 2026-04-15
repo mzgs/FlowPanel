@@ -12,6 +12,12 @@ import {
   type NodeJSStatus,
 } from "@/api/nodejs";
 import {
+  fetchPM2Status,
+  installPM2,
+  removePM2,
+  type PM2Status,
+} from "@/api/pm2";
+import {
   fetchMariaDBStatus,
   installMariaDB,
   removeMariaDB,
@@ -54,6 +60,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -81,6 +88,7 @@ const applicationLogos = {
   },
   go: { src: "/application-icons/go.png", alt: "Go logo", className: "h-7 w-full" },
   nodejs: { src: "/application-icons/nodejs.svg", alt: "Node.js logo", className: "h-7 w-full" },
+  pm2: { src: "/application-icons/pm2.png", alt: "PM2 logo", className: "h-7 w-full" },
 } as const;
 
 type StatusMetaTone = "success" | "danger" | "info";
@@ -89,7 +97,8 @@ type RemovableApplication =
   | { kind: "mariadb" }
   | { kind: "phpmyadmin" }
   | { kind: "golang" }
-  | { kind: "nodejs" };
+  | { kind: "nodejs" }
+  | { kind: "pm2" };
 type RuntimeState = string | null | undefined;
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -320,6 +329,44 @@ function getNodeJSBadge(status: NodeJSStatus | null) {
   return { label: "Not installed", variant: "outline" as const };
 }
 
+function formatPM2Value(status: PM2Status | null) {
+  if (!status) {
+    return "Unavailable";
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
+  if (status.installed && status.version?.trim()) {
+    return status.version.trim();
+  }
+
+  if (status.installed) {
+    return "Installed";
+  }
+
+  return "";
+}
+
+function getPM2Badge(status: PM2Status | null) {
+  if (!status) {
+    return { label: "Unavailable", variant: "outline" as const };
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
+  }
+
+  if (status.installed) {
+    return { label: "Installed", variant: "default" as const };
+  }
+
+  return { label: "Not installed", variant: "outline" as const };
+}
+
 function getPHPMyAdminServiceStatus(status: PHPMyAdminStatus | null) {
   const actionLabel = getRuntimeActionLabel(status?.state);
   if (actionLabel) {
@@ -366,6 +413,14 @@ function canRemoveGolang(status: GolangStatus | null) {
 }
 
 function canRemoveNodeJS(status: NodeJSStatus | null) {
+  if (!status) {
+    return false;
+  }
+
+  return status.remove_available;
+}
+
+function canRemovePM2(status: PM2Status | null) {
   if (!status) {
     return false;
   }
@@ -874,6 +929,7 @@ export function ApplicationsPage() {
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [golangStatus, setGolangStatus] = useState<GolangStatus | null>(null);
   const [nodeJSStatus, setNodeJSStatus] = useState<NodeJSStatus | null>(null);
+  const [pm2Status, setPM2Status] = useState<PM2Status | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
   const [phpSettingsOpen, setPHPSettingsOpen] = useState(false);
   const [mariaDBSettingsOpen, setMariaDBSettingsOpen] = useState(false);
@@ -901,12 +957,13 @@ export function ApplicationsPage() {
     setPageError(null);
 
     const nextErrors: string[] = [];
-    const [phpResult, mariadbResult, phpMyAdminResult, golangResult, nodeJSResult] = await Promise.allSettled([
+    const [phpResult, mariadbResult, phpMyAdminResult, golangResult, nodeJSResult, pm2Result] = await Promise.allSettled([
       fetchPHPStatus(),
       fetchMariaDBStatus(),
       fetchPHPMyAdminStatus(),
       fetchGolangStatus(),
       fetchNodeJSStatus(),
+      fetchPM2Status(),
     ]);
     if (options?.ignoreIfUnmounted?.()) {
       return;
@@ -947,6 +1004,13 @@ export function ApplicationsPage() {
       nextErrors.push(getErrorMessage(nodeJSResult.reason, "Failed to inspect Node.js."));
     }
 
+    if (pm2Result.status === "fulfilled") {
+      setPM2Status(pm2Result.value);
+    } else {
+      setPM2Status(null);
+      nextErrors.push(getErrorMessage(pm2Result.reason, "Failed to inspect PM2."));
+    }
+
     setPageError(nextErrors.length > 0 ? nextErrors.join(" ") : null);
 
     if (options?.showRefreshToast) {
@@ -984,7 +1048,8 @@ export function ApplicationsPage() {
       !isRuntimeActionState(mariadbStatus?.state) &&
       !isRuntimeActionState(phpMyAdminStatus?.state) &&
       !isRuntimeActionState(golangStatus?.state) &&
-      !isRuntimeActionState(nodeJSStatus?.state)
+      !isRuntimeActionState(nodeJSStatus?.state) &&
+      !isRuntimeActionState(pm2Status?.state)
     ) {
       return;
     }
@@ -996,7 +1061,7 @@ export function ApplicationsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state, golangStatus?.state, nodeJSStatus?.state]);
+  }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state, golangStatus?.state, nodeJSStatus?.state, pm2Status?.state]);
 
   useEffect(() => {
     const availableVersions = getAvailablePHPVersions(phpStatus);
@@ -1097,8 +1162,17 @@ export function ApplicationsPage() {
     if (runningAction === "remove-nodejs" && nodeJSStatus && !nodeJSStatus.installed) {
       setRemoveCandidate((current) => (current?.kind === "nodejs" ? null : current));
       setRunningAction(null);
+      return;
     }
-  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus, golangStatus, nodeJSStatus]);
+    if (runningAction === "install-pm2" && pm2Status?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-pm2" && pm2Status && !pm2Status.installed) {
+      setRemoveCandidate((current) => (current?.kind === "pm2" ? null : current));
+      setRunningAction(null);
+    }
+  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus, golangStatus, nodeJSStatus, pm2Status]);
 
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
   const phpMyAdminServiceStatus = getPHPMyAdminServiceStatus(phpMyAdminStatus);
@@ -1108,10 +1182,14 @@ export function ApplicationsPage() {
   const phpMyAdminRemoveEnabled = canRemovePHPMyAdmin(phpMyAdminStatus);
   const golangRemoveEnabled = canRemoveGolang(golangStatus);
   const nodeJSRemoveEnabled = canRemoveNodeJS(nodeJSStatus);
+  const pm2RemoveEnabled = canRemovePM2(pm2Status);
   const mariadbBusyLabel = getRuntimeActionLabel(mariadbStatus?.state);
   const phpMyAdminBusyLabel = getRuntimeActionLabel(phpMyAdminStatus?.state);
   const golangBusyLabel = getRuntimeActionLabel(golangStatus?.state);
   const nodeJSBusyLabel = getRuntimeActionLabel(nodeJSStatus?.state);
+  const pm2BusyLabel = getRuntimeActionLabel(pm2Status?.state);
+  const pm2InstallDisabled = runningAction !== null || !pm2Status?.install_available;
+  const pm2NodeJSRequired = !nodeJSStatus?.installed;
   const mariaDBServiceStartingAfterInstall =
     runningAction === "install-mariadb" &&
     Boolean(mariadbStatus?.server_installed) &&
@@ -1127,6 +1205,8 @@ export function ApplicationsPage() {
           ? "Remove Go from this node? Deployments and scripts that rely on the Go toolchain will stop working until it is installed again."
           : removeCandidate?.kind === "nodejs"
             ? "Remove Node.js from this node? Applications and build steps that rely on the Node.js runtime will stop working until it is installed again."
+            : removeCandidate?.kind === "pm2"
+              ? "Remove PM2 from this node? Node.js process management and PM2 log rotation will stop working until PM2 is installed again."
           : "Remove this runtime?";
   const removeDialogTitle =
     removeCandidate?.kind === "php"
@@ -1139,6 +1219,8 @@ export function ApplicationsPage() {
           ? "Remove Go"
           : removeCandidate?.kind === "nodejs"
             ? "Remove Node.js"
+            : removeCandidate?.kind === "pm2"
+              ? "Remove PM2"
           : "Remove application";
   const removeDialogConfirmText =
     removeCandidate?.kind === "php"
@@ -1151,6 +1233,8 @@ export function ApplicationsPage() {
           ? "Remove Go"
           : removeCandidate?.kind === "nodejs"
             ? "Remove Node.js"
+            : removeCandidate?.kind === "pm2"
+              ? "Remove PM2"
           : "Remove";
 
   async function handleRemoveApplication() {
@@ -1169,7 +1253,9 @@ export function ApplicationsPage() {
           ? "remove-phpmyadmin"
           : target.kind === "golang"
             ? "remove-golang"
-            : "remove-nodejs";
+            : target.kind === "nodejs"
+              ? "remove-nodejs"
+              : "remove-pm2";
     setRunningAction(action);
     setPageError(null);
 
@@ -1195,10 +1281,14 @@ export function ApplicationsPage() {
           const nextStatus = await removeGolang();
           setGolangStatus(nextStatus);
           toast.success(!nextStatus.installed ? "Go removed." : "Go removal started.");
-        } else {
+        } else if (target.kind === "nodejs") {
           const nextStatus = await removeNodeJS();
           setNodeJSStatus(nextStatus);
           toast.success(!nextStatus.installed ? "Node.js removed." : "Node.js removal started.");
+        } else {
+          const nextStatus = await removePM2();
+          setPM2Status(nextStatus);
+          toast.success(!nextStatus.installed ? "PM2 removed." : "PM2 removal started.");
         }
       }
     } catch (error) {
@@ -1211,7 +1301,9 @@ export function ApplicationsPage() {
               ? "Failed to remove phpMyAdmin."
               : target.kind === "golang"
                 ? "Failed to remove Go."
-                : "Failed to remove Node.js.";
+                : target.kind === "nodejs"
+                  ? "Failed to remove Node.js."
+                  : "Failed to remove PM2.";
       const message = getErrorMessage(error, fallback);
       setPageError(message);
       toast.error(message);
@@ -1410,6 +1502,23 @@ export function ApplicationsPage() {
     }
   }
 
+  async function handlePM2Install() {
+    setRunningAction("install-pm2");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installPM2();
+      setPM2Status(nextStatus);
+      toast.success("PM2 installed. Log rotation is limited to 100 MB.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install PM2.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
   if (loading) {
     return (
       <>
@@ -1464,7 +1573,8 @@ export function ApplicationsPage() {
           (removeCandidate?.kind === "mariadb" && runningAction === "remove-mariadb") ||
           (removeCandidate?.kind === "phpmyadmin" && runningAction === "remove-phpmyadmin") ||
           (removeCandidate?.kind === "golang" && runningAction === "remove-golang") ||
-          (removeCandidate?.kind === "nodejs" && runningAction === "remove-nodejs")
+          (removeCandidate?.kind === "nodejs" && runningAction === "remove-nodejs") ||
+          (removeCandidate?.kind === "pm2" && runningAction === "remove-pm2")
         }
         handleConfirm={() => {
           void handleRemoveApplication();
@@ -1868,6 +1978,91 @@ export function ApplicationsPage() {
                   title={nodeJSRemoveEnabled ? undefined : "Automatic Node.js removal is only available for installed runtimes supported by this environment."}
                 >
                   {runningAction === "remove-nodejs" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  Remove
+                </Button>
+              </>
+            }
+          />
+
+          <ApplicationCard
+            icon={<ApplicationLogo app="pm2" />}
+            name="PM2"
+            summary={formatPM2Value(pm2Status)}
+            badge={getPM2Badge(pm2Status)}
+            meta={[
+              { label: "Toolchain", value: pm2Status?.binary_path?.trim() || "pm2", mono: true },
+              ...(pm2Status?.package_manager
+                ? [{ label: "Package manager", value: pm2Status.package_manager }]
+                : []),
+              ...(pm2Status?.installed ? [{ label: "Log rotation", value: "100 MB max" }] : []),
+            ]}
+            configAction={null}
+            actions={
+              <>
+                {pm2BusyLabel ? (
+                  <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    {pm2BusyLabel}
+                  </Button>
+                ) : null}
+                {!pm2Status?.installed ? (
+                  pm2NodeJSRequired ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className={compactActionButtonClassName}
+                            onClick={() => {
+                              void handlePM2Install();
+                            }}
+                            disabled
+                          >
+                            <Package className="h-4 w-4" />
+                            {pm2Status?.install_label ?? "Install PM2"}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Node.js required.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className={compactActionButtonClassName}
+                      onClick={() => {
+                        void handlePM2Install();
+                      }}
+                      disabled={pm2InstallDisabled}
+                    >
+                      {runningAction === "install-pm2" ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Package className="h-4 w-4" />
+                      )}
+                      {pm2Status?.install_label ?? "Install PM2"}
+                    </Button>
+                  )
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={compactActionButtonClassName}
+                  onClick={() => {
+                    setRemoveCandidate({ kind: "pm2" });
+                  }}
+                  disabled={runningAction !== null || !pm2RemoveEnabled}
+                  title={pm2RemoveEnabled ? undefined : "Automatic PM2 removal is only available when PM2 and npm are installed."}
+                >
+                  {runningAction === "remove-pm2" ? (
                     <LoaderCircle className="h-4 w-4 animate-spin" />
                   ) : (
                     <Trash2 className="h-4 w-4" />

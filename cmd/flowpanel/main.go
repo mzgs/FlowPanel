@@ -31,6 +31,7 @@ import (
 	"flowpanel/internal/nodejs"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
+	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
 
 	"go.uber.org/zap"
@@ -234,6 +235,7 @@ func runServer() error {
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
 	golangManager := golang.NewService(logger.Named("golang"))
 	nodeJSManager := nodejs.NewService(logger.Named("nodejs"))
+	pm2Manager := pm2.NewService(logger.Named("pm2"))
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
@@ -286,6 +288,7 @@ func runServer() error {
 		caddyRuntime,
 		golangManager,
 		nodeJSManager,
+		pm2Manager,
 		mariadbManager,
 		phpManager,
 		phpMyAdminManager,
