@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   fetchGolangStatus,
   installGolang,
@@ -12,9 +12,15 @@ import {
   type NodeJSStatus,
 } from "@/api/nodejs";
 import {
+  fetchPM2ProcessLogs,
+  fetchPM2Processes,
   fetchPM2Status,
   installPM2,
+  restartPM2Process,
   removePM2,
+  startPM2Process,
+  stopPM2Process,
+  type PM2Process,
   type PM2Status,
 } from "@/api/pm2";
 import {
@@ -47,7 +53,9 @@ import { MariaDBSettingsDialog } from "@/components/mariadb-settings-dialog";
 import { PHPSettingsDialog } from "@/components/php-settings-dialog";
 import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialog";
 import {
+  Copy,
   ExternalLink,
+  List,
   LoaderCircle,
   Package,
   PlayerPlayFilled,
@@ -55,11 +63,15 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  TerminalSquare,
   Trash2,
 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
@@ -75,6 +87,7 @@ import { toast } from "sonner";
 const compactActionButtonClassName = "h-7 gap-1.5 px-2.5 text-xs";
 const statusMetaBadgeClassName = "h-5 rounded-sm px-1.5 py-0 text-[11px] font-medium";
 const postInstallServiceStartWaitMs = 30_000;
+const pm2ProcessesRefreshIntervalMs = 10_000;
 const applicationLogoFrameClassName =
   "flex h-11 w-16 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2";
 
@@ -365,6 +378,111 @@ function getPM2Badge(status: PM2Status | null) {
   }
 
   return { label: "Not installed", variant: "outline" as const };
+}
+
+function formatPM2ProcessStatus(status: string) {
+  const normalized = status.trim().toLowerCase();
+  if (!normalized) {
+    return "Unknown";
+  }
+
+  return normalized
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getPM2ProcessStatusBadge(status: string) {
+  const normalized = status.trim().toLowerCase();
+
+  if (normalized === "online") {
+    return { label: "Online", variant: "default" as const };
+  }
+  if (normalized === "launching" || normalized === "waiting restart") {
+    return { label: formatPM2ProcessStatus(normalized), variant: "secondary" as const };
+  }
+  if (normalized === "errored") {
+    return { label: "Errored", variant: "destructive" as const };
+  }
+
+  return { label: formatPM2ProcessStatus(normalized), variant: "outline" as const };
+}
+
+function formatPM2ProcessCPU(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0%";
+  }
+
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)}%`;
+}
+
+function formatPM2ProcessMemory(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatPM2ProcessUptime(process: PM2Process) {
+  const status = process.status.trim().toLowerCase();
+  if (status !== "online" && status !== "launching" && status !== "waiting restart") {
+    return "-";
+  }
+
+  if (!process.uptime_unix_milli || process.uptime_unix_milli <= 0) {
+    return "-";
+  }
+
+  const elapsed = Date.now() - process.uptime_unix_milli;
+  if (!Number.isFinite(elapsed) || elapsed <= 0) {
+    return "Just now";
+  }
+
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (elapsed >= day) {
+    const days = Math.floor(elapsed / day);
+    const hours = Math.floor((elapsed % day) / hour);
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  }
+  if (elapsed >= hour) {
+    const hours = Math.floor(elapsed / hour);
+    const minutes = Math.floor((elapsed % hour) / minute);
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  if (elapsed >= minute) {
+    return `${Math.floor(elapsed / minute)}m`;
+  }
+
+  return `${Math.max(1, Math.floor(elapsed / 1000))}s`;
+}
+
+function canStartPM2Process(process: PM2Process) {
+  const status = process.status.trim().toLowerCase();
+  return status !== "online" && status !== "launching";
+}
+
+function canStopPM2Process(process: PM2Process) {
+  const status = process.status.trim().toLowerCase();
+  return status === "online" || status === "launching" || status === "waiting restart";
+}
+
+function canRestartPM2Process(process: PM2Process) {
+  const status = process.status.trim().toLowerCase();
+  return status === "online" || status === "launching" || status === "waiting restart";
 }
 
 function getPHPMyAdminServiceStatus(status: PHPMyAdminStatus | null) {
@@ -930,17 +1048,178 @@ export function ApplicationsPage() {
   const [golangStatus, setGolangStatus] = useState<GolangStatus | null>(null);
   const [nodeJSStatus, setNodeJSStatus] = useState<NodeJSStatus | null>(null);
   const [pm2Status, setPM2Status] = useState<PM2Status | null>(null);
+  const [pm2ListOpen, setPM2ListOpen] = useState(false);
+  const [pm2Processes, setPM2Processes] = useState<PM2Process[]>([]);
+  const [pm2ProcessesLoading, setPM2ProcessesLoading] = useState(false);
+  const [pm2ProcessesError, setPM2ProcessesError] = useState<string | null>(null);
+  const [pm2ProcessActionKey, setPM2ProcessActionKey] = useState<string | null>(null);
+  const [pm2LogsOpen, setPM2LogsOpen] = useState(false);
+  const [pm2LogsTarget, setPM2LogsTarget] = useState<PM2Process | null>(null);
+  const [pm2LogsOutput, setPM2LogsOutput] = useState("");
+  const [pm2LogsLoading, setPM2LogsLoading] = useState(false);
+  const [pm2LogsError, setPM2LogsError] = useState<string | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
   const [phpSettingsOpen, setPHPSettingsOpen] = useState(false);
   const [mariaDBSettingsOpen, setMariaDBSettingsOpen] = useState(false);
   const [phpMyAdminSettingsOpen, setPHPMyAdminSettingsOpen] = useState(false);
 
   const [runningAction, setRunningAction] = useState<string | null>(null);
+  const pm2ProcessListRequestIdRef = useRef(0);
+  const pm2LogsRequestIdRef = useRef(0);
   const postInstallServiceStartingAction = getPostInstallServiceStartingAction(
     runningAction,
     phpStatus,
     mariadbStatus,
   );
+
+  function resetPM2LogsState() {
+    pm2LogsRequestIdRef.current += 1;
+    setPM2LogsLoading(false);
+    setPM2LogsError(null);
+    setPM2LogsOutput("");
+  }
+
+  function handlePM2LogsOpenChange(open: boolean) {
+    setPM2LogsOpen(open);
+    if (!open) {
+      setPM2LogsTarget(null);
+      resetPM2LogsState();
+    }
+  }
+
+  function resetPM2ProcessesState() {
+    pm2ProcessListRequestIdRef.current += 1;
+    setPM2ProcessesLoading(false);
+    setPM2ProcessesError(null);
+    setPM2ProcessActionKey(null);
+    setPM2Processes([]);
+    handlePM2LogsOpenChange(false);
+  }
+
+  function handlePM2ListOpenChange(open: boolean) {
+    setPM2ListOpen(open);
+    if (!open) {
+      resetPM2ProcessesState();
+    }
+  }
+
+  async function loadPM2Processes() {
+    if (!pm2Status?.installed) {
+      setPM2Processes([]);
+      setPM2ProcessesError("PM2 is not installed.");
+      return;
+    }
+
+    const requestId = pm2ProcessListRequestIdRef.current + 1;
+    pm2ProcessListRequestIdRef.current = requestId;
+    setPM2ProcessesLoading(true);
+    setPM2ProcessesError(null);
+
+    try {
+      const processes = await fetchPM2Processes();
+      if (pm2ProcessListRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2Processes(processes);
+      setPM2LogsTarget((current) => {
+        if (current === null) {
+          return current;
+        }
+
+        return processes.find((process) => process.id === current.id) ?? current;
+      });
+    } catch (error) {
+      if (pm2ProcessListRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2Processes([]);
+      setPM2ProcessesError(getErrorMessage(error, "Failed to load PM2 processes."));
+    } finally {
+      if (pm2ProcessListRequestIdRef.current === requestId) {
+        setPM2ProcessesLoading(false);
+      }
+    }
+  }
+
+  async function loadPM2Logs(process: PM2Process) {
+    const requestId = pm2LogsRequestIdRef.current + 1;
+    pm2LogsRequestIdRef.current = requestId;
+    setPM2LogsLoading(true);
+    setPM2LogsError(null);
+
+    try {
+      const output = await fetchPM2ProcessLogs(process.id);
+      if (pm2LogsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2LogsOutput(output.trim());
+    } catch (error) {
+      if (pm2LogsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2LogsOutput("");
+      setPM2LogsError(getErrorMessage(error, `Failed to load logs for ${process.name}.`));
+    } finally {
+      if (pm2LogsRequestIdRef.current === requestId) {
+        setPM2LogsLoading(false);
+      }
+    }
+  }
+
+  function openPM2Logs(process: PM2Process) {
+    setPM2LogsTarget(process);
+    setPM2LogsOpen(true);
+    resetPM2LogsState();
+    void loadPM2Logs(process);
+  }
+
+  async function handlePM2ProcessAction(action: "start" | "stop" | "restart", process: PM2Process) {
+    const actionKey = `${action}:${process.id}`;
+    setPM2ProcessActionKey(actionKey);
+    setPM2ProcessesError(null);
+
+    const processLabel = process.name || `Process ${process.id}`;
+    const successMessage =
+      action === "start"
+        ? `${processLabel} started.`
+        : action === "stop"
+          ? `${processLabel} stopped.`
+          : `${processLabel} restarted.`;
+    const fallbackMessage =
+      action === "start"
+        ? `Failed to start ${processLabel}.`
+        : action === "stop"
+          ? `Failed to stop ${processLabel}.`
+          : `Failed to restart ${processLabel}.`;
+
+    try {
+      const processes =
+        action === "start"
+          ? await startPM2Process(process.id)
+          : action === "stop"
+            ? await stopPM2Process(process.id)
+            : await restartPM2Process(process.id);
+      setPM2Processes(processes);
+      setPM2LogsTarget((current) => {
+        if (current === null) {
+          return current;
+        }
+
+        return processes.find((item) => item.id === current.id) ?? current;
+      });
+      toast.success(successMessage);
+    } catch (error) {
+      const message = getErrorMessage(error, fallbackMessage);
+      setPM2ProcessesError(message);
+      toast.error(message);
+    } finally {
+      setPM2ProcessActionKey((current) => (current === actionKey ? null : current));
+    }
+  }
 
   async function loadPage(options?: {
     showLoading?: boolean;
@@ -1038,6 +1317,13 @@ export function ApplicationsPage() {
 
     return () => {
       unmounted = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      pm2ProcessListRequestIdRef.current += 1;
+      pm2LogsRequestIdRef.current += 1;
     };
   }, []);
 
@@ -1174,6 +1460,58 @@ export function ApplicationsPage() {
     }
   }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus, golangStatus, nodeJSStatus, pm2Status]);
 
+  useEffect(() => {
+    if (!pm2ListOpen || !pm2Status?.installed) {
+      return;
+    }
+
+    void loadPM2Processes();
+  }, [pm2ListOpen, pm2Status?.installed]);
+
+  useEffect(() => {
+    if (!pm2ListOpen || !pm2Status?.installed) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (pm2ProcessesLoading || pm2ProcessActionKey !== null) {
+        return;
+      }
+
+      void loadPM2Processes();
+    }, pm2ProcessesRefreshIntervalMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [pm2ListOpen, pm2Status?.installed, pm2ProcessesLoading, pm2ProcessActionKey]);
+
+  useEffect(() => {
+    if (!pm2LogsOpen || pm2LogsTarget === null || !pm2Status?.installed) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (pm2LogsLoading || pm2ProcessActionKey !== null) {
+        return;
+      }
+
+      void loadPM2Logs(pm2LogsTarget);
+    }, pm2ProcessesRefreshIntervalMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [pm2LogsOpen, pm2LogsTarget, pm2LogsLoading, pm2ProcessActionKey, pm2Status?.installed]);
+
+  useEffect(() => {
+    if (!pm2ListOpen || pm2Status === null || pm2Status.installed) {
+      return;
+    }
+
+    handlePM2ListOpenChange(false);
+  }, [pm2ListOpen, pm2Status]);
+
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
   const phpMyAdminServiceStatus = getPHPMyAdminServiceStatus(phpMyAdminStatus);
   const phpVersions = getAvailablePHPVersions(phpStatus);
@@ -1190,6 +1528,7 @@ export function ApplicationsPage() {
   const pm2BusyLabel = getRuntimeActionLabel(pm2Status?.state);
   const pm2InstallDisabled = runningAction !== null || !pm2Status?.install_available;
   const pm2NodeJSRequired = !nodeJSStatus?.installed;
+  const pm2LogsLineCount = pm2LogsOutput ? pm2LogsOutput.split(/\r?\n/).length : 0;
   const mariaDBServiceStartingAfterInstall =
     runningAction === "install-mariadb" &&
     Boolean(mariadbStatus?.server_installed) &&
@@ -1555,6 +1894,280 @@ export function ApplicationsPage() {
         status={phpMyAdminStatus}
         onStatusChange={setPHPMyAdminStatus}
       />
+
+      <Dialog open={pm2ListOpen} onOpenChange={handlePM2ListOpenChange}>
+        <DialogContent className="h-[min(85vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-6xl">
+          <DialogHeader className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <DialogTitle>PM2 processes</DialogTitle>
+                <DialogDescription>Manage runtime processes with start, stop, restart, and log actions.</DialogDescription>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                onClick={() => {
+                  void loadPM2Processes();
+                }}
+                disabled={pm2ProcessesLoading || pm2ProcessActionKey !== null || !pm2Status?.installed}
+              >
+                {pm2ProcessesLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Refresh
+              </Button>
+            </div>
+          </DialogHeader>
+
+          <div className="min-h-0 bg-[var(--app-surface)] text-[var(--app-text)]">
+            {pm2ProcessesError ? (
+              <div className="flex h-full items-center justify-center p-6">
+                <div className="max-w-xl rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
+                  {pm2ProcessesError}
+                </div>
+              </div>
+            ) : pm2ProcessesLoading ? (
+              <div className="flex h-full items-center justify-center gap-2 px-6 text-sm text-[var(--app-text-muted)]">
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                Loading PM2 processes...
+              </div>
+            ) : pm2Processes.length === 0 ? (
+              <div className="px-6 py-6">
+                <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-10 text-sm text-[var(--app-text-muted)]">
+                  No PM2 processes found.
+                </div>
+              </div>
+            ) : (
+              <div className="h-full overflow-auto">
+                <Table className="min-w-[1100px]">
+                  <TableHeader className="sticky top-0 z-10 bg-[var(--app-surface)] [&_tr]:border-[var(--app-border)]">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="px-4">Name</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>CPU</TableHead>
+                      <TableHead>Memory</TableHead>
+                      <TableHead>Restarts</TableHead>
+                      <TableHead>Uptime</TableHead>
+                      <TableHead className="min-w-[280px]">Script</TableHead>
+                      <TableHead className="w-[300px] text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pm2Processes.map((process) => {
+                      const statusBadge = getPM2ProcessStatusBadge(process.status);
+                      const activeAction = pm2ProcessActionKey?.endsWith(`:${process.id}`) ? pm2ProcessActionKey.split(":")[0] : null;
+                      const actionsDisabled = pm2ProcessActionKey !== null;
+
+                      return (
+                        <TableRow key={process.id} className="align-top">
+                          <TableCell className="px-4 py-3">
+                            <div className="font-medium text-[var(--app-text)]">{process.name}</div>
+                            <div className="mt-1 text-xs text-[var(--app-text-muted)]">
+                              ID {process.id}
+                              {process.namespace ? ` • ${process.namespace}` : ""}
+                              {process.exec_mode ? ` • ${process.exec_mode}` : ""}
+                              {process.version ? ` • v${process.version}` : ""}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-3">
+                            <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+                          </TableCell>
+                          <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
+                            {formatPM2ProcessCPU(process.cpu)}
+                          </TableCell>
+                          <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
+                            {formatPM2ProcessMemory(process.memory_bytes)}
+                          </TableCell>
+                          <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
+                            {process.restarts}
+                          </TableCell>
+                          <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
+                            {formatPM2ProcessUptime(process)}
+                          </TableCell>
+                          <TableCell className="max-w-0 py-3">
+                            <div className="whitespace-normal break-all font-mono text-xs text-[var(--app-text-muted)]">
+                              {process.script_path?.trim() || "-"}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-3 text-right">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => {
+                                  void handlePM2ProcessAction("start", process);
+                                }}
+                                disabled={actionsDisabled || !canStartPM2Process(process)}
+                                aria-label={`Start ${process.name}`}
+                                title={`Start ${process.name}`}
+                              >
+                                {activeAction === "start" ? (
+                                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <PlayerPlayFilled className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => {
+                                  void handlePM2ProcessAction("stop", process);
+                                }}
+                                disabled={actionsDisabled || !canStopPM2Process(process)}
+                                aria-label={`Stop ${process.name}`}
+                                title={`Stop ${process.name}`}
+                              >
+                                {activeAction === "stop" ? (
+                                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <PlayerStop className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => {
+                                  void handlePM2ProcessAction("restart", process);
+                                }}
+                                disabled={actionsDisabled || !canRestartPM2Process(process)}
+                                aria-label={`Restart ${process.name}`}
+                                title={`Restart ${process.name}`}
+                              >
+                                {activeAction === "restart" ? (
+                                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className={compactActionButtonClassName}
+                                onClick={() => {
+                                  openPM2Logs(process);
+                                }}
+                                disabled={actionsDisabled}
+                              >
+                                <TerminalSquare className="h-4 w-4" />
+                                Logs
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pm2LogsOpen} onOpenChange={handlePM2LogsOpenChange}>
+        <DialogContent className="h-[min(80vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-5xl">
+          <DialogHeader className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <DialogTitle>{pm2LogsTarget ? `${pm2LogsTarget.name} logs` : "PM2 process logs"}</DialogTitle>
+                <DialogDescription>
+                  {pm2LogsTarget
+                    ? `pm2 logs ${pm2LogsTarget.id} --lines 200 --nostream --raw`
+                    : "Recent PM2 process output."}
+                </DialogDescription>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {pm2LogsOutput ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                    onClick={() => {
+                      if (!pm2LogsOutput) {
+                        return;
+                      }
+
+                      void navigator.clipboard.writeText(pm2LogsOutput).then(
+                        () => {
+                          toast.success("PM2 logs copied.");
+                        },
+                        () => {
+                          toast.error("Failed to copy PM2 logs.");
+                        },
+                      );
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                    Copy logs
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                  onClick={() => {
+                    if (pm2LogsTarget) {
+                      void loadPM2Logs(pm2LogsTarget);
+                    }
+                  }}
+                  disabled={pm2LogsLoading || pm2LogsTarget === null}
+                >
+                  {pm2LogsLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Refresh
+                </Button>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="flex min-h-0 flex-col bg-[var(--app-surface)]">
+            {pm2LogsTarget ? (
+              <>
+                <div className="border-b border-[var(--app-border)] px-6 py-4 text-sm text-[var(--app-text-muted)]">
+                  <span className="font-medium text-[var(--app-text)]">{pm2LogsTarget.name}</span>
+                  {" • "}
+                  {pm2LogsLineCount > 0
+                    ? `${pm2LogsLineCount} ${pm2LogsLineCount === 1 ? "line" : "lines"}`
+                    : "No captured output"}
+                </div>
+
+                {pm2LogsError ? (
+                  <div className="flex h-full items-center justify-center p-6">
+                    <div className="max-w-xl rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
+                      {pm2LogsError}
+                    </div>
+                  </div>
+                ) : pm2LogsLoading ? (
+                  <div className="flex h-full items-center justify-center gap-2 px-6 text-sm text-[var(--app-text-muted)]">
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    Loading PM2 logs...
+                  </div>
+                ) : pm2LogsOutput ? (
+                  <ScrollArea className="min-h-0 flex-1 bg-[var(--app-surface)]">
+                    <pre className="p-6 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)]">
+                      {pm2LogsOutput}
+                    </pre>
+                  </ScrollArea>
+                ) : (
+                  <div className="flex h-full items-center justify-center px-6 text-sm text-[var(--app-text-muted)]">
+                    No log output returned for this process.
+                  </div>
+                )}
+              </>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ActionConfirmDialog
         open={removeCandidate !== null}
@@ -2050,6 +2663,21 @@ export function ApplicationsPage() {
                       {pm2Status?.install_label ?? "Install PM2"}
                     </Button>
                   )
+                ) : null}
+                {pm2Status?.installed ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={compactActionButtonClassName}
+                    onClick={() => {
+                      handlePM2ListOpenChange(true);
+                    }}
+                    disabled={runningAction === "remove-pm2"}
+                  >
+                    <List className="h-4 w-4" />
+                    List
+                  </Button>
                 ) : null}
                 <Button
                   type="button"

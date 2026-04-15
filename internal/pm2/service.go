@@ -3,6 +3,7 @@ package pm2
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,16 +21,39 @@ import (
 
 const (
 	statusCommandTimeout = 3 * time.Second
+	listCommandTimeout   = 5 * time.Second
+	logsCommandTimeout   = 5 * time.Second
+	actionCommandTimeout = 10 * time.Second
 	managedNodeRoot      = "/usr/local/nodejs"
 	pm2LogMaxSize        = "100M"
+	pm2LogLines          = 200
 )
 
 var pm2VersionPattern = regexp.MustCompile(`\b(\d+(?:\.\d+)+)\b`)
 
 type Manager interface {
 	Status(context.Context) Status
+	List(context.Context) ([]Process, error)
+	Logs(context.Context, int) (string, error)
+	StartProcess(context.Context, int) ([]Process, error)
+	StopProcess(context.Context, int) ([]Process, error)
+	RestartProcess(context.Context, int) ([]Process, error)
 	Install(context.Context) error
 	Remove(context.Context) error
+}
+
+type Process struct {
+	ID              int     `json:"id"`
+	Name            string  `json:"name"`
+	Status          string  `json:"status"`
+	CPU             float64 `json:"cpu"`
+	MemoryBytes     int64   `json:"memory_bytes"`
+	Restarts        int     `json:"restarts"`
+	UptimeUnixMilli int64   `json:"uptime_unix_milli,omitempty"`
+	ScriptPath      string  `json:"script_path,omitempty"`
+	Namespace       string  `json:"namespace,omitempty"`
+	Version         string  `json:"version,omitempty"`
+	ExecMode        string  `json:"exec_mode,omitempty"`
 }
 
 type Status struct {
@@ -47,6 +73,25 @@ type Status struct {
 
 type Service struct {
 	logger *zap.Logger
+}
+
+type rawProcess struct {
+	Name   string `json:"name"`
+	PMID   int    `json:"pm_id"`
+	PM2Env struct {
+		Status      string `json:"status"`
+		PMXModule   bool   `json:"pmx_module"`
+		RestartTime int    `json:"restart_time"`
+		PMUptime    int64  `json:"pm_uptime"`
+		PMExecPath  string `json:"pm_exec_path"`
+		Namespace   string `json:"namespace"`
+		Version     string `json:"version"`
+		ExecMode    string `json:"exec_mode"`
+	} `json:"pm2_env"`
+	Monit struct {
+		Memory int64   `json:"memory"`
+		CPU    float64 `json:"cpu"`
+	} `json:"monit"`
 }
 
 func NewService(logger *zap.Logger) *Service {
@@ -156,6 +201,51 @@ func (s *Service) Install(ctx context.Context) error {
 	)
 }
 
+func (s *Service) List(ctx context.Context) ([]Process, error) {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return nil, errors.New("PM2 is not installed")
+	}
+
+	output, err := runInspectCommandWithTimeout(ctx, listCommandTimeout, pm2Path, "jlist")
+	if err != nil {
+		return nil, err
+	}
+
+	return parseProcesses(output)
+}
+
+func (s *Service) Logs(ctx context.Context, processID int) (string, error) {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return "", errors.New("PM2 is not installed")
+	}
+
+	return runInspectCommandWithTimeout(
+		ctx,
+		logsCommandTimeout,
+		pm2Path,
+		"logs",
+		strconv.Itoa(processID),
+		"--lines",
+		strconv.Itoa(pm2LogLines),
+		"--nostream",
+		"--raw",
+	)
+}
+
+func (s *Service) StartProcess(ctx context.Context, processID int) ([]Process, error) {
+	return s.runProcessAction(ctx, "start", processID)
+}
+
+func (s *Service) StopProcess(ctx context.Context, processID int) ([]Process, error) {
+	return s.runProcessAction(ctx, "stop", processID)
+}
+
+func (s *Service) RestartProcess(ctx context.Context, processID int) ([]Process, error) {
+	return s.runProcessAction(ctx, "restart", processID)
+}
+
 func (s *Service) Remove(ctx context.Context) error {
 	if status := s.Status(ctx); !status.Installed {
 		return nil
@@ -181,6 +271,76 @@ func parseVersion(output string) string {
 	}
 
 	return strings.TrimSpace(match[1])
+}
+
+func parseProcesses(output string) ([]Process, error) {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	var records []rawProcess
+	if err := json.Unmarshal([]byte(trimmed), &records); err != nil {
+		return nil, fmt.Errorf("failed to parse PM2 process list: %w", err)
+	}
+
+	processes := make([]Process, 0, len(records))
+	for _, record := range records {
+		if isModuleProcess(record) {
+			continue
+		}
+
+		process := Process{
+			ID:              record.PMID,
+			Name:            strings.TrimSpace(record.Name),
+			Status:          strings.TrimSpace(record.PM2Env.Status),
+			CPU:             record.Monit.CPU,
+			MemoryBytes:     record.Monit.Memory,
+			Restarts:        record.PM2Env.RestartTime,
+			UptimeUnixMilli: record.PM2Env.PMUptime,
+			ScriptPath:      strings.TrimSpace(record.PM2Env.PMExecPath),
+			Namespace:       strings.TrimSpace(record.PM2Env.Namespace),
+			Version:         strings.TrimSpace(record.PM2Env.Version),
+			ExecMode:        strings.TrimSpace(record.PM2Env.ExecMode),
+		}
+		if process.Name == "" {
+			process.Name = fmt.Sprintf("Process %d", process.ID)
+		}
+		processes = append(processes, process)
+	}
+
+	sort.Slice(processes, func(i, j int) bool {
+		leftName := strings.ToLower(processes[i].Name)
+		rightName := strings.ToLower(processes[j].Name)
+		if leftName == rightName {
+			return processes[i].ID < processes[j].ID
+		}
+		return leftName < rightName
+	})
+
+	return processes, nil
+}
+
+func isModuleProcess(process rawProcess) bool {
+	if process.PM2Env.PMXModule {
+		return true
+	}
+
+	scriptPath := filepath.ToSlash(strings.TrimSpace(process.PM2Env.PMExecPath))
+	return strings.Contains(scriptPath, "/.pm2/modules/")
+}
+
+func (s *Service) runProcessAction(ctx context.Context, action string, processID int) ([]Process, error) {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return nil, errors.New("PM2 is not installed")
+	}
+
+	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, action, strconv.Itoa(processID)); err != nil {
+		return nil, err
+	}
+
+	return s.List(ctx)
 }
 
 func detectNodeBinary() (string, bool) {
@@ -235,6 +395,10 @@ func lookupCommand(name string) (string, bool) {
 }
 
 func runInspectCommand(ctx context.Context, name string, args ...string) (string, error) {
+	return runInspectCommandWithTimeout(ctx, statusCommandTimeout, name, args...)
+}
+
+func runInspectCommandWithTimeout(ctx context.Context, timeout time.Duration, name string, args ...string) (string, error) {
 	runCtx := ctx
 	if runCtx == nil {
 		runCtx = context.Background()
@@ -242,7 +406,7 @@ func runInspectCommand(ctx context.Context, name string, args ...string) (string
 
 	if _, ok := runCtx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(runCtx, statusCommandTimeout)
+		runCtx, cancel = context.WithTimeout(runCtx, timeout)
 		defer cancel()
 	}
 

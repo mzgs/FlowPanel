@@ -13,11 +13,33 @@ export type PM2Status = {
   remove_label?: string;
 };
 
+export type PM2Process = {
+  id: number;
+  name: string;
+  status: string;
+  cpu: number;
+  memory_bytes: number;
+  restarts: number;
+  uptime_unix_milli?: number;
+  script_path?: string;
+  namespace?: string;
+  version?: string;
+  exec_mode?: string;
+};
+
 type PM2StatusPayload = {
   pm2: PM2Status;
 };
 
-async function parsePM2Response(response: Response): Promise<PM2Status> {
+type PM2ProcessesPayload = {
+  processes: PM2Process[];
+};
+
+type PM2ProcessLogsPayload = {
+  output: string;
+};
+
+async function parsePM2Response<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let message = `pm2 request failed with status ${response.status}`;
 
@@ -33,8 +55,7 @@ async function parsePM2Response(response: Response): Promise<PM2Status> {
     throw new Error(message);
   }
 
-  const payload = (await response.json()) as PM2StatusPayload;
-  return payload.pm2;
+  return (await response.json()) as T;
 }
 
 export async function fetchPM2Status(): Promise<PM2Status> {
@@ -43,7 +64,50 @@ export async function fetchPM2Status(): Promise<PM2Status> {
     cache: "no-store",
   });
 
-  return parsePM2Response(response);
+  const payload = await parsePM2Response<PM2StatusPayload>(response);
+  return payload.pm2;
+}
+
+export async function fetchPM2Processes(): Promise<PM2Process[]> {
+  const response = await fetch("/api/pm2/processes", {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const payload = await parsePM2Response<PM2ProcessesPayload>(response);
+  return payload.processes;
+}
+
+export async function fetchPM2ProcessLogs(processID: number): Promise<string> {
+  const response = await fetch(`/api/pm2/processes/${processID}/logs`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const payload = await parsePM2Response<PM2ProcessLogsPayload>(response);
+  return payload.output;
+}
+
+async function runPM2ProcessAction(processID: number, action: "start" | "stop" | "restart"): Promise<PM2Process[]> {
+  const response = await fetch(`/api/pm2/processes/${processID}/${action}`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  const payload = await parsePM2Response<PM2ProcessesPayload>(response);
+  return payload.processes;
+}
+
+export function startPM2Process(processID: number): Promise<PM2Process[]> {
+  return runPM2ProcessAction(processID, "start");
+}
+
+export function stopPM2Process(processID: number): Promise<PM2Process[]> {
+  return runPM2ProcessAction(processID, "stop");
+}
+
+export function restartPM2Process(processID: number): Promise<PM2Process[]> {
+  return runPM2ProcessAction(processID, "restart");
 }
 
 export async function installPM2(): Promise<PM2Status> {
@@ -52,7 +116,8 @@ export async function installPM2(): Promise<PM2Status> {
     credentials: "include",
   });
 
-  return parsePM2Response(response);
+  const payload = await parsePM2Response<PM2StatusPayload>(response);
+  return payload.pm2;
 }
 
 export async function removePM2(): Promise<PM2Status> {
@@ -61,5 +126,6 @@ export async function removePM2(): Promise<PM2Status> {
     credentials: "include",
   });
 
-  return parsePM2Response(response);
+  const payload = await parsePM2Response<PM2StatusPayload>(response);
+  return payload.pm2;
 }
