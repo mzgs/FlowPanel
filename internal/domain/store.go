@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS domains (
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `
+UPDATE domains
+SET kind = ?, target = 'http://127.0.0.1:' || target
+WHERE kind = 'App' AND target <> '' AND target NOT GLOB '*[^0-9]*'
+`, string(KindReverseProxy)); err != nil {
+		return fmt.Errorf("migrate app domains to reverse proxy: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS domain_github_integrations (
     domain_id TEXT PRIMARY KEY,
     repository_url TEXT NOT NULL,
@@ -116,7 +123,7 @@ ORDER BY created_at DESC, id DESC
 			return nil, fmt.Errorf("scan domain row: %w", err)
 		}
 
-		record.Kind = Kind(kind)
+		record.Kind, record.Target = normalizePersistedKindAndTarget(Kind(kind), record.Target)
 		record.PHPVersion = strings.TrimSpace(phpVersion)
 		record.CacheEnabled = cacheEnabledInt != 0
 		if message := validateKind(record.Kind); message != "" {

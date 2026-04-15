@@ -78,7 +78,6 @@ type FormMode = "create" | "edit";
 const domainKinds: DomainKind[] = [
   "Static site",
   "Php site",
-  "App",
   "Reverse proxy",
 ];
 
@@ -121,12 +120,6 @@ const kindConfig: Record<
   "Php site": {
     helpText:
       "FlowPanel uses the default PHP site directory automatically and requires PHP-FPM to be ready in Overview.",
-  },
-  App: {
-    targetLabel: "Internal port",
-    targetPlaceholder: "3000",
-    helpText:
-      "Traffic will be forwarded to the selected local application port.",
   },
   "Reverse proxy": {
     targetLabel: "Upstream URL",
@@ -177,17 +170,6 @@ function getDuplicateHostnameError(
 
 function validateTarget(kind: DomainKind, value: string) {
   const trimmed = value.trim();
-
-  if (kind === "App") {
-    if (!trimmed) {
-      return "Internal port is required.";
-    }
-
-    const port = Number(trimmed);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      return "Enter a valid port between 1 and 65535.";
-    }
-  }
 
   if (kind === "Reverse proxy") {
     if (!trimmed) {

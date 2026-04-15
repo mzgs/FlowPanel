@@ -34,7 +34,6 @@ type Kind string
 const (
 	KindStaticSite   Kind = "Static site"
 	KindPHP          Kind = "Php site"
-	KindApp          Kind = "App"
 	KindReverseProxy Kind = "Reverse proxy"
 )
 
@@ -146,7 +145,7 @@ func defaultSitesBasePath() string {
 
 func SupportsManagedDocumentRoot(kind Kind) bool {
 	switch kind {
-	case KindStaticSite, KindPHP, KindApp, KindReverseProxy:
+	case KindStaticSite, KindPHP, KindReverseProxy:
 		return true
 	default:
 		return false
@@ -276,7 +275,7 @@ func (s *Service) Delete(ctx context.Context, id string) (Record, bool, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
-	hostname, target, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target)
+	hostname, kind, target, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target)
 	if err != nil {
 		return Record{}, err
 	}
@@ -290,7 +289,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		}
 	}
 
-	resolvedTarget, err := s.deriveTarget(hostname, input.Kind, target)
+	resolvedTarget, err := s.deriveTarget(hostname, kind, target)
 	if err != nil {
 		return Record{}, err
 	}
@@ -298,7 +297,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 	record := Record{
 		ID:           fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano()),
 		Hostname:     hostname,
-		Kind:         input.Kind,
+		Kind:         kind,
 		Target:       resolvedTarget,
 		CacheEnabled: input.CacheEnabled,
 		CreatedAt:    time.Now().UTC(),
@@ -317,7 +316,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 }
 
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Record, Record, error) {
-	hostname, target, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target)
+	hostname, kind, target, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target)
 	if err != nil {
 		return Record{}, Record{}, err
 	}
@@ -336,13 +335,13 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 		}
 	}
 
-	resolvedTarget, err := s.deriveTarget(current.Hostname, input.Kind, target)
+	resolvedTarget, err := s.deriveTarget(current.Hostname, kind, target)
 	if err != nil {
 		return Record{}, Record{}, err
 	}
 
 	updated := current
-	updated.Kind = input.Kind
+	updated.Kind = kind
 	updated.Target = resolvedTarget
 	updated.CacheEnabled = input.CacheEnabled
 	updated = s.withTransientFields(updated)
@@ -362,6 +361,7 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	record.Kind, record.Target = normalizePersistedKindAndTarget(record.Kind, record.Target)
 	record = s.withTransientFields(record)
 
 	index, _, exists := s.findRecordLocked(record.ID)
@@ -412,7 +412,7 @@ func normalizeHostname(value string) string {
 
 func validateKind(kind Kind) string {
 	switch kind {
-	case KindStaticSite, KindPHP, KindApp, KindReverseProxy:
+	case KindStaticSite, KindPHP, KindReverseProxy:
 		return ""
 	default:
 		return "Select a valid domain type."
@@ -460,11 +460,6 @@ func validateTarget(kind Kind, value string) string {
 	}
 
 	switch kind {
-	case KindApp:
-		port, err := strconv.Atoi(trimmed)
-		if err != nil || port < 1 || port > 65535 {
-			return "Enter a valid port between 1 and 65535."
-		}
 	case KindReverseProxy:
 		parsed, err := url.Parse(trimmed)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -481,13 +476,13 @@ func validateTarget(kind Kind, value string) string {
 	return ""
 }
 
-func normalizeAndValidateInput(hostname string, kind Kind, target string) (string, string, error) {
+func normalizeAndValidateInput(hostname string, kind Kind, target string) (string, Kind, string, error) {
 	normalizedHostname := normalizeHostname(hostname)
-	trimmedTarget := strings.TrimSpace(target)
+	normalizedKind, trimmedTarget := normalizePersistedKindAndTarget(kind, target)
 
 	validation := ValidationErrors{}
 
-	if message := validateKind(kind); message != "" {
+	if message := validateKind(normalizedKind); message != "" {
 		validation["kind"] = message
 	}
 
@@ -495,17 +490,17 @@ func normalizeAndValidateInput(hostname string, kind Kind, target string) (strin
 		validation["hostname"] = message
 	}
 
-	if kind == KindApp || kind == KindReverseProxy {
-		if message := validateTarget(kind, trimmedTarget); message != "" {
+	if normalizedKind == KindReverseProxy {
+		if message := validateTarget(normalizedKind, trimmedTarget); message != "" {
 			validation["target"] = message
 		}
 	}
 
 	if len(validation) > 0 {
-		return "", "", validation
+		return "", "", "", validation
 	}
 
-	return normalizedHostname, trimmedTarget, nil
+	return normalizedHostname, normalizedKind, trimmedTarget, nil
 }
 
 func (s *Service) findRecordLocked(id string) (int, Record, bool) {
@@ -696,11 +691,25 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 			return "", err
 		}
 		return siteRoot, nil
-	case KindApp, KindReverseProxy:
+	case KindReverseProxy:
 		return target, nil
 	default:
 		return "", fmt.Errorf("unsupported domain kind %q", kind)
 	}
+}
+
+func normalizePersistedKindAndTarget(kind Kind, target string) (Kind, string) {
+	trimmedTarget := strings.TrimSpace(target)
+	if kind != "App" {
+		return kind, trimmedTarget
+	}
+
+	port, err := strconv.Atoi(trimmedTarget)
+	if err != nil || port < 1 || port > 65535 {
+		return KindReverseProxy, trimmedTarget
+	}
+
+	return KindReverseProxy, fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
 func (s *Service) ensureSiteRoot(hostname string) (string, error) {

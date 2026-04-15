@@ -15,7 +15,7 @@ export function getFilesPathFromDomainTarget(
     return null;
   }
 
-  if (kind === "App" || kind === "Reverse proxy") {
+  if (kind === "Reverse proxy") {
     return normalizedHostname;
   }
 

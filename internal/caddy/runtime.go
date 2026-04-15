@@ -498,16 +498,6 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 				Routes: phpSubrouteRoutes(root, fastCGIAddress, record.PHPSettings),
 			}, "handler", "subroute", nil),
 		)
-	case domain.KindApp:
-		originHandlers = append(originHandlers,
-			caddyconfig.JSONModuleObject(reverseproxy.Handler{
-				Upstreams: reverseproxy.UpstreamPool{
-					&reverseproxy.Upstream{
-						Dial: net.JoinHostPort("localhost", record.Target),
-					},
-				},
-			}, "handler", "reverse_proxy", nil),
-		)
 	case domain.KindReverseProxy:
 		targetURL, err := parseUpstreamURL(record)
 		if err != nil {

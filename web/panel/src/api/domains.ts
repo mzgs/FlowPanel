@@ -1,7 +1,7 @@
 import { type PHPSettings } from "@/api/php";
 import { type WordPressStatus } from "@/api/domain-wordpress";
 
-export type DomainKind = "Static site" | "Php site" | "App" | "Reverse proxy";
+export type DomainKind = "Static site" | "Php site" | "Reverse proxy";
 
 export type DomainRecord = {
   id: string;
