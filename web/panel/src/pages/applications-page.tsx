@@ -35,10 +35,7 @@ import { MariaDBSettingsDialog } from "@/components/mariadb-settings-dialog";
 import { PHPSettingsDialog } from "@/components/php-settings-dialog";
 import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialog";
 import {
-  Database,
   ExternalLink,
-  FileCode2,
-  LayoutDashboard,
   LoaderCircle,
   Package,
   PlayerPlayFilled,
@@ -46,7 +43,6 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
-  TerminalSquare,
   Trash2,
 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
@@ -66,6 +62,20 @@ import { toast } from "sonner";
 const compactActionButtonClassName = "h-7 gap-1.5 px-2.5 text-xs";
 const statusMetaBadgeClassName = "h-5 rounded-sm px-1.5 py-0 text-[11px] font-medium";
 const postInstallServiceStartWaitMs = 30_000;
+const applicationLogoFrameClassName =
+  "flex h-11 w-16 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2";
+
+const applicationLogos = {
+  php: { src: "/application-icons/php.png", alt: "PHP logo", className: "h-6 w-full" },
+  mariadb: { src: "/application-icons/mariadb.png", alt: "MariaDB logo", className: "h-8 w-full" },
+  phpmyadmin: {
+    src: "/application-icons/phpmyadmin.png",
+    alt: "phpMyAdmin logo",
+    className: "h-7 w-full",
+  },
+  go: { src: "/application-icons/go.png", alt: "Go logo", className: "h-7 w-full" },
+} as const;
+
 type StatusMetaTone = "success" | "danger" | "info";
 type RemovableApplication =
   | { kind: "php"; version: string }
@@ -309,6 +319,12 @@ function canRemoveGolang(status: GolangStatus | null) {
   return status.remove_available;
 }
 
+function ApplicationLogo({ app }: { app: keyof typeof applicationLogos }) {
+  const logo = applicationLogos[app];
+
+  return <img src={logo.src} alt={logo.alt} className={cn("object-contain", logo.className)} />;
+}
+
 function ApplicationCard({
   icon,
   name,
@@ -332,7 +348,7 @@ function ApplicationCard({
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
       <div className="relative px-4 py-4">
         <div className="flex min-w-0 w-full items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
+          <div className={applicationLogoFrameClassName}>
             {icon}
           </div>
           <div className="min-w-0 flex-1">
@@ -423,8 +439,8 @@ function ApplicationCardSkeleton({ showConfigAction = false }: { showConfigActio
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
       <div className="relative px-4 py-4">
         <div className="flex min-w-0 w-full items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-            <Skeleton circle width={18} height={18} />
+          <div className={applicationLogoFrameClassName}>
+            <Skeleton width="100%" height={18} borderRadius={6} />
           </div>
 
           <div className="min-w-0 flex-1 pr-10">
@@ -629,7 +645,7 @@ function PHPRuntimeCard({
 
   return (
     <ApplicationCard
-      icon={<TerminalSquare className="h-5 w-5" />}
+      icon={<ApplicationLogo app="php" />}
       name="PHP"
       summary={formatInstalledPHPRuntimeVersion(status)}
       badge={badge}
@@ -1403,7 +1419,7 @@ export function ApplicationsPage() {
           />
 
           <ApplicationCard
-            icon={<Database className="h-5 w-5" />}
+            icon={<ApplicationLogo app="mariadb" />}
             name="MariaDB"
             summary={formatMariaDBValue(mariadbStatus)}
             badge={getMariaDBBadge(mariadbStatus)}
@@ -1544,7 +1560,7 @@ export function ApplicationsPage() {
           />
 
           <ApplicationCard
-            icon={<LayoutDashboard className="h-5 w-5" />}
+            icon={<ApplicationLogo app="phpmyadmin" />}
             name="phpMyAdmin"
             summary={formatPHPMyAdminValue(phpMyAdminStatus)}
             badge={getPHPMyAdminBadge(phpMyAdminStatus)}
@@ -1632,7 +1648,7 @@ export function ApplicationsPage() {
           />
 
           <ApplicationCard
-            icon={<FileCode2 className="h-5 w-5" />}
+            icon={<ApplicationLogo app="go" />}
             name="Go"
             summary={formatGolangValue(golangStatus)}
             badge={getGolangBadge(golangStatus)}
