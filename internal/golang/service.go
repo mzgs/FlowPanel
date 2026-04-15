@@ -28,6 +28,7 @@ var goVersionPattern = regexp.MustCompile(`\bgo([0-9][^\s]*)\b`)
 const (
 	goDownloadListURL = "https://go.dev/dl/?mode=json"
 	linuxInstallRoot  = "/usr/local/go"
+	linuxProfilePath  = "/etc/profile.d/flowpanel-go.sh"
 )
 
 type Manager interface {
@@ -135,13 +136,18 @@ func (s *Service) Status(ctx context.Context) Status {
 }
 
 func (s *Service) Install(ctx context.Context) error {
+	plan := detectActionPlan()
 	if status := s.Status(ctx); status.Installed {
+		if plan.useOfficialTar {
+			return ensureManagedLinuxPath()
+		}
 		return nil
 	}
-
-	plan := detectActionPlan()
 	if plan.useOfficialTar {
-		return s.installLatestLinuxRelease(ctx)
+		if err := s.installLatestLinuxRelease(ctx); err != nil {
+			return err
+		}
+		return ensureManagedLinuxPath()
 	}
 	if len(plan.installCmds) == 0 {
 		return fmt.Errorf("automatic Go installation is not supported on %s", runtime.GOOS)
@@ -371,6 +377,31 @@ func removeManagedLinuxInstall() error {
 
 	if err := os.RemoveAll(linuxInstallRoot); err != nil {
 		return fmt.Errorf("remove go path: %w", err)
+	}
+	if err := removeManagedLinuxPath(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ensureManagedLinuxPath() error {
+	pathEntry := filepath.Join(linuxInstallRoot, "bin")
+	content := fmt.Sprintf(
+		"# Added by FlowPanel for Go\ncase \":$PATH:\" in\n  *:%[1]s:*) ;;\n  *) export PATH=\"$PATH:%[1]s\" ;;\nesac\n",
+		pathEntry,
+	)
+
+	if err := os.WriteFile(linuxProfilePath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write go profile: %w", err)
+	}
+
+	return nil
+}
+
+func removeManagedLinuxPath() error {
+	if err := os.Remove(linuxProfilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove go profile: %w", err)
 	}
 
 	return nil
