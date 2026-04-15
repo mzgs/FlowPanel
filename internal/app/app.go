@@ -11,6 +11,7 @@ import (
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
 	"flowpanel/internal/ftp"
+	"flowpanel/internal/golang"
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
@@ -29,6 +30,7 @@ type App struct {
 	Sessions    *scs.SessionManager
 	Cron        *cron.Scheduler
 	Caddy       *caddy.Runtime
+	Golang      golang.Manager
 	MariaDB     mariadb.Manager
 	PHP         phpenv.Manager
 	PHPMyAdmin  phpmyadmin.Manager
@@ -49,6 +51,7 @@ func New(
 	sessions *scs.SessionManager,
 	scheduler *cron.Scheduler,
 	caddyRuntime *caddy.Runtime,
+	golangManager golang.Manager,
 	mariadbManager mariadb.Manager,
 	phpManager phpenv.Manager,
 	phpMyAdminManager phpmyadmin.Manager,
@@ -68,6 +71,7 @@ func New(
 		Sessions:    sessions,
 		Cron:        scheduler,
 		Caddy:       caddyRuntime,
+		Golang:      golangManager,
 		MariaDB:     mariadbManager,
 		PHP:         phpManager,
 		PHPMyAdmin:  phpMyAdminManager,

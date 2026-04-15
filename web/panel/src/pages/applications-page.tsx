@@ -1,5 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  fetchGolangStatus,
+  installGolang,
+  removeGolang,
+  type GolangStatus,
+} from "@/api/golang";
+import {
   fetchMariaDBStatus,
   installMariaDB,
   removeMariaDB,
@@ -31,6 +37,7 @@ import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialo
 import {
   Database,
   ExternalLink,
+  FileCode2,
   LayoutDashboard,
   LoaderCircle,
   Package,
@@ -63,7 +70,8 @@ type StatusMetaTone = "success" | "danger" | "info";
 type RemovableApplication =
   | { kind: "php"; version: string }
   | { kind: "mariadb" }
-  | { kind: "phpmyadmin" };
+  | { kind: "phpmyadmin" }
+  | { kind: "golang" };
 type RuntimeState = string | null | undefined;
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -155,6 +163,27 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
   return "";
 }
 
+function formatGolangValue(status: GolangStatus | null) {
+  if (!status) {
+    return "Unavailable";
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
+  if (status.installed && status.version?.trim()) {
+    return status.version.trim();
+  }
+
+  if (status.installed) {
+    return "Installed";
+  }
+
+  return "";
+}
+
 function getPHPRuntimeBadge(status: PHPRuntimeStatus) {
   const actionLabel = getRuntimeActionLabel(status.state);
   if (actionLabel) {
@@ -218,6 +247,23 @@ function getPHPMyAdminBadge(status: PHPMyAdminStatus | null) {
   return { label: "Not installed", variant: "outline" as const };
 }
 
+function getGolangBadge(status: GolangStatus | null) {
+  if (!status) {
+    return { label: "Unavailable", variant: "outline" as const };
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
+  }
+
+  if (status.installed) {
+    return { label: "Installed", variant: "default" as const };
+  }
+
+  return { label: "Not installed", variant: "outline" as const };
+}
+
 function getPHPMyAdminServiceStatus(status: PHPMyAdminStatus | null) {
   const actionLabel = getRuntimeActionLabel(status?.state);
   if (actionLabel) {
@@ -255,6 +301,14 @@ function canRemovePHPMyAdmin(status: PHPMyAdminStatus | null) {
   return status.remove_available;
 }
 
+function canRemoveGolang(status: GolangStatus | null) {
+  if (!status) {
+    return false;
+  }
+
+  return status.remove_available;
+}
+
 function ApplicationCard({
   icon,
   name,
@@ -272,6 +326,8 @@ function ApplicationCard({
   actions: ReactNode;
   configAction?: ReactNode;
 }) {
+  const hasConfigAction = configAction !== null;
+
   return (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
       <div className="relative px-4 py-4">
@@ -280,12 +336,14 @@ function ApplicationCard({
             {icon}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 pr-10">
+            <div className={cn("flex flex-wrap items-center gap-2", hasConfigAction && "pr-10")}>
               <h2 className="text-sm font-semibold tracking-tight text-[var(--app-text)]">{name}</h2>
               <Badge variant={badge.variant}>{badge.label}</Badge>
             </div>
             {summary ? (
-              <div className="mt-1 pr-10 text-sm font-medium text-[var(--app-text)]">{summary}</div>
+              <div className={cn("mt-1 text-sm font-medium text-[var(--app-text)]", hasConfigAction && "pr-10")}>
+                {summary}
+              </div>
             ) : null}
             {meta.length > 0 ? (
               <div className="mt-1 flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-text-muted)]">
@@ -333,20 +391,24 @@ function ApplicationCard({
             ) : null}
           </div>
         </div>
-        <div className="absolute right-4 top-4">
-          {configAction ?? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 rounded-md text-[var(--app-text-muted)]"
-              aria-label={`Configure ${name}`}
-              title={`Configure ${name}`}
-            >
-              <Settings className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
+        {hasConfigAction ? (
+          <div className="absolute right-4 top-4">
+            {configAction === undefined ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-md text-[var(--app-text-muted)]"
+                aria-label={`Configure ${name}`}
+                title={`Configure ${name}`}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            ) : (
+              configAction
+            )}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-[var(--app-border)] px-4 py-3">
@@ -409,6 +471,7 @@ function ApplicationsPageSkeleton() {
           <ApplicationCardSkeleton />
           <ApplicationCardSkeleton />
           <ApplicationCardSkeleton showConfigAction />
+          <ApplicationCardSkeleton />
         </div>
       </div>
     </SkeletonTheme>
@@ -738,6 +801,7 @@ export function ApplicationsPage() {
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
+  const [golangStatus, setGolangStatus] = useState<GolangStatus | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
   const [phpSettingsOpen, setPHPSettingsOpen] = useState(false);
   const [mariaDBSettingsOpen, setMariaDBSettingsOpen] = useState(false);
@@ -765,10 +829,11 @@ export function ApplicationsPage() {
     setPageError(null);
 
     const nextErrors: string[] = [];
-    const [phpResult, mariadbResult, phpMyAdminResult] = await Promise.allSettled([
+    const [phpResult, mariadbResult, phpMyAdminResult, golangResult] = await Promise.allSettled([
       fetchPHPStatus(),
       fetchMariaDBStatus(),
       fetchPHPMyAdminStatus(),
+      fetchGolangStatus(),
     ]);
     if (options?.ignoreIfUnmounted?.()) {
       return;
@@ -793,6 +858,13 @@ export function ApplicationsPage() {
     } else {
       setPHPMyAdminStatus(null);
       nextErrors.push(getErrorMessage(phpMyAdminResult.reason, "Failed to inspect phpMyAdmin."));
+    }
+
+    if (golangResult.status === "fulfilled") {
+      setGolangStatus(golangResult.value);
+    } else {
+      setGolangStatus(null);
+      nextErrors.push(getErrorMessage(golangResult.reason, "Failed to inspect Go."));
     }
 
     setPageError(nextErrors.length > 0 ? nextErrors.join(" ") : null);
@@ -830,7 +902,8 @@ export function ApplicationsPage() {
       runningAction === null &&
       !isRuntimeActionState(phpStatus?.state) &&
       !isRuntimeActionState(mariadbStatus?.state) &&
-      !isRuntimeActionState(phpMyAdminStatus?.state)
+      !isRuntimeActionState(phpMyAdminStatus?.state) &&
+      !isRuntimeActionState(golangStatus?.state)
     ) {
       return;
     }
@@ -842,7 +915,7 @@ export function ApplicationsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state]);
+  }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state, golangStatus?.state]);
 
   useEffect(() => {
     const availableVersions = getAvailablePHPVersions(phpStatus);
@@ -902,7 +975,7 @@ export function ApplicationsPage() {
       !mariadbStatus.server_installed &&
       !mariadbStatus.client_installed
     ) {
-      setRemoveCandidate((current) => (current === "mariadb" ? null : current));
+      setRemoveCandidate((current) => (current?.kind === "mariadb" ? null : current));
       setRunningAction(null);
       return;
     }
@@ -925,8 +998,17 @@ export function ApplicationsPage() {
     if (runningAction === "remove-phpmyadmin" && phpMyAdminStatus && !phpMyAdminStatus.installed) {
       setRemoveCandidate((current) => (current?.kind === "phpmyadmin" ? null : current));
       setRunningAction(null);
+      return;
     }
-  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus]);
+    if (runningAction === "install-golang" && golangStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-golang" && golangStatus && !golangStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "golang" ? null : current));
+      setRunningAction(null);
+    }
+  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus, golangStatus]);
 
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
   const phpMyAdminServiceStatus = getPHPMyAdminServiceStatus(phpMyAdminStatus);
@@ -934,8 +1016,10 @@ export function ApplicationsPage() {
   const selectedPHPRuntime = getSelectedPHPRuntime(phpStatus, selectedPHPVersion);
   const mariaDBRemoveEnabled = canRemoveMariaDB(mariadbStatus);
   const phpMyAdminRemoveEnabled = canRemovePHPMyAdmin(phpMyAdminStatus);
+  const golangRemoveEnabled = canRemoveGolang(golangStatus);
   const mariadbBusyLabel = getRuntimeActionLabel(mariadbStatus?.state);
   const phpMyAdminBusyLabel = getRuntimeActionLabel(phpMyAdminStatus?.state);
+  const golangBusyLabel = getRuntimeActionLabel(golangStatus?.state);
   const mariaDBServiceStartingAfterInstall =
     runningAction === "install-mariadb" &&
     Boolean(mariadbStatus?.server_installed) &&
@@ -947,6 +1031,8 @@ export function ApplicationsPage() {
         ? "Remove MariaDB from this node? Existing databases may become unavailable until MariaDB is installed again."
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin from this node? The browser database client will no longer be available."
+          : removeCandidate?.kind === "golang"
+            ? "Remove Go from this node? Deployments and scripts that rely on the Go toolchain will stop working until it is installed again."
           : "Remove this runtime?";
   const removeDialogTitle =
     removeCandidate?.kind === "php"
@@ -955,6 +1041,8 @@ export function ApplicationsPage() {
         ? "Remove MariaDB"
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin"
+          : removeCandidate?.kind === "golang"
+            ? "Remove Go"
           : "Remove application";
   const removeDialogConfirmText =
     removeCandidate?.kind === "php"
@@ -963,6 +1051,8 @@ export function ApplicationsPage() {
         ? "Remove MariaDB"
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin"
+          : removeCandidate?.kind === "golang"
+            ? "Remove Go"
           : "Remove";
 
   async function handleRemoveApplication() {
@@ -977,7 +1067,9 @@ export function ApplicationsPage() {
         ? phpRuntimeActionKey("remove", target.version)
         : target.kind === "mariadb"
           ? "remove-mariadb"
-          : "remove-phpmyadmin";
+          : target.kind === "phpmyadmin"
+            ? "remove-phpmyadmin"
+            : "remove-golang";
     setRunningAction(action);
     setPageError(null);
 
@@ -995,9 +1087,15 @@ export function ApplicationsPage() {
             : "MariaDB removal started.",
         );
       } else {
-        const nextStatus = await removePHPMyAdmin();
-        setPHPMyAdminStatus(nextStatus);
-        toast.success(!nextStatus.installed ? "phpMyAdmin removed." : "phpMyAdmin removal started.");
+        if (target.kind === "phpmyadmin") {
+          const nextStatus = await removePHPMyAdmin();
+          setPHPMyAdminStatus(nextStatus);
+          toast.success(!nextStatus.installed ? "phpMyAdmin removed." : "phpMyAdmin removal started.");
+        } else {
+          const nextStatus = await removeGolang();
+          setGolangStatus(nextStatus);
+          toast.success(!nextStatus.installed ? "Go removed." : "Go removal started.");
+        }
       }
     } catch (error) {
       const fallback =
@@ -1005,7 +1103,9 @@ export function ApplicationsPage() {
           ? `Failed to remove PHP ${target.version}.`
           : target.kind === "mariadb"
             ? "Failed to remove MariaDB."
-            : "Failed to remove phpMyAdmin.";
+            : target.kind === "phpmyadmin"
+              ? "Failed to remove phpMyAdmin."
+              : "Failed to remove Go.";
       const message = getErrorMessage(error, fallback);
       setPageError(message);
       toast.error(message);
@@ -1170,6 +1270,23 @@ export function ApplicationsPage() {
     }
   }
 
+  async function handleGolangInstall() {
+    setRunningAction("install-golang");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installGolang();
+      setGolangStatus(nextStatus);
+      toast.success("Go installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install Go.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
   if (loading) {
     return (
       <>
@@ -1222,7 +1339,8 @@ export function ApplicationsPage() {
           (removeCandidate?.kind === "php" &&
             runningAction === phpRuntimeActionKey("remove", removeCandidate.version)) ||
           (removeCandidate?.kind === "mariadb" && runningAction === "remove-mariadb") ||
-          (removeCandidate?.kind === "phpmyadmin" && runningAction === "remove-phpmyadmin")
+          (removeCandidate?.kind === "phpmyadmin" && runningAction === "remove-phpmyadmin") ||
+          (removeCandidate?.kind === "golang" && runningAction === "remove-golang")
         }
         handleConfirm={() => {
           void handleRemoveApplication();
@@ -1503,6 +1621,66 @@ export function ApplicationsPage() {
                   title={phpMyAdminRemoveEnabled ? undefined : "Runtime removal is only available for installed runtimes."}
                 >
                   {runningAction === "remove-phpmyadmin" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  Remove
+                </Button>
+              </>
+            }
+          />
+
+          <ApplicationCard
+            icon={<FileCode2 className="h-5 w-5" />}
+            name="Go"
+            summary={formatGolangValue(golangStatus)}
+            badge={getGolangBadge(golangStatus)}
+            meta={[
+              { label: "Toolchain", value: golangStatus?.binary_path?.trim() || "go", mono: true },
+              ...(golangStatus?.package_manager
+                ? [{ label: "Package manager", value: golangStatus.package_manager }]
+                : []),
+            ]}
+            configAction={null}
+            actions={
+              <>
+                {golangBusyLabel ? (
+                  <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    {golangBusyLabel}
+                  </Button>
+                ) : null}
+                {golangStatus?.install_available ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className={compactActionButtonClassName}
+                    onClick={() => {
+                      void handleGolangInstall();
+                    }}
+                    disabled={runningAction !== null}
+                  >
+                    {runningAction === "install-golang" ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Package className="h-4 w-4" />
+                    )}
+                    {golangStatus.install_label ?? "Install Go"}
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={compactActionButtonClassName}
+                  onClick={() => {
+                    setRemoveCandidate({ kind: "golang" });
+                  }}
+                  disabled={runningAction !== null || !golangRemoveEnabled}
+                  title={golangRemoveEnabled ? undefined : "Automatic Go removal is only available for installed runtimes supported by this environment."}
+                >
+                  {runningAction === "remove-golang" ? (
                     <LoaderCircle className="h-4 w-4 animate-spin" />
                   ) : (
                     <Trash2 className="h-4 w-4" />

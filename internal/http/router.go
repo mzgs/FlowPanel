@@ -704,6 +704,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/system", systemStatusHandler)
 		r.Method(stdhttp.MethodHead, "/system", systemStatusHandler)
 
+		api.registerGoRoutes(r)
 		api.registerMariaDBRoutes(r)
 
 		api.registerPHPRoutes(r)

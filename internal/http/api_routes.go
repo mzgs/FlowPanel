@@ -8,6 +8,7 @@ import (
 
 	"flowpanel/internal/app"
 	eventlog "flowpanel/internal/events"
+	"flowpanel/internal/golang"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
@@ -34,6 +35,7 @@ func (a *apiRoutes) register(r chi.Router) {
 	}
 
 	a.registerBackupRoutes(r)
+	a.registerGoRoutes(r)
 	a.registerMariaDBRoutes(r)
 	a.registerPHPRoutes(r)
 	a.registerDomainRoutes(r)
@@ -184,6 +186,31 @@ func (a *apiRoutes) trackMariaDBStatus(status mariadb.Status) mariadb.Status {
 	status.StartAvailable = false
 	status.StopAvailable = false
 	status.RestartAvailable = false
+	return status
+}
+
+func (a *apiRoutes) trackGoStatus(status golang.Status) golang.Status {
+	switch a.runtimeActions.Current("golang") {
+	case "install":
+		if status.Installed {
+			a.runtimeActions.End("golang", "install")
+			return status
+		}
+		status.State = "installing"
+		status.Message = "Go installation is running in the background."
+	case "remove":
+		if !status.Installed {
+			a.runtimeActions.End("golang", "remove")
+			return status
+		}
+		status.State = "removing"
+		status.Message = "Go removal is running in the background."
+	default:
+		return status
+	}
+
+	status.InstallAvailable = false
+	status.RemoveAvailable = false
 	return status
 }
 

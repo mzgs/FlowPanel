@@ -23,6 +23,7 @@ import (
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
 	"flowpanel/internal/ftp"
+	"flowpanel/internal/golang"
 	"flowpanel/internal/googledrive"
 	httpx "flowpanel/internal/http"
 	"flowpanel/internal/logging"
@@ -230,6 +231,7 @@ func runServer() error {
 		return fmt.Errorf("load persisted cron jobs: %w", err)
 	}
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
+	golangManager := golang.NewService(logger.Named("golang"))
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
@@ -280,6 +282,7 @@ func runServer() error {
 		sessionManager,
 		scheduler,
 		caddyRuntime,
+		golangManager,
 		mariadbManager,
 		phpManager,
 		phpMyAdminManager,
