@@ -214,6 +214,21 @@ function getRuntimeActionLabel(state: RuntimeState) {
   }
 }
 
+function getApplicationActionLabel(action: "install" | "start" | "stop" | "restart" | "remove") {
+  switch (action) {
+    case "install":
+      return "Install";
+    case "start":
+      return "Start";
+    case "stop":
+      return "Stop";
+    case "restart":
+      return "Restart";
+    case "remove":
+      return "Remove";
+  }
+}
+
 function isRuntimeActionState(state: RuntimeState) {
   return getRuntimeActionLabel(state) !== null;
 }
@@ -813,7 +828,7 @@ function InstallRemoveApplicationCard({
               ) : (
                 <Package className="h-4 w-4" />
               )}
-              {status.install_label ?? `Install ${name}`}
+              {getApplicationActionLabel("install")}
             </Button>
           ) : null}
           <Button
@@ -905,7 +920,7 @@ function ServiceApplicationCard({
               ) : (
                 <Package className="h-4 w-4" />
               )}
-              {status.install_label ?? `Install ${name}`}
+              {getApplicationActionLabel("install")}
             </Button>
           ) : null}
           {status?.start_available ? (
@@ -922,7 +937,7 @@ function ServiceApplicationCard({
               ) : (
                 <PlayerPlayFilled className="h-4 w-4" />
               )}
-              {status.start_label ?? "Start"}
+              {getApplicationActionLabel("start")}
             </Button>
           ) : null}
           {status?.stop_available ? (
@@ -939,7 +954,7 @@ function ServiceApplicationCard({
               ) : (
                 <PlayerStop className="h-4 w-4" />
               )}
-              {status.stop_label ?? "Stop"}
+              {getApplicationActionLabel("stop")}
             </Button>
           ) : null}
           {status?.restart_available ? (
@@ -956,7 +971,7 @@ function ServiceApplicationCard({
               ) : (
                 <RotateCcw className="h-4 w-4" />
               )}
-              {status.restart_label ?? "Restart"}
+              {getApplicationActionLabel("restart")}
             </Button>
           ) : null}
           <Button
@@ -973,7 +988,7 @@ function ServiceApplicationCard({
             ) : (
               <Trash2 className="h-4 w-4" />
             )}
-            Remove
+            {getApplicationActionLabel("remove")}
           </Button>
         </>
       }
@@ -2025,28 +2040,7 @@ export function ApplicationsPage() {
             : removeCandidate?.kind === "pm2"
               ? "Remove PM2"
           : "Remove application";
-  const removeDialogConfirmText =
-    removeCandidate?.kind === "php"
-      ? `Remove PHP ${removeCandidate.version}`
-      : removeCandidate?.kind === "mariadb"
-        ? "Remove MariaDB"
-        : removeCandidate?.kind === "docker"
-          ? "Remove Docker"
-        : removeCandidate?.kind === "redis"
-          ? "Remove Redis"
-          : removeCandidate?.kind === "mongodb"
-            ? "Remove MongoDB"
-            : removeCandidate?.kind === "postgresql"
-              ? "Remove PostgreSQL"
-        : removeCandidate?.kind === "phpmyadmin"
-          ? "Remove phpMyAdmin"
-        : removeCandidate?.kind === "golang"
-          ? "Remove Go"
-          : removeCandidate?.kind === "nodejs"
-            ? "Remove Node.js"
-            : removeCandidate?.kind === "pm2"
-              ? "Remove PM2"
-          : "Remove";
+  const removeDialogConfirmText = getApplicationActionLabel("remove");
 
   async function handleRemoveApplication() {
     if (removeCandidate === null) {
@@ -3085,7 +3079,7 @@ export function ApplicationsPage() {
                     ) : (
                       <Package className="h-4 w-4" />
                     )}
-                    {mariadbStatus.install_label ?? "Install MariaDB"}
+                    {getApplicationActionLabel("install")}
                   </Button>
                 ) : null}
                 {mariadbStatus?.start_available ? (
@@ -3331,7 +3325,7 @@ export function ApplicationsPage() {
                     ) : (
                       <Package className="h-4 w-4" />
                     )}
-                    {phpMyAdminStatus.install_label ?? "Install phpMyAdmin"}
+                    {getApplicationActionLabel("install")}
                   </Button>
                 ) : null}
                 {phpMyAdminStatus?.installed ? (
@@ -3410,7 +3404,7 @@ export function ApplicationsPage() {
                     ) : (
                       <Package className="h-4 w-4" />
                     )}
-                    {golangStatus.install_label ?? "Install Go"}
+                    {getApplicationActionLabel("install")}
                   </Button>
                 ) : null}
                 <Button
@@ -3473,7 +3467,7 @@ export function ApplicationsPage() {
                     ) : (
                       <Package className="h-4 w-4" />
                     )}
-                    {nodeJSStatus.install_label ?? "Install Node.js"}
+                    {getApplicationActionLabel("install")}
                   </Button>
                 ) : null}
                 <Button
@@ -3534,7 +3528,7 @@ export function ApplicationsPage() {
                             disabled
                           >
                             <Package className="h-4 w-4" />
-                            {pm2Status?.install_label ?? "Install PM2"}
+                            {getApplicationActionLabel("install")}
                           </Button>
                         </span>
                       </TooltipTrigger>
@@ -3557,7 +3551,7 @@ export function ApplicationsPage() {
                       ) : (
                         <Package className="h-4 w-4" />
                       )}
-                      {pm2Status?.install_label ?? "Install PM2"}
+                      {getApplicationActionLabel("install")}
                     </Button>
                   )
                 ) : null}
