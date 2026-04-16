@@ -48,6 +48,19 @@ type Runtime struct {
 	rawJSON []byte
 }
 
+type Status struct {
+	Started           bool   `json:"started"`
+	ConfigLoaded      bool   `json:"config_loaded"`
+	AdminListenAddr   string `json:"admin_listen_addr,omitempty"`
+	PublicHTTPAddr    string `json:"public_http_addr,omitempty"`
+	PublicHTTPSAddr   string `json:"public_https_addr,omitempty"`
+	ConfiguredDomains int    `json:"configured_domains"`
+	State             string `json:"state"`
+	Message           string `json:"message"`
+	RestartAvailable  bool   `json:"restart_available"`
+	RestartLabel      string `json:"restart_label,omitempty"`
+}
+
 type configSummary struct {
 	configuredDomains int
 	activeRoutes      int
@@ -100,6 +113,42 @@ func NewRuntime(
 		phpMyAdmin:      phpMyAdminManager,
 		phpMyAdminAddr:  strings.TrimSpace(phpMyAdminAddr),
 	}
+}
+
+func (r *Runtime) Status() Status {
+	if r == nil {
+		return Status{
+			State:   "missing",
+			Message: "Caddy runtime is not configured.",
+		}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	status := Status{
+		Started:          r.started,
+		ConfigLoaded:     len(r.rawJSON) > 0,
+		AdminListenAddr:  r.adminListenAddr,
+		PublicHTTPAddr:   r.publicHTTPAddr,
+		PublicHTTPSAddr:  r.publicHTTPSAddr,
+		RestartAvailable: true,
+		RestartLabel:     "Restart & sync",
+	}
+
+	switch {
+	case status.Started && status.ConfigLoaded:
+		status.State = "running"
+		status.Message = "Embedded Caddy is running with the current domain configuration."
+	case status.Started:
+		status.State = "running"
+		status.Message = "Embedded Caddy is running."
+	default:
+		status.State = "stopped"
+		status.Message = "Embedded Caddy is stopped."
+	}
+
+	return status
 }
 
 func (r *Runtime) Start(ctx context.Context) error {

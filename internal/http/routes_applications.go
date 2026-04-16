@@ -26,6 +26,7 @@ func (a *apiRoutes) registerApplicationRoutes(r chi.Router) {
 		return
 	}
 
+	a.registerCaddyRoutes(r)
 	a.registerGoRoutes(r)
 	a.registerNodeJSRoutes(r)
 	a.registerPM2Routes(r)
@@ -35,6 +36,59 @@ func (a *apiRoutes) registerApplicationRoutes(r chi.Router) {
 	a.registerPackageRuntimeRoutes(r, "mongodb", "MongoDB", a.app.MongoDB)
 	a.registerPackageRuntimeRoutes(r, "postgresql", "PostgreSQL", a.app.PostgreSQL)
 	a.registerPHPRoutes(r)
+}
+
+func (a *apiRoutes) registerCaddyRoutes(r chi.Router) {
+	statusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Caddy == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "caddy runtime is not configured"})
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusOK, map[string]any{
+			"caddy": a.currentCaddyStatus(),
+		})
+	})
+	r.Method(stdhttp.MethodGet, "/caddy", statusHandler)
+	r.Method(stdhttp.MethodHead, "/caddy", statusHandler)
+
+	r.Method(stdhttp.MethodPost, "/caddy/restart", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Caddy == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "caddy runtime is not configured"})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		if err := a.runtimeActions.Begin("caddy", "restart"); err != nil {
+			writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})
+			return
+		}
+		defer a.runtimeActions.End("caddy", "restart")
+
+		if err := a.app.Caddy.Stop(actionCtx); err != nil {
+			a.app.Logger.Error("restart caddy failed during stop", zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "restart", "caddy", "caddy", "Caddy server", "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := a.app.Caddy.Start(actionCtx); err != nil {
+			a.app.Logger.Error("restart caddy failed during start", zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "restart", "caddy", "caddy", "Caddy server", "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := a.syncDomainsWithCaddy(actionCtx); err != nil {
+			a.app.Logger.Error("sync domains after caddy restart failed", zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "restart", "caddy", "caddy", "Caddy server", "failed", "Caddy restarted but failed to synchronize domains.")
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "caddy restarted but failed to synchronize domains"})
+			return
+		}
+
+		a.mutationEvent(actionCtx, "runtime", "restart", "caddy", "caddy", "Caddy server", "succeeded", "Restarted Caddy and synchronized domains.")
+		writeJSON(w, stdhttp.StatusOK, map[string]any{
+			"caddy": a.currentCaddyStatus(),
+		})
+	}))
 }
 
 func (a *apiRoutes) registerGoRoutes(r chi.Router) {

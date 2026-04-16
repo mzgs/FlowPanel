@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { fetchCaddyStatus, restartCaddy, type CaddyStatus } from "@/api/caddy";
 import {
   fetchDockerStatus,
   installDocker,
@@ -98,6 +99,7 @@ import {
   PlayerStop,
   RefreshCw,
   RotateCcw,
+  Server,
   Settings,
   TerminalSquare,
   Trash2,
@@ -415,6 +417,52 @@ function getServiceRuntimeMeta(status: ServiceRuntimeStatus | null) {
 
 function getGolangBadge(status: GolangStatus | null) {
   return getInstallRemoveRuntimeBadge(status);
+}
+
+function formatCaddyValue(status: CaddyStatus | null) {
+  if (!status) {
+    return "Unavailable";
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return actionLabel;
+  }
+
+  if (!status.started) {
+    return "Stopped";
+  }
+
+  if (status.configured_domains === 0) {
+    return "No domains configured";
+  }
+
+  return `${status.configured_domains} domain${status.configured_domains === 1 ? "" : "s"} configured`;
+}
+
+function getCaddyBadge(status: CaddyStatus | null) {
+  if (!status) {
+    return { label: "Unavailable", variant: "outline" as const };
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
+  }
+
+  if (status.started) {
+    return { label: "Running", variant: "default" as const };
+  }
+
+  return { label: "Stopped", variant: "outline" as const };
+}
+
+function getCaddyServiceMeta(status: CaddyStatus | null) {
+  const actionLabel = getRuntimeActionLabel(status?.state);
+  const value = actionLabel?.replace("...", "") ?? (status?.started ? "Running" : "Stopped");
+  const tone: StatusMetaTone | undefined = actionLabel ? undefined : status?.started ? "success" : "danger";
+
+  return { value, tone };
 }
 
 function formatNodeJSValue(status: NodeJSStatus | null) {
@@ -1318,6 +1366,7 @@ export function ApplicationsPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [selectedPHPVersion, setSelectedPHPVersion] = useState("");
 
+  const [caddyStatus, setCaddyStatus] = useState<CaddyStatus | null>(null);
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [dockerStatus, setDockerStatus] = useState<DockerStatus | null>(null);
@@ -1517,6 +1566,7 @@ export function ApplicationsPage() {
 
     const nextErrors: string[] = [];
     const [
+      caddyResult,
       phpResult,
       mariadbResult,
       dockerResult,
@@ -1528,6 +1578,7 @@ export function ApplicationsPage() {
       nodeJSResult,
       pm2Result,
     ] = await Promise.allSettled([
+      fetchCaddyStatus(),
       fetchPHPStatus(),
       fetchMariaDBStatus(),
       fetchDockerStatus(),
@@ -1541,6 +1592,13 @@ export function ApplicationsPage() {
     ]);
     if (options?.ignoreIfUnmounted?.()) {
       return;
+    }
+
+    if (caddyResult.status === "fulfilled") {
+      setCaddyStatus(caddyResult.value);
+    } else {
+      setCaddyStatus(null);
+      nextErrors.push(getErrorMessage(caddyResult.reason, "Failed to inspect Caddy server."));
     }
 
     if (phpResult.status === "fulfilled") {
@@ -1653,6 +1711,7 @@ export function ApplicationsPage() {
   useEffect(() => {
     if (
       runningAction === null &&
+      !isRuntimeActionState(caddyStatus?.state) &&
       !isRuntimeActionState(phpStatus?.state) &&
       !isRuntimeActionState(mariadbStatus?.state) &&
       !isRuntimeActionState(dockerStatus?.state) &&
@@ -1676,6 +1735,7 @@ export function ApplicationsPage() {
     };
   }, [
     runningAction,
+    caddyStatus?.state,
     phpStatus?.state,
     mariadbStatus?.state,
     dockerStatus?.state,
@@ -1900,6 +1960,7 @@ export function ApplicationsPage() {
   }, [pm2ListOpen, pm2Status]);
 
   const phpMyAdminInstallBlocked = !mariadbStatus?.server_installed;
+  const caddyServiceMeta = getCaddyServiceMeta(caddyStatus);
   const phpMyAdminServiceStatus = getPHPMyAdminServiceStatus(phpMyAdminStatus);
   const phpVersions = getAvailablePHPVersions(phpStatus);
   const selectedPHPRuntime = getSelectedPHPRuntime(phpStatus, selectedPHPVersion);
@@ -2281,6 +2342,16 @@ export function ApplicationsPage() {
     } finally {
       setRunningAction(null);
     }
+  }
+
+  async function handleCaddyRestart() {
+    await handleServiceRuntimeAction({
+      actionKey: "restart-caddy",
+      run: restartCaddy,
+      setStatus: (status) => setCaddyStatus(status),
+      successMessage: "Caddy restarted and domains refreshed.",
+      fallbackMessage: "Failed to restart Caddy and refresh domains.",
+    });
   }
 
   async function handleRedisStart() {
@@ -2889,6 +2960,44 @@ export function ApplicationsPage() {
         ) : null}
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <ApplicationCard
+            icon={<Server className="h-5 w-5 text-[var(--app-text)]" />}
+            name="Caddy server"
+            summary={formatCaddyValue(caddyStatus)}
+            badge={getCaddyBadge(caddyStatus)}
+            meta={[
+              {
+                label: "Service",
+                value: caddyServiceMeta.value,
+                tone: caddyServiceMeta.tone,
+              },
+              { label: "Domains", value: String(caddyStatus?.configured_domains ?? 0) },
+              { label: "HTTP", value: caddyStatus?.public_http_addr?.trim() || "Disabled", mono: true },
+              { label: "HTTPS", value: caddyStatus?.public_https_addr?.trim() || "Disabled", mono: true },
+            ]}
+            configAction={null}
+            actions={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={compactActionButtonClassName}
+                onClick={() => {
+                  void handleCaddyRestart();
+                }}
+                disabled={runningAction !== null || !caddyStatus?.restart_available}
+                title={caddyStatus?.restart_available ? undefined : "Caddy runtime is unavailable."}
+              >
+                {runningAction === "restart-caddy" ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-4 w-4" />
+                )}
+                {caddyStatus?.restart_label ?? "Restart & sync"}
+              </Button>
+            }
+          />
+
           <PHPRuntimeCard
             status={selectedPHPRuntime}
             availableVersions={phpVersions}

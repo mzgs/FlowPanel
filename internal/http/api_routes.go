@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"flowpanel/internal/app"
+	"flowpanel/internal/caddy"
 	eventlog "flowpanel/internal/events"
 	"flowpanel/internal/golang"
 	"flowpanel/internal/mariadb"
@@ -90,6 +91,22 @@ func (a *apiRoutes) mutationEvent(ctx context.Context, category, action, resourc
 	})
 }
 
+func (a *apiRoutes) currentCaddyStatus() caddy.Status {
+	if a == nil || a.app == nil || a.app.Caddy == nil {
+		return caddy.Status{
+			State:   "missing",
+			Message: "Caddy runtime is not configured.",
+		}
+	}
+
+	status := a.app.Caddy.Status()
+	if a.app.Domains != nil {
+		status.ConfiguredDomains = len(a.app.Domains.List())
+	}
+
+	return a.trackCaddyStatus(status)
+}
+
 func (a *apiRoutes) startBackgroundRuntimeAction(
 	w stdhttp.ResponseWriter,
 	r *stdhttp.Request,
@@ -131,6 +148,21 @@ func (a *apiRoutes) startBackgroundRuntimeAction(
 
 	writeJSON(w, stdhttp.StatusOK, status(actionCtx))
 	return true
+}
+
+func (a *apiRoutes) trackCaddyStatus(status caddy.Status) caddy.Status {
+	switch a.runtimeActions.Current("caddy") {
+	case "restart":
+		if status.Started && status.ConfigLoaded {
+			a.runtimeActions.End("caddy", "restart")
+			return status
+		}
+		status.State = "restarting"
+		status.Message = "Caddy restart and domain sync are running in the background."
+		status.RestartAvailable = false
+	}
+
+	return status
 }
 
 func (a *apiRoutes) trackPHPStatus(status phpenv.Status) phpenv.Status {
