@@ -37,6 +37,7 @@ type App struct {
 	NodeJS      nodejs.Manager
 	PM2         pm2.Manager
 	MariaDB     mariadb.Manager
+	Docker      packageruntime.Manager
 	Redis       packageruntime.Manager
 	MongoDB     packageruntime.Manager
 	PostgreSQL  packageruntime.Manager
@@ -63,6 +64,7 @@ func New(
 	nodeJSManager nodejs.Manager,
 	pm2Manager pm2.Manager,
 	mariadbManager mariadb.Manager,
+	dockerManager packageruntime.Manager,
 	redisManager packageruntime.Manager,
 	mongoDBManager packageruntime.Manager,
 	postgresqlManager packageruntime.Manager,
@@ -88,6 +90,7 @@ func New(
 		NodeJS:      nodeJSManager,
 		PM2:         pm2Manager,
 		MariaDB:     mariadbManager,
+		Docker:      dockerManager,
 		Redis:       redisManager,
 		MongoDB:     mongoDBManager,
 		PostgreSQL:  postgresqlManager,

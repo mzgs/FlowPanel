@@ -4,11 +4,14 @@ import (
 	"errors"
 	"io/fs"
 	stdhttp "net/http"
+	"regexp"
 	"strings"
 
 	"flowpanel/internal/backup"
 	filesvc "flowpanel/internal/files"
 )
+
+var listenerConflictPattern = regexp.MustCompile(`listen tcp (?P<address>\[[^\]]+\]:\d+|[^:[:space:]]*:\d+)`)
 
 func eventErrorMessage(message string, err error) string {
 	message = strings.TrimSpace(message)
@@ -25,6 +28,40 @@ func eventErrorMessage(message string, err error) string {
 	}
 
 	return message + "\n\nError: " + detail
+}
+
+func syncDomainsErrorResponse(err error, fallback string) (int, string) {
+	message := strings.TrimSpace(fallback)
+	if message == "" {
+		message = "failed to refresh domain routing"
+	}
+	if err == nil {
+		return stdhttp.StatusInternalServerError, message
+	}
+
+	detail := strings.ToLower(strings.TrimSpace(err.Error()))
+	if !strings.Contains(detail, "address already in use") {
+		return stdhttp.StatusInternalServerError, message
+	}
+
+	address := listenerConflictAddress(err.Error())
+	switch {
+	case strings.HasSuffix(address, ":443"):
+		return stdhttp.StatusConflict, "FlowPanel could not publish the domain because another process is already listening on HTTPS port 443. Stop the service or Docker container using port 443, then retry."
+	case strings.HasSuffix(address, ":80"):
+		return stdhttp.StatusConflict, "FlowPanel could not publish the domain because another process is already listening on HTTP port 80. Stop the service or Docker container using port 80, then retry."
+	default:
+		return stdhttp.StatusConflict, "FlowPanel could not publish the domain because one of its public ports is already in use. Stop the conflicting service or Docker container, then retry."
+	}
+}
+
+func listenerConflictAddress(message string) string {
+	match := listenerConflictPattern.FindStringSubmatch(strings.ToLower(strings.TrimSpace(message)))
+	if len(match) < 2 {
+		return ""
+	}
+
+	return strings.TrimSpace(match[1])
 }
 
 func writeFileError(w stdhttp.ResponseWriter, err error) {

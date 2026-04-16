@@ -854,7 +854,8 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		if err := a.syncDomainsWithCaddy(r.Context()); err != nil {
 			a.app.Logger.Error("sync domains after php settings update failed", zap.String("hostname", hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "update_php_settings", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Saved domain PHP settings but failed to republish routes.", err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "domain php settings saved but routes could not be refreshed"})
+			status, message := syncDomainsErrorResponse(err, "domain php settings saved but routes could not be refreshed")
+			writeJSON(w, status, map[string]any{"error": message})
 			return
 		}
 
@@ -950,7 +951,8 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			}
 			a.app.Logger.Error("publish domain failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Created domain record but failed to publish it.", err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to publish domain"})
+			status, message := syncDomainsErrorResponse(err, "failed to publish domain")
+			writeJSON(w, status, map[string]any{"error": message})
 			return
 		}
 
@@ -1013,7 +1015,8 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			}
 			a.app.Logger.Error("publish updated domain failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "update", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Updated domain record but failed to publish it.", err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to update domain"})
+			status, message := syncDomainsErrorResponse(err, "failed to update domain")
+			writeJSON(w, status, map[string]any{"error": message})
 			return
 		}
 
@@ -1051,7 +1054,8 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			}
 			a.app.Logger.Error("publish deleted domain failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "delete", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Deleted domain record but failed to republish routes.", err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to delete domain"})
+			status, message := syncDomainsErrorResponse(err, "failed to delete domain")
+			writeJSON(w, status, map[string]any{"error": message})
 			return
 		}
 

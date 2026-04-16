@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  fetchDockerStatus,
+  installDocker,
+  removeDocker,
+  restartDocker,
+  startDocker,
+  stopDocker,
+  type DockerStatus,
+} from "@/api/docker";
+import {
   fetchGolangStatus,
   installGolang,
   removeGolang,
@@ -121,6 +130,7 @@ const applicationLogoFrameClassName =
 const applicationLogos = {
   php: { src: "/application-icons/php.png", alt: "PHP logo", className: "h-6 w-full" },
   mariadb: { src: "/application-icons/mariadb.png", alt: "MariaDB logo", className: "h-8 w-full" },
+  docker: { src: "/application-icons/docker.svg", alt: "Docker logo", className: "h-7 w-full" },
   redis: { src: "/application-icons/redis.svg", alt: "Redis logo", className: "h-7 w-full" },
   mongodb: { src: "/application-icons/mongodb.svg", alt: "MongoDB logo", className: "h-7 w-full" },
   postgresql: {
@@ -142,6 +152,7 @@ type StatusMetaTone = "success" | "danger" | "info";
 type RemovableApplication =
   | { kind: "php"; version: string }
   | { kind: "mariadb" }
+  | { kind: "docker" }
   | { kind: "redis" }
   | { kind: "mongodb" }
   | { kind: "postgresql" }
@@ -1309,6 +1320,7 @@ export function ApplicationsPage() {
 
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
+  const [dockerStatus, setDockerStatus] = useState<DockerStatus | null>(null);
   const [redisStatus, setRedisStatus] = useState<RedisStatus | null>(null);
   const [mongoDBStatus, setMongoDBStatus] = useState<MongoDBStatus | null>(null);
   const [postgresqlStatus, setPostgreSQLStatus] = useState<PostgreSQLStatus | null>(null);
@@ -1507,6 +1519,7 @@ export function ApplicationsPage() {
     const [
       phpResult,
       mariadbResult,
+      dockerResult,
       redisResult,
       mongoDBResult,
       postgresqlResult,
@@ -1517,6 +1530,7 @@ export function ApplicationsPage() {
     ] = await Promise.allSettled([
       fetchPHPStatus(),
       fetchMariaDBStatus(),
+      fetchDockerStatus(),
       fetchRedisStatus(),
       fetchMongoDBStatus(),
       fetchPostgreSQLStatus(),
@@ -1541,6 +1555,13 @@ export function ApplicationsPage() {
     } else {
       setMariaDBStatus(null);
       nextErrors.push(getErrorMessage(mariadbResult.reason, "Failed to inspect MariaDB."));
+    }
+
+    if (dockerResult.status === "fulfilled") {
+      setDockerStatus(dockerResult.value);
+    } else {
+      setDockerStatus(null);
+      nextErrors.push(getErrorMessage(dockerResult.reason, "Failed to inspect Docker."));
     }
 
     if (redisResult.status === "fulfilled") {
@@ -1634,6 +1655,7 @@ export function ApplicationsPage() {
       runningAction === null &&
       !isRuntimeActionState(phpStatus?.state) &&
       !isRuntimeActionState(mariadbStatus?.state) &&
+      !isRuntimeActionState(dockerStatus?.state) &&
       !isRuntimeActionState(redisStatus?.state) &&
       !isRuntimeActionState(mongoDBStatus?.state) &&
       !isRuntimeActionState(postgresqlStatus?.state) &&
@@ -1656,6 +1678,7 @@ export function ApplicationsPage() {
     runningAction,
     phpStatus?.state,
     mariadbStatus?.state,
+    dockerStatus?.state,
     redisStatus?.state,
     mongoDBStatus?.state,
     postgresqlStatus?.state,
@@ -1728,6 +1751,15 @@ export function ApplicationsPage() {
       return;
     }
     if (runningAction === "install-redis" && redisStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "install-docker" && dockerStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-docker" && dockerStatus && !dockerStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "docker" ? null : current));
       setRunningAction(null);
       return;
     }
@@ -1805,6 +1837,7 @@ export function ApplicationsPage() {
     runningAction,
     phpStatus,
     mariadbStatus,
+    dockerStatus,
     redisStatus,
     mongoDBStatus,
     postgresqlStatus,
@@ -1892,6 +1925,8 @@ export function ApplicationsPage() {
       ? `Remove PHP ${removeCandidate.version} from this node? Domains assigned to PHP ${removeCandidate.version} will stop serving until that runtime is installed again.`
       : removeCandidate?.kind === "mariadb"
         ? "Remove MariaDB from this node? Existing databases may become unavailable until MariaDB is installed again."
+        : removeCandidate?.kind === "docker"
+          ? "Remove Docker from this node? Container workloads and image builds will stop working until Docker is installed again."
         : removeCandidate?.kind === "redis"
           ? "Remove Redis from this node? Services and jobs that rely on Redis caching or queues will stop working until Redis is installed again."
           : removeCandidate?.kind === "mongodb"
@@ -1912,6 +1947,8 @@ export function ApplicationsPage() {
       ? `Remove PHP ${removeCandidate.version}`
       : removeCandidate?.kind === "mariadb"
         ? "Remove MariaDB"
+        : removeCandidate?.kind === "docker"
+          ? "Remove Docker"
         : removeCandidate?.kind === "redis"
           ? "Remove Redis"
           : removeCandidate?.kind === "mongodb"
@@ -1932,6 +1969,8 @@ export function ApplicationsPage() {
       ? `Remove PHP ${removeCandidate.version}`
       : removeCandidate?.kind === "mariadb"
         ? "Remove MariaDB"
+        : removeCandidate?.kind === "docker"
+          ? "Remove Docker"
         : removeCandidate?.kind === "redis"
           ? "Remove Redis"
           : removeCandidate?.kind === "mongodb"
@@ -1960,6 +1999,8 @@ export function ApplicationsPage() {
         ? phpRuntimeActionKey("remove", target.version)
         : target.kind === "mariadb"
           ? "remove-mariadb"
+          : target.kind === "docker"
+            ? "remove-docker"
           : target.kind === "redis"
             ? "remove-redis"
             : target.kind === "mongodb"
@@ -1993,6 +2034,10 @@ export function ApplicationsPage() {
             ? "MariaDB removed."
             : "MariaDB removal started.",
         );
+      } else if (target.kind === "docker") {
+        const nextStatus = await removeDocker();
+        setDockerStatus(nextStatus);
+        toast.success(!nextStatus.installed ? "Docker removed." : "Docker removal started.");
       } else if (target.kind === "redis") {
         const nextStatus = await removeRedis();
         setRedisStatus(nextStatus);
@@ -2030,6 +2075,8 @@ export function ApplicationsPage() {
           ? `Failed to remove PHP ${target.version}.`
           : target.kind === "mariadb"
             ? "Failed to remove MariaDB."
+            : target.kind === "docker"
+              ? "Failed to remove Docker."
             : target.kind === "redis"
               ? "Failed to remove Redis."
               : target.kind === "mongodb"
@@ -2156,6 +2203,23 @@ export function ApplicationsPage() {
     }
   }
 
+  async function handleDockerInstall() {
+    setRunningAction("install-docker");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installDocker();
+      setDockerStatus(nextStatus);
+      toast.success("Docker installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install Docker.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
   async function handleMongoDBInstall() {
     setRunningAction("install-mongodb");
     setPageError(null);
@@ -2226,6 +2290,36 @@ export function ApplicationsPage() {
       setStatus: (status) => setRedisStatus(status),
       successMessage: "Redis started.",
       fallbackMessage: "Failed to start Redis.",
+    });
+  }
+
+  async function handleDockerStart() {
+    await handleServiceRuntimeAction({
+      actionKey: "start-docker",
+      run: startDocker,
+      setStatus: (status) => setDockerStatus(status),
+      successMessage: "Docker started.",
+      fallbackMessage: "Failed to start Docker.",
+    });
+  }
+
+  async function handleDockerStop() {
+    await handleServiceRuntimeAction({
+      actionKey: "stop-docker",
+      run: stopDocker,
+      setStatus: (status) => setDockerStatus(status),
+      successMessage: "Docker stopped.",
+      fallbackMessage: "Failed to stop Docker.",
+    });
+  }
+
+  async function handleDockerRestart() {
+    await handleServiceRuntimeAction({
+      actionKey: "restart-docker",
+      run: restartDocker,
+      setStatus: (status) => setDockerStatus(status),
+      successMessage: "Docker restarted.",
+      fallbackMessage: "Failed to restart Docker.",
     });
   }
 
@@ -2754,6 +2848,7 @@ export function ApplicationsPage() {
           (removeCandidate?.kind === "php" &&
             runningAction === phpRuntimeActionKey("remove", removeCandidate.version)) ||
           (removeCandidate?.kind === "mariadb" && runningAction === "remove-mariadb") ||
+          (removeCandidate?.kind === "docker" && runningAction === "remove-docker") ||
           (removeCandidate?.kind === "redis" && runningAction === "remove-redis") ||
           (removeCandidate?.kind === "mongodb" && runningAction === "remove-mongodb") ||
           (removeCandidate?.kind === "postgresql" && runningAction === "remove-postgresql") ||
@@ -2961,6 +3056,36 @@ export function ApplicationsPage() {
                 </Button>
               </>
             }
+          />
+
+          <ServiceApplicationCard
+            app="docker"
+            name="Docker"
+            status={dockerStatus}
+            runningAction={runningAction}
+            actionKeyPrefix="docker"
+            removeTitle="Automatic Docker removal is only available for installed runtimes supported by this environment."
+            meta={[
+              { label: "Binary", value: dockerStatus?.binary_path?.trim() || "docker", mono: true },
+              ...(dockerStatus?.package_manager
+                ? [{ label: "Package manager", value: dockerStatus.package_manager }]
+                : []),
+            ]}
+            onInstall={() => {
+              void handleDockerInstall();
+            }}
+            onStart={() => {
+              void handleDockerStart();
+            }}
+            onStop={() => {
+              void handleDockerStop();
+            }}
+            onRestart={() => {
+              void handleDockerRestart();
+            }}
+            onRemove={() => {
+              setRemoveCandidate({ kind: "docker" });
+            }}
           />
 
           <ServiceApplicationCard

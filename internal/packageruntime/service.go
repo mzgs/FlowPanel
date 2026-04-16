@@ -184,6 +184,28 @@ func NewPostgreSQLService(logger *zap.Logger) *Service {
 	})
 }
 
+func NewDockerService(logger *zap.Logger) *Service {
+	return NewService(logger, Definition{
+		Key:            "docker",
+		DisplayName:    "Docker",
+		BinaryNames:    []string{"docker"},
+		VersionArgs:    []string{"--version"},
+		InstallLabel:   "Install Docker",
+		RemoveLabel:    "Remove Docker",
+		StartLabel:     "Start Docker",
+		StopLabel:      "Stop Docker",
+		RestartLabel:   "Restart Docker",
+		APTPackages:    []string{"docker.io"},
+		APTService:     "docker",
+		DNFPackages:    []string{"moby-engine"},
+		DNFService:     "docker",
+		YUMPackages:    []string{"moby-engine"},
+		YUMService:     "docker",
+		PacmanPackages: []string{"docker"},
+		PacmanService:  "docker",
+	})
+}
+
 func (s *Service) Status(ctx context.Context) Status {
 	plan := detectActionPlan(s.definition)
 	status := Status{
