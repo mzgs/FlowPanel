@@ -124,6 +124,7 @@ export async function removePM2(): Promise<PM2Status> {
   const response = await fetch("/api/pm2/remove", {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   const payload = await parsePM2Response<PM2StatusPayload>(response);

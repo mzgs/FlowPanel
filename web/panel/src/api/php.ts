@@ -201,6 +201,7 @@ export async function removePHP(version?: string): Promise<PHPStatus> {
   const response = await fetch(withVersion("/api/php/remove", version), {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   return parsePHPResponse(response);

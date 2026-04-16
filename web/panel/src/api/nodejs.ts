@@ -60,6 +60,7 @@ export async function removeNodeJS(): Promise<NodeJSStatus> {
   const response = await fetch("/api/nodejs/remove", {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   return parseNodeJSResponse(response);

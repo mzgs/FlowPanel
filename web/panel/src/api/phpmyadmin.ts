@@ -59,6 +59,7 @@ export async function removePHPMyAdmin(): Promise<PHPMyAdminStatus> {
   const response = await fetch("/api/phpmyadmin/remove", {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   return parsePHPMyAdminResponse(response);

@@ -59,6 +59,7 @@ export async function removeGolang(): Promise<GolangStatus> {
   const response = await fetch("/api/golang/remove", {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   return parseGolangResponse(response);

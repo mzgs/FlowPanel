@@ -29,6 +29,27 @@ func (a *apiRoutes) registerGoRoutes(r chi.Router) {
 				return
 			}
 
+			if action == "remove" {
+				a.startBackgroundRuntimeAction(
+					w,
+					r,
+					"golang",
+					action,
+					"golang",
+					"golang",
+					"Go",
+					"Removed Go.",
+					func(ctx context.Context) map[string]any {
+						return map[string]any{
+							"golang": a.trackGoStatus(a.app.Golang.Status(ctx)),
+						}
+					},
+					run,
+					nil,
+				)
+				return
+			}
+
 			actionCtx := backgroundRequestContext(r.Context())
 			if err := a.runtimeActions.Begin("golang", action); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})

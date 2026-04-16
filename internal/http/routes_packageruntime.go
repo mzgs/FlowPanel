@@ -32,6 +32,27 @@ func (a *apiRoutes) registerPackageRuntimeRoutes(r chi.Router, key, label string
 				return
 			}
 
+			if action == "remove" {
+				a.startBackgroundRuntimeAction(
+					w,
+					r,
+					key,
+					action,
+					key,
+					key,
+					label,
+					fmt.Sprintf("Removed %s.", label),
+					func(ctx context.Context) map[string]any {
+						return map[string]any{
+							key: a.trackPackageRuntimeStatus(key, label, manager.Status(ctx)),
+						}
+					},
+					run,
+					nil,
+				)
+				return
+			}
+
 			actionCtx := backgroundRequestContext(r.Context())
 			if err := a.runtimeActions.Begin(key, action); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})

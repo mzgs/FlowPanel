@@ -1980,7 +1980,11 @@ export function ApplicationsPage() {
       if (target.kind === "php") {
         const nextStatus = await removePHP(target.version);
         setPHPStatus(nextStatus);
-        toast.success(`PHP ${target.version} removed.`);
+        toast.success(
+          getPHPRuntimeByVersion(nextStatus, target.version) === null
+            ? `PHP ${target.version} removed.`
+            : `PHP ${target.version} removal started.`,
+        );
       } else if (target.kind === "mariadb") {
         const nextStatus = await removeMariaDB();
         setMariaDBStatus(nextStatus);

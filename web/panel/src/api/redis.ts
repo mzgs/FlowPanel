@@ -66,6 +66,7 @@ export async function removeRedis(): Promise<RedisStatus> {
   const response = await fetch("/api/redis/remove", {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   return parseRedisResponse(response);

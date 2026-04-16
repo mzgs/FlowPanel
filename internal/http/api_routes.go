@@ -97,6 +97,49 @@ func (a *apiRoutes) mutationEvent(ctx context.Context, category, action, resourc
 	})
 }
 
+func (a *apiRoutes) startBackgroundRuntimeAction(
+	w stdhttp.ResponseWriter,
+	r *stdhttp.Request,
+	resource string,
+	action string,
+	resourceType string,
+	resourceID string,
+	resourceLabel string,
+	successMessage string,
+	status func(context.Context) map[string]any,
+	run func(context.Context) error,
+	after func(context.Context) error,
+) bool {
+	actionCtx := backgroundRequestContext(r.Context())
+	if err := a.runtimeActions.Begin(resource, action); err != nil {
+		writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})
+		return false
+	}
+
+	go func() {
+		defer a.runtimeActions.End(resource, action)
+
+		if err := run(actionCtx); err != nil {
+			a.app.Logger.Error(action+" "+resource+" failed", zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", action, resourceType, resourceID, resourceLabel, "failed", err.Error())
+			return
+		}
+
+		if after != nil {
+			if err := after(actionCtx); err != nil {
+				a.app.Logger.Error(action+" "+resource+" follow-up failed", zap.Error(err))
+				a.mutationEvent(actionCtx, "runtime", action, resourceType, resourceID, resourceLabel, "failed", err.Error())
+				return
+			}
+		}
+
+		a.mutationEvent(actionCtx, "runtime", action, resourceType, resourceID, resourceLabel, "succeeded", successMessage)
+	}()
+
+	writeJSON(w, stdhttp.StatusOK, status(actionCtx))
+	return true
+}
+
 func (a *apiRoutes) trackPHPStatus(status phpenv.Status) phpenv.Status {
 	switch a.runtimeActions.Current("php") {
 	case "install":

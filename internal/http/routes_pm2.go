@@ -111,6 +111,27 @@ func (a *apiRoutes) registerPM2Routes(r chi.Router) {
 				return
 			}
 
+			if action == "remove" {
+				a.startBackgroundRuntimeAction(
+					w,
+					r,
+					"pm2",
+					action,
+					"pm2",
+					"pm2",
+					"PM2",
+					"Removed PM2.",
+					func(ctx context.Context) map[string]any {
+						return map[string]any{
+							"pm2": a.trackPM2Status(a.app.PM2.Status(ctx)),
+						}
+					},
+					run,
+					nil,
+				)
+				return
+			}
+
 			actionCtx := backgroundRequestContext(r.Context())
 			if err := a.runtimeActions.Begin("pm2", action); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})

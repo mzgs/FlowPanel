@@ -114,8 +114,34 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 				return
 			}
 
-			actionCtx := backgroundRequestContext(r.Context())
 			version := a.phpActionVersion(r)
+			if action == "remove" {
+				a.startBackgroundRuntimeAction(
+					w,
+					r,
+					"php",
+					action,
+					"php",
+					"php",
+					"PHP",
+					"Removed PHP.",
+					func(ctx context.Context) map[string]any {
+						return map[string]any{"php": a.trackPHPStatus(a.app.PHP.Status(ctx))}
+					},
+					func(ctx context.Context) error {
+						return run(ctx, version)
+					},
+					func(ctx context.Context) error {
+						if err := a.syncDomainsWithCaddy(ctx); err != nil {
+							return fmt.Errorf("php removed but failed to republish domains: %w", err)
+						}
+						return nil
+					},
+				)
+				return
+			}
+
+			actionCtx := backgroundRequestContext(r.Context())
 			if err := a.runtimeActions.Begin("php", action); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})
 				return
@@ -373,6 +399,32 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 		return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if a.app.PHPMyAdmin == nil {
 				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "phpmyadmin runtime is not configured"})
+				return
+			}
+
+			if action == "remove" {
+				a.startBackgroundRuntimeAction(
+					w,
+					r,
+					"phpmyadmin",
+					action,
+					"phpmyadmin",
+					"phpmyadmin",
+					"phpMyAdmin",
+					"Removed phpMyAdmin.",
+					func(ctx context.Context) map[string]any {
+						return map[string]any{
+							"phpmyadmin": a.trackPHPMyAdminStatus(a.app.PHPMyAdmin.Status(ctx)),
+						}
+					},
+					run,
+					func(ctx context.Context) error {
+						if err := a.syncDomainsWithCaddy(ctx); err != nil {
+							return fmt.Errorf("phpmyadmin removed but failed to republish routes: %w", err)
+						}
+						return nil
+					},
+				)
 				return
 			}
 

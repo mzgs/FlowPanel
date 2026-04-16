@@ -99,6 +99,7 @@ export async function removeMariaDB(): Promise<MariaDBStatus> {
   const response = await fetch("/api/mariadb/remove", {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   return parseMariaDBResponse(response);

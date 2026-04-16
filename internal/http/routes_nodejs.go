@@ -29,6 +29,27 @@ func (a *apiRoutes) registerNodeJSRoutes(r chi.Router) {
 				return
 			}
 
+			if action == "remove" {
+				a.startBackgroundRuntimeAction(
+					w,
+					r,
+					"nodejs",
+					action,
+					"nodejs",
+					"nodejs",
+					"Node.js",
+					"Removed Node.js.",
+					func(ctx context.Context) map[string]any {
+						return map[string]any{
+							"nodejs": a.trackNodeJSStatus(a.app.NodeJS.Status(ctx)),
+						}
+					},
+					run,
+					nil,
+				)
+				return
+			}
+
 			actionCtx := backgroundRequestContext(r.Context())
 			if err := a.runtimeActions.Begin("nodejs", action); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})

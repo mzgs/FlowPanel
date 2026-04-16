@@ -66,6 +66,7 @@ export async function removePostgreSQL(): Promise<PostgreSQLStatus> {
   const response = await fetch("/api/postgresql/remove", {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   return parsePostgreSQLResponse(response);

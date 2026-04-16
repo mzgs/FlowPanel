@@ -99,6 +99,29 @@ func (a *apiRoutes) registerMariaDBRoutes(r chi.Router) {
 				return
 			}
 
+			if action == "remove" {
+				a.startBackgroundRuntimeAction(
+					w,
+					r,
+					"mariadb",
+					action,
+					"mariadb",
+					"mariadb",
+					"MariaDB",
+					"Removed MariaDB.",
+					func(ctx context.Context) map[string]any {
+						return map[string]any{
+							"mariadb": a.trackMariaDBStatus(a.app.MariaDB.Status(ctx)),
+						}
+					},
+					func(ctx context.Context) error {
+						return run(a, ctx)
+					},
+					nil,
+				)
+				return
+			}
+
 			actionCtx := backgroundRequestContext(r.Context())
 			if err := a.runtimeActions.Begin("mariadb", action); err != nil {
 				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})

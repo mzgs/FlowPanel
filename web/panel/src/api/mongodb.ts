@@ -66,6 +66,7 @@ export async function removeMongoDB(): Promise<MongoDBStatus> {
   const response = await fetch("/api/mongodb/remove", {
     method: "POST",
     credentials: "include",
+    keepalive: true,
   });
 
   return parseMongoDBResponse(response);
