@@ -11,6 +11,7 @@ import (
 	"flowpanel/internal/golang"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/nodejs"
+	"flowpanel/internal/packageruntime"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/pm2"
@@ -41,6 +42,9 @@ func (a *apiRoutes) register(r chi.Router) {
 	a.registerNodeJSRoutes(r)
 	a.registerPM2Routes(r)
 	a.registerMariaDBRoutes(r)
+	a.registerPackageRuntimeRoutes(r, "redis", "Redis", a.app.Redis)
+	a.registerPackageRuntimeRoutes(r, "mongodb", "MongoDB", a.app.MongoDB)
+	a.registerPackageRuntimeRoutes(r, "postgresql", "PostgreSQL", a.app.PostgreSQL)
 	a.registerPHPRoutes(r)
 	a.registerDomainRoutes(r)
 	a.registerFileRoutes(r)
@@ -290,6 +294,55 @@ func (a *apiRoutes) trackPHPMyAdminStatus(status phpmyadmin.Status) phpmyadmin.S
 
 	status.InstallAvailable = false
 	status.RemoveAvailable = false
+	return status
+}
+
+func (a *apiRoutes) trackPackageRuntimeStatus(key, label string, status packageruntime.Status) packageruntime.Status {
+	switch a.runtimeActions.Current(key) {
+	case "install":
+		if status.Installed {
+			a.runtimeActions.End(key, "install")
+			return status
+		}
+		status.State = "installing"
+		status.Message = fmt.Sprintf("%s installation is running in the background.", label)
+	case "remove":
+		if !status.Installed {
+			a.runtimeActions.End(key, "remove")
+			return status
+		}
+		status.State = "removing"
+		status.Message = fmt.Sprintf("%s removal is running in the background.", label)
+	case "start":
+		if status.ServiceRunning {
+			a.runtimeActions.End(key, "start")
+			return status
+		}
+		status.State = "starting"
+		status.Message = fmt.Sprintf("%s is starting in the background.", label)
+	case "stop":
+		if status.Installed && !status.ServiceRunning {
+			a.runtimeActions.End(key, "stop")
+			return status
+		}
+		status.State = "stopping"
+		status.Message = fmt.Sprintf("%s is stopping in the background.", label)
+	case "restart":
+		if status.ServiceRunning {
+			a.runtimeActions.End(key, "restart")
+			return status
+		}
+		status.State = "restarting"
+		status.Message = fmt.Sprintf("%s is restarting in the background.", label)
+	default:
+		return status
+	}
+
+	status.InstallAvailable = false
+	status.RemoveAvailable = false
+	status.StartAvailable = false
+	status.StopAvailable = false
+	status.RestartAvailable = false
 	return status
 }
 

@@ -29,6 +29,7 @@ import (
 	"flowpanel/internal/logging"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/nodejs"
+	"flowpanel/internal/packageruntime"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/pm2"
@@ -236,6 +237,9 @@ func runServer() error {
 	golangManager := golang.NewService(logger.Named("golang"))
 	nodeJSManager := nodejs.NewService(logger.Named("nodejs"))
 	pm2Manager := pm2.NewService(logger.Named("pm2"))
+	redisManager := packageruntime.NewRedisService(logger.Named("redis"))
+	mongoDBManager := packageruntime.NewMongoDBService(logger.Named("mongodb"))
+	postgresqlManager := packageruntime.NewPostgreSQLService(logger.Named("postgresql"))
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), eventsStore)
@@ -290,6 +294,9 @@ func runServer() error {
 		nodeJSManager,
 		pm2Manager,
 		mariadbManager,
+		redisManager,
+		mongoDBManager,
+		postgresqlManager,
 		phpManager,
 		phpMyAdminManager,
 		fileManager,

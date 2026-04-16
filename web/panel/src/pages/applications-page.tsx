@@ -33,6 +33,15 @@ import {
   type MariaDBStatus,
 } from "@/api/mariadb";
 import {
+  fetchMongoDBStatus,
+  installMongoDB,
+  restartMongoDB,
+  removeMongoDB,
+  startMongoDB,
+  stopMongoDB,
+  type MongoDBStatus,
+} from "@/api/mongodb";
+import {
   fetchPHPStatus,
   installPHP,
   removePHP,
@@ -48,6 +57,24 @@ import {
   removePHPMyAdmin,
   type PHPMyAdminStatus,
 } from "@/api/phpmyadmin";
+import {
+  fetchPostgreSQLStatus,
+  installPostgreSQL,
+  restartPostgreSQL,
+  removePostgreSQL,
+  startPostgreSQL,
+  stopPostgreSQL,
+  type PostgreSQLStatus,
+} from "@/api/postgresql";
+import {
+  fetchRedisStatus,
+  installRedis,
+  restartRedis,
+  removeRedis,
+  startRedis,
+  stopRedis,
+  type RedisStatus,
+} from "@/api/redis";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { MariaDBSettingsDialog } from "@/components/mariadb-settings-dialog";
 import { PHPSettingsDialog } from "@/components/php-settings-dialog";
@@ -94,6 +121,13 @@ const applicationLogoFrameClassName =
 const applicationLogos = {
   php: { src: "/application-icons/php.png", alt: "PHP logo", className: "h-6 w-full" },
   mariadb: { src: "/application-icons/mariadb.png", alt: "MariaDB logo", className: "h-8 w-full" },
+  redis: { src: "/application-icons/redis.svg", alt: "Redis logo", className: "h-7 w-full" },
+  mongodb: { src: "/application-icons/mongodb.svg", alt: "MongoDB logo", className: "h-7 w-full" },
+  postgresql: {
+    src: "/application-icons/postgresql.svg",
+    alt: "PostgreSQL logo",
+    className: "h-7 w-full",
+  },
   phpmyadmin: {
     src: "/application-icons/phpmyadmin.png",
     alt: "phpMyAdmin logo",
@@ -108,11 +142,34 @@ type StatusMetaTone = "success" | "danger" | "info";
 type RemovableApplication =
   | { kind: "php"; version: string }
   | { kind: "mariadb" }
+  | { kind: "redis" }
+  | { kind: "mongodb" }
+  | { kind: "postgresql" }
   | { kind: "phpmyadmin" }
   | { kind: "golang" }
   | { kind: "nodejs" }
   | { kind: "pm2" };
 type RuntimeState = string | null | undefined;
+type InstallRemoveRuntimeStatus = {
+  installed: boolean;
+  binary_path?: string;
+  version?: string;
+  state: string;
+  package_manager?: string;
+  install_available: boolean;
+  install_label?: string;
+  remove_available: boolean;
+  remove_label?: string;
+};
+type ServiceRuntimeStatus = InstallRemoveRuntimeStatus & {
+  service_running: boolean;
+  start_available: boolean;
+  start_label?: string;
+  stop_available: boolean;
+  stop_label?: string;
+  restart_available: boolean;
+  restart_label?: string;
+};
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {
@@ -203,7 +260,7 @@ function formatPHPMyAdminValue(status: PHPMyAdminStatus | null) {
   return "";
 }
 
-function formatGolangValue(status: GolangStatus | null) {
+function formatInstallRemoveRuntimeValue(status: InstallRemoveRuntimeStatus | null) {
   if (!status) {
     return "Unavailable";
   }
@@ -222,6 +279,10 @@ function formatGolangValue(status: GolangStatus | null) {
   }
 
   return "";
+}
+
+function formatGolangValue(status: GolangStatus | null) {
+  return formatInstallRemoveRuntimeValue(status);
 }
 
 function getPHPRuntimeBadge(status: PHPRuntimeStatus) {
@@ -287,7 +348,7 @@ function getPHPMyAdminBadge(status: PHPMyAdminStatus | null) {
   return { label: "Not installed", variant: "outline" as const };
 }
 
-function getGolangBadge(status: GolangStatus | null) {
+function getInstallRemoveRuntimeBadge(status: InstallRemoveRuntimeStatus | null) {
   if (!status) {
     return { label: "Unavailable", variant: "outline" as const };
   }
@@ -302,82 +363,63 @@ function getGolangBadge(status: GolangStatus | null) {
   }
 
   return { label: "Not installed", variant: "outline" as const };
+}
+
+function getServiceRuntimeBadge(status: ServiceRuntimeStatus | null) {
+  if (!status) {
+    return { label: "Unavailable", variant: "outline" as const };
+  }
+
+  const actionLabel = getRuntimeActionLabel(status.state);
+  if (actionLabel) {
+    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
+  }
+
+  if (status.service_running) {
+    return { label: "Running", variant: "default" as const };
+  }
+
+  if (status.installed) {
+    return { label: "Installed", variant: "outline" as const };
+  }
+
+  return { label: "Not installed", variant: "outline" as const };
+}
+
+function getServiceRuntimeMeta(status: ServiceRuntimeStatus | null) {
+  const actionLabel = getRuntimeActionLabel(status?.state);
+  const value =
+    actionLabel?.replace("...", "") ??
+    (status?.service_running ? "Running" : status?.installed ? "Stopped" : "Not installed");
+  const tone: StatusMetaTone | undefined = actionLabel
+    ? undefined
+    : status?.service_running
+      ? "success"
+      : status?.installed
+        ? "danger"
+        : undefined;
+
+  return { value, tone };
+}
+
+function getGolangBadge(status: GolangStatus | null) {
+  return getInstallRemoveRuntimeBadge(status);
 }
 
 function formatNodeJSValue(status: NodeJSStatus | null) {
-  if (!status) {
-    return "Unavailable";
-  }
-
-  const actionLabel = getRuntimeActionLabel(status.state);
-  if (actionLabel) {
-    return actionLabel;
-  }
-
-  if (status.installed && status.version?.trim()) {
-    return status.version.trim();
-  }
-
-  if (status.installed) {
-    return "Installed";
-  }
-
-  return "";
+  return formatInstallRemoveRuntimeValue(status);
 }
 
 function getNodeJSBadge(status: NodeJSStatus | null) {
-  if (!status) {
-    return { label: "Unavailable", variant: "outline" as const };
-  }
-
-  const actionLabel = getRuntimeActionLabel(status.state);
-  if (actionLabel) {
-    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
-  }
-
-  if (status.installed) {
-    return { label: "Installed", variant: "default" as const };
-  }
-
-  return { label: "Not installed", variant: "outline" as const };
+  return getInstallRemoveRuntimeBadge(status);
 }
 
 function formatPM2Value(status: PM2Status | null) {
-  if (!status) {
-    return "Unavailable";
-  }
-
-  const actionLabel = getRuntimeActionLabel(status.state);
-  if (actionLabel) {
-    return actionLabel;
-  }
-
-  if (status.installed && status.version?.trim()) {
-    return status.version.trim();
-  }
-
-  if (status.installed) {
-    return "Installed";
-  }
-
-  return "";
+  return formatInstallRemoveRuntimeValue(status);
 }
 
 function getPM2Badge(status: PM2Status | null) {
-  if (!status) {
-    return { label: "Unavailable", variant: "outline" as const };
-  }
-
-  const actionLabel = getRuntimeActionLabel(status.state);
-  if (actionLabel) {
-    return { label: actionLabel.replace("...", ""), variant: "secondary" as const };
-  }
-
-  if (status.installed) {
-    return { label: "Installed", variant: "default" as const };
-  }
-
-  return { label: "Not installed", variant: "outline" as const };
+  return getInstallRemoveRuntimeBadge(status);
 }
 
 function formatPM2ProcessStatus(status: string) {
@@ -522,28 +564,24 @@ function canRemovePHPMyAdmin(status: PHPMyAdminStatus | null) {
   return status.remove_available;
 }
 
-function canRemoveGolang(status: GolangStatus | null) {
+function canRemoveInstallRemoveRuntime(status: InstallRemoveRuntimeStatus | null) {
   if (!status) {
     return false;
   }
 
   return status.remove_available;
+}
+
+function canRemoveGolang(status: GolangStatus | null) {
+  return canRemoveInstallRemoveRuntime(status);
 }
 
 function canRemoveNodeJS(status: NodeJSStatus | null) {
-  if (!status) {
-    return false;
-  }
-
-  return status.remove_available;
+  return canRemoveInstallRemoveRuntime(status);
 }
 
 function canRemovePM2(status: PM2Status | null) {
-  if (!status) {
-    return false;
-  }
-
-  return status.remove_available;
+  return canRemoveInstallRemoveRuntime(status);
 }
 
 function ApplicationLogo({ app }: { app: keyof typeof applicationLogos }) {
@@ -661,6 +699,229 @@ function ApplicationCard({
   );
 }
 
+function InstallRemoveApplicationCard({
+  app,
+  name,
+  status,
+  runningAction,
+  installActionKey,
+  removeActionKey,
+  meta,
+  removeTitle,
+  onInstall,
+  onRemove,
+}: {
+  app: keyof typeof applicationLogos;
+  name: string;
+  status: InstallRemoveRuntimeStatus | null;
+  runningAction: string | null;
+  installActionKey: string;
+  removeActionKey: string;
+  meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: StatusMetaTone; fullWidth?: boolean }>;
+  removeTitle: string;
+  onInstall: () => void;
+  onRemove: () => void;
+}) {
+  const busyLabel = getRuntimeActionLabel(status?.state);
+  const removeEnabled = canRemoveInstallRemoveRuntime(status);
+
+  return (
+    <ApplicationCard
+      icon={<ApplicationLogo app={app} />}
+      name={name}
+      summary={formatInstallRemoveRuntimeValue(status)}
+      badge={getInstallRemoveRuntimeBadge(status)}
+      meta={meta}
+      configAction={null}
+      actions={
+        <>
+          {busyLabel ? (
+            <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              {busyLabel}
+            </Button>
+          ) : null}
+          {status?.install_available ? (
+            <Button
+              type="button"
+              size="sm"
+              className={compactActionButtonClassName}
+              onClick={onInstall}
+              disabled={runningAction !== null}
+            >
+              {runningAction === installActionKey ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <Package className="h-4 w-4" />
+              )}
+              {status.install_label ?? `Install ${name}`}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={compactActionButtonClassName}
+            onClick={onRemove}
+            disabled={runningAction !== null || !removeEnabled}
+            title={removeEnabled ? undefined : removeTitle}
+          >
+            {runningAction === removeActionKey ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            Remove
+          </Button>
+        </>
+      }
+    />
+  );
+}
+
+function ServiceApplicationCard({
+  app,
+  name,
+  status,
+  runningAction,
+  actionKeyPrefix,
+  meta,
+  removeTitle,
+  onInstall,
+  onStart,
+  onStop,
+  onRestart,
+  onRemove,
+}: {
+  app: keyof typeof applicationLogos;
+  name: string;
+  status: ServiceRuntimeStatus | null;
+  runningAction: string | null;
+  actionKeyPrefix: string;
+  meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: StatusMetaTone; fullWidth?: boolean }>;
+  removeTitle: string;
+  onInstall: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  onRestart: () => void;
+  onRemove: () => void;
+}) {
+  const busyLabel = getRuntimeActionLabel(status?.state);
+  const removeEnabled = canRemoveInstallRemoveRuntime(status);
+  const serviceMeta = getServiceRuntimeMeta(status);
+
+  return (
+    <ApplicationCard
+      icon={<ApplicationLogo app={app} />}
+      name={name}
+      summary={formatInstallRemoveRuntimeValue(status)}
+      badge={getServiceRuntimeBadge(status)}
+      meta={[
+        {
+          label: "Service",
+          value: serviceMeta.value,
+          tone: serviceMeta.tone,
+        },
+        ...meta,
+      ]}
+      configAction={null}
+      actions={
+        <>
+          {busyLabel ? (
+            <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              {busyLabel}
+            </Button>
+          ) : null}
+          {status?.install_available ? (
+            <Button
+              type="button"
+              size="sm"
+              className={compactActionButtonClassName}
+              onClick={onInstall}
+              disabled={runningAction !== null}
+            >
+              {runningAction === `install-${actionKeyPrefix}` ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <Package className="h-4 w-4" />
+              )}
+              {status.install_label ?? `Install ${name}`}
+            </Button>
+          ) : null}
+          {status?.start_available ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={compactActionButtonClassName}
+              onClick={onStart}
+              disabled={runningAction !== null}
+            >
+              {runningAction === `start-${actionKeyPrefix}` ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <PlayerPlayFilled className="h-4 w-4" />
+              )}
+              {status.start_label ?? "Start"}
+            </Button>
+          ) : null}
+          {status?.stop_available ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={compactActionButtonClassName}
+              onClick={onStop}
+              disabled={runningAction !== null}
+            >
+              {runningAction === `stop-${actionKeyPrefix}` ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <PlayerStop className="h-4 w-4" />
+              )}
+              {status.stop_label ?? "Stop"}
+            </Button>
+          ) : null}
+          {status?.restart_available ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={compactActionButtonClassName}
+              onClick={onRestart}
+              disabled={runningAction !== null}
+            >
+              {runningAction === `restart-${actionKeyPrefix}` ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <RotateCcw className="h-4 w-4" />
+              )}
+              {status.restart_label ?? "Restart"}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={compactActionButtonClassName}
+            onClick={onRemove}
+            disabled={runningAction !== null || !removeEnabled}
+            title={removeEnabled ? undefined : removeTitle}
+          >
+            {runningAction === `remove-${actionKeyPrefix}` ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            Remove
+          </Button>
+        </>
+      }
+    />
+  );
+}
+
 function ApplicationCardSkeleton({ showConfigAction = false }: { showConfigAction?: boolean }) {
   return (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
@@ -713,6 +974,10 @@ function ApplicationsPageSkeleton() {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <ApplicationCardSkeleton showConfigAction />
           <ApplicationCardSkeleton showConfigAction />
+          <ApplicationCardSkeleton />
+          <ApplicationCardSkeleton />
+          <ApplicationCardSkeleton />
+          <ApplicationCardSkeleton />
           <ApplicationCardSkeleton showConfigAction />
           <ApplicationCardSkeleton />
           <ApplicationCardSkeleton />
@@ -1044,6 +1309,9 @@ export function ApplicationsPage() {
 
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
+  const [redisStatus, setRedisStatus] = useState<RedisStatus | null>(null);
+  const [mongoDBStatus, setMongoDBStatus] = useState<MongoDBStatus | null>(null);
+  const [postgresqlStatus, setPostgreSQLStatus] = useState<PostgreSQLStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [golangStatus, setGolangStatus] = useState<GolangStatus | null>(null);
   const [nodeJSStatus, setNodeJSStatus] = useState<NodeJSStatus | null>(null);
@@ -1236,9 +1504,22 @@ export function ApplicationsPage() {
     setPageError(null);
 
     const nextErrors: string[] = [];
-    const [phpResult, mariadbResult, phpMyAdminResult, golangResult, nodeJSResult, pm2Result] = await Promise.allSettled([
+    const [
+      phpResult,
+      mariadbResult,
+      redisResult,
+      mongoDBResult,
+      postgresqlResult,
+      phpMyAdminResult,
+      golangResult,
+      nodeJSResult,
+      pm2Result,
+    ] = await Promise.allSettled([
       fetchPHPStatus(),
       fetchMariaDBStatus(),
+      fetchRedisStatus(),
+      fetchMongoDBStatus(),
+      fetchPostgreSQLStatus(),
       fetchPHPMyAdminStatus(),
       fetchGolangStatus(),
       fetchNodeJSStatus(),
@@ -1260,6 +1541,27 @@ export function ApplicationsPage() {
     } else {
       setMariaDBStatus(null);
       nextErrors.push(getErrorMessage(mariadbResult.reason, "Failed to inspect MariaDB."));
+    }
+
+    if (redisResult.status === "fulfilled") {
+      setRedisStatus(redisResult.value);
+    } else {
+      setRedisStatus(null);
+      nextErrors.push(getErrorMessage(redisResult.reason, "Failed to inspect Redis."));
+    }
+
+    if (mongoDBResult.status === "fulfilled") {
+      setMongoDBStatus(mongoDBResult.value);
+    } else {
+      setMongoDBStatus(null);
+      nextErrors.push(getErrorMessage(mongoDBResult.reason, "Failed to inspect MongoDB."));
+    }
+
+    if (postgresqlResult.status === "fulfilled") {
+      setPostgreSQLStatus(postgresqlResult.value);
+    } else {
+      setPostgreSQLStatus(null);
+      nextErrors.push(getErrorMessage(postgresqlResult.reason, "Failed to inspect PostgreSQL."));
     }
 
     if (phpMyAdminResult.status === "fulfilled") {
@@ -1332,6 +1634,9 @@ export function ApplicationsPage() {
       runningAction === null &&
       !isRuntimeActionState(phpStatus?.state) &&
       !isRuntimeActionState(mariadbStatus?.state) &&
+      !isRuntimeActionState(redisStatus?.state) &&
+      !isRuntimeActionState(mongoDBStatus?.state) &&
+      !isRuntimeActionState(postgresqlStatus?.state) &&
       !isRuntimeActionState(phpMyAdminStatus?.state) &&
       !isRuntimeActionState(golangStatus?.state) &&
       !isRuntimeActionState(nodeJSStatus?.state) &&
@@ -1347,7 +1652,18 @@ export function ApplicationsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runningAction, phpStatus?.state, mariadbStatus?.state, phpMyAdminStatus?.state, golangStatus?.state, nodeJSStatus?.state, pm2Status?.state]);
+  }, [
+    runningAction,
+    phpStatus?.state,
+    mariadbStatus?.state,
+    redisStatus?.state,
+    mongoDBStatus?.state,
+    postgresqlStatus?.state,
+    phpMyAdminStatus?.state,
+    golangStatus?.state,
+    nodeJSStatus?.state,
+    pm2Status?.state,
+  ]);
 
   useEffect(() => {
     const availableVersions = getAvailablePHPVersions(phpStatus);
@@ -1411,6 +1727,33 @@ export function ApplicationsPage() {
       setRunningAction(null);
       return;
     }
+    if (runningAction === "install-redis" && redisStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-redis" && redisStatus && !redisStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "redis" ? null : current));
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "install-mongodb" && mongoDBStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-mongodb" && mongoDBStatus && !mongoDBStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "mongodb" ? null : current));
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "install-postgresql" && postgresqlStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-postgresql" && postgresqlStatus && !postgresqlStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "postgresql" ? null : current));
+      setRunningAction(null);
+      return;
+    }
     if (runningAction === "start-mariadb" && mariadbStatus?.service_running) {
       setRunningAction(null);
       return;
@@ -1458,7 +1801,18 @@ export function ApplicationsPage() {
       setRemoveCandidate((current) => (current?.kind === "pm2" ? null : current));
       setRunningAction(null);
     }
-  }, [runningAction, phpStatus, mariadbStatus, phpMyAdminStatus, golangStatus, nodeJSStatus, pm2Status]);
+  }, [
+    runningAction,
+    phpStatus,
+    mariadbStatus,
+    redisStatus,
+    mongoDBStatus,
+    postgresqlStatus,
+    phpMyAdminStatus,
+    golangStatus,
+    nodeJSStatus,
+    pm2Status,
+  ]);
 
   useEffect(() => {
     if (!pm2ListOpen || !pm2Status?.installed) {
@@ -1538,6 +1892,12 @@ export function ApplicationsPage() {
       ? `Remove PHP ${removeCandidate.version} from this node? Domains assigned to PHP ${removeCandidate.version} will stop serving until that runtime is installed again.`
       : removeCandidate?.kind === "mariadb"
         ? "Remove MariaDB from this node? Existing databases may become unavailable until MariaDB is installed again."
+        : removeCandidate?.kind === "redis"
+          ? "Remove Redis from this node? Services and jobs that rely on Redis caching or queues will stop working until Redis is installed again."
+          : removeCandidate?.kind === "mongodb"
+            ? "Remove MongoDB from this node? Existing MongoDB databases will become unavailable until MongoDB is installed again."
+            : removeCandidate?.kind === "postgresql"
+              ? "Remove PostgreSQL from this node? Existing PostgreSQL databases will become unavailable until PostgreSQL is installed again."
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin from this node? The browser database client will no longer be available."
         : removeCandidate?.kind === "golang"
@@ -1552,6 +1912,12 @@ export function ApplicationsPage() {
       ? `Remove PHP ${removeCandidate.version}`
       : removeCandidate?.kind === "mariadb"
         ? "Remove MariaDB"
+        : removeCandidate?.kind === "redis"
+          ? "Remove Redis"
+          : removeCandidate?.kind === "mongodb"
+            ? "Remove MongoDB"
+            : removeCandidate?.kind === "postgresql"
+              ? "Remove PostgreSQL"
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin"
         : removeCandidate?.kind === "golang"
@@ -1566,6 +1932,12 @@ export function ApplicationsPage() {
       ? `Remove PHP ${removeCandidate.version}`
       : removeCandidate?.kind === "mariadb"
         ? "Remove MariaDB"
+        : removeCandidate?.kind === "redis"
+          ? "Remove Redis"
+          : removeCandidate?.kind === "mongodb"
+            ? "Remove MongoDB"
+            : removeCandidate?.kind === "postgresql"
+              ? "Remove PostgreSQL"
         : removeCandidate?.kind === "phpmyadmin"
           ? "Remove phpMyAdmin"
         : removeCandidate?.kind === "golang"
@@ -1588,13 +1960,19 @@ export function ApplicationsPage() {
         ? phpRuntimeActionKey("remove", target.version)
         : target.kind === "mariadb"
           ? "remove-mariadb"
-        : target.kind === "phpmyadmin"
-          ? "remove-phpmyadmin"
-          : target.kind === "golang"
-            ? "remove-golang"
-            : target.kind === "nodejs"
-              ? "remove-nodejs"
-              : "remove-pm2";
+          : target.kind === "redis"
+            ? "remove-redis"
+            : target.kind === "mongodb"
+              ? "remove-mongodb"
+              : target.kind === "postgresql"
+                ? "remove-postgresql"
+                : target.kind === "phpmyadmin"
+                  ? "remove-phpmyadmin"
+                  : target.kind === "golang"
+                    ? "remove-golang"
+                    : target.kind === "nodejs"
+                      ? "remove-nodejs"
+                      : "remove-pm2";
     setRunningAction(action);
     setPageError(null);
 
@@ -1611,6 +1989,18 @@ export function ApplicationsPage() {
             ? "MariaDB removed."
             : "MariaDB removal started.",
         );
+      } else if (target.kind === "redis") {
+        const nextStatus = await removeRedis();
+        setRedisStatus(nextStatus);
+        toast.success(!nextStatus.installed ? "Redis removed." : "Redis removal started.");
+      } else if (target.kind === "mongodb") {
+        const nextStatus = await removeMongoDB();
+        setMongoDBStatus(nextStatus);
+        toast.success(!nextStatus.installed ? "MongoDB removed." : "MongoDB removal started.");
+      } else if (target.kind === "postgresql") {
+        const nextStatus = await removePostgreSQL();
+        setPostgreSQLStatus(nextStatus);
+        toast.success(!nextStatus.installed ? "PostgreSQL removed." : "PostgreSQL removal started.");
       } else {
         if (target.kind === "phpmyadmin") {
           const nextStatus = await removePHPMyAdmin();
@@ -1636,13 +2026,19 @@ export function ApplicationsPage() {
           ? `Failed to remove PHP ${target.version}.`
           : target.kind === "mariadb"
             ? "Failed to remove MariaDB."
-            : target.kind === "phpmyadmin"
-              ? "Failed to remove phpMyAdmin."
-              : target.kind === "golang"
-                ? "Failed to remove Go."
-                : target.kind === "nodejs"
-                  ? "Failed to remove Node.js."
-                  : "Failed to remove PM2.";
+            : target.kind === "redis"
+              ? "Failed to remove Redis."
+              : target.kind === "mongodb"
+                ? "Failed to remove MongoDB."
+                : target.kind === "postgresql"
+                  ? "Failed to remove PostgreSQL."
+                  : target.kind === "phpmyadmin"
+                    ? "Failed to remove phpMyAdmin."
+                    : target.kind === "golang"
+                      ? "Failed to remove Go."
+                      : target.kind === "nodejs"
+                        ? "Failed to remove Node.js."
+                        : "Failed to remove PM2.";
       const message = getErrorMessage(error, fallback);
       setPageError(message);
       toast.error(message);
@@ -1737,6 +2133,176 @@ export function ApplicationsPage() {
       toast.error(message);
       setRunningAction(null);
     }
+  }
+
+  async function handleRedisInstall() {
+    setRunningAction("install-redis");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installRedis();
+      setRedisStatus(nextStatus);
+      toast.success("Redis installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install Redis.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handleMongoDBInstall() {
+    setRunningAction("install-mongodb");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installMongoDB();
+      setMongoDBStatus(nextStatus);
+      toast.success("MongoDB installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install MongoDB.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handlePostgreSQLInstall() {
+    setRunningAction("install-postgresql");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installPostgreSQL();
+      setPostgreSQLStatus(nextStatus);
+      toast.success("PostgreSQL installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install PostgreSQL.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handleServiceRuntimeAction<TStatus>({
+    actionKey,
+    run,
+    setStatus,
+    successMessage,
+    fallbackMessage,
+  }: {
+    actionKey: string;
+    run: () => Promise<TStatus>;
+    setStatus: (status: TStatus) => void;
+    successMessage: string;
+    fallbackMessage: string;
+  }) {
+    setRunningAction(actionKey);
+    setPageError(null);
+
+    try {
+      const nextStatus = await run();
+      setStatus(nextStatus);
+      toast.success(successMessage);
+    } catch (error) {
+      const message = getErrorMessage(error, fallbackMessage);
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handleRedisStart() {
+    await handleServiceRuntimeAction({
+      actionKey: "start-redis",
+      run: startRedis,
+      setStatus: (status) => setRedisStatus(status),
+      successMessage: "Redis started.",
+      fallbackMessage: "Failed to start Redis.",
+    });
+  }
+
+  async function handleRedisStop() {
+    await handleServiceRuntimeAction({
+      actionKey: "stop-redis",
+      run: stopRedis,
+      setStatus: (status) => setRedisStatus(status),
+      successMessage: "Redis stopped.",
+      fallbackMessage: "Failed to stop Redis.",
+    });
+  }
+
+  async function handleRedisRestart() {
+    await handleServiceRuntimeAction({
+      actionKey: "restart-redis",
+      run: restartRedis,
+      setStatus: (status) => setRedisStatus(status),
+      successMessage: "Redis restarted.",
+      fallbackMessage: "Failed to restart Redis.",
+    });
+  }
+
+  async function handleMongoDBStart() {
+    await handleServiceRuntimeAction({
+      actionKey: "start-mongodb",
+      run: startMongoDB,
+      setStatus: (status) => setMongoDBStatus(status),
+      successMessage: "MongoDB started.",
+      fallbackMessage: "Failed to start MongoDB.",
+    });
+  }
+
+  async function handleMongoDBStop() {
+    await handleServiceRuntimeAction({
+      actionKey: "stop-mongodb",
+      run: stopMongoDB,
+      setStatus: (status) => setMongoDBStatus(status),
+      successMessage: "MongoDB stopped.",
+      fallbackMessage: "Failed to stop MongoDB.",
+    });
+  }
+
+  async function handleMongoDBRestart() {
+    await handleServiceRuntimeAction({
+      actionKey: "restart-mongodb",
+      run: restartMongoDB,
+      setStatus: (status) => setMongoDBStatus(status),
+      successMessage: "MongoDB restarted.",
+      fallbackMessage: "Failed to restart MongoDB.",
+    });
+  }
+
+  async function handlePostgreSQLStart() {
+    await handleServiceRuntimeAction({
+      actionKey: "start-postgresql",
+      run: startPostgreSQL,
+      setStatus: (status) => setPostgreSQLStatus(status),
+      successMessage: "PostgreSQL started.",
+      fallbackMessage: "Failed to start PostgreSQL.",
+    });
+  }
+
+  async function handlePostgreSQLStop() {
+    await handleServiceRuntimeAction({
+      actionKey: "stop-postgresql",
+      run: stopPostgreSQL,
+      setStatus: (status) => setPostgreSQLStatus(status),
+      successMessage: "PostgreSQL stopped.",
+      fallbackMessage: "Failed to stop PostgreSQL.",
+    });
+  }
+
+  async function handlePostgreSQLRestart() {
+    await handleServiceRuntimeAction({
+      actionKey: "restart-postgresql",
+      run: restartPostgreSQL,
+      setStatus: (status) => setPostgreSQLStatus(status),
+      successMessage: "PostgreSQL restarted.",
+      fallbackMessage: "Failed to restart PostgreSQL.",
+    });
   }
 
   async function handleMariaDBStart() {
@@ -2184,6 +2750,9 @@ export function ApplicationsPage() {
           (removeCandidate?.kind === "php" &&
             runningAction === phpRuntimeActionKey("remove", removeCandidate.version)) ||
           (removeCandidate?.kind === "mariadb" && runningAction === "remove-mariadb") ||
+          (removeCandidate?.kind === "redis" && runningAction === "remove-redis") ||
+          (removeCandidate?.kind === "mongodb" && runningAction === "remove-mongodb") ||
+          (removeCandidate?.kind === "postgresql" && runningAction === "remove-postgresql") ||
           (removeCandidate?.kind === "phpmyadmin" && runningAction === "remove-phpmyadmin") ||
           (removeCandidate?.kind === "golang" && runningAction === "remove-golang") ||
           (removeCandidate?.kind === "nodejs" && runningAction === "remove-nodejs") ||
@@ -2388,6 +2957,96 @@ export function ApplicationsPage() {
                 </Button>
               </>
             }
+          />
+
+          <ServiceApplicationCard
+            app="redis"
+            name="Redis"
+            status={redisStatus}
+            runningAction={runningAction}
+            actionKeyPrefix="redis"
+            removeTitle="Automatic Redis removal is only available for installed runtimes supported by this environment."
+            meta={[
+              { label: "Binary", value: redisStatus?.binary_path?.trim() || "redis-server", mono: true },
+              ...(redisStatus?.package_manager
+                ? [{ label: "Package manager", value: redisStatus.package_manager }]
+                : []),
+            ]}
+            onInstall={() => {
+              void handleRedisInstall();
+            }}
+            onStart={() => {
+              void handleRedisStart();
+            }}
+            onStop={() => {
+              void handleRedisStop();
+            }}
+            onRestart={() => {
+              void handleRedisRestart();
+            }}
+            onRemove={() => {
+              setRemoveCandidate({ kind: "redis" });
+            }}
+          />
+
+          <ServiceApplicationCard
+            app="mongodb"
+            name="MongoDB"
+            status={mongoDBStatus}
+            runningAction={runningAction}
+            actionKeyPrefix="mongodb"
+            removeTitle="Automatic MongoDB removal is only available for installed runtimes supported by this environment."
+            meta={[
+              { label: "Binary", value: mongoDBStatus?.binary_path?.trim() || "mongod", mono: true },
+              ...(mongoDBStatus?.package_manager
+                ? [{ label: "Package manager", value: mongoDBStatus.package_manager }]
+                : []),
+            ]}
+            onInstall={() => {
+              void handleMongoDBInstall();
+            }}
+            onStart={() => {
+              void handleMongoDBStart();
+            }}
+            onStop={() => {
+              void handleMongoDBStop();
+            }}
+            onRestart={() => {
+              void handleMongoDBRestart();
+            }}
+            onRemove={() => {
+              setRemoveCandidate({ kind: "mongodb" });
+            }}
+          />
+
+          <ServiceApplicationCard
+            app="postgresql"
+            name="PostgreSQL"
+            status={postgresqlStatus}
+            runningAction={runningAction}
+            actionKeyPrefix="postgresql"
+            removeTitle="Automatic PostgreSQL removal is only available for installed runtimes supported by this environment."
+            meta={[
+              { label: "Binary", value: postgresqlStatus?.binary_path?.trim() || "postgres", mono: true },
+              ...(postgresqlStatus?.package_manager
+                ? [{ label: "Package manager", value: postgresqlStatus.package_manager }]
+                : []),
+            ]}
+            onInstall={() => {
+              void handlePostgreSQLInstall();
+            }}
+            onStart={() => {
+              void handlePostgreSQLStart();
+            }}
+            onStop={() => {
+              void handlePostgreSQLStop();
+            }}
+            onRestart={() => {
+              void handlePostgreSQLRestart();
+            }}
+            onRemove={() => {
+              setRemoveCandidate({ kind: "postgresql" });
+            }}
           />
 
           <ApplicationCard

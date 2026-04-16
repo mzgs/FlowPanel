@@ -15,6 +15,7 @@ import (
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/nodejs"
+	"flowpanel/internal/packageruntime"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/pm2"
@@ -36,6 +37,9 @@ type App struct {
 	NodeJS      nodejs.Manager
 	PM2         pm2.Manager
 	MariaDB     mariadb.Manager
+	Redis       packageruntime.Manager
+	MongoDB     packageruntime.Manager
+	PostgreSQL  packageruntime.Manager
 	PHP         phpenv.Manager
 	PHPMyAdmin  phpmyadmin.Manager
 	Files       *files.Service
@@ -59,6 +63,9 @@ func New(
 	nodeJSManager nodejs.Manager,
 	pm2Manager pm2.Manager,
 	mariadbManager mariadb.Manager,
+	redisManager packageruntime.Manager,
+	mongoDBManager packageruntime.Manager,
+	postgresqlManager packageruntime.Manager,
 	phpManager phpenv.Manager,
 	phpMyAdminManager phpmyadmin.Manager,
 	fileManager *files.Service,
@@ -81,6 +88,9 @@ func New(
 		NodeJS:      nodeJSManager,
 		PM2:         pm2Manager,
 		MariaDB:     mariadbManager,
+		Redis:       redisManager,
+		MongoDB:     mongoDBManager,
+		PostgreSQL:  postgresqlManager,
 		PHP:         phpManager,
 		PHPMyAdmin:  phpMyAdminManager,
 		Files:       fileManager,
