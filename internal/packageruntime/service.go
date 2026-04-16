@@ -135,7 +135,7 @@ func NewMongoDBService(logger *zap.Logger) *Service {
 	return NewService(logger, Definition{
 		Key:             "mongodb",
 		DisplayName:     "MongoDB",
-		BinaryNames:     []string{"mongod", "mongosh"},
+		BinaryNames:     []string{"mongod"},
 		VersionArgs:     []string{"--version"},
 		InstallLabel:    "Install MongoDB",
 		RemoveLabel:     "Remove MongoDB",
@@ -374,7 +374,7 @@ func detectActionPlan(definition Definition) actionPlan {
 		if aptPath, ok := lookupCommand("apt-get"); ok && len(definition.APTPackages) > 0 {
 			plan := actionPlan{
 				packageManager: "apt",
-				removeCmds:     [][]string{append([]string{aptPath, "remove", "-y"}, definition.APTPackages...)},
+				removeCmds:     packageRemoveCommands(definition, "apt", aptPath),
 			}
 			if definition.Key != "mongodb" || supportsMongoDBAPTInstall() {
 				plan.installCmds = [][]string{append([]string{aptPath, "install", "-y"}, definition.APTPackages...)}
@@ -396,7 +396,7 @@ func detectActionPlan(definition Definition) actionPlan {
 			plan := actionPlan{
 				packageManager: "dnf",
 				installCmds:    [][]string{append([]string{dnfPath, "install", "-y"}, definition.DNFPackages...)},
-				removeCmds:     [][]string{append([]string{dnfPath, "remove", "-y"}, definition.DNFPackages...)},
+				removeCmds:     packageRemoveCommands(definition, "dnf", dnfPath),
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.DNFService); serviceName != "" {
@@ -415,7 +415,7 @@ func detectActionPlan(definition Definition) actionPlan {
 			plan := actionPlan{
 				packageManager: "yum",
 				installCmds:    [][]string{append([]string{yumPath, "install", "-y"}, definition.YUMPackages...)},
-				removeCmds:     [][]string{append([]string{yumPath, "remove", "-y"}, definition.YUMPackages...)},
+				removeCmds:     packageRemoveCommands(definition, "yum", yumPath),
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.YUMService); serviceName != "" {
@@ -434,7 +434,7 @@ func detectActionPlan(definition Definition) actionPlan {
 			plan := actionPlan{
 				packageManager: "pacman",
 				installCmds:    [][]string{append([]string{pacmanPath, "-Sy", "--noconfirm"}, definition.PacmanPackages...)},
-				removeCmds:     [][]string{append([]string{pacmanPath, "-Rns", "--noconfirm"}, definition.PacmanPackages...)},
+				removeCmds:     packageRemoveCommands(definition, "pacman", pacmanPath),
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.PacmanService); serviceName != "" {
@@ -452,6 +452,69 @@ func detectActionPlan(definition Definition) actionPlan {
 	}
 
 	return actionPlan{}
+}
+
+func packageRemoveCommands(definition Definition, packageManager string, binaryPath string) [][]string {
+	if definition.Key == "mongodb" {
+		return mongoDBRemoveCommands(packageManager, binaryPath)
+	}
+
+	switch packageManager {
+	case "apt":
+		return [][]string{append([]string{binaryPath, "remove", "-y"}, definition.APTPackages...)}
+	case "dnf":
+		return [][]string{append([]string{binaryPath, "remove", "-y"}, definition.DNFPackages...)}
+	case "yum":
+		return [][]string{append([]string{binaryPath, "remove", "-y"}, definition.YUMPackages...)}
+	case "pacman":
+		return [][]string{append([]string{binaryPath, "-Rns", "--noconfirm"}, definition.PacmanPackages...)}
+	default:
+		return nil
+	}
+}
+
+func mongoDBRemoveCommands(packageManager string, binaryPath string) [][]string {
+	switch packageManager {
+	case "apt":
+		return [][]string{
+			{
+				"sh",
+				"-lc",
+				fmt.Sprintf(
+					`packages="$(
+dpkg-query -W -f='${binary:Package}\n' 'mongodb-org*' 'mongodb-mongosh*' 'mongodb-database-tools*' 2>/dev/null | sort -u
+)"
+if [ -n "$packages" ]; then
+  %s purge -y $packages
+fi`,
+					shellQuote(binaryPath),
+				),
+			},
+			{binaryPath, "autoremove", "-y"},
+		}
+	case "dnf", "yum":
+		return [][]string{
+			{
+				"sh",
+				"-lc",
+				fmt.Sprintf(
+					`packages="$(
+rpm -qa | grep -E '^(mongodb-org|mongodb-mongosh|mongodb-database-tools)' | sort -u
+)"
+if [ -n "$packages" ]; then
+  %s remove -y $packages
+fi`,
+					shellQuote(binaryPath),
+				),
+			},
+		}
+	default:
+		return packageRemoveCommands(
+			Definition{PacmanPackages: []string{"mongodb"}},
+			packageManager,
+			binaryPath,
+		)
+	}
 }
 
 func lookupFirstCommand(names ...string) (string, bool) {
@@ -563,6 +626,10 @@ func runCommands(ctx context.Context, commands ...[]string) error {
 	}
 
 	return nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 type osReleaseInfo struct {
