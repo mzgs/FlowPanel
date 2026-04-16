@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,8 @@ import (
 )
 
 const statusCommandTimeout = 3 * time.Second
+
+const mongoDBAPTSeries = "8.0"
 
 var versionPattern = regexp.MustCompile(`\b(\d+(?:\.\d+)+)\b`)
 
@@ -71,6 +75,9 @@ type Definition struct {
 	YUMService      string
 	PacmanPackages  []string
 	PacmanService   string
+	EnableOnInstall bool
+	StartOnInstall  bool
+	InstallFallback func(context.Context, actionPlan, error) (bool, error)
 }
 
 type Service struct {
@@ -79,13 +86,14 @@ type Service struct {
 }
 
 type actionPlan struct {
-	packageManager string
-	installCmds    [][]string
-	removeCmds     [][]string
-	startCmds      [][]string
-	stopCmds       [][]string
-	restartCmds    [][]string
-	serviceStatus  func(context.Context) (bool, error)
+	packageManager  string
+	installCmds     [][]string
+	postInstallCmds [][]string
+	removeCmds      [][]string
+	startCmds       [][]string
+	stopCmds        [][]string
+	restartCmds     [][]string
+	serviceStatus   func(context.Context) (bool, error)
 }
 
 func NewService(logger *zap.Logger, definition Definition) *Service {
@@ -145,6 +153,9 @@ func NewMongoDBService(logger *zap.Logger) *Service {
 		YUMService:      "mongod",
 		PacmanPackages:  []string{"mongodb"},
 		PacmanService:   "mongodb",
+		EnableOnInstall: true,
+		StartOnInstall:  true,
+		InstallFallback: retryMongoDBInstall,
 	})
 }
 
@@ -169,6 +180,7 @@ func NewPostgreSQLService(logger *zap.Logger) *Service {
 		YUMService:      "postgresql",
 		PacmanPackages:  []string{"postgresql"},
 		PacmanService:   "postgresql",
+		EnableOnInstall: true,
 	})
 }
 
@@ -246,7 +258,16 @@ func (s *Service) Install(ctx context.Context) error {
 		zap.String("runtime", s.definition.Key),
 		zap.String("package_manager", plan.packageManager),
 	)
-	return runCommands(ctx, plan.installCmds...)
+	if err := runCommands(ctx, plan.installCmds...); err != nil {
+		if fallback := s.definition.InstallFallback; fallback != nil {
+			if handled, fallbackErr := fallback(ctx, plan, err); handled {
+				return fallbackErr
+			}
+		}
+		return err
+	}
+
+	return runCommands(ctx, plan.postInstallCmds...)
 }
 
 func (s *Service) Remove(ctx context.Context) error {
@@ -353,14 +374,17 @@ func detectActionPlan(definition Definition) actionPlan {
 		if aptPath, ok := lookupCommand("apt-get"); ok && len(definition.APTPackages) > 0 {
 			plan := actionPlan{
 				packageManager: "apt",
-				installCmds:    [][]string{append([]string{aptPath, "install", "-y"}, definition.APTPackages...)},
 				removeCmds:     [][]string{append([]string{aptPath, "remove", "-y"}, definition.APTPackages...)},
+			}
+			if definition.Key != "mongodb" || supportsMongoDBAPTInstall() {
+				plan.installCmds = [][]string{append([]string{aptPath, "install", "-y"}, definition.APTPackages...)}
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.APTService); serviceName != "" {
 					plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
 					plan.stopCmds = [][]string{{systemctlPath, "stop", serviceName}}
 					plan.restartCmds = [][]string{{systemctlPath, "restart", serviceName}}
+					plan.postInstallCmds = appendSystemdInstallServiceCommands(plan.postInstallCmds, systemctlPath, serviceName, definition)
 					plan.serviceStatus = func(ctx context.Context) (bool, error) {
 						return inspectSystemdService(ctx, systemctlPath, serviceName)
 					}
@@ -379,6 +403,7 @@ func detectActionPlan(definition Definition) actionPlan {
 					plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
 					plan.stopCmds = [][]string{{systemctlPath, "stop", serviceName}}
 					plan.restartCmds = [][]string{{systemctlPath, "restart", serviceName}}
+					plan.postInstallCmds = appendSystemdInstallServiceCommands(plan.postInstallCmds, systemctlPath, serviceName, definition)
 					plan.serviceStatus = func(ctx context.Context) (bool, error) {
 						return inspectSystemdService(ctx, systemctlPath, serviceName)
 					}
@@ -397,6 +422,7 @@ func detectActionPlan(definition Definition) actionPlan {
 					plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
 					plan.stopCmds = [][]string{{systemctlPath, "stop", serviceName}}
 					plan.restartCmds = [][]string{{systemctlPath, "restart", serviceName}}
+					plan.postInstallCmds = appendSystemdInstallServiceCommands(plan.postInstallCmds, systemctlPath, serviceName, definition)
 					plan.serviceStatus = func(ctx context.Context) (bool, error) {
 						return inspectSystemdService(ctx, systemctlPath, serviceName)
 					}
@@ -415,6 +441,7 @@ func detectActionPlan(definition Definition) actionPlan {
 					plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
 					plan.stopCmds = [][]string{{systemctlPath, "stop", serviceName}}
 					plan.restartCmds = [][]string{{systemctlPath, "restart", serviceName}}
+					plan.postInstallCmds = appendSystemdInstallServiceCommands(plan.postInstallCmds, systemctlPath, serviceName, definition)
 					plan.serviceStatus = func(ctx context.Context) (bool, error) {
 						return inspectSystemdService(ctx, systemctlPath, serviceName)
 					}
@@ -536,4 +563,256 @@ func runCommands(ctx context.Context, commands ...[]string) error {
 	}
 
 	return nil
+}
+
+type osReleaseInfo struct {
+	id              string
+	idLike          string
+	versionCodename string
+	ubuntuCodename  string
+}
+
+type mongoDBAPTRepository struct {
+	keyURL      string
+	keyringPath string
+	listPath    string
+	listEntry   string
+}
+
+func retryMongoDBInstall(ctx context.Context, plan actionPlan, err error) (bool, error) {
+	if err == nil || plan.packageManager != "apt" || !isMissingAPTPackageError(err) {
+		return false, nil
+	}
+
+	repository, repoErr := detectMongoDBAPTRepository()
+	if repoErr != nil {
+		return true, repoErr
+	}
+	if repoErr := bootstrapMongoDBAPTRepository(ctx, repository); repoErr != nil {
+		return true, repoErr
+	}
+
+	if err := runCommands(ctx, plan.installCmds...); err != nil {
+		return true, err
+	}
+
+	return true, runCommands(ctx, plan.postInstallCmds...)
+}
+
+func supportsMongoDBAPTInstall() bool {
+	_, err := detectMongoDBAPTRepository()
+	return err == nil
+}
+
+func isMissingAPTPackageError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unable to locate package") ||
+		strings.Contains(message, "has no installation candidate")
+}
+
+func detectMongoDBAPTRepository() (mongoDBAPTRepository, error) {
+	info := parseOSReleaseFile("/etc/os-release")
+	codename := firstNonEmpty(info.versionCodename, info.ubuntuCodename)
+	if codename == "" {
+		return mongoDBAPTRepository{}, errors.New("automatic mongodb installation requires a Linux release codename in /etc/os-release")
+	}
+
+	keyringPath := filepath.Join("/usr/share/keyrings", "mongodb-server-"+mongoDBAPTSeries+".gpg")
+	listPath := filepath.Join("/etc/apt/sources.list.d", "mongodb-org-"+mongoDBAPTSeries+".list")
+
+	switch {
+	case isUbuntuLikeLinux(info):
+		if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+			return mongoDBAPTRepository{}, fmt.Errorf("automatic mongodb installation via apt is only supported on Ubuntu 20.04, 22.04, or 24.04 for amd64 and arm64 systems")
+		}
+		if codename != "focal" && codename != "jammy" && codename != "noble" {
+			return mongoDBAPTRepository{}, fmt.Errorf("automatic mongodb installation via apt is only supported on Ubuntu 20.04, 22.04, or 24.04; detected %q", codename)
+		}
+
+		return mongoDBAPTRepository{
+			keyURL:      "https://pgp.mongodb.com/server-" + mongoDBAPTSeries + ".asc",
+			keyringPath: keyringPath,
+			listPath:    listPath,
+			listEntry: fmt.Sprintf(
+				"deb [ arch=amd64,arm64 signed-by=%s ] https://repo.mongodb.org/apt/ubuntu %s/mongodb-org/%s multiverse",
+				keyringPath,
+				codename,
+				mongoDBAPTSeries,
+			),
+		}, nil
+	case isDebianLikeLinux(info):
+		if runtime.GOARCH != "amd64" {
+			return mongoDBAPTRepository{}, fmt.Errorf("automatic mongodb installation via apt is only supported on Debian 12 x86_64; detected %s", runtime.GOARCH)
+		}
+		if codename != "bookworm" {
+			return mongoDBAPTRepository{}, fmt.Errorf("automatic mongodb installation via apt is only supported on Debian 12; detected %q", codename)
+		}
+
+		return mongoDBAPTRepository{
+			keyURL:      "https://pgp.mongodb.com/server-" + mongoDBAPTSeries + ".asc",
+			keyringPath: keyringPath,
+			listPath:    listPath,
+			listEntry: fmt.Sprintf(
+				"deb [ signed-by=%s ] https://repo.mongodb.org/apt/debian %s/mongodb-org/%s main",
+				keyringPath,
+				codename,
+				mongoDBAPTSeries,
+			),
+		}, nil
+	default:
+		return mongoDBAPTRepository{}, errors.New("automatic mongodb installation via apt is only supported on Ubuntu LTS and Debian 12")
+	}
+}
+
+func bootstrapMongoDBAPTRepository(ctx context.Context, repository mongoDBAPTRepository) error {
+	aptPath, ok := lookupCommand("apt-get")
+	if !ok {
+		return errors.New("apt-get is not available")
+	}
+
+	if err := runCommands(ctx, []string{aptPath, "install", "-y", "gnupg"}); err != nil {
+		return err
+	}
+
+	publicKeyFile, err := downloadFile(ctx, repository.keyURL, "mongodb-server-*.asc")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(publicKeyFile)
+
+	gpgPath, ok := lookupCommand("gpg")
+	if !ok {
+		return errors.New("gpg is not available after installing gnupg")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(repository.keyringPath), 0o755); err != nil {
+		return fmt.Errorf("create mongodb keyring directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(repository.listPath), 0o755); err != nil {
+		return fmt.Errorf("create mongodb sources directory: %w", err)
+	}
+	if err := os.RemoveAll(repository.keyringPath); err != nil {
+		return fmt.Errorf("reset mongodb keyring: %w", err)
+	}
+	if err := runCommands(ctx, []string{gpgPath, "--dearmor", "-o", repository.keyringPath, publicKeyFile}); err != nil {
+		return err
+	}
+	if err := os.WriteFile(repository.listPath, []byte(repository.listEntry+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write mongodb apt source: %w", err)
+	}
+
+	return runCommands(ctx, []string{aptPath, "update"})
+}
+
+func downloadFile(ctx context.Context, url string, pattern string) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("prepare download request: %w", err)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("download %s: %w", url, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download %s: unexpected status %s", url, response.Status)
+	}
+
+	file, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", fmt.Errorf("create temporary file: %w", err)
+	}
+
+	if _, err := io.Copy(file, response.Body); err != nil {
+		file.Close()
+		os.Remove(file.Name())
+		return "", fmt.Errorf("write temporary file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(file.Name())
+		return "", fmt.Errorf("close temporary file: %w", err)
+	}
+
+	return file.Name(), nil
+}
+
+func parseOSReleaseFile(path string) osReleaseInfo {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return osReleaseInfo{}
+	}
+
+	var info osReleaseInfo
+	for _, rawLine := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		value = strings.ToLower(strings.Trim(strings.TrimSpace(value), `"'`))
+
+		switch key {
+		case "ID":
+			info.id = value
+		case "ID_LIKE":
+			info.idLike = value
+		case "VERSION_CODENAME":
+			info.versionCodename = value
+		case "UBUNTU_CODENAME":
+			info.ubuntuCodename = value
+		}
+	}
+
+	return info
+}
+
+func isUbuntuLikeLinux(info osReleaseInfo) bool {
+	return info.id == "ubuntu" || stringListContains(strings.Fields(info.idLike), "ubuntu")
+}
+
+func isDebianLikeLinux(info osReleaseInfo) bool {
+	return info.id == "debian" || stringListContains(strings.Fields(info.idLike), "debian")
+}
+
+func stringListContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+
+	return ""
+}
+
+func appendSystemdInstallServiceCommands(commands [][]string, systemctlPath string, serviceName string, definition Definition) [][]string {
+	if definition.EnableOnInstall {
+		commands = append(commands, []string{systemctlPath, "enable", serviceName})
+	}
+	if definition.StartOnInstall {
+		commands = append(commands, []string{systemctlPath, "start", serviceName})
+	}
+
+	return commands
 }
