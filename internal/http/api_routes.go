@@ -38,14 +38,7 @@ func (a *apiRoutes) register(r chi.Router) {
 	}
 
 	a.registerBackupRoutes(r)
-	a.registerGoRoutes(r)
-	a.registerNodeJSRoutes(r)
-	a.registerPM2Routes(r)
-	a.registerMariaDBRoutes(r)
-	a.registerPackageRuntimeRoutes(r, "redis", "Redis", a.app.Redis)
-	a.registerPackageRuntimeRoutes(r, "mongodb", "MongoDB", a.app.MongoDB)
-	a.registerPackageRuntimeRoutes(r, "postgresql", "PostgreSQL", a.app.PostgreSQL)
-	a.registerPHPRoutes(r)
+	a.registerApplicationRoutes(r)
 	a.registerDomainRoutes(r)
 	a.registerFileRoutes(r)
 }
