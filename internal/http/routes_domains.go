@@ -917,6 +917,31 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 
 		actionCtx := backgroundRequestContext(r.Context())
 		runtimeLabel := domainRuntimeLabel(record.Kind)
+		if record.Kind == domain.KindPython {
+			if err := ensureDomainPythonEnvironment(actionCtx, a.app.Domains, record); err != nil {
+				a.app.Logger.Error("prepare domain python environment failed", zap.String("hostname", record.Hostname), zap.Error(err))
+				a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+				return
+			}
+		}
+		runtimeConfig, err := resolveDomainRuntimeProcessConfig(a.app.Domains.BasePath(), record)
+		if err != nil {
+			a.app.Logger.Error("resolve domain runtime config failed", zap.String("hostname", record.Hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if status.Process != nil {
+			if runtimeProcessNeedsRecreate(*status.Process, runtimeConfig) {
+				if _, err := a.app.PM2.DeleteProcess(actionCtx, status.Process.ID); err != nil {
+					a.app.Logger.Error("delete mismatched domain runtime process failed", zap.String("hostname", record.Hostname), zap.Int("process_id", status.Process.ID), zap.Error(err))
+					a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
+					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+					return
+				}
+				status.Process = nil
+			}
+		}
 		if status.Process != nil {
 			if _, err := a.app.PM2.StartProcess(actionCtx, status.Process.ID); err != nil {
 				a.app.Logger.Error("start domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.Int("process_id", status.Process.ID), zap.Error(err))
@@ -925,24 +950,13 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				return
 			}
 		} else {
-			workingDirectory, err := domain.ResolveDocumentRoot(a.app.Domains.BasePath(), record)
-			if err != nil {
-				a.app.Logger.Error("resolve domain nodejs root failed", zap.String("hostname", record.Hostname), zap.Error(err))
-				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to resolve the domain root"})
-				return
-			}
-			scriptPath, err := domain.ResolveNodeJSScriptPath(a.app.Domains.BasePath(), record)
-			if err != nil {
-				a.app.Logger.Error("resolve domain nodejs script failed", zap.String("hostname", record.Hostname), zap.Error(err))
-				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
-				return
-			}
 			if _, err := a.app.PM2.CreateProcess(actionCtx, pm2.CreateProcessInput{
 				Name:             record.Hostname,
-				ScriptPath:       scriptPath,
-				WorkingDirectory: workingDirectory,
+				ScriptPath:       runtimeConfig.ScriptPath,
+				WorkingDirectory: runtimeConfig.WorkingDirectory,
+				Interpreter:      runtimeConfig.InterpreterPath,
 			}); err != nil {
-				a.app.Logger.Error("create domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.String("script_path", scriptPath), zap.String("working_directory", workingDirectory), zap.Error(err))
+				a.app.Logger.Error("create domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.String("script_path", runtimeConfig.ScriptPath), zap.String("working_directory", runtimeConfig.WorkingDirectory), zap.String("interpreter", runtimeConfig.InterpreterPath), zap.Error(err))
 				a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -1030,6 +1044,28 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		a.mutationEvent(actionCtx, "domains", "npm_install", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Ran npm install for %q.", record.Hostname))
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+	})
+
+	domainsPythonRequirementsInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		actionCtx := backgroundRequestContext(r.Context())
+		record, err := runDomainPythonRequirementsInstall(actionCtx, a.app.Domains, hostname)
+		if err != nil {
+			switch {
+			case errors.Is(err, domain.ErrNotFound):
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			case errors.Is(err, errDomainPythonRequirementsUnsupportedDomain), errors.Is(err, errDomainPythonRequirementsMissingFile):
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			default:
+				a.app.Logger.Error("install domain python requirements failed", zap.String("hostname", hostname), zap.Error(err))
+				a.mutationEvent(actionCtx, "domains", "python_requirements_install", "domain", hostname, hostname, "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			}
+			return
+		}
+
+		a.mutationEvent(actionCtx, "domains", "python_requirements_install", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Installed Python requirements for %q.", record.Hostname))
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
 	})
 
@@ -1390,6 +1426,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/start", domainsNodeJSStartHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/stop", domainsNodeJSStopHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/npm-install", domainsNodeJSNPMInstallHandler)
+	r.Method(stdhttp.MethodPost, "/domains/{hostname}/python/requirements-install", domainsPythonRequirementsInstallHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/php-settings", domainsPHPSettingsUpdateHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/github", domainsGitHubUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/deploy", domainsGitHubDeployHandler)
@@ -1427,8 +1464,15 @@ type domainNodeJSStatusResponse struct {
 	RuntimeVersion   string       `json:"runtime_version,omitempty"`
 	ScriptPath       string       `json:"script_path,omitempty"`
 	WorkingDirectory string       `json:"working_directory,omitempty"`
+	InterpreterPath  string       `json:"interpreter_path,omitempty"`
 	Process          *pm2.Process `json:"process"`
 	Message          string       `json:"message"`
+}
+
+type domainRuntimeProcessConfig struct {
+	ScriptPath       string
+	WorkingDirectory string
+	InterpreterPath  string
 }
 
 func normalizeDomainLogHostname(value string) string {
@@ -1466,9 +1510,6 @@ func loadDomainNodeJSStatus(
 		ScriptPath: strings.TrimSpace(record.NodeJSScript),
 		Process:    nil,
 	}
-	if record.Kind == domain.KindPython {
-		status.RuntimeVersion = detectDomainPythonRuntimeVersion(ctx)
-	}
 	runtimeLabel := domainRuntimeLabel(record.Kind)
 	if !status.Supported {
 		status.Message = "Runtime controls are available only for Node.js and Python domains."
@@ -1484,6 +1525,19 @@ func loadDomainNodeJSStatus(
 		status.Message = "Script path is not configured for this domain."
 		return record, status, nil
 	}
+
+	runtimeConfig, err := resolveDomainRuntimeProcessConfig(domains.BasePath(), record)
+	if err != nil {
+		status.Configured = false
+		status.Message = err.Error()
+		return record, status, nil
+	}
+	status.ScriptPath = filepath.ToSlash(runtimeConfig.ScriptPath)
+	status.InterpreterPath = filepath.ToSlash(runtimeConfig.InterpreterPath)
+	if record.Kind == domain.KindPython {
+		status.RuntimeVersion = detectDomainPythonRuntimeVersion(ctx, runtimeConfig.InterpreterPath)
+	}
+
 	if pm2Manager == nil {
 		status.Message = "PM2 runtime is not configured."
 		return record, status, nil
@@ -1496,19 +1550,12 @@ func loadDomainNodeJSStatus(
 		return record, status, nil
 	}
 
-	resolvedScriptPath, err := domain.ResolveNodeJSScriptPath(domains.BasePath(), record)
-	if err != nil {
-		status.Configured = false
-		status.Message = err.Error()
-		return record, status, nil
-	}
-
 	processes, err := pm2Manager.List(ctx)
 	if err != nil {
 		return domain.Record{}, domainNodeJSStatusResponse{}, fmt.Errorf("list pm2 processes: %w", err)
 	}
 
-	if process, ok := matchDomainNodeJSProcess(processes, resolvedScriptPath, workingDirectory); ok {
+	if process, ok := matchDomainNodeJSProcess(processes, runtimeConfig); ok {
 		status.Process = &process
 		switch {
 		case canStopDomainNodeJSProcess(process):
@@ -1525,12 +1572,17 @@ func loadDomainNodeJSStatus(
 	return record, status, nil
 }
 
-func matchDomainNodeJSProcess(processes []pm2.Process, scriptPath string, workingDirectory string) (pm2.Process, bool) {
-	wantScriptPath := filepath.Clean(strings.TrimSpace(scriptPath))
-	wantWorkingDirectory := filepath.Clean(strings.TrimSpace(workingDirectory))
+func matchDomainNodeJSProcess(processes []pm2.Process, config domainRuntimeProcessConfig) (pm2.Process, bool) {
+	wantScriptPath := filepath.Clean(strings.TrimSpace(config.ScriptPath))
+	wantWorkingDirectory := filepath.Clean(strings.TrimSpace(config.WorkingDirectory))
+	wantInterpreter := filepath.Clean(strings.TrimSpace(config.InterpreterPath))
 
-	var storedProcess pm2.Process
-	storedFound := false
+	var (
+		exactStored    pm2.Process
+		exactStoredSet bool
+		fallbackStored pm2.Process
+		fallbackSet    bool
+	)
 	for _, process := range processes {
 		if filepath.Clean(strings.TrimSpace(process.ScriptPath)) != wantScriptPath {
 			continue
@@ -1538,16 +1590,30 @@ func matchDomainNodeJSProcess(processes []pm2.Process, scriptPath string, workin
 		if filepath.Clean(strings.TrimSpace(process.WorkingDirectory)) != wantWorkingDirectory {
 			continue
 		}
+		exactInterpreter := wantInterpreter == "" || filepath.Clean(strings.TrimSpace(process.Interpreter)) == wantInterpreter
+		if !exactInterpreter {
+			if process.ID >= 0 {
+				return process, true
+			}
+			if !fallbackSet {
+				fallbackStored = process
+				fallbackSet = true
+			}
+			continue
+		}
 		if process.ID >= 0 {
 			return process, true
 		}
-		if !storedFound {
-			storedProcess = process
-			storedFound = true
+		if !exactStoredSet {
+			exactStored = process
+			exactStoredSet = true
 		}
 	}
 
-	return storedProcess, storedFound
+	if exactStoredSet {
+		return exactStored, true
+	}
+	return fallbackStored, fallbackSet
 }
 
 func deleteDomainNodeJSProcess(ctx context.Context, pm2Manager pm2.Manager, basePath string, record domain.Record) error {
@@ -1558,11 +1624,7 @@ func deleteDomainNodeJSProcess(ctx context.Context, pm2Manager pm2.Manager, base
 		return nil
 	}
 
-	workingDirectory, err := domain.ResolveDocumentRoot(basePath, record)
-	if err != nil {
-		return err
-	}
-	scriptPath, err := domain.ResolveNodeJSScriptPath(basePath, record)
+	runtimeConfig, err := resolveDomainRuntimeProcessConfig(basePath, record)
 	if err != nil {
 		if strings.TrimSpace(record.NodeJSScript) == "" {
 			return nil
@@ -1574,7 +1636,7 @@ func deleteDomainNodeJSProcess(ctx context.Context, pm2Manager pm2.Manager, base
 	if err != nil {
 		return err
 	}
-	process, ok := matchDomainNodeJSProcess(processes, scriptPath, workingDirectory)
+	process, ok := matchDomainNodeJSProcess(processes, runtimeConfig)
 	if !ok {
 		return nil
 	}
@@ -1595,7 +1657,42 @@ func domainRuntimeLabel(kind domain.Kind) string {
 	return "Node.js"
 }
 
-func detectDomainPythonRuntimeVersion(ctx context.Context) string {
+func resolveDomainRuntimeProcessConfig(basePath string, record domain.Record) (domainRuntimeProcessConfig, error) {
+	workingDirectory, err := domain.ResolveDocumentRoot(basePath, record)
+	if err != nil {
+		return domainRuntimeProcessConfig{}, fmt.Errorf("resolve domain nodejs root: %w", err)
+	}
+
+	scriptPath, err := domain.ResolveNodeJSScriptPath(basePath, record)
+	if err != nil {
+		return domainRuntimeProcessConfig{}, err
+	}
+
+	config := domainRuntimeProcessConfig{
+		ScriptPath:       scriptPath,
+		WorkingDirectory: workingDirectory,
+	}
+	if record.Kind != domain.KindPython {
+		return config, nil
+	}
+
+	interpreterPath, err := domain.ResolvePythonInterpreter(basePath, record)
+	if err != nil {
+		return domainRuntimeProcessConfig{}, err
+	}
+	config.InterpreterPath = interpreterPath
+	return config, nil
+}
+
+func runtimeProcessNeedsRecreate(process pm2.Process, config domainRuntimeProcessConfig) bool {
+	if strings.TrimSpace(config.InterpreterPath) == "" {
+		return false
+	}
+
+	return filepath.Clean(strings.TrimSpace(process.Interpreter)) != filepath.Clean(strings.TrimSpace(config.InterpreterPath))
+}
+
+func detectDomainPythonRuntimeVersion(ctx context.Context, interpreterPath string) string {
 	runCtx := ctx
 	if runCtx == nil {
 		runCtx = context.Background()
@@ -1606,15 +1703,18 @@ func detectDomainPythonRuntimeVersion(ctx context.Context) string {
 		defer cancel()
 	}
 
-	for _, candidate := range []string{"python3", "python"} {
-		output, err := exec.CommandContext(runCtx, candidate, "--version").CombinedOutput()
-		if err != nil && len(output) == 0 {
-			continue
-		}
-		match := pythonVersionPattern.FindStringSubmatch(string(output))
-		if len(match) >= 2 {
-			return match[1]
-		}
+	candidate := strings.TrimSpace(interpreterPath)
+	if candidate == "" {
+		return ""
+	}
+
+	output, err := exec.CommandContext(runCtx, candidate, "--version").CombinedOutput()
+	if err != nil && len(output) == 0 {
+		return ""
+	}
+	match := pythonVersionPattern.FindStringSubmatch(string(output))
+	if len(match) >= 2 {
+		return match[1]
 	}
 
 	return ""

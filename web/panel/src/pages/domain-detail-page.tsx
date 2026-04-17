@@ -24,6 +24,7 @@ import {
   fetchDomains,
   getDomainSiteUrl,
   installDomainNodeJSPackages,
+  installDomainPythonRequirements,
   startDomainNodeJS,
   stopDomainNodeJS,
   type DomainNodeJSStatus,
@@ -587,6 +588,10 @@ const nodeJSDevToolAction: DomainActionItem = {
   title: "npm install",
   icon: Download,
 };
+const pythonRequirementsDevToolAction: DomainActionItem = {
+  title: "Install requirements",
+  icon: Download,
+};
 const phpOnlyDevToolTitles = new Set([
   "PHP",
   "Install PHP App",
@@ -670,7 +675,14 @@ function getActiveDevToolActions(kind: DomainRecord["kind"] | undefined) {
     (item) => kind === "Php site" || !phpOnlyDevToolTitles.has(item.title),
   );
 
-  return kind === "Node.js" ? [...items, nodeJSDevToolAction] : items;
+  if (kind === "Node.js") {
+    return [...items, nodeJSDevToolAction];
+  }
+  if (kind === "Python") {
+    return [...items, pythonRequirementsDevToolAction];
+  }
+
+  return items;
 }
 
 function parseComposerPackages(content: string) {
@@ -841,7 +853,7 @@ export function DomainDetailPage() {
   const [nodeJSLoading, setNodeJSLoading] = useState(false);
   const [nodeJSError, setNodeJSError] = useState<string | null>(null);
   const [nodeJSAction, setNodeJSAction] = useState<
-    "start" | "stop" | "install" | null
+    "start" | "stop" | "install" | "requirements" | null
   >(
     null,
   );
@@ -2013,6 +2025,29 @@ export function DomainDetailPage() {
     }
   }
 
+  async function handlePythonRequirementsInstall() {
+    if (!domain || domain.kind !== "Python" || nodeJSAction !== null) {
+      return;
+    }
+
+    setNodeJSAction("requirements");
+    setNodeJSError(null);
+
+    try {
+      await installDomainPythonRequirements(domain.hostname);
+      toast.success(`Installed Python requirements for ${domain.hostname}.`);
+    } catch (error) {
+      const message = getErrorMessage(
+        error,
+        "Failed to install Python requirements.",
+      );
+      setNodeJSError(message);
+      toast.error(message);
+    } finally {
+      setNodeJSAction(null);
+    }
+  }
+
   async function loadWordPressDetails(section: WordPressDetailsSection) {
     if (
       !domain ||
@@ -2948,6 +2983,21 @@ export function DomainDetailPage() {
                         }
 
                         void handleNodeJSInstall();
+                        return;
+                      }
+
+                      if (
+                        item.title === "Install requirements" &&
+                        domain !== null
+                      ) {
+                        if (domain.kind !== "Python") {
+                          toast.error(
+                            "Install requirements is available only for Python domains.",
+                          );
+                          return;
+                        }
+
+                        void handlePythonRequirementsInstall();
                         return;
                       }
 

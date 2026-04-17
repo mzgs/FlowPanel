@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -28,6 +29,9 @@ var ErrDuplicateHostname = errors.New("duplicate hostname")
 var ErrNotFound = errors.New("domain not found")
 
 var hostnamePattern = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$`)
+
+var pythonInterpreterCandidates = []string{"python3", "python"}
+var pythonVirtualEnvNames = []string{".venv", "venv", "env"}
 
 type Kind string
 
@@ -837,8 +841,73 @@ func ResolveNodeJSScriptPath(basePath string, record Record) (string, error) {
 	return resolved, nil
 }
 
+func ResolvePythonInterpreter(basePath string, record Record) (string, error) {
+	if record.Kind != KindPython {
+		return "", fmt.Errorf("unsupported domain kind %q", record.Kind)
+	}
+
+	documentRoot, err := ResolveDocumentRoot(basePath, record)
+	if err != nil {
+		return "", err
+	}
+
+	for _, name := range pythonVirtualEnvNames {
+		parts := append([]string{documentRoot, name}, pythonVirtualEnvBinaryPath()...)
+		interpreterPath := filepath.Join(parts...)
+		info, err := os.Stat(interpreterPath)
+		if err == nil && !info.IsDir() {
+			return interpreterPath, nil
+		}
+	}
+
+	for _, candidate := range pythonInterpreterCandidates {
+		if resolved, ok := lookupExecutablePath(candidate); ok {
+			return resolved, nil
+		}
+	}
+
+	return "", errors.New("python interpreter was not found for this domain")
+}
+
 func usesScriptPath(kind Kind) bool {
 	return kind == KindNodeJS || kind == KindPython
+}
+
+func pythonVirtualEnvBinaryPath() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"Scripts", "python.exe"}
+	}
+
+	return []string{"bin", "python"}
+}
+
+func lookupExecutablePath(name string) (string, bool) {
+	if path, err := exec.LookPath(name); err == nil {
+		return path, true
+	}
+
+	if filepath.IsAbs(name) {
+		info, err := os.Stat(name)
+		return name, err == nil && !info.IsDir()
+	}
+
+	for _, dir := range []string{
+		"/opt/homebrew/bin",
+		"/opt/homebrew/sbin",
+		"/usr/local/bin",
+		"/usr/local/sbin",
+		"/usr/bin",
+		"/usr/sbin",
+		"/snap/bin",
+	} {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err == nil && !info.IsDir() {
+			return path, true
+		}
+	}
+
+	return "", false
 }
 
 func (s *Service) ensureSiteRoot(hostname string) (string, error) {

@@ -330,6 +330,22 @@ export async function installDomainNodeJSPackages(
   }
 }
 
+export async function installDomainPythonRequirements(
+  hostname: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/python/requirements-install`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "install requirements");
+  }
+}
+
 export async function updateDomainFTP(
   domainID: string,
   input: UpdateDomainFTPInput,

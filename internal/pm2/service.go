@@ -50,6 +50,7 @@ type CreateProcessInput struct {
 	Name             string
 	ScriptPath       string
 	WorkingDirectory string
+	Interpreter      string
 }
 
 type Process struct {
@@ -62,6 +63,7 @@ type Process struct {
 	UptimeUnixMilli  int64   `json:"uptime_unix_milli,omitempty"`
 	ScriptPath       string  `json:"script_path,omitempty"`
 	WorkingDirectory string  `json:"working_directory,omitempty"`
+	Interpreter      string  `json:"interpreter,omitempty"`
 	Namespace        string  `json:"namespace,omitempty"`
 	Version          string  `json:"version,omitempty"`
 	ExecMode         string  `json:"exec_mode,omitempty"`
@@ -102,6 +104,7 @@ type rawProcess struct {
 		PMUptime    int64  `json:"pm_uptime"`
 		PMExecPath  string `json:"pm_exec_path"`
 		PMCwd       string `json:"pm_cwd"`
+		Interpreter string `json:"exec_interpreter"`
 		Namespace   string `json:"namespace"`
 		Version     string `json:"version"`
 		ExecMode    string `json:"exec_mode"`
@@ -303,6 +306,9 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 	if workingDirectory := strings.TrimSpace(input.WorkingDirectory); workingDirectory != "" {
 		args = append(args, "--cwd", workingDirectory)
 	}
+	if interpreter := strings.TrimSpace(input.Interpreter); interpreter != "" {
+		args = append(args, "--interpreter", interpreter)
+	}
 
 	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, args...); err != nil {
 		return nil, err
@@ -438,6 +444,7 @@ func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
 			UptimeUnixMilli:  record.PM2Env.PMUptime,
 			ScriptPath:       strings.TrimSpace(record.PM2Env.PMExecPath),
 			WorkingDirectory: strings.TrimSpace(record.PM2Env.PMCwd),
+			Interpreter:      strings.TrimSpace(record.PM2Env.Interpreter),
 			Namespace:        strings.TrimSpace(record.PM2Env.Namespace),
 			Version:          strings.TrimSpace(record.PM2Env.Version),
 			ExecMode:         strings.TrimSpace(record.PM2Env.ExecMode),
@@ -446,6 +453,7 @@ func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
 			Name:             strings.TrimSpace(record.Name),
 			ScriptPath:       process.ScriptPath,
 			WorkingDirectory: process.WorkingDirectory,
+			Interpreter:      process.Interpreter,
 		}
 		if process.Name == "" {
 			process.Name = fmt.Sprintf("Process %d", process.ID)
@@ -502,6 +510,7 @@ func toProcesses(inspected []inspectedProcess, stored []Definition, matchedStore
 			Status:           "stopped",
 			ScriptPath:       strings.TrimSpace(definition.ScriptPath),
 			WorkingDirectory: strings.TrimSpace(definition.WorkingDirectory),
+			Interpreter:      strings.TrimSpace(definition.Interpreter),
 		})
 		virtualID--
 	}
@@ -625,7 +634,10 @@ func missingDefinitions(stored []Definition, inspected []inspectedProcess) []Def
 }
 
 func definitionKey(definition Definition) string {
-	return strings.TrimSpace(definition.Name) + "\x00" + strings.TrimSpace(definition.ScriptPath) + "\x00" + strings.TrimSpace(definition.WorkingDirectory)
+	return strings.TrimSpace(definition.Name) + "\x00" +
+		strings.TrimSpace(definition.ScriptPath) + "\x00" +
+		strings.TrimSpace(definition.WorkingDirectory) + "\x00" +
+		strings.TrimSpace(definition.Interpreter)
 }
 
 func preserveStoredDefinitionState(inspected []inspectedProcess, stored []Definition) map[string]int {
@@ -734,6 +746,9 @@ func (s *Service) createMissingProcess(ctx context.Context, pm2Path string, defi
 	}
 	if workingDirectory := strings.TrimSpace(definition.WorkingDirectory); workingDirectory != "" {
 		args = append(args, "--cwd", workingDirectory)
+	}
+	if interpreter := strings.TrimSpace(definition.Interpreter); interpreter != "" {
+		args = append(args, "--interpreter", interpreter)
 	}
 	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, args...); err != nil {
 		return err

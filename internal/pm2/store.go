@@ -14,6 +14,7 @@ type Definition struct {
 	Name             string
 	ScriptPath       string
 	WorkingDirectory string
+	Interpreter      string
 	ManuallyStopped  bool
 }
 
@@ -35,12 +36,16 @@ CREATE TABLE IF NOT EXISTS pm2_processes (
     position INTEGER PRIMARY KEY,
     name TEXT NOT NULL DEFAULT '',
     script_path TEXT NOT NULL DEFAULT '',
-    working_directory TEXT NOT NULL DEFAULT ''
+    working_directory TEXT NOT NULL DEFAULT '',
+    interpreter TEXT NOT NULL DEFAULT ''
 );
 `
 
 	if _, err := s.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("ensure pm2 processes table: %w", err)
+	}
+	if err := s.ensureColumn(ctx, "interpreter", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
 	}
 	if err := s.ensureColumn(ctx, "manually_stopped", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
@@ -58,7 +63,7 @@ func (s *Store) List(ctx context.Context) ([]Definition, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT name, script_path, working_directory, manually_stopped
+SELECT name, script_path, working_directory, manually_stopped, interpreter
 FROM pm2_processes
 ORDER BY position ASC
 `)
@@ -70,7 +75,7 @@ ORDER BY position ASC
 	definitions := make([]Definition, 0)
 	for rows.Next() {
 		var definition Definition
-		if err := rows.Scan(&definition.Name, &definition.ScriptPath, &definition.WorkingDirectory, &definition.ManuallyStopped); err != nil {
+		if err := rows.Scan(&definition.Name, &definition.ScriptPath, &definition.WorkingDirectory, &definition.ManuallyStopped, &definition.Interpreter); err != nil {
 			return nil, fmt.Errorf("scan pm2 process row: %w", err)
 		}
 		definitions = append(definitions, definition)
@@ -108,8 +113,8 @@ func (s *Store) Replace(ctx context.Context, definitions []Definition) error {
 	}
 
 	statement, err := tx.PrepareContext(ctx, `
-INSERT INTO pm2_processes (position, name, script_path, working_directory, manually_stopped)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO pm2_processes (position, name, script_path, working_directory, manually_stopped, interpreter)
+VALUES (?, ?, ?, ?, ?, ?)
 `)
 	if err != nil {
 		return fmt.Errorf("prepare pm2 process insert: %w", err)
@@ -117,7 +122,7 @@ VALUES (?, ?, ?, ?, ?)
 	defer statement.Close()
 
 	for index, definition := range definitions {
-		if _, err := statement.ExecContext(ctx, index, definition.Name, definition.ScriptPath, definition.WorkingDirectory, definition.ManuallyStopped); err != nil {
+		if _, err := statement.ExecContext(ctx, index, definition.Name, definition.ScriptPath, definition.WorkingDirectory, definition.ManuallyStopped, definition.Interpreter); err != nil {
 			return fmt.Errorf("insert pm2 process at position %d: %w", index, err)
 		}
 	}
