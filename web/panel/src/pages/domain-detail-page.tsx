@@ -649,6 +649,14 @@ function isSiteBackedKind(kind: DomainRecord["kind"]) {
   return kind === "Static site" || kind === "Php site";
 }
 
+function isRuntimeDomainKind(kind: DomainRecord["kind"] | undefined | null) {
+  return kind === "Node.js" || kind === "Python";
+}
+
+function getRuntimeDomainLabel(kind: DomainRecord["kind"] | undefined | null) {
+  return kind === "Python" ? "Python" : "Node.js";
+}
+
 function getComposerManifestPath(path: string | null) {
   if (path === null) {
     return null;
@@ -1112,7 +1120,7 @@ export function DomainDetailPage() {
   }, [domain?.hostname, previewRefreshToken]);
 
   useEffect(() => {
-    if (!domain || domain.kind !== "Node.js") {
+    if (!domain || !isRuntimeDomainKind(domain.kind)) {
       setNodeJSStatus(null);
       setNodeJSLoading(false);
       setNodeJSError(null);
@@ -1145,7 +1153,10 @@ export function DomainDetailPage() {
 
         setNodeJSStatus(null);
         setNodeJSError(
-          getErrorMessage(error, "Failed to load the Node.js runtime status."),
+          getErrorMessage(
+            error,
+            `Failed to load the ${getRuntimeDomainLabel(domain.kind)} runtime status.`,
+          ),
         );
       } finally {
         if (active) {
@@ -1314,7 +1325,11 @@ export function DomainDetailPage() {
   const websiteCopyTargets = allDomains.filter(
     (record) => record.hostname !== domain?.hostname,
   );
-  const nodeJSPort = domain?.kind === "Node.js" ? getNodeJSPortFromTarget(domain.target) : "";
+  const runtimeLabel = getRuntimeDomainLabel(domain?.kind);
+  const nodeJSPort =
+    domain && isRuntimeDomainKind(domain.kind)
+      ? getNodeJSPortFromTarget(domain.target)
+      : "";
   const nodeJSRunning = isNodeJSProcessRunning(nodeJSStatus);
   const nodeJSStatusLabel = nodeJSLoading
     ? "Loading"
@@ -1941,12 +1956,13 @@ export function DomainDetailPage() {
   }
 
   async function handleNodeJSAction(action: "start" | "stop") {
-    if (!domain || domain.kind !== "Node.js" || nodeJSAction !== null) {
+    if (!domain || !isRuntimeDomainKind(domain.kind) || nodeJSAction !== null) {
       return;
     }
 
     setNodeJSAction(action);
     setNodeJSError(null);
+    const currentRuntimeLabel = getRuntimeDomainLabel(domain.kind);
 
     try {
       const nextStatus =
@@ -1956,15 +1972,15 @@ export function DomainDetailPage() {
       setNodeJSStatus(nextStatus);
       toast.success(
         action === "start"
-          ? `Started Node.js for ${domain.hostname}.`
-          : `Stopped Node.js for ${domain.hostname}.`,
+          ? `Started ${currentRuntimeLabel} for ${domain.hostname}.`
+          : `Stopped ${currentRuntimeLabel} for ${domain.hostname}.`,
       );
     } catch (error) {
       const message = getErrorMessage(
         error,
         action === "start"
-          ? "Failed to start the Node.js app."
-          : "Failed to stop the Node.js app.",
+          ? `Failed to start the ${currentRuntimeLabel} app.`
+          : `Failed to stop the ${currentRuntimeLabel} app.`,
       );
       setNodeJSError(message);
       toast.error(message);
@@ -2429,7 +2445,7 @@ export function DomainDetailPage() {
                 <DialogDescription>
                   {nodeJSLogsProcess
                     ? `pm2 logs ${nodeJSLogsProcess.id} --lines 200 --nostream --raw`
-                    : "Recent PM2 output for the domain Node.js process."}
+                    : `Recent PM2 output for the domain ${runtimeLabel} process.`}
                 </DialogDescription>
               </div>
 
@@ -2523,7 +2539,7 @@ export function DomainDetailPage() {
                     : "No captured output"}
                 </>
               ) : (
-                "Start the Node.js process to load PM2 logs."
+                `Start the ${runtimeLabel} process to load PM2 logs.`
               )}
             </div>
 
@@ -2548,7 +2564,7 @@ export function DomainDetailPage() {
               <div className="flex h-full items-center justify-center px-5 text-sm text-[var(--app-text-muted)] sm:px-6">
                 {nodeJSLogsProcess
                   ? "No log output returned for this process."
-                  : "Start the Node.js process to load PM2 logs."}
+                  : `Start the ${runtimeLabel} process to load PM2 logs.`}
               </div>
             )}
           </div>
@@ -2726,11 +2742,11 @@ export function DomainDetailPage() {
                 </section>
               </aside>
               <div className="space-y-4">
-                {domain?.kind === "Node.js" ? (
+                {isRuntimeDomainKind(domain?.kind) ? (
                   <section className="overflow-x-auto rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow)]">
                     <div className="flex min-w-max items-center gap-4 text-xs">
                       <h2 className="shrink-0 text-sm font-semibold tracking-tight text-[var(--app-text)]">
-                        Node.js Runtime
+                        {runtimeLabel} Runtime
                       </h2>
                       <div className="inline-flex items-baseline gap-1.5">
                         <span className="shrink-0 text-[var(--app-text-muted)]">
@@ -2772,7 +2788,7 @@ export function DomainDetailPage() {
                             disabled={nodeJSLogsDisabled}
                             title={
                               nodeJSLogsProcess === null
-                                ? "Start the Node.js process to view PM2 logs."
+                                ? `Start the ${runtimeLabel} process to view PM2 logs.`
                                 : undefined
                             }
                           >

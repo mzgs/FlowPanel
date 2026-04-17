@@ -82,6 +82,7 @@ const domainKinds: DomainKind[] = [
   "Static site",
   "Php site",
   "Node.js",
+  "Python",
   "Reverse proxy",
 ];
 
@@ -94,8 +95,8 @@ const initialFormState: FormState = {
 };
 
 function getDefaultTarget(kind: DomainKind) {
-  if (kind === "Node.js") {
-    return "3000";
+  if (kind === "Node.js" || kind === "Python") {
+    return kind === "Python" ? "8000" : "3000";
   }
 
   return kind === "Reverse proxy" ? "http://127.0.0.1:8080" : "";
@@ -150,6 +151,13 @@ const kindConfig: Record<
     imageSrc: "/application-icons/nodejs.svg",
     targetLabel: "Port",
     targetPlaceholder: "3000",
+    helpText:
+      "FlowPanel proxies this domain to `127.0.0.1` on the port you set here.",
+  },
+  Python: {
+    imageSrc: "/application-icons/python.png",
+    targetLabel: "Port",
+    targetPlaceholder: "8000",
     helpText:
       "FlowPanel proxies this domain to `127.0.0.1` on the port you set here.",
   },
@@ -216,7 +224,7 @@ function getDuplicateHostnameError(
 function validateTarget(kind: DomainKind, value: string) {
   const trimmed = value.trim();
 
-  if (kind === "Node.js") {
+  if (kind === "Node.js" || kind === "Python") {
     if (!trimmed) {
       return "Port is required.";
     }
@@ -265,6 +273,10 @@ function isSiteBackedKind(kind: DomainKind) {
   return kind === "Static site" || kind === "Php site";
 }
 
+function isRuntimeDomainKind(kind: DomainKind) {
+  return kind === "Node.js" || kind === "Python";
+}
+
 function validateNodeJSScriptPath(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -301,11 +313,11 @@ function getNodeJSPort(value: string) {
 }
 
 function getFormTargetValue(kind: DomainKind, target: string) {
-  return kind === "Node.js" ? getNodeJSPort(target) : target;
+  return isRuntimeDomainKind(kind) ? getNodeJSPort(target) : target;
 }
 
 function getFormScriptPathValue(kind: DomainKind, scriptPath?: string) {
-  return kind === "Node.js" ? scriptPath?.trim() ?? "" : "";
+  return isRuntimeDomainKind(kind) ? scriptPath?.trim() ?? "" : "";
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -527,7 +539,7 @@ export function DomainsPage() {
         ? undefined
         : validateTarget(form.kind, target),
       nodejs_script_path:
-        form.kind === "Node.js"
+        isRuntimeDomainKind(form.kind)
           ? validateNodeJSScriptPath(nodeJSScriptPath)
           : undefined,
     };
@@ -553,7 +565,7 @@ export function DomainsPage() {
         kind: form.kind,
         target: isSiteBackedKind(form.kind) ? "" : target,
         nodejs_script_path:
-          form.kind === "Node.js" ? nodeJSScriptPath : undefined,
+          isRuntimeDomainKind(form.kind) ? nodeJSScriptPath : undefined,
         cache_enabled: form.cacheEnabled,
       };
 
@@ -1189,7 +1201,7 @@ export function DomainsPage() {
             <DialogDescription>
               {isEditing
                 ? "Update the route target and domain type. Domains stay fixed after creation."
-                : "Define the domain and route target. Static, PHP, and Node.js domains keep the default site directory automatically."}
+                : "Define the domain and route target. Static, PHP, Node.js, and Python domains keep the default site directory automatically."}
             </DialogDescription>
           </DialogHeader>
 
@@ -1365,7 +1377,7 @@ export function DomainsPage() {
               </div>
             )}
 
-            {form.kind === "Node.js" ? (
+            {isRuntimeDomainKind(form.kind) ? (
               <div className="space-y-2">
                 <label
                   htmlFor="domain-nodejs-script-path"
@@ -1388,7 +1400,7 @@ export function DomainsPage() {
                       }));
                     }
                   }}
-                  placeholder="server.js"
+                  placeholder={form.kind === "Python" ? "app.py" : "server.js"}
                   autoComplete="off"
                   aria-invalid={errors.nodejs_script_path ? "true" : "false"}
                   className={
@@ -1401,8 +1413,9 @@ export function DomainsPage() {
                   </p>
                 ) : (
                   <p className="text-[12px] text-[var(--app-text-muted)]">
-                    Use a path relative to the domain root, for example
-                    `server.js` or `dist/index.js`.
+                    {form.kind === "Python"
+                      ? "Use a path relative to the domain root, for example `app.py` or `src/main.py`."
+                      : "Use a path relative to the domain root, for example `server.js` or `dist/index.js`."}
                   </p>
                 )}
               </div>
@@ -1438,7 +1451,7 @@ export function DomainsPage() {
 
             <DialogFooter className="border-t border-[var(--app-border)] pt-4">
               <div className="text-[12px] text-[var(--app-text-muted)]">
-                Static, PHP, and Node.js domains keep the default site
+                Static, PHP, Node.js, and Python domains keep the default site
                 directory automatically.
               </div>
               <div className="flex items-center justify-end gap-2">

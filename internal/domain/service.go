@@ -35,6 +35,7 @@ const (
 	KindStaticSite   Kind = "Static site"
 	KindPHP          Kind = "Php site"
 	KindNodeJS       Kind = "Node.js"
+	KindPython       Kind = "Python"
 	KindReverseProxy Kind = "Reverse proxy"
 )
 
@@ -149,7 +150,7 @@ func defaultSitesBasePath() string {
 
 func SupportsManagedDocumentRoot(kind Kind) bool {
 	switch kind {
-	case KindStaticSite, KindPHP, KindNodeJS, KindReverseProxy:
+	case KindStaticSite, KindPHP, KindNodeJS, KindPython, KindReverseProxy:
 		return true
 	default:
 		return false
@@ -158,7 +159,7 @@ func SupportsManagedDocumentRoot(kind Kind) bool {
 
 func usesUpstreamTarget(kind Kind) bool {
 	switch kind {
-	case KindNodeJS, KindReverseProxy:
+	case KindNodeJS, KindPython, KindReverseProxy:
 		return true
 	default:
 		return false
@@ -428,7 +429,7 @@ func normalizeHostname(value string) string {
 
 func validateKind(kind Kind) string {
 	switch kind {
-	case KindStaticSite, KindPHP, KindNodeJS, KindReverseProxy:
+	case KindStaticSite, KindPHP, KindNodeJS, KindPython, KindReverseProxy:
 		return ""
 	default:
 		return "Select a valid domain type."
@@ -476,7 +477,7 @@ func validateTarget(kind Kind, value string) string {
 	}
 
 	switch kind {
-	case KindNodeJS:
+	case KindNodeJS, KindPython:
 		if _, err := normalizeNodeJSTarget(trimmed); err != nil {
 			return err.Error()
 		}
@@ -516,7 +517,7 @@ func normalizeAndValidateInput(hostname string, kind Kind, target string, nodeJS
 			validation["target"] = message
 		}
 	}
-	if normalizedKind == KindNodeJS {
+	if usesScriptPath(normalizedKind) {
 		if message := validateNodeJSScript(normalizedNodeJSScript); message != "" {
 			validation["nodejs_script_path"] = message
 		}
@@ -717,7 +718,7 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 			return "", err
 		}
 		return siteRoot, nil
-	case KindNodeJS, KindReverseProxy:
+	case KindNodeJS, KindPython, KindReverseProxy:
 		return target, nil
 	default:
 		return "", fmt.Errorf("unsupported domain kind %q", kind)
@@ -726,7 +727,7 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 
 func normalizePersistedKindAndTarget(kind Kind, target string) (Kind, string) {
 	trimmedTarget := strings.TrimSpace(target)
-	if kind == KindNodeJS {
+	if usesScriptPath(kind) {
 		if normalizedTarget, err := normalizeNodeJSTarget(trimmedTarget); err == nil {
 			return kind, normalizedTarget
 		}
@@ -753,7 +754,7 @@ func validateNodeJSScript(value string) string {
 }
 
 func normalizePersistedNodeJSScript(kind Kind, value string) string {
-	if kind != KindNodeJS {
+	if !usesScriptPath(kind) {
 		return ""
 	}
 
@@ -810,7 +811,7 @@ func normalizeNodeJSTarget(target string) (string, error) {
 }
 
 func ResolveNodeJSScriptPath(basePath string, record Record) (string, error) {
-	if record.Kind != KindNodeJS {
+	if !usesScriptPath(record.Kind) {
 		return "", fmt.Errorf("unsupported domain kind %q", record.Kind)
 	}
 
@@ -834,6 +835,10 @@ func ResolveNodeJSScriptPath(basePath string, record Record) (string, error) {
 	}
 
 	return resolved, nil
+}
+
+func usesScriptPath(kind Kind) bool {
+	return kind == KindNodeJS || kind == KindPython
 }
 
 func (s *Service) ensureSiteRoot(hostname string) (string, error) {

@@ -6,6 +6,7 @@ export type DomainKind =
   | "Static site"
   | "Php site"
   | "Node.js"
+  | "Python"
   | "Reverse proxy";
 
 export type DomainRecord = {

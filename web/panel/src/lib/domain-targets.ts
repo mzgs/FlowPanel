@@ -5,7 +5,7 @@ function normalizeFilesystemPath(value: string) {
 }
 
 function usesManagedHostnamePath(kind: DomainKind) {
-  return kind === "Node.js" || kind === "Reverse proxy";
+  return kind === "Node.js" || kind === "Python" || kind === "Reverse proxy";
 }
 
 export function getFilesPathFromDomainTarget(

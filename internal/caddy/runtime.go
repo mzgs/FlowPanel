@@ -547,7 +547,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 				Routes: phpSubrouteRoutes(root, fastCGIAddress, record.PHPSettings),
 			}, "handler", "subroute", nil),
 		)
-	case domain.KindNodeJS, domain.KindReverseProxy:
+	case domain.KindNodeJS, domain.KindPython, domain.KindReverseProxy:
 		targetURL, err := parseUpstreamURL(record)
 		if err != nil {
 			return nil, false, err

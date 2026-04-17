@@ -910,6 +910,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		actionCtx := backgroundRequestContext(r.Context())
+		runtimeLabel := domainRuntimeLabel(record.Kind)
 		if status.Process != nil {
 			if _, err := a.app.PM2.StartProcess(actionCtx, status.Process.ID); err != nil {
 				a.app.Logger.Error("start domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.Int("process_id", status.Process.ID), zap.Error(err))
@@ -945,11 +946,11 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		_, nextStatus, err := loadDomainNodeJSStatus(actionCtx, a.app.Domains, a.app.PM2, hostname)
 		if err != nil {
 			a.app.Logger.Error("reload domain nodejs status after start failed", zap.String("hostname", record.Hostname), zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "nodejs started but status could not be refreshed"})
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": fmt.Sprintf("%s started but status could not be refreshed", runtimeLabel)})
 			return
 		}
 
-		a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Started Node.js for %q.", record.Hostname))
+		a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Started %s for %q.", runtimeLabel, record.Hostname))
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"nodejs": nextStatus})
 	})
 
@@ -983,6 +984,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		actionCtx := backgroundRequestContext(r.Context())
+		runtimeLabel := domainRuntimeLabel(record.Kind)
 		if _, err := a.app.PM2.StopProcess(actionCtx, status.Process.ID); err != nil {
 			a.app.Logger.Error("stop domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.Int("process_id", status.Process.ID), zap.Error(err))
 			a.mutationEvent(actionCtx, "domains", "stop_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
@@ -993,11 +995,11 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		_, nextStatus, err := loadDomainNodeJSStatus(actionCtx, a.app.Domains, a.app.PM2, hostname)
 		if err != nil {
 			a.app.Logger.Error("reload domain nodejs status after stop failed", zap.String("hostname", record.Hostname), zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "nodejs stopped but status could not be refreshed"})
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": fmt.Sprintf("%s stopped but status could not be refreshed", runtimeLabel)})
 			return
 		}
 
-		a.mutationEvent(actionCtx, "domains", "stop_nodejs", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Stopped Node.js for %q.", record.Hostname))
+		a.mutationEvent(actionCtx, "domains", "stop_nodejs", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Stopped %s for %q.", runtimeLabel, record.Hostname))
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"nodejs": nextStatus})
 	})
 
@@ -1236,7 +1238,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			}
 		}
 		if cleanupErr := deleteDomainNodeJSProcess(r.Context(), a.app.PM2, a.app.Domains.BasePath(), record); cleanupErr != nil {
-			warnings = append(warnings, "The Node.js PM2 process could not be removed.")
+			warnings = append(warnings, "The PM2 process for this domain could not be removed.")
 			a.app.Logger.Warn("delete domain nodejs process failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(cleanupErr))
 		}
 
@@ -1452,13 +1454,14 @@ func loadDomainNodeJSStatus(
 	}
 
 	status := domainNodeJSStatusResponse{
-		Supported:  record.Kind == domain.KindNodeJS,
+		Supported:  supportsDomainRuntime(record.Kind),
 		Configured: strings.TrimSpace(record.NodeJSScript) != "",
 		ScriptPath: strings.TrimSpace(record.NodeJSScript),
 		Process:    nil,
 	}
+	runtimeLabel := domainRuntimeLabel(record.Kind)
 	if !status.Supported {
-		status.Message = "Node.js controls are available only for Node.js domains."
+		status.Message = "Runtime controls are available only for Node.js and Python domains."
 		return record, status, nil
 	}
 
@@ -1499,16 +1502,16 @@ func loadDomainNodeJSStatus(
 		status.Process = &process
 		switch {
 		case canStopDomainNodeJSProcess(process):
-			status.Message = "The Node.js app is running under PM2."
+			status.Message = fmt.Sprintf("The %s app is running under PM2.", runtimeLabel)
 		case canStartDomainNodeJSProcess(process):
-			status.Message = "The Node.js app is stopped and can be started."
+			status.Message = fmt.Sprintf("The %s app is stopped and can be started.", runtimeLabel)
 		default:
-			status.Message = fmt.Sprintf("PM2 reports the Node.js app as %s.", strings.TrimSpace(process.Status))
+			status.Message = fmt.Sprintf("PM2 reports the %s app as %s.", runtimeLabel, strings.TrimSpace(process.Status))
 		}
 		return record, status, nil
 	}
 
-	status.Message = "The Node.js app has not been started with PM2 yet."
+	status.Message = fmt.Sprintf("The %s app has not been started with PM2 yet.", runtimeLabel)
 	return record, status, nil
 }
 
@@ -1538,7 +1541,7 @@ func matchDomainNodeJSProcess(processes []pm2.Process, scriptPath string, workin
 }
 
 func deleteDomainNodeJSProcess(ctx context.Context, pm2Manager pm2.Manager, basePath string, record domain.Record) error {
-	if pm2Manager == nil || record.Kind != domain.KindNodeJS {
+	if pm2Manager == nil || !supportsDomainRuntime(record.Kind) {
 		return nil
 	}
 	if !pm2Manager.Status(ctx).Installed {
@@ -1568,6 +1571,18 @@ func deleteDomainNodeJSProcess(ctx context.Context, pm2Manager pm2.Manager, base
 
 	_, err = pm2Manager.DeleteProcess(ctx, process.ID)
 	return err
+}
+
+func supportsDomainRuntime(kind domain.Kind) bool {
+	return kind == domain.KindNodeJS || kind == domain.KindPython
+}
+
+func domainRuntimeLabel(kind domain.Kind) string {
+	if kind == domain.KindPython {
+		return "Python"
+	}
+
+	return "Node.js"
 }
 
 func readDomainLog(hostname string, logType string, filePath string, search string, limit int) domainLogResponse {
