@@ -9,6 +9,7 @@ import {
   Plus,
   Trash2,
   UserCog,
+  World,
 } from "@/components/icons/tabler-icons";
 import {
   createBackup,
@@ -109,19 +110,24 @@ const hostnamePattern =
 const kindConfig: Record<
   DomainKind,
   {
+    icon?: typeof World;
+    imageSrc?: string;
     targetLabel?: string;
     targetPlaceholder?: string;
     helpText: string;
   }
 > = {
   "Static site": {
+    icon: World,
     helpText: "FlowPanel uses the default site directory automatically.",
   },
   "Php site": {
+    imageSrc: "/application-icons/php.png",
     helpText:
       "FlowPanel uses the default PHP site directory automatically and requires PHP-FPM to be ready in Overview.",
   },
   "Reverse proxy": {
+    imageSrc: "/application-icons/proxy_server.png",
     targetLabel: "Upstream URL",
     targetPlaceholder: "http://127.0.0.1:8080",
     helpText: "Requests will be proxied to this upstream service.",
@@ -1137,6 +1143,7 @@ export function DomainsPage() {
               >
                 {domainKinds.map((kind) => {
                   const isActive = form.kind === kind;
+                  const { icon: KindIcon, imageSrc } = kindConfig[kind];
 
                   return (
                     <button
@@ -1159,13 +1166,23 @@ export function DomainsPage() {
                       }}
                       aria-pressed={isActive}
                       className={cn(
-                        "min-w-fit shrink-0 rounded-lg border px-3 py-2 text-[13px] font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-text)]/20",
+                        "inline-flex min-w-fit shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-[13px] font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-text)]/20",
                         isActive
                           ? "border-[var(--app-text)]/10 bg-[var(--app-surface)] text-[var(--app-text)] shadow-sm"
                           : "border-transparent bg-transparent text-[var(--app-text-muted)] hover:border-[var(--app-border)] hover:bg-[var(--app-surface)] hover:text-[var(--app-text)]",
                       )}
                     >
-                      {kind}
+                      {imageSrc ? (
+                        <img
+                          src={imageSrc}
+                          alt=""
+                          aria-hidden="true"
+                          className="h-4 w-4 shrink-0 object-contain"
+                        />
+                      ) : KindIcon ? (
+                        <KindIcon className="size-4 shrink-0" stroke={1.7} />
+                      ) : null}
+                      <span>{kind}</span>
                     </button>
                   );
                 })}
