@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="caddyTitle caddyDesc">
+  <title id="caddyTitle">Caddy</title>
+  <desc id="caddyDesc">A blue cloud with a green carry handle.</desc>
+  <defs>
+    <linearGradient id="caddyCloud" x1="16" x2="48" y1="17" y2="49" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#69bee9" />
+      <stop offset="1" stop-color="#1f88c0" />
+    </linearGradient>
+    <linearGradient id="caddyShade" x1="22" x2="46" y1="32" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#166f9f" stop-opacity=".0" />
+      <stop offset="1" stop-color="#166f9f" stop-opacity=".28" />
+    </linearGradient>
+  </defs>
+  <path
+    fill="#22b638"
+    d="M24 21c0-4.4 3.6-8 8-8s8 3.6 8 8v4h-5v-4a3 3 0 1 0-6 0v4h-5z"
+  />
+  <path
+    fill="url(#caddyCloud)"
+    d="M20.3 25.5c2.3-5.2 7.5-8.5 13.1-8.5 7.4 0 13.5 5.4 14.6 12.6 4.6.8 8 4.8 8 9.6 0 5.4-4.4 9.8-9.8 9.8H18.2c-5.6 0-10.2-4.6-10.2-10.2s4.6-10.1 10.2-10.1c.7 0 1.4.1 2.1.2z"
+  />
+  <path
+    fill="url(#caddyShade)"
+    d="M20.3 25.5c2.3-5.2 7.5-8.5 13.1-8.5 7.4 0 13.5 5.4 14.6 12.6 4.6.8 8 4.8 8 9.6 0 5.4-4.4 9.8-9.8 9.8H18.2c-5.6 0-10.2-4.6-10.2-10.2 10.4 4.6 24.2 5.8 38.3 3.4 4.2-.7 7.4-1.8 9.7-3.1 0 5.4-4.4 9.8-9.8 9.8H18.2c-5.6 0-10.2-4.6-10.2-10.2s4.6-10.1 10.2-10.1c.7 0 1.4.1 2.1.2z"
+    opacity=".7"
+  />
+  <path
+    fill="#fff"
+    d="M39.9 39.5a8.2 8.2 0 1 1 0-7.4H35c-.8-1.1-2.1-1.8-3.6-1.8-2.5 0-4.6 2.1-4.6 4.6s2.1 4.6 4.6 4.6c1.5 0 2.8-.7 3.6-1.8h4.9z"
+  />
+</svg>

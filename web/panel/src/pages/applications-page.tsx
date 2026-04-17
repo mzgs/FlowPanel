@@ -99,7 +99,6 @@ import {
   PlayerStop,
   RefreshCw,
   RotateCcw,
-  Server,
   Settings,
   TerminalSquare,
   Trash2,
@@ -130,6 +129,7 @@ const applicationLogoFrameClassName =
   "flex h-11 w-16 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2";
 
 const applicationLogos = {
+  caddy: { src: "/application-icons/caddy.svg", alt: "Caddy logo", className: "h-7 w-full" },
   php: { src: "/application-icons/php.png", alt: "PHP logo", className: "h-6 w-full" },
   mariadb: { src: "/application-icons/mariadb.png", alt: "MariaDB logo", className: "h-8 w-full" },
   docker: { src: "/application-icons/docker.svg", alt: "Docker logo", className: "h-7 w-full" },
@@ -2955,7 +2955,7 @@ export function ApplicationsPage() {
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <ApplicationCard
-            icon={<Server className="h-5 w-5 text-[var(--app-text)]" />}
+            icon={<ApplicationLogo app="caddy" />}
             name="Caddy server"
             summary={formatCaddyValue(caddyStatus)}
             badge={getCaddyBadge(caddyStatus)}
