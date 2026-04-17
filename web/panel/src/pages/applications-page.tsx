@@ -608,6 +608,22 @@ function canRestartPM2Process(process: PM2Process) {
   return status === "online" || status === "launching" || status === "waiting restart";
 }
 
+function getPM2PrimaryProcessAction(process: PM2Process) {
+  if (canStopPM2Process(process)) {
+    return {
+      action: "stop" as const,
+      label: "Stop",
+      icon: PlayerStop,
+    };
+  }
+
+  return {
+    action: "start" as const,
+    label: "Start",
+    icon: PlayerPlayFilled,
+  };
+}
+
 function isSamePM2Process(current: PM2Process, next: PM2Process) {
   return (
     current.id === next.id &&
@@ -2841,6 +2857,9 @@ export function ApplicationsPage() {
                       const statusBadge = getPM2ProcessStatusBadge(process.status);
                       const activeAction = pm2ProcessActionKey?.endsWith(`:${process.id}`) ? pm2ProcessActionKey.split(":")[0] : null;
                       const actionsDisabled = pm2ProcessesBusy;
+                      const primaryAction = getPM2PrimaryProcessAction(process);
+                      const primaryActionDisabled = primaryAction.action === "start" ? !canStartPM2Process(process) : !canStopPM2Process(process);
+                      const PrimaryActionIcon = primaryAction.icon;
 
                       return (
                         <TableRow key={process.id} className="align-top">
@@ -2881,34 +2900,16 @@ export function ApplicationsPage() {
                                 size="sm"
                                 className="h-7 w-7 p-0"
                                 onClick={() => {
-                                  void handlePM2ProcessAction("start", process);
+                                  void handlePM2ProcessAction(primaryAction.action, process);
                                 }}
-                                disabled={actionsDisabled || !canStartPM2Process(process)}
-                                aria-label={`Start ${process.name}`}
-                                title={`Start ${process.name}`}
+                                disabled={actionsDisabled || primaryActionDisabled}
+                                aria-label={`${primaryAction.label} ${process.name}`}
+                                title={`${primaryAction.label} ${process.name}`}
                               >
-                                {activeAction === "start" ? (
+                                {activeAction === primaryAction.action ? (
                                   <LoaderCircle className="h-4 w-4 animate-spin" />
                                 ) : (
-                                  <PlayerPlayFilled className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-7 w-7 p-0"
-                                onClick={() => {
-                                  void handlePM2ProcessAction("stop", process);
-                                }}
-                                disabled={actionsDisabled || !canStopPM2Process(process)}
-                                aria-label={`Stop ${process.name}`}
-                                title={`Stop ${process.name}`}
-                              >
-                                {activeAction === "stop" ? (
-                                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <PlayerStop className="h-4 w-4" />
+                                  <PrimaryActionIcon className="h-4 w-4" />
                                 )}
                               </Button>
                               <Button
