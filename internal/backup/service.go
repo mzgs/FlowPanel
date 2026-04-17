@@ -20,6 +20,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
 
 	"go.uber.org/zap"
@@ -98,6 +99,7 @@ type Service struct {
 	mariaDB      DatabaseSource
 	settings     *settings.Service
 	googleDrive  *googledrive.Service
+	pm2          PM2Syncer
 }
 
 type manifest struct {
@@ -119,6 +121,10 @@ type DatabaseSource interface {
 	RestoreDatabase(context.Context, string, []byte) error
 }
 
+type PM2Syncer interface {
+	Sync(context.Context) ([]pm2.Process, error)
+}
+
 type siteArchive struct {
 	Hostname string
 	RootPath string
@@ -134,6 +140,7 @@ func NewService(
 	mariaDB DatabaseSource,
 	settingsService *settings.Service,
 	googleDriveService *googledrive.Service,
+	pm2Syncer PM2Syncer,
 ) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -159,6 +166,7 @@ func NewService(
 		mariaDB:      mariaDB,
 		settings:     settingsService,
 		googleDrive:  googleDriveService,
+		pm2:          pm2Syncer,
 	}
 }
 
@@ -238,22 +246,33 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		return Record{}, validation
 	}
 
+	refreshToken := ""
 	switch input.Location {
 	case LocationLocal:
 		if err := s.ensureBackupPath(); err != nil {
 			return Record{}, err
 		}
 	case LocationGoogleDrive:
-		refreshToken, ok, err := s.googleDriveRefreshToken(ctx)
+		token, ok, err := s.googleDriveRefreshToken(ctx)
 		if err != nil {
 			return Record{}, err
 		}
 		if !ok {
 			return Record{}, fmt.Errorf("google drive is not connected")
 		}
-		return s.createGoogleDriveBackup(ctx, input, refreshToken)
+		refreshToken = token
 	default:
 		return Record{}, ErrInvalidLocation
+	}
+
+	if input.IncludePanelData && s.pm2 != nil {
+		if _, err := s.pm2.Sync(ctx); err != nil {
+			return Record{}, fmt.Errorf("sync pm2 processes: %w", err)
+		}
+	}
+
+	if input.Location == LocationGoogleDrive {
+		return s.createGoogleDriveBackup(ctx, input, refreshToken)
 	}
 
 	createdAt := time.Now().UTC()

@@ -1061,6 +1061,12 @@ func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.Res
 		}
 	}
 
+	if app.PM2 != nil {
+		if _, err := app.PM2.Sync(ctx); err != nil {
+			return fmt.Errorf("sync pm2 processes: %w", err)
+		}
+	}
+
 	return nil
 }
 

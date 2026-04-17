@@ -51,6 +51,7 @@ export const Download = pick("IconDownload");
 export const Eye = pick("IconEye");
 export const EyeOff = pick("IconEyeOff");
 export const ExternalLink = pick("IconExternalLink");
+export const DotsVertical = pick("IconDotsVertical", "IconDots", "IconEllipsisVertical");
 export const File = pick("IconFile");
 export const FileCode2 = pick("IconFileCode2", "IconFileCode");
 export const FilePlus2 = pick("IconFilePlus2", "IconFilePlus");

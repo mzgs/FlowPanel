@@ -33,6 +33,7 @@ var pm2VersionPattern = regexp.MustCompile(`\b(\d+(?:\.\d+)+)\b`)
 
 type Manager interface {
 	Status(context.Context) Status
+	Sync(context.Context) ([]Process, error)
 	List(context.Context) ([]Process, error)
 	Logs(context.Context, int) (string, error)
 	CreateProcess(context.Context, CreateProcessInput) ([]Process, error)
@@ -51,17 +52,18 @@ type CreateProcessInput struct {
 }
 
 type Process struct {
-	ID              int     `json:"id"`
-	Name            string  `json:"name"`
-	Status          string  `json:"status"`
-	CPU             float64 `json:"cpu"`
-	MemoryBytes     int64   `json:"memory_bytes"`
-	Restarts        int     `json:"restarts"`
-	UptimeUnixMilli int64   `json:"uptime_unix_milli,omitempty"`
-	ScriptPath      string  `json:"script_path,omitempty"`
-	Namespace       string  `json:"namespace,omitempty"`
-	Version         string  `json:"version,omitempty"`
-	ExecMode        string  `json:"exec_mode,omitempty"`
+	ID               int     `json:"id"`
+	Name             string  `json:"name"`
+	Status           string  `json:"status"`
+	CPU              float64 `json:"cpu"`
+	MemoryBytes      int64   `json:"memory_bytes"`
+	Restarts         int     `json:"restarts"`
+	UptimeUnixMilli  int64   `json:"uptime_unix_milli,omitempty"`
+	ScriptPath       string  `json:"script_path,omitempty"`
+	WorkingDirectory string  `json:"working_directory,omitempty"`
+	Namespace        string  `json:"namespace,omitempty"`
+	Version          string  `json:"version,omitempty"`
+	ExecMode         string  `json:"exec_mode,omitempty"`
 }
 
 type Status struct {
@@ -81,6 +83,7 @@ type Status struct {
 
 type Service struct {
 	logger *zap.Logger
+	store  *Store
 }
 
 type rawProcess struct {
@@ -92,6 +95,7 @@ type rawProcess struct {
 		RestartTime int    `json:"restart_time"`
 		PMUptime    int64  `json:"pm_uptime"`
 		PMExecPath  string `json:"pm_exec_path"`
+		PMCwd       string `json:"pm_cwd"`
 		Namespace   string `json:"namespace"`
 		Version     string `json:"version"`
 		ExecMode    string `json:"exec_mode"`
@@ -102,12 +106,20 @@ type rawProcess struct {
 	} `json:"monit"`
 }
 
-func NewService(logger *zap.Logger) *Service {
+type inspectedProcess struct {
+	Process
+	Definition Definition
+}
+
+func NewService(logger *zap.Logger, store *Store) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
-	return &Service{logger: logger}
+	return &Service{
+		logger: logger,
+		store:  store,
+	}
 }
 
 func (s *Service) Status(ctx context.Context) Status {
@@ -209,18 +221,22 @@ func (s *Service) Install(ctx context.Context) error {
 	)
 }
 
+func (s *Service) Sync(ctx context.Context) ([]Process, error) {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return nil, nil
+	}
+
+	return s.sync(ctx, pm2Path)
+}
+
 func (s *Service) List(ctx context.Context) ([]Process, error) {
 	pm2Path, installed := detectPM2Binary()
 	if !installed {
 		return nil, errors.New("PM2 is not installed")
 	}
 
-	output, err := runInspectCommandWithTimeout(ctx, listCommandTimeout, pm2Path, "jlist")
-	if err != nil {
-		return nil, err
-	}
-
-	return parseProcesses(output)
+	return s.refresh(ctx, pm2Path)
 }
 
 func (s *Service) Logs(ctx context.Context, processID int) (string, error) {
@@ -265,7 +281,7 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 		return nil, err
 	}
 
-	return s.List(ctx)
+	return s.refresh(ctx, pm2Path)
 }
 
 func (s *Service) StartProcess(ctx context.Context, processID int) ([]Process, error) {
@@ -311,7 +327,47 @@ func parseVersion(output string) string {
 	return strings.TrimSpace(match[1])
 }
 
+func (s *Service) sync(ctx context.Context, pm2Path string) ([]Process, error) {
+	storedDefinitions, err := s.loadDefinitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	inspected, err := s.inspectProcesses(ctx, pm2Path)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, definition := range missingDefinitions(storedDefinitions, inspected) {
+		if err := s.createMissingProcess(ctx, pm2Path, definition); err != nil {
+			label := strings.TrimSpace(definition.Name)
+			if label == "" {
+				label = strings.TrimSpace(definition.ScriptPath)
+			}
+			if label == "" {
+				label = "stored PM2 process"
+			}
+			return nil, fmt.Errorf("restore %s: %w", label, err)
+		}
+	}
+
+	if len(storedDefinitions) > 0 {
+		return s.refresh(ctx, pm2Path)
+	}
+
+	return s.persistInspected(ctx, inspected)
+}
+
 func parseProcesses(output string) ([]Process, error) {
+	inspected, err := parseInspectedProcesses(output)
+	if err != nil {
+		return nil, err
+	}
+
+	return toProcesses(inspected), nil
+}
+
+func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
 		return nil, nil
@@ -322,41 +378,59 @@ func parseProcesses(output string) ([]Process, error) {
 		return nil, fmt.Errorf("failed to parse PM2 process list: %w", err)
 	}
 
-	processes := make([]Process, 0, len(records))
+	processes := make([]inspectedProcess, 0, len(records))
 	for _, record := range records {
 		if isModuleProcess(record) {
 			continue
 		}
 
 		process := Process{
-			ID:              record.PMID,
-			Name:            strings.TrimSpace(record.Name),
-			Status:          strings.TrimSpace(record.PM2Env.Status),
-			CPU:             record.Monit.CPU,
-			MemoryBytes:     record.Monit.Memory,
-			Restarts:        record.PM2Env.RestartTime,
-			UptimeUnixMilli: record.PM2Env.PMUptime,
-			ScriptPath:      strings.TrimSpace(record.PM2Env.PMExecPath),
-			Namespace:       strings.TrimSpace(record.PM2Env.Namespace),
-			Version:         strings.TrimSpace(record.PM2Env.Version),
-			ExecMode:        strings.TrimSpace(record.PM2Env.ExecMode),
+			ID:               record.PMID,
+			Name:             strings.TrimSpace(record.Name),
+			Status:           strings.TrimSpace(record.PM2Env.Status),
+			CPU:              record.Monit.CPU,
+			MemoryBytes:      record.Monit.Memory,
+			Restarts:         record.PM2Env.RestartTime,
+			UptimeUnixMilli:  record.PM2Env.PMUptime,
+			ScriptPath:       strings.TrimSpace(record.PM2Env.PMExecPath),
+			WorkingDirectory: strings.TrimSpace(record.PM2Env.PMCwd),
+			Namespace:        strings.TrimSpace(record.PM2Env.Namespace),
+			Version:          strings.TrimSpace(record.PM2Env.Version),
+			ExecMode:         strings.TrimSpace(record.PM2Env.ExecMode),
+		}
+		definition := Definition{
+			Name:             strings.TrimSpace(record.Name),
+			ScriptPath:       process.ScriptPath,
+			WorkingDirectory: process.WorkingDirectory,
 		}
 		if process.Name == "" {
 			process.Name = fmt.Sprintf("Process %d", process.ID)
 		}
-		processes = append(processes, process)
+		processes = append(processes, inspectedProcess{
+			Process:    process,
+			Definition: definition,
+		})
 	}
 
 	sort.Slice(processes, func(i, j int) bool {
-		leftName := strings.ToLower(processes[i].Name)
-		rightName := strings.ToLower(processes[j].Name)
+		leftName := strings.ToLower(processes[i].Process.Name)
+		rightName := strings.ToLower(processes[j].Process.Name)
 		if leftName == rightName {
-			return processes[i].ID < processes[j].ID
+			return processes[i].Process.ID < processes[j].Process.ID
 		}
 		return leftName < rightName
 	})
 
 	return processes, nil
+}
+
+func toProcesses(inspected []inspectedProcess) []Process {
+	processes := make([]Process, 0, len(inspected))
+	for _, process := range inspected {
+		processes = append(processes, process.Process)
+	}
+
+	return processes
 }
 
 func isModuleProcess(process rawProcess) bool {
@@ -378,7 +452,110 @@ func (s *Service) runProcessAction(ctx context.Context, action string, processID
 		return nil, err
 	}
 
-	return s.List(ctx)
+	return s.refresh(ctx, pm2Path)
+}
+
+func (s *Service) inspectProcesses(ctx context.Context, pm2Path string) ([]inspectedProcess, error) {
+	output, err := runInspectCommandWithTimeout(ctx, listCommandTimeout, pm2Path, "jlist")
+	if err != nil {
+		return nil, err
+	}
+
+	return parseInspectedProcesses(output)
+}
+
+func (s *Service) refresh(ctx context.Context, pm2Path string) ([]Process, error) {
+	inspected, err := s.inspectProcesses(ctx, pm2Path)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.persistInspected(ctx, inspected)
+}
+
+func (s *Service) loadDefinitions(ctx context.Context) ([]Definition, error) {
+	if s.store == nil {
+		return nil, nil
+	}
+
+	definitions, err := s.store.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load pm2 process definitions: %w", err)
+	}
+
+	return definitions, nil
+}
+
+func (s *Service) replaceDefinitions(ctx context.Context, inspected []inspectedProcess) error {
+	if s.store == nil {
+		return nil
+	}
+
+	definitions := make([]Definition, 0, len(inspected))
+	for _, process := range inspected {
+		definitions = append(definitions, process.Definition)
+	}
+
+	if err := s.store.Replace(ctx, definitions); err != nil {
+		return fmt.Errorf("persist pm2 process definitions: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) persistInspected(ctx context.Context, inspected []inspectedProcess) ([]Process, error) {
+	if err := s.replaceDefinitions(ctx, inspected); err != nil {
+		return nil, err
+	}
+
+	return toProcesses(inspected), nil
+}
+
+func missingDefinitions(stored []Definition, inspected []inspectedProcess) []Definition {
+	if len(stored) == 0 {
+		return nil
+	}
+
+	liveCounts := make(map[string]int, len(inspected))
+	for _, process := range inspected {
+		liveCounts[definitionKey(process.Definition)]++
+	}
+
+	missing := make([]Definition, 0)
+	for _, definition := range stored {
+		key := definitionKey(definition)
+		if liveCounts[key] > 0 {
+			liveCounts[key]--
+			continue
+		}
+		missing = append(missing, definition)
+	}
+
+	return missing
+}
+
+func definitionKey(definition Definition) string {
+	return strings.TrimSpace(definition.Name) + "\x00" + strings.TrimSpace(definition.ScriptPath) + "\x00" + strings.TrimSpace(definition.WorkingDirectory)
+}
+
+func (s *Service) createMissingProcess(ctx context.Context, pm2Path string, definition Definition) error {
+	scriptPath := strings.TrimSpace(definition.ScriptPath)
+	if scriptPath == "" {
+		return nil
+	}
+
+	args := []string{"start", scriptPath}
+	if name := strings.TrimSpace(definition.Name); name != "" {
+		args = append(args, "--name", name)
+	}
+	if workingDirectory := strings.TrimSpace(definition.WorkingDirectory); workingDirectory != "" {
+		args = append(args, "--cwd", workingDirectory)
+	}
+	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, args...); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func detectNodeBinary() (string, bool) {

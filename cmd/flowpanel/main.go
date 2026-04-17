@@ -122,12 +122,17 @@ func runBackupCreateCommand(args []string) error {
 	if err := mariaDBStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure mariadb storage: %w", err)
 	}
+	pm2Store := pm2.NewStore(dbConn)
+	if err := pm2Store.Ensure(ctx); err != nil {
+		return fmt.Errorf("ensure pm2 storage: %w", err)
+	}
 
 	domainService := domain.NewService(domainStore)
 	if err := domainService.Load(ctx); err != nil {
 		return fmt.Errorf("load persisted domains: %w", err)
 	}
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
+	pm2Manager := pm2.NewService(logger.Named("pm2"), pm2Store)
 	settingsStore := settings.NewStore(dbConn)
 	if err := settingsStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure settings storage: %w", err)
@@ -144,6 +149,7 @@ func runBackupCreateCommand(args []string) error {
 		mariadbManager,
 		settingsService,
 		googleDriveService,
+		pm2Manager,
 	)
 
 	record, err := backupService.Create(ctx, input)
@@ -206,6 +212,10 @@ func runServer() error {
 	if err := mariaDBStore.Ensure(startupCtx); err != nil {
 		return fmt.Errorf("ensure mariadb storage: %w", err)
 	}
+	pm2Store := pm2.NewStore(dbConn)
+	if err := pm2Store.Ensure(startupCtx); err != nil {
+		return fmt.Errorf("ensure pm2 storage: %w", err)
+	}
 	cronStore := flowcron.NewStore(dbConn)
 	if err := cronStore.Ensure(startupCtx); err != nil {
 		return fmt.Errorf("ensure cron storage: %w", err)
@@ -236,7 +246,7 @@ func runServer() error {
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
 	golangManager := golang.NewService(logger.Named("golang"))
 	nodeJSManager := nodejs.NewService(logger.Named("nodejs"))
-	pm2Manager := pm2.NewService(logger.Named("pm2"))
+	pm2Manager := pm2.NewService(logger.Named("pm2"), pm2Store)
 	redisManager := packageruntime.NewRedisService(logger.Named("redis"))
 	dockerManager := packageruntime.NewDockerService(logger.Named("docker"))
 	mongoDBManager := packageruntime.NewMongoDBService(logger.Named("mongodb"))
@@ -268,7 +278,11 @@ func runServer() error {
 		mariadbManager,
 		settingsService,
 		googleDriveService,
+		pm2Manager,
 	)
+	if _, err := pm2Manager.Sync(startupCtx); err != nil {
+		logger.Error("sync pm2 processes failed", zap.Error(err))
+	}
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
 		cfg.AdminListenAddr,
