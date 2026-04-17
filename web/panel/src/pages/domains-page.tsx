@@ -122,7 +122,7 @@ const kindConfig: Record<
     helpText: "FlowPanel uses the default site directory automatically.",
   },
   "Php site": {
-    imageSrc: "/application-icons/php.png",
+    imageSrc: "/application-icons/php.svg",
     helpText:
       "FlowPanel uses the default PHP site directory automatically and requires PHP-FPM to be ready in Overview.",
   },

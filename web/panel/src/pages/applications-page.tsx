@@ -136,7 +136,7 @@ const applicationLogoFrameClassName =
 
 const applicationLogos = {
   caddy: { src: "/application-icons/caddy.svg", alt: "Caddy logo", className: "h-7 w-full" },
-  php: { src: "/application-icons/php.png", alt: "PHP logo", className: "h-6 w-full" },
+  php: { src: "/application-icons/php.svg", alt: "PHP logo", className: "h-6 w-full" },
   mariadb: { src: "/application-icons/mariadb.png", alt: "MariaDB logo", className: "h-8 w-full" },
   docker: { src: "/application-icons/docker.svg", alt: "Docker logo", className: "h-7 w-full" },
   redis: { src: "/application-icons/redis.svg", alt: "Redis logo", className: "h-7 w-full" },
