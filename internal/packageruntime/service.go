@@ -206,6 +206,22 @@ func NewDockerService(logger *zap.Logger) *Service {
 	})
 }
 
+func NewFFmpegService(logger *zap.Logger) *Service {
+	return NewService(logger, Definition{
+		Key:             "ffmpeg",
+		DisplayName:     "FFmpeg",
+		BinaryNames:     []string{"ffmpeg"},
+		VersionArgs:     []string{"-version"},
+		InstallLabel:    "Install FFmpeg",
+		RemoveLabel:     "Remove FFmpeg",
+		HomebrewFormula: "ffmpeg",
+		APTPackages:     []string{"ffmpeg"},
+		DNFPackages:     []string{"ffmpeg"},
+		YUMPackages:     []string{"ffmpeg"},
+		PacmanPackages:  []string{"ffmpeg"},
+	})
+}
+
 func (s *Service) Status(ctx context.Context) Status {
 	plan := detectActionPlan(s.definition)
 	status := Status{

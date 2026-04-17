@@ -249,6 +249,7 @@ func runServer() error {
 	pm2Manager := pm2.NewService(logger.Named("pm2"), pm2Store)
 	redisManager := packageruntime.NewRedisService(logger.Named("redis"))
 	dockerManager := packageruntime.NewDockerService(logger.Named("docker"))
+	ffmpegManager := packageruntime.NewFFmpegService(logger.Named("ffmpeg"))
 	mongoDBManager := packageruntime.NewMongoDBService(logger.Named("mongodb"))
 	postgresqlManager := packageruntime.NewPostgreSQLService(logger.Named("postgresql"))
 	phpManager := phpenv.NewService(logger.Named("php"))
@@ -310,6 +311,7 @@ func runServer() error {
 		pm2Manager,
 		mariadbManager,
 		dockerManager,
+		ffmpegManager,
 		redisManager,
 		mongoDBManager,
 		postgresqlManager,

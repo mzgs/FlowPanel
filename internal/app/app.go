@@ -38,6 +38,7 @@ type App struct {
 	PM2         pm2.Manager
 	MariaDB     mariadb.Manager
 	Docker      packageruntime.Manager
+	FFmpeg      packageruntime.Manager
 	Redis       packageruntime.Manager
 	MongoDB     packageruntime.Manager
 	PostgreSQL  packageruntime.Manager
@@ -65,6 +66,7 @@ func New(
 	pm2Manager pm2.Manager,
 	mariadbManager mariadb.Manager,
 	dockerManager packageruntime.Manager,
+	ffmpegManager packageruntime.Manager,
 	redisManager packageruntime.Manager,
 	mongoDBManager packageruntime.Manager,
 	postgresqlManager packageruntime.Manager,
@@ -91,6 +93,7 @@ func New(
 		PM2:         pm2Manager,
 		MariaDB:     mariadbManager,
 		Docker:      dockerManager,
+		FFmpeg:      ffmpegManager,
 		Redis:       redisManager,
 		MongoDB:     mongoDBManager,
 		PostgreSQL:  postgresqlManager,

@@ -10,6 +10,12 @@ import {
   type DockerStatus,
 } from "@/api/docker";
 import {
+  fetchFFmpegStatus,
+  installFFmpeg,
+  removeFFmpeg,
+  type FFmpegStatus,
+} from "@/api/ffmpeg";
+import {
   fetchGolangStatus,
   installGolang,
   removeGolang,
@@ -140,6 +146,7 @@ const applicationLogos = {
   php: { src: "/application-icons/php.svg", alt: "PHP logo", className: "h-6 w-full" },
   mariadb: { src: "/application-icons/mariadb.png", alt: "MariaDB logo", className: "h-8 w-full" },
   docker: { src: "/application-icons/docker.svg", alt: "Docker logo", className: "h-7 w-full" },
+  ffmpeg: { src: "/application-icons/ffmpeg.svg", alt: "FFmpeg logo", className: "h-7 w-full" },
   redis: { src: "/application-icons/redis.svg", alt: "Redis logo", className: "h-7 w-full" },
   mongodb: { src: "/application-icons/mongodb.svg", alt: "MongoDB logo", className: "h-7 w-full" },
   postgresql: {
@@ -162,6 +169,7 @@ type RemovableApplication =
   | { kind: "php"; version: string }
   | { kind: "mariadb" }
   | { kind: "docker" }
+  | { kind: "ffmpeg" }
   | { kind: "redis" }
   | { kind: "mongodb" }
   | { kind: "postgresql" }
@@ -1120,6 +1128,9 @@ function ApplicationsPageSkeleton() {
           <ApplicationCardSkeleton showConfigAction />
           <ApplicationCardSkeleton />
           <ApplicationCardSkeleton />
+          <ApplicationCardSkeleton />
+          <ApplicationCardSkeleton />
+          <ApplicationCardSkeleton />
         </div>
       </div>
     </SkeletonTheme>
@@ -1450,6 +1461,7 @@ export function ApplicationsPage() {
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [dockerStatus, setDockerStatus] = useState<DockerStatus | null>(null);
+  const [ffmpegStatus, setFFmpegStatus] = useState<FFmpegStatus | null>(null);
   const [redisStatus, setRedisStatus] = useState<RedisStatus | null>(null);
   const [mongoDBStatus, setMongoDBStatus] = useState<MongoDBStatus | null>(null);
   const [postgresqlStatus, setPostgreSQLStatus] = useState<PostgreSQLStatus | null>(null);
@@ -1791,6 +1803,7 @@ export function ApplicationsPage() {
       phpResult,
       mariadbResult,
       dockerResult,
+      ffmpegResult,
       redisResult,
       mongoDBResult,
       postgresqlResult,
@@ -1803,6 +1816,7 @@ export function ApplicationsPage() {
       fetchPHPStatus(),
       fetchMariaDBStatus(),
       fetchDockerStatus(),
+      fetchFFmpegStatus(),
       fetchRedisStatus(),
       fetchMongoDBStatus(),
       fetchPostgreSQLStatus(),
@@ -1841,6 +1855,13 @@ export function ApplicationsPage() {
     } else {
       setDockerStatus(null);
       nextErrors.push(getErrorMessage(dockerResult.reason, "Failed to inspect Docker."));
+    }
+
+    if (ffmpegResult.status === "fulfilled") {
+      setFFmpegStatus(ffmpegResult.value);
+    } else {
+      setFFmpegStatus(null);
+      nextErrors.push(getErrorMessage(ffmpegResult.reason, "Failed to inspect FFmpeg."));
     }
 
     if (redisResult.status === "fulfilled") {
@@ -1936,6 +1957,7 @@ export function ApplicationsPage() {
       !isRuntimeActionState(phpStatus?.state) &&
       !isRuntimeActionState(mariadbStatus?.state) &&
       !isRuntimeActionState(dockerStatus?.state) &&
+      !isRuntimeActionState(ffmpegStatus?.state) &&
       !isRuntimeActionState(redisStatus?.state) &&
       !isRuntimeActionState(mongoDBStatus?.state) &&
       !isRuntimeActionState(postgresqlStatus?.state) &&
@@ -1960,6 +1982,7 @@ export function ApplicationsPage() {
     phpStatus?.state,
     mariadbStatus?.state,
     dockerStatus?.state,
+    ffmpegStatus?.state,
     redisStatus?.state,
     mongoDBStatus?.state,
     postgresqlStatus?.state,
@@ -2039,8 +2062,17 @@ export function ApplicationsPage() {
       setRunningAction(null);
       return;
     }
+    if (runningAction === "install-ffmpeg" && ffmpegStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
     if (runningAction === "remove-docker" && dockerStatus && !dockerStatus.installed) {
       setRemoveCandidate((current) => (current?.kind === "docker" ? null : current));
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-ffmpeg" && ffmpegStatus && !ffmpegStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "ffmpeg" ? null : current));
       setRunningAction(null);
       return;
     }
@@ -2119,6 +2151,7 @@ export function ApplicationsPage() {
     phpStatus,
     mariadbStatus,
     dockerStatus,
+    ffmpegStatus,
     redisStatus,
     mongoDBStatus,
     postgresqlStatus,
@@ -2215,6 +2248,8 @@ export function ApplicationsPage() {
         ? "Remove MariaDB from this node? Existing databases may become unavailable until MariaDB is installed again."
         : removeCandidate?.kind === "docker"
           ? "Remove Docker from this node? Container workloads and image builds will stop working until Docker is installed again."
+        : removeCandidate?.kind === "ffmpeg"
+          ? "Remove FFmpeg from this node? Video and audio processing commands that rely on FFmpeg will stop working until it is installed again."
         : removeCandidate?.kind === "redis"
           ? "Remove Redis from this node? Services and jobs that rely on Redis caching or queues will stop working until Redis is installed again."
           : removeCandidate?.kind === "mongodb"
@@ -2237,6 +2272,8 @@ export function ApplicationsPage() {
         ? "Remove MariaDB"
         : removeCandidate?.kind === "docker"
           ? "Remove Docker"
+        : removeCandidate?.kind === "ffmpeg"
+          ? "Remove FFmpeg"
         : removeCandidate?.kind === "redis"
           ? "Remove Redis"
           : removeCandidate?.kind === "mongodb"
@@ -2268,6 +2305,8 @@ export function ApplicationsPage() {
           ? "remove-mariadb"
           : target.kind === "docker"
             ? "remove-docker"
+          : target.kind === "ffmpeg"
+            ? "remove-ffmpeg"
           : target.kind === "redis"
             ? "remove-redis"
             : target.kind === "mongodb"
@@ -2305,6 +2344,10 @@ export function ApplicationsPage() {
         const nextStatus = await removeDocker();
         setDockerStatus(nextStatus);
         toast.success(!nextStatus.installed ? "Docker removed." : "Docker removal started.");
+      } else if (target.kind === "ffmpeg") {
+        const nextStatus = await removeFFmpeg();
+        setFFmpegStatus(nextStatus);
+        toast.success(!nextStatus.installed ? "FFmpeg removed." : "FFmpeg removal started.");
       } else if (target.kind === "redis") {
         const nextStatus = await removeRedis();
         setRedisStatus(nextStatus);
@@ -2344,6 +2387,8 @@ export function ApplicationsPage() {
             ? "Failed to remove MariaDB."
             : target.kind === "docker"
               ? "Failed to remove Docker."
+            : target.kind === "ffmpeg"
+              ? "Failed to remove FFmpeg."
             : target.kind === "redis"
               ? "Failed to remove Redis."
               : target.kind === "mongodb"
@@ -2480,6 +2525,23 @@ export function ApplicationsPage() {
       toast.success("Docker installed.");
     } catch (error) {
       const message = getErrorMessage(error, "Failed to install Docker.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handleFFmpegInstall() {
+    setRunningAction("install-ffmpeg");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installFFmpeg();
+      setFFmpegStatus(nextStatus);
+      toast.success("FFmpeg installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install FFmpeg.");
       setPageError(message);
       toast.error(message);
     } finally {
@@ -3253,6 +3315,7 @@ export function ApplicationsPage() {
             runningAction === phpRuntimeActionKey("remove", removeCandidate.version)) ||
           (removeCandidate?.kind === "mariadb" && runningAction === "remove-mariadb") ||
           (removeCandidate?.kind === "docker" && runningAction === "remove-docker") ||
+          (removeCandidate?.kind === "ffmpeg" && runningAction === "remove-ffmpeg") ||
           (removeCandidate?.kind === "redis" && runningAction === "remove-redis") ||
           (removeCandidate?.kind === "mongodb" && runningAction === "remove-mongodb") ||
           (removeCandidate?.kind === "postgresql" && runningAction === "remove-postgresql") ||
@@ -3527,6 +3590,28 @@ export function ApplicationsPage() {
             }}
             onRemove={() => {
               setRemoveCandidate({ kind: "docker" });
+            }}
+          />
+
+          <InstallRemoveApplicationCard
+            app="ffmpeg"
+            name="FFmpeg"
+            status={ffmpegStatus}
+            runningAction={runningAction}
+            installActionKey="install-ffmpeg"
+            removeActionKey="remove-ffmpeg"
+            removeTitle="Automatic FFmpeg removal is only available for installed runtimes supported by this environment."
+            meta={[
+              { label: "Toolchain", value: ffmpegStatus?.binary_path?.trim() || "ffmpeg", mono: true },
+              ...(ffmpegStatus?.package_manager
+                ? [{ label: "Package manager", value: ffmpegStatus.package_manager }]
+                : []),
+            ]}
+            onInstall={() => {
+              void handleFFmpegInstall();
+            }}
+            onRemove={() => {
+              setRemoveCandidate({ kind: "ffmpeg" });
             }}
           />
 
