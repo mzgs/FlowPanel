@@ -314,7 +314,12 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 		return nil, err
 	}
 
-	return s.refresh(ctx, pm2Path, nil)
+	processes, err := s.refresh(ctx, pm2Path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return processes, s.saveProcessSnapshot(ctx, pm2Path)
 }
 
 func (s *Service) StartProcess(ctx context.Context, processID int) ([]Process, error) {
@@ -402,7 +407,12 @@ func (s *Service) sync(ctx context.Context, pm2Path string) ([]Process, error) {
 	}
 
 	if len(storedDefinitions) > 0 && len(missing) > 0 {
-		return s.refresh(ctx, pm2Path, nil)
+		processes, err := s.refresh(ctx, pm2Path, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		return processes, s.saveProcessSnapshot(ctx, pm2Path)
 	}
 
 	return s.persistDefinitions(ctx, storedDefinitions, inspected, nil)
@@ -542,9 +552,14 @@ func (s *Service) runProcessAction(ctx context.Context, action string, processID
 		return nil, err
 	}
 
-	return s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
+	processes, err := s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
 		definitionKey(target.Definition): {update},
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	return processes, s.saveProcessSnapshot(ctx, pm2Path)
 }
 
 func (s *Service) inspectProcesses(ctx context.Context, pm2Path string) ([]inspectedProcess, error) {
@@ -786,9 +801,14 @@ func (s *Service) startStoredProcess(ctx context.Context, processID int) ([]Proc
 		return nil, err
 	}
 
-	return s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
+	processes, err := s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
 		definitionKey(definition): {{manuallyStopped: boolPointer(false)}},
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	return processes, s.saveProcessSnapshot(ctx, pm2Path)
 }
 
 func (s *Service) deleteStoredProcess(ctx context.Context, processID int) ([]Process, error) {
@@ -802,9 +822,19 @@ func (s *Service) deleteStoredProcess(ctx context.Context, processID int) ([]Pro
 		return nil, err
 	}
 
-	return s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
+	processes, err := s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
 		definitionKey(definition): {{remove: true}},
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	return processes, s.saveProcessSnapshot(ctx, pm2Path)
+}
+
+func (s *Service) saveProcessSnapshot(ctx context.Context, pm2Path string) error {
+	_, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, "save", "--force")
+	return err
 }
 
 func (s *Service) resolveStoredProcess(ctx context.Context, pm2Path string, processID int) (Definition, error) {
