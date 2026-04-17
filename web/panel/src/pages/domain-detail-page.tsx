@@ -1275,10 +1275,19 @@ export function DomainDetailPage() {
   );
   const nodeJSPort = domain?.kind === "Node.js" ? getNodeJSPortFromTarget(domain.target) : "";
   const nodeJSRunning = isNodeJSProcessRunning(nodeJSStatus);
+  const nodeJSStatusLabel = nodeJSLoading
+    ? "Loading"
+    : nodeJSError
+      ? "Unavailable"
+      : getNodeJSDomainBadge(nodeJSStatus);
+  const nodeJSToggleAction = nodeJSRunning ? "stop" : "start";
   const nodeJSStartDisabled =
     nodeJSLoading || nodeJSAction !== null || !canStartNodeJSDomain(nodeJSStatus);
   const nodeJSStopDisabled =
     nodeJSLoading || nodeJSAction !== null || !canStopNodeJSDomain(nodeJSStatus);
+  const nodeJSToggleDisabled = nodeJSRunning
+    ? nodeJSStopDisabled
+    : nodeJSStartDisabled;
   const activeDevToolActions =
     domain?.kind === "Php site"
       ? devToolActions
@@ -2415,86 +2424,61 @@ export function DomainDetailPage() {
               </aside>
               <div className="space-y-4">
                 {domain?.kind === "Node.js" ? (
-                  <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-5 shadow-[var(--app-shadow)]">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-base font-semibold text-[var(--app-text)]">
-                            Node.js Runtime
-                          </h2>
-                          <Badge variant="outline" className="rounded-full">
-                            {getNodeJSDomainBadge(nodeJSStatus)}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-[var(--app-text-muted)]">
-                          {nodeJSLoading
-                            ? "Loading the PM2 status for this domain..."
-                            : nodeJSError ??
-                              nodeJSStatus?.message ??
-                              "Node.js runtime status is unavailable."}
-                        </p>
+                  <section className="overflow-x-auto rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow)]">
+                    <div className="flex min-w-max items-center gap-4 text-xs">
+                      <h2 className="shrink-0 text-sm font-semibold tracking-tight text-[var(--app-text)]">
+                        Node.js Runtime
+                      </h2>
+                      <div className="inline-flex items-baseline gap-1.5">
+                        <span className="shrink-0 text-[var(--app-text-muted)]">
+                          Status
+                        </span>
+                        <span className="text-[var(--app-text)]">
+                          {nodeJSStatusLabel}
+                        </span>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          onClick={() => {
-                            void handleNodeJSAction("start");
-                          }}
-                          disabled={nodeJSStartDisabled}
-                        >
-                          {nodeJSAction === "start" ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <PlayerPlay className="h-4 w-4" />
-                          )}
-                          {nodeJSRunning ? "Running" : "Start"}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            void handleNodeJSAction("stop");
-                          }}
-                          disabled={nodeJSStopDisabled}
-                        >
-                          {nodeJSAction === "stop" ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <PlayerStop className="h-4 w-4" />
-                          )}
-                          Stop
-                        </Button>
-                      </div>
-                    </div>
-
-                    <dl className="mt-4 grid gap-4 text-sm md:grid-cols-3">
-                      <div className="space-y-1">
-                        <dt className="text-[var(--app-text-muted)]">Port</dt>
-                        <dd className="font-mono text-[var(--app-text)]">
+                      <div className="inline-flex items-baseline gap-1.5">
+                        <span className="shrink-0 text-[var(--app-text-muted)]">
+                          Port
+                        </span>
+                        <span className="font-mono text-[var(--app-text)]">
                           {nodeJSPort || "-"}
-                        </dd>
+                        </span>
                       </div>
-                      <div className="space-y-1">
-                        <dt className="text-[var(--app-text-muted)]">
+                      <div className="inline-flex min-w-0 flex-1 items-baseline gap-1.5">
+                        <span className="shrink-0 text-[var(--app-text-muted)]">
                           Script path
-                        </dt>
-                        <dd className="font-mono text-[var(--app-text)]">
+                        </span>
+                        <span
+                          className="truncate font-mono text-[var(--app-text)]"
+                          title={nodeJSStatus?.script_path || domain.nodejs_script_path || "-"}
+                        >
                           {nodeJSStatus?.script_path ||
                             domain.nodejs_script_path ||
                             "-"}
-                        </dd>
+                        </span>
                       </div>
-                      <div className="space-y-1">
-                        <dt className="text-[var(--app-text-muted)]">
-                          Working directory
-                        </dt>
-                        <dd className="break-all font-mono text-[var(--app-text)]">
-                          {nodeJSStatus?.working_directory ||
-                            documentRootDisplayPath ||
-                            "-"}
-                        </dd>
+                      <div className="shrink-0">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 gap-1.5 px-3 text-xs"
+                          onClick={() => {
+                            void handleNodeJSAction(nodeJSToggleAction);
+                          }}
+                          disabled={nodeJSToggleDisabled}
+                        >
+                          {nodeJSAction === nodeJSToggleAction ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : nodeJSRunning ? (
+                            <PlayerStop className="h-4 w-4" />
+                          ) : (
+                            <PlayerPlay className="h-4 w-4" />
+                          )}
+                          {nodeJSRunning ? "Stop" : "Start"}
+                        </Button>
                       </div>
-                    </dl>
+                    </div>
                   </section>
                 ) : null}
                 <DomainActionSection
