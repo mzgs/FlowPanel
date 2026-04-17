@@ -1136,10 +1136,7 @@ export function DomainsPage() {
               <div
                 role="group"
                 aria-label="Domain type"
-                className={cn(
-                  "flex flex-nowrap gap-2 overflow-x-auto rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-2",
-                  errors.kind ? "border-[var(--app-danger)]" : "",
-                )}
+                className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
               >
                 {domainKinds.map((kind) => {
                   const isActive = form.kind === kind;
@@ -1166,23 +1163,35 @@ export function DomainsPage() {
                       }}
                       aria-pressed={isActive}
                       className={cn(
-                        "inline-flex min-w-fit shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-[13px] font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-text)]/20",
+                        "flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border px-3 py-3 text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-text)]/20",
                         isActive
-                          ? "border-[var(--app-text)]/10 bg-[var(--app-surface)] text-[var(--app-text)] shadow-sm"
-                          : "border-transparent bg-transparent text-[var(--app-text-muted)] hover:border-[var(--app-border)] hover:bg-[var(--app-surface)] hover:text-[var(--app-text)]",
+                          ? "border-[var(--app-accent)] bg-[var(--app-surface)] text-[var(--app-text)] shadow-sm"
+                          : "border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-surface)]",
+                        errors.kind ? "border-[var(--app-danger)]" : "",
                       )}
                     >
-                      {imageSrc ? (
-                        <img
-                          src={imageSrc}
-                          alt=""
-                          aria-hidden="true"
-                          className="h-4 w-4 shrink-0 object-contain"
-                        />
-                      ) : KindIcon ? (
-                        <KindIcon className="size-4 shrink-0" stroke={1.7} />
-                      ) : null}
-                      <span>{kind}</span>
+                      <span
+                        className={cn(
+                          "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border",
+                          isActive
+                            ? "border-[var(--app-accent)]/20 bg-[var(--app-accent-soft)] text-[var(--app-accent)]"
+                            : "border-[var(--app-border)] bg-[var(--app-bg-2)] text-[var(--app-text-muted)]",
+                        )}
+                      >
+                        {imageSrc ? (
+                          <img
+                            src={imageSrc}
+                            alt=""
+                            aria-hidden="true"
+                            className="h-5 w-5 shrink-0 object-contain"
+                          />
+                        ) : KindIcon ? (
+                          <KindIcon className="size-5 shrink-0" stroke={1.7} />
+                        ) : null}
+                      </span>
+                      <span className="text-[12px] font-semibold leading-4">
+                        {kind}
+                      </span>
                     </button>
                   );
                 })}
