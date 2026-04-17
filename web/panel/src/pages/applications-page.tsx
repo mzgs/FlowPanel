@@ -2840,6 +2840,7 @@ export function ApplicationsPage() {
                   <TableHeader className="sticky top-0 z-10 bg-[var(--app-surface)] [&_tr]:border-[var(--app-border)]">
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="px-4">Name</TableHead>
+                      <TableHead>ID</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>CPU</TableHead>
                       <TableHead>Memory</TableHead>
@@ -2862,12 +2863,9 @@ export function ApplicationsPage() {
                         <TableRow key={process.id} className="align-top">
                           <TableCell className="px-4 py-3">
                             <div className="font-medium text-[var(--app-text)]">{process.name}</div>
-                            <div className="mt-1 text-xs text-[var(--app-text-muted)]">
-                              ID {process.id}
-                              {process.namespace ? ` • ${process.namespace}` : ""}
-                              {process.exec_mode ? ` • ${process.exec_mode}` : ""}
-                              {process.version ? ` • v${process.version}` : ""}
-                            </div>
+                          </TableCell>
+                          <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
+                            {process.id}
                           </TableCell>
                           <TableCell className="py-3">
                             <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
