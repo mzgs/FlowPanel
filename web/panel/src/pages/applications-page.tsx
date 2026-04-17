@@ -2785,60 +2785,57 @@ export function ApplicationsPage() {
       />
 
       <Dialog open={pm2ListOpen} onOpenChange={handlePM2ListOpenChange}>
-        <DialogContent className="h-[min(85vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-6xl">
-          <DialogHeader className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-5">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
+        <DialogContent className="h-[min(85vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-6xl">
+          <DialogHeader className="gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
                 <DialogTitle>PM2 processes</DialogTitle>
                 <DialogDescription>
-                  Manage runtime processes with start, stop, restart, delete, and log actions. This list refreshes
-                  automatically every 10 seconds.
+                  Manage runtime processes with start, stop, restart, delete, and log actions.
                 </DialogDescription>
               </div>
 
-              <div className="flex items-center gap-3">
-                <Button
-                  type="button"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => {
-                    handlePM2CreateOpenChange(true);
-                  }}
-                  disabled={pm2ProcessesBusy || pm2ProcessesInitialLoading || !pm2Status?.installed}
-                >
-                  <Plus className="h-4 w-4" />
-                  New process
-                </Button>
-              </div>
+              <Button
+                type="button"
+                size="sm"
+                className="shrink-0 self-start"
+                onClick={() => {
+                  handlePM2CreateOpenChange(true);
+                }}
+                disabled={pm2ProcessesBusy || pm2ProcessesInitialLoading || !pm2Status?.installed}
+              >
+                <Plus className="h-4 w-4" />
+                New process
+              </Button>
             </div>
           </DialogHeader>
 
-          <div className="flex min-h-0 flex-col bg-[var(--app-surface)] text-[var(--app-text)]">
+          <div className="flex min-h-0 flex-col rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)]">
             {pm2ProcessesError && pm2Processes.length > 0 ? (
-              <div className="border-b border-[var(--app-danger)]/20 bg-[var(--app-danger-soft)] px-6 py-3 text-sm text-[var(--app-danger)]">
+              <div className="border-b border-[var(--app-danger)]/20 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)] sm:px-5">
                 {pm2ProcessesError}
               </div>
             ) : null}
 
             {pm2ProcessesError && pm2Processes.length === 0 ? (
-              <div className="flex h-full items-center justify-center p-6">
+              <div className="flex h-full items-center justify-center p-5 sm:p-6">
                 <div className="max-w-xl rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
                   {pm2ProcessesError}
                 </div>
               </div>
             ) : pm2ProcessesInitialLoading ? (
-              <div className="flex h-full items-center justify-center gap-2 px-6 text-sm text-[var(--app-text-muted)]">
+              <div className="flex h-full items-center justify-center gap-2 px-5 text-sm text-[var(--app-text-muted)] sm:px-6">
                 <LoaderCircle className="h-4 w-4 animate-spin" />
                 Loading PM2 processes...
               </div>
             ) : pm2Processes.length === 0 ? (
-              <div className="px-6 py-6">
-                <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-10 text-sm text-[var(--app-text-muted)]">
+              <div className="p-5 sm:p-6">
+                <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-10 text-sm text-[var(--app-text-muted)]">
                   No PM2 processes found.
                 </div>
               </div>
             ) : (
-              <div className="h-full overflow-auto">
+              <div className="min-h-0 overflow-auto rounded-b-lg bg-[var(--app-surface)]">
                 <Table className="min-w-[1100px]">
                   <TableHeader className="sticky top-0 z-10 bg-[var(--app-surface)] [&_tr]:border-[var(--app-border)]">
                     <TableRow className="hover:bg-transparent">
@@ -3057,10 +3054,10 @@ export function ApplicationsPage() {
       </Dialog>
 
       <Dialog open={pm2LogsOpen} onOpenChange={handlePM2LogsOpenChange}>
-        <DialogContent className="h-[min(80vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-5xl">
-          <DialogHeader className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-5">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
+        <DialogContent className="h-[min(80vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
+          <DialogHeader className="gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
                 <DialogTitle>{pm2LogsTarget ? `${pm2LogsTarget.name} logs` : "PM2 process logs"}</DialogTitle>
                 <DialogDescription>
                   {pm2LogsTarget
@@ -3069,7 +3066,7 @@ export function ApplicationsPage() {
                 </DialogDescription>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {pm2LogsOutput ? (
                   <Button
                     type="button"
@@ -3114,10 +3111,10 @@ export function ApplicationsPage() {
             </div>
           </DialogHeader>
 
-          <div className="flex min-h-0 flex-col bg-[var(--app-surface)]">
+          <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
             {pm2LogsTarget ? (
               <>
-                <div className="border-b border-[var(--app-border)] px-6 py-4 text-sm text-[var(--app-text-muted)]">
+                <div className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-4 text-sm text-[var(--app-text-muted)]">
                   <span className="font-medium text-[var(--app-text)]">{pm2LogsTarget.name}</span>
                   {" • "}
                   {pm2LogsLineCount > 0
@@ -3126,24 +3123,24 @@ export function ApplicationsPage() {
                 </div>
 
                 {pm2LogsError ? (
-                  <div className="flex h-full items-center justify-center p-6">
+                  <div className="flex h-full items-center justify-center p-5 sm:p-6">
                     <div className="max-w-xl rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
                       {pm2LogsError}
                     </div>
                   </div>
                 ) : pm2LogsLoading ? (
-                  <div className="flex h-full items-center justify-center gap-2 px-6 text-sm text-[var(--app-text-muted)]">
+                  <div className="flex h-full items-center justify-center gap-2 px-5 text-sm text-[var(--app-text-muted)] sm:px-6">
                     <LoaderCircle className="h-4 w-4 animate-spin" />
                     Loading PM2 logs...
                   </div>
                 ) : pm2LogsOutput ? (
                   <ScrollArea className="min-h-0 flex-1 bg-[var(--app-surface)]">
-                    <pre className="p-6 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)]">
+                    <pre className="p-5 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)] sm:p-6">
                       {pm2LogsOutput}
                     </pre>
                   </ScrollArea>
                 ) : (
-                  <div className="flex h-full items-center justify-center px-6 text-sm text-[var(--app-text-muted)]">
+                  <div className="flex h-full items-center justify-center px-5 text-sm text-[var(--app-text-muted)] sm:px-6">
                     No log output returned for this process.
                   </div>
                 )}

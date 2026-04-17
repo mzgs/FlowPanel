@@ -187,10 +187,10 @@ export function ActivityPage() {
       </div>
 
       <Dialog open={selectedEvent !== null} onOpenChange={(open) => (!open ? setSelectedEvent(null) : null)}>
-        <DialogContent className="h-[min(85vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-4xl">
-          <DialogHeader className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-5">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
+        <DialogContent className="h-[min(85vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-4xl">
+          <DialogHeader className="gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
                 <DialogTitle>{selectedEvent ? `${formatAction(selectedEvent)} log` : "Activity log"}</DialogTitle>
                 <DialogDescription>
                   {selectedEvent
@@ -204,7 +204,7 @@ export function ActivityPage() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                  className="shrink-0 self-start border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
                   onClick={() => void handleCopySelectedEventMessage()}
                 >
                   <Copy className="h-4 w-4" />
@@ -215,8 +215,8 @@ export function ActivityPage() {
           </DialogHeader>
 
           {selectedEvent ? (
-            <div className="flex min-h-0 flex-col bg-[var(--app-surface)]">
-              <div className="border-b border-[var(--app-border)] px-6 py-4 text-sm text-[var(--app-text-muted)]">
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+              <div className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-4 text-sm text-[var(--app-text-muted)]">
                 <span className="font-medium text-[var(--app-text)]">{selectedEvent.status}</span>
                 {" • "}
                 {selectedEvent.actor}
@@ -225,7 +225,7 @@ export function ActivityPage() {
               </div>
 
               <ScrollArea className="min-h-0 flex-1 bg-[var(--app-surface)]">
-                <pre className="p-6 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)]">
+                <pre className="p-5 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)] sm:p-6">
                   {selectedEvent.message}
                 </pre>
               </ScrollArea>

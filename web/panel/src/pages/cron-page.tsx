@@ -647,8 +647,8 @@ export function CronPage() {
       </div>
 
       <Dialog open={logsJob !== null} onOpenChange={(open) => (!open ? setLogsJobId(null) : null)}>
-        <DialogContent className="max-w-5xl overflow-hidden p-0 sm:max-w-5xl">
-          <DialogHeader className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-5">
+        <DialogContent className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
+          <DialogHeader className="gap-3">
             <DialogTitle>{logsJob ? `${logsJob.name} logs` : "Execution logs"}</DialogTitle>
             <DialogDescription>
               {logsJob
@@ -657,11 +657,11 @@ export function CronPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="bg-[var(--app-surface)] text-[var(--app-text)]">
+          <div className="min-h-0 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)]">
             {logsJob ? (
               sortedExecutions.length === 0 ? (
-                <div className="px-6 py-6">
-                  <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-10 text-sm text-[var(--app-text-muted)]">
+                <div className="p-5 sm:p-6">
+                  <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-10 text-sm text-[var(--app-text-muted)]">
                     No executions recorded for this job yet.
                   </div>
                 </div>
