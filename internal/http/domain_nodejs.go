@@ -92,3 +92,37 @@ func runDomainNPMInstall(
 
 	return record, nil
 }
+
+func ensureDomainNodeModules(
+	ctx context.Context,
+	domains *domain.Service,
+	nodeJS nodejs.Manager,
+	record domain.Record,
+) error {
+	if record.Kind != domain.KindNodeJS {
+		return nil
+	}
+
+	targetPath, err := domain.ResolveDocumentRoot(domains.BasePath(), record)
+	if err != nil {
+		return fmt.Errorf("resolve domain document root: %w", err)
+	}
+
+	nodeModulesPath := filepath.Join(targetPath, "node_modules")
+	if _, err := os.Stat(nodeModulesPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect node_modules: %w", err)
+	}
+
+	manifestPath := filepath.Join(targetPath, "package.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect package.json: %w", err)
+	}
+
+	_, err = runDomainNPMInstall(ctx, domains, nodeJS, record.Hostname)
+	return err
+}

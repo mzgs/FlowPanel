@@ -924,6 +924,16 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
 				return
 			}
+		} else if err := ensureDomainNodeModules(actionCtx, a.app.Domains, a.app.NodeJS, record); err != nil {
+			a.app.Logger.Error("prepare domain nodejs dependencies failed", zap.String("hostname", record.Hostname), zap.Error(err))
+			a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
+			switch {
+			case errors.Is(err, errDomainNPMUnavailable):
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			default:
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			}
+			return
 		}
 		runtimeConfig, err := resolveDomainRuntimeProcessConfig(a.app.Domains.BasePath(), record)
 		if err != nil {
