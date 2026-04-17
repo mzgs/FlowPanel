@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { fetchCaddyStatus, restartCaddy, type CaddyStatus } from "@/api/caddy";
 import {
   fetchDockerStatus,
@@ -22,6 +22,7 @@ import {
   type NodeJSStatus,
 } from "@/api/nodejs";
 import {
+  createPM2Process,
   fetchPM2ProcessLogs,
   fetchPM2Processes,
   fetchPM2Status,
@@ -30,6 +31,7 @@ import {
   removePM2,
   startPM2Process,
   stopPM2Process,
+  type PM2CreateProcessInput,
   type PM2Process,
   type PM2Status,
 } from "@/api/pm2";
@@ -95,6 +97,7 @@ import {
   List,
   LoaderCircle,
   Package,
+  Plus,
   PlayerPlayFilled,
   PlayerStop,
   RefreshCw,
@@ -107,6 +110,8 @@ import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -1397,6 +1402,12 @@ export function ApplicationsPage() {
   const [pm2ProcessesLoading, setPM2ProcessesLoading] = useState(false);
   const [pm2ProcessesError, setPM2ProcessesError] = useState<string | null>(null);
   const [pm2ProcessActionKey, setPM2ProcessActionKey] = useState<string | null>(null);
+  const [pm2CreateOpen, setPM2CreateOpen] = useState(false);
+  const [pm2CreateName, setPM2CreateName] = useState("");
+  const [pm2CreateScriptPath, setPM2CreateScriptPath] = useState("");
+  const [pm2CreateWorkingDirectory, setPM2CreateWorkingDirectory] = useState("");
+  const [pm2CreateSubmitting, setPM2CreateSubmitting] = useState(false);
+  const [pm2CreateError, setPM2CreateError] = useState<string | null>(null);
   const [pm2LogsOpen, setPM2LogsOpen] = useState(false);
   const [pm2LogsTarget, setPM2LogsTarget] = useState<PM2Process | null>(null);
   const [pm2LogsOutput, setPM2LogsOutput] = useState("");
@@ -1409,7 +1420,9 @@ export function ApplicationsPage() {
 
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const pm2ProcessListRequestIdRef = useRef(0);
+  const pm2CreateRequestIdRef = useRef(0);
   const pm2LogsRequestIdRef = useRef(0);
+  const pm2ProcessesBusy = pm2ProcessActionKey !== null || pm2CreateSubmitting;
   const postInstallServiceStartingAction = getPostInstallServiceStartingAction(
     runningAction,
     phpStatus,
@@ -1421,6 +1434,22 @@ export function ApplicationsPage() {
     setPM2LogsLoading(false);
     setPM2LogsError(null);
     setPM2LogsOutput("");
+  }
+
+  function resetPM2CreateState() {
+    pm2CreateRequestIdRef.current += 1;
+    setPM2CreateSubmitting(false);
+    setPM2CreateError(null);
+    setPM2CreateName("");
+    setPM2CreateScriptPath("");
+    setPM2CreateWorkingDirectory("");
+  }
+
+  function handlePM2CreateOpenChange(open: boolean) {
+    setPM2CreateOpen(open);
+    if (!open) {
+      resetPM2CreateState();
+    }
   }
 
   function handlePM2LogsOpenChange(open: boolean) {
@@ -1437,6 +1466,7 @@ export function ApplicationsPage() {
     setPM2ProcessesError(null);
     setPM2ProcessActionKey(null);
     setPM2Processes([]);
+    handlePM2CreateOpenChange(false);
     handlePM2LogsOpenChange(false);
   }
 
@@ -1445,6 +1475,18 @@ export function ApplicationsPage() {
     if (!open) {
       resetPM2ProcessesState();
     }
+  }
+
+  function syncPM2Processes(processes: PM2Process[]) {
+    setPM2ProcessesError(null);
+    setPM2Processes(processes);
+    setPM2LogsTarget((current) => {
+      if (current === null) {
+        return current;
+      }
+
+      return processes.find((process) => process.id === current.id) ?? current;
+    });
   }
 
   async function loadPM2Processes() {
@@ -1465,14 +1507,7 @@ export function ApplicationsPage() {
         return;
       }
 
-      setPM2Processes(processes);
-      setPM2LogsTarget((current) => {
-        if (current === null) {
-          return current;
-        }
-
-        return processes.find((process) => process.id === current.id) ?? current;
-      });
+      syncPM2Processes(processes);
     } catch (error) {
       if (pm2ProcessListRequestIdRef.current !== requestId) {
         return;
@@ -1521,6 +1556,51 @@ export function ApplicationsPage() {
     void loadPM2Logs(process);
   }
 
+  async function handlePM2CreateSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const input: PM2CreateProcessInput = {
+      name: pm2CreateName.trim() || undefined,
+      script_path: pm2CreateScriptPath.trim(),
+      working_directory: pm2CreateWorkingDirectory.trim() || undefined,
+    };
+
+    if (!input.script_path) {
+      setPM2CreateError("Script path is required.");
+      return;
+    }
+
+    const requestId = pm2CreateRequestIdRef.current + 1;
+    pm2CreateRequestIdRef.current = requestId;
+    setPM2CreateSubmitting(true);
+    setPM2CreateError(null);
+
+    const processLabel = input.name || input.script_path;
+
+    try {
+      const processes = await createPM2Process(input);
+      if (pm2CreateRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      syncPM2Processes(processes);
+      handlePM2CreateOpenChange(false);
+      toast.success(`${processLabel} created.`);
+    } catch (error) {
+      if (pm2CreateRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const message = getErrorMessage(error, `Failed to create ${processLabel}.`);
+      setPM2CreateError(message);
+      toast.error(message);
+    } finally {
+      if (pm2CreateRequestIdRef.current === requestId) {
+        setPM2CreateSubmitting(false);
+      }
+    }
+  }
+
   async function handlePM2ProcessAction(action: "start" | "stop" | "restart", process: PM2Process) {
     const actionKey = `${action}:${process.id}`;
     setPM2ProcessActionKey(actionKey);
@@ -1547,14 +1627,7 @@ export function ApplicationsPage() {
           : action === "stop"
             ? await stopPM2Process(process.id)
             : await restartPM2Process(process.id);
-      setPM2Processes(processes);
-      setPM2LogsTarget((current) => {
-        if (current === null) {
-          return current;
-        }
-
-        return processes.find((item) => item.id === current.id) ?? current;
-      });
+      syncPM2Processes(processes);
       toast.success(successMessage);
     } catch (error) {
       const message = getErrorMessage(error, fallbackMessage);
@@ -1936,7 +2009,7 @@ export function ApplicationsPage() {
     }
 
     const intervalId = window.setInterval(() => {
-      if (pm2ProcessesLoading || pm2ProcessActionKey !== null) {
+      if (pm2ProcessesLoading || pm2ProcessesBusy) {
         return;
       }
 
@@ -1946,7 +2019,7 @@ export function ApplicationsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [pm2ListOpen, pm2Status?.installed, pm2ProcessesLoading, pm2ProcessActionKey]);
+  }, [pm2ListOpen, pm2ProcessesBusy, pm2Status?.installed, pm2ProcessesLoading]);
 
   useEffect(() => {
     if (!pm2LogsOpen || pm2LogsTarget === null || !pm2Status?.installed) {
@@ -1954,7 +2027,7 @@ export function ApplicationsPage() {
     }
 
     const intervalId = window.setInterval(() => {
-      if (pm2LogsLoading || pm2ProcessActionKey !== null) {
+      if (pm2LogsLoading || pm2ProcessesBusy) {
         return;
       }
 
@@ -1964,7 +2037,7 @@ export function ApplicationsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [pm2LogsOpen, pm2LogsTarget, pm2LogsLoading, pm2ProcessActionKey, pm2Status?.installed]);
+  }, [pm2LogsOpen, pm2LogsTarget, pm2LogsLoading, pm2ProcessesBusy, pm2Status?.installed]);
 
   useEffect(() => {
     if (!pm2ListOpen || pm2Status === null || pm2Status.installed) {
@@ -2630,7 +2703,10 @@ export function ApplicationsPage() {
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <DialogTitle>PM2 processes</DialogTitle>
-                <DialogDescription>Manage runtime processes with start, stop, restart, and log actions.</DialogDescription>
+                <DialogDescription>
+                  Manage runtime processes with start, stop, restart, and log actions. This list refreshes automatically
+                  every 10 seconds.
+                </DialogDescription>
               </div>
 
               <Button
@@ -2639,12 +2715,12 @@ export function ApplicationsPage() {
                 size="sm"
                 className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
                 onClick={() => {
-                  void loadPM2Processes();
+                  handlePM2CreateOpenChange(true);
                 }}
-                disabled={pm2ProcessesLoading || pm2ProcessActionKey !== null || !pm2Status?.installed}
+                disabled={pm2ProcessesBusy || pm2ProcessesLoading || !pm2Status?.installed}
               >
-                {pm2ProcessesLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                Refresh
+                <Plus className="h-4 w-4" />
+                New process
               </Button>
             </div>
           </DialogHeader>
@@ -2686,7 +2762,7 @@ export function ApplicationsPage() {
                     {pm2Processes.map((process) => {
                       const statusBadge = getPM2ProcessStatusBadge(process.status);
                       const activeAction = pm2ProcessActionKey?.endsWith(`:${process.id}`) ? pm2ProcessActionKey.split(":")[0] : null;
-                      const actionsDisabled = pm2ProcessActionKey !== null;
+                      const actionsDisabled = pm2ProcessesBusy;
 
                       return (
                         <TableRow key={process.id} className="align-top">
@@ -2798,6 +2874,88 @@ export function ApplicationsPage() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pm2CreateOpen} onOpenChange={handlePM2CreateOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add PM2 process</DialogTitle>
+            <DialogDescription>
+              Start a new PM2 process from a script or entry file. Leave the name empty to let PM2 derive it.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form className="space-y-4" onSubmit={handlePM2CreateSubmit}>
+            {pm2CreateError ? (
+              <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
+                {pm2CreateError}
+              </div>
+            ) : null}
+
+            <div className="space-y-2">
+              <Label htmlFor="pm2-create-name">Process name</Label>
+              <Input
+                id="pm2-create-name"
+                value={pm2CreateName}
+                onChange={(event) => {
+                  setPM2CreateName(event.target.value);
+                }}
+                placeholder="api-server"
+                disabled={pm2CreateSubmitting}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="pm2-create-script-path">Script path</Label>
+              <Input
+                id="pm2-create-script-path"
+                value={pm2CreateScriptPath}
+                onChange={(event) => {
+                  setPM2CreateScriptPath(event.target.value);
+                }}
+                placeholder="/var/www/app/server.js"
+                disabled={pm2CreateSubmitting}
+                autoFocus
+              />
+              <p className="text-xs text-[var(--app-text-muted)]">
+                Required. Use the script or entry file you would normally pass to `pm2 start`.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="pm2-create-working-directory">Working directory</Label>
+              <Input
+                id="pm2-create-working-directory"
+                value={pm2CreateWorkingDirectory}
+                onChange={(event) => {
+                  setPM2CreateWorkingDirectory(event.target.value);
+                }}
+                placeholder="/var/www/app"
+                disabled={pm2CreateSubmitting}
+              />
+              <p className="text-xs text-[var(--app-text-muted)]">
+                Optional. PM2 will start the process from this directory when provided.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  handlePM2CreateOpenChange(false);
+                }}
+                disabled={pm2CreateSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={pm2CreateSubmitting || !pm2Status?.installed}>
+                {pm2CreateSubmitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Add process
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 

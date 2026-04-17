@@ -35,11 +35,18 @@ type Manager interface {
 	Status(context.Context) Status
 	List(context.Context) ([]Process, error)
 	Logs(context.Context, int) (string, error)
+	CreateProcess(context.Context, CreateProcessInput) ([]Process, error)
 	StartProcess(context.Context, int) ([]Process, error)
 	StopProcess(context.Context, int) ([]Process, error)
 	RestartProcess(context.Context, int) ([]Process, error)
 	Install(context.Context) error
 	Remove(context.Context) error
+}
+
+type CreateProcessInput struct {
+	Name             string
+	ScriptPath       string
+	WorkingDirectory string
 }
 
 type Process struct {
@@ -232,6 +239,32 @@ func (s *Service) Logs(ctx context.Context, processID int) (string, error) {
 		"--nostream",
 		"--raw",
 	)
+}
+
+func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) ([]Process, error) {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return nil, errors.New("PM2 is not installed")
+	}
+
+	scriptPath := strings.TrimSpace(input.ScriptPath)
+	if scriptPath == "" {
+		return nil, errors.New("PM2 script path is required")
+	}
+
+	args := []string{"start", scriptPath}
+	if name := strings.TrimSpace(input.Name); name != "" {
+		args = append(args, "--name", name)
+	}
+	if workingDirectory := strings.TrimSpace(input.WorkingDirectory); workingDirectory != "" {
+		args = append(args, "--cwd", workingDirectory)
+	}
+
+	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, args...); err != nil {
+		return nil, err
+	}
+
+	return s.List(ctx)
 }
 
 func (s *Service) StartProcess(ctx context.Context, processID int) ([]Process, error) {

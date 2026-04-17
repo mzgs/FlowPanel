@@ -1061,6 +1061,12 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 }
 
 func (a *apiRoutes) registerPM2Routes(r chi.Router) {
+	type createPM2ProcessRequest struct {
+		Name             string `json:"name"`
+		ScriptPath       string `json:"script_path"`
+		WorkingDirectory string `json:"working_directory"`
+	}
+
 	pm2StatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app.PM2 == nil {
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "pm2 runtime is not configured"})
@@ -1095,6 +1101,60 @@ func (a *apiRoutes) registerPM2Routes(r chi.Router) {
 			return
 		}
 
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"processes": processes})
+	}))
+	r.Method(stdhttp.MethodPost, "/pm2/processes", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.PM2 == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "pm2 runtime is not configured"})
+			return
+		}
+
+		var input createPM2ProcessRequest
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		input.Name = strings.TrimSpace(input.Name)
+		input.ScriptPath = strings.TrimSpace(input.ScriptPath)
+		input.WorkingDirectory = strings.TrimSpace(input.WorkingDirectory)
+
+		fieldErrors := make(map[string]string)
+		if input.ScriptPath == "" {
+			fieldErrors["script_path"] = "Script path is required."
+		}
+		if len(fieldErrors) > 0 {
+			writeValidationFailed(w, fieldErrors)
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		processes, err := a.app.PM2.CreateProcess(actionCtx, pm2.CreateProcessInput{
+			Name:             input.Name,
+			ScriptPath:       input.ScriptPath,
+			WorkingDirectory: input.WorkingDirectory,
+		})
+		if err != nil {
+			a.app.Logger.Error("create pm2 process failed",
+				zap.String("name", input.Name),
+				zap.String("script_path", input.ScriptPath),
+				zap.String("working_directory", input.WorkingDirectory),
+				zap.Error(err),
+			)
+			processLabel := input.Name
+			if processLabel == "" {
+				processLabel = input.ScriptPath
+			}
+			a.mutationEvent(actionCtx, "runtime", "create", "pm2_process", input.ScriptPath, processLabel, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+
+		processLabel := input.Name
+		if processLabel == "" {
+			processLabel = input.ScriptPath
+		}
+		a.mutationEvent(actionCtx, "runtime", "create", "pm2_process", input.ScriptPath, processLabel, "succeeded", "Created the PM2 process.")
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"processes": processes})
 	}))
 	r.Method(stdhttp.MethodGet, "/pm2/processes/{processID}/logs", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

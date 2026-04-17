@@ -27,6 +27,12 @@ export type PM2Process = {
   exec_mode?: string;
 };
 
+export type PM2CreateProcessInput = {
+  name?: string;
+  script_path: string;
+  working_directory?: string;
+};
+
 type PM2StatusPayload = {
   pm2: PM2Status;
 };
@@ -72,6 +78,20 @@ export async function fetchPM2Processes(): Promise<PM2Process[]> {
   const response = await fetch("/api/pm2/processes", {
     credentials: "include",
     cache: "no-store",
+  });
+
+  const payload = await parsePM2Response<PM2ProcessesPayload>(response);
+  return payload.processes;
+}
+
+export async function createPM2Process(input: PM2CreateProcessInput): Promise<PM2Process[]> {
+  const response = await fetch("/api/pm2/processes", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
   });
 
   const payload = await parsePM2Response<PM2ProcessesPayload>(response);
