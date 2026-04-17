@@ -14,6 +14,7 @@ type Definition struct {
 	Name             string
 	ScriptPath       string
 	WorkingDirectory string
+	ManuallyStopped  bool
 }
 
 func NewStore(db *sql.DB) *Store {
@@ -41,6 +42,9 @@ CREATE TABLE IF NOT EXISTS pm2_processes (
 	if _, err := s.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("ensure pm2 processes table: %w", err)
 	}
+	if err := s.ensureColumn(ctx, "manually_stopped", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -54,7 +58,7 @@ func (s *Store) List(ctx context.Context) ([]Definition, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT name, script_path, working_directory
+SELECT name, script_path, working_directory, manually_stopped
 FROM pm2_processes
 ORDER BY position ASC
 `)
@@ -66,7 +70,7 @@ ORDER BY position ASC
 	definitions := make([]Definition, 0)
 	for rows.Next() {
 		var definition Definition
-		if err := rows.Scan(&definition.Name, &definition.ScriptPath, &definition.WorkingDirectory); err != nil {
+		if err := rows.Scan(&definition.Name, &definition.ScriptPath, &definition.WorkingDirectory, &definition.ManuallyStopped); err != nil {
 			return nil, fmt.Errorf("scan pm2 process row: %w", err)
 		}
 		definitions = append(definitions, definition)
@@ -104,8 +108,8 @@ func (s *Store) Replace(ctx context.Context, definitions []Definition) error {
 	}
 
 	statement, err := tx.PrepareContext(ctx, `
-INSERT INTO pm2_processes (position, name, script_path, working_directory)
-VALUES (?, ?, ?, ?)
+INSERT INTO pm2_processes (position, name, script_path, working_directory, manually_stopped)
+VALUES (?, ?, ?, ?, ?)
 `)
 	if err != nil {
 		return fmt.Errorf("prepare pm2 process insert: %w", err)
@@ -113,13 +117,47 @@ VALUES (?, ?, ?, ?)
 	defer statement.Close()
 
 	for index, definition := range definitions {
-		if _, err := statement.ExecContext(ctx, index, definition.Name, definition.ScriptPath, definition.WorkingDirectory); err != nil {
+		if _, err := statement.ExecContext(ctx, index, definition.Name, definition.ScriptPath, definition.WorkingDirectory, definition.ManuallyStopped); err != nil {
 			return fmt.Errorf("insert pm2 process at position %d: %w", index, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit pm2 process replace: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) ensureColumn(ctx context.Context, columnName, definition string) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(pm2_processes)`)
+	if err != nil {
+		return fmt.Errorf("inspect pm2 processes columns: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
+			return fmt.Errorf("scan pm2 processes column: %w", err)
+		}
+		if name == columnName {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate pm2 processes columns: %w", err)
+	}
+
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE pm2_processes ADD COLUMN %s %s", columnName, definition)); err != nil {
+		return fmt.Errorf("add pm2 processes column %s: %w", columnName, err)
 	}
 
 	return nil

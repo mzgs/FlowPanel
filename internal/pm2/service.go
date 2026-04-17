@@ -86,6 +86,11 @@ type Service struct {
 	store  *Store
 }
 
+type definitionUpdate struct {
+	manuallyStopped *bool
+	remove          bool
+}
+
 type rawProcess struct {
 	Name   string `json:"name"`
 	PMID   int    `json:"pm_id"`
@@ -236,13 +241,16 @@ func (s *Service) List(ctx context.Context) ([]Process, error) {
 		return nil, errors.New("PM2 is not installed")
 	}
 
-	return s.refresh(ctx, pm2Path)
+	return s.refresh(ctx, pm2Path, nil)
 }
 
 func (s *Service) Logs(ctx context.Context, processID int) (string, error) {
 	pm2Path, installed := detectPM2Binary()
 	if !installed {
 		return "", errors.New("PM2 is not installed")
+	}
+	if processID < 0 {
+		return "", errors.New("PM2 logs are unavailable until the saved process is started")
 	}
 
 	return runInspectCommandWithTimeout(
@@ -281,23 +289,39 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 		return nil, err
 	}
 
-	return s.refresh(ctx, pm2Path)
+	return s.refresh(ctx, pm2Path, nil)
 }
 
 func (s *Service) StartProcess(ctx context.Context, processID int) ([]Process, error) {
-	return s.runProcessAction(ctx, "start", processID)
+	if processID < 0 {
+		return s.startStoredProcess(ctx, processID)
+	}
+
+	return s.runProcessAction(ctx, "start", processID, definitionUpdate{manuallyStopped: boolPointer(false)})
 }
 
 func (s *Service) StopProcess(ctx context.Context, processID int) ([]Process, error) {
-	return s.runProcessAction(ctx, "stop", processID)
+	if processID < 0 {
+		return nil, errors.New("saved stopped processes cannot be stopped again")
+	}
+
+	return s.runProcessAction(ctx, "stop", processID, definitionUpdate{manuallyStopped: boolPointer(true)})
 }
 
 func (s *Service) RestartProcess(ctx context.Context, processID int) ([]Process, error) {
-	return s.runProcessAction(ctx, "restart", processID)
+	if processID < 0 {
+		return nil, errors.New("saved stopped processes must be started before they can be restarted")
+	}
+
+	return s.runProcessAction(ctx, "restart", processID, definitionUpdate{manuallyStopped: boolPointer(false)})
 }
 
 func (s *Service) DeleteProcess(ctx context.Context, processID int) ([]Process, error) {
-	return s.runProcessAction(ctx, "delete", processID)
+	if processID < 0 {
+		return s.deleteStoredProcess(ctx, processID)
+	}
+
+	return s.runProcessAction(ctx, "delete", processID, definitionUpdate{remove: true})
 }
 
 func (s *Service) Remove(ctx context.Context) error {
@@ -338,7 +362,8 @@ func (s *Service) sync(ctx context.Context, pm2Path string) ([]Process, error) {
 		return nil, err
 	}
 
-	for _, definition := range missingDefinitions(storedDefinitions, inspected) {
+	missing := missingDefinitions(storedDefinitions, inspected)
+	for _, definition := range missing {
 		if err := s.createMissingProcess(ctx, pm2Path, definition); err != nil {
 			label := strings.TrimSpace(definition.Name)
 			if label == "" {
@@ -351,11 +376,11 @@ func (s *Service) sync(ctx context.Context, pm2Path string) ([]Process, error) {
 		}
 	}
 
-	if len(storedDefinitions) > 0 {
-		return s.refresh(ctx, pm2Path)
+	if len(storedDefinitions) > 0 && len(missing) > 0 {
+		return s.refresh(ctx, pm2Path, nil)
 	}
 
-	return s.persistInspected(ctx, inspected)
+	return s.persistDefinitions(ctx, storedDefinitions, inspected, nil)
 }
 
 func parseProcesses(output string) ([]Process, error) {
@@ -364,7 +389,7 @@ func parseProcesses(output string) ([]Process, error) {
 		return nil, err
 	}
 
-	return toProcesses(inspected), nil
+	return toProcesses(inspected, nil, nil), nil
 }
 
 func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
@@ -424,10 +449,42 @@ func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
 	return processes, nil
 }
 
-func toProcesses(inspected []inspectedProcess) []Process {
+func toProcesses(inspected []inspectedProcess, stored []Definition, matchedStoredCounts map[string]int) []Process {
 	processes := make([]Process, 0, len(inspected))
 	for _, process := range inspected {
 		processes = append(processes, process.Process)
+	}
+	if len(stored) == 0 {
+		return processes
+	}
+
+	virtualID := -1
+	remainingMatches := cloneDefinitionCounts(matchedStoredCounts)
+	for _, definition := range stored {
+		key := definitionKey(definition)
+		if remainingMatches[key] > 0 {
+			remainingMatches[key]--
+			continue
+		}
+		if !definition.ManuallyStopped {
+			continue
+		}
+
+		name := strings.TrimSpace(definition.Name)
+		if name == "" {
+			name = strings.TrimSpace(definition.ScriptPath)
+		}
+		if name == "" {
+			name = fmt.Sprintf("Process %d", virtualID)
+		}
+		processes = append(processes, Process{
+			ID:               virtualID,
+			Name:             name,
+			Status:           "stopped",
+			ScriptPath:       strings.TrimSpace(definition.ScriptPath),
+			WorkingDirectory: strings.TrimSpace(definition.WorkingDirectory),
+		})
+		virtualID--
 	}
 
 	return processes
@@ -442,17 +499,24 @@ func isModuleProcess(process rawProcess) bool {
 	return strings.Contains(scriptPath, "/.pm2/modules/")
 }
 
-func (s *Service) runProcessAction(ctx context.Context, action string, processID int) ([]Process, error) {
+func (s *Service) runProcessAction(ctx context.Context, action string, processID int, update definitionUpdate) ([]Process, error) {
 	pm2Path, installed := detectPM2Binary()
 	if !installed {
 		return nil, errors.New("PM2 is not installed")
+	}
+
+	target, err := s.inspectProcess(ctx, pm2Path, processID)
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, action, strconv.Itoa(processID)); err != nil {
 		return nil, err
 	}
 
-	return s.refresh(ctx, pm2Path)
+	return s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
+		definitionKey(target.Definition): {update},
+	})
 }
 
 func (s *Service) inspectProcesses(ctx context.Context, pm2Path string) ([]inspectedProcess, error) {
@@ -464,13 +528,18 @@ func (s *Service) inspectProcesses(ctx context.Context, pm2Path string) ([]inspe
 	return parseInspectedProcesses(output)
 }
 
-func (s *Service) refresh(ctx context.Context, pm2Path string) ([]Process, error) {
+func (s *Service) refresh(ctx context.Context, pm2Path string, updates map[string][]definitionUpdate) ([]Process, error) {
+	storedDefinitions, err := s.loadDefinitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	inspected, err := s.inspectProcesses(ctx, pm2Path)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.persistInspected(ctx, inspected)
+	return s.persistDefinitions(ctx, storedDefinitions, inspected, updates)
 }
 
 func (s *Service) loadDefinitions(ctx context.Context) ([]Definition, error) {
@@ -486,14 +555,9 @@ func (s *Service) loadDefinitions(ctx context.Context) ([]Definition, error) {
 	return definitions, nil
 }
 
-func (s *Service) replaceDefinitions(ctx context.Context, inspected []inspectedProcess) error {
+func (s *Service) replaceDefinitions(ctx context.Context, definitions []Definition) error {
 	if s.store == nil {
 		return nil
-	}
-
-	definitions := make([]Definition, 0, len(inspected))
-	for _, process := range inspected {
-		definitions = append(definitions, process.Definition)
 	}
 
 	if err := s.store.Replace(ctx, definitions); err != nil {
@@ -503,12 +567,16 @@ func (s *Service) replaceDefinitions(ctx context.Context, inspected []inspectedP
 	return nil
 }
 
-func (s *Service) persistInspected(ctx context.Context, inspected []inspectedProcess) ([]Process, error) {
-	if err := s.replaceDefinitions(ctx, inspected); err != nil {
+func (s *Service) persistDefinitions(ctx context.Context, stored []Definition, inspected []inspectedProcess, updates map[string][]definitionUpdate) ([]Process, error) {
+	matchedStoredCounts := preserveStoredDefinitionState(inspected, stored)
+	definitions := mergeDefinitions(stored, inspected, cloneDefinitionCounts(matchedStoredCounts), updates)
+	processes := toProcesses(inspected, definitions, cloneDefinitionCounts(matchedStoredCounts))
+
+	if err := s.replaceDefinitions(ctx, definitions); err != nil {
 		return nil, err
 	}
 
-	return toProcesses(inspected), nil
+	return processes, nil
 }
 
 func missingDefinitions(stored []Definition, inspected []inspectedProcess) []Definition {
@@ -528,6 +596,9 @@ func missingDefinitions(stored []Definition, inspected []inspectedProcess) []Def
 			liveCounts[key]--
 			continue
 		}
+		if definition.ManuallyStopped {
+			continue
+		}
 		missing = append(missing, definition)
 	}
 
@@ -536,6 +607,100 @@ func missingDefinitions(stored []Definition, inspected []inspectedProcess) []Def
 
 func definitionKey(definition Definition) string {
 	return strings.TrimSpace(definition.Name) + "\x00" + strings.TrimSpace(definition.ScriptPath) + "\x00" + strings.TrimSpace(definition.WorkingDirectory)
+}
+
+func preserveStoredDefinitionState(inspected []inspectedProcess, stored []Definition) map[string]int {
+	if len(inspected) == 0 || len(stored) == 0 {
+		return nil
+	}
+
+	storedQueues := make(map[string][]Definition, len(stored))
+	for _, definition := range stored {
+		key := definitionKey(definition)
+		storedQueues[key] = append(storedQueues[key], definition)
+	}
+
+	matchedCounts := make(map[string]int, len(inspected))
+	for i := range inspected {
+		key := definitionKey(inspected[i].Definition)
+		queue := storedQueues[key]
+		if len(queue) == 0 {
+			continue
+		}
+		inspected[i].Definition.ManuallyStopped = queue[0].ManuallyStopped
+		storedQueues[key] = queue[1:]
+		matchedCounts[key]++
+	}
+
+	return matchedCounts
+}
+
+func mergeDefinitions(stored []Definition, inspected []inspectedProcess, matchedStoredCounts map[string]int, updates map[string][]definitionUpdate) []Definition {
+	definitions := make([]Definition, 0, len(stored)+len(inspected))
+	for _, process := range inspected {
+		definition, include := applyDefinitionUpdate(process.Definition, updates)
+		if include {
+			definitions = append(definitions, definition)
+		}
+	}
+
+	for _, definition := range stored {
+		key := definitionKey(definition)
+		if matchedStoredCounts[key] > 0 {
+			matchedStoredCounts[key]--
+			continue
+		}
+		definition, include := applyDefinitionUpdate(definition, updates)
+		if include {
+			definitions = append(definitions, definition)
+		}
+	}
+
+	return definitions
+}
+
+func applyDefinitionUpdate(definition Definition, updates map[string][]definitionUpdate) (Definition, bool) {
+	if len(updates) == 0 {
+		return definition, true
+	}
+
+	key := definitionKey(definition)
+	queue := updates[key]
+	if len(queue) == 0 {
+		return definition, true
+	}
+
+	update := queue[0]
+	if len(queue) == 1 {
+		delete(updates, key)
+	} else {
+		updates[key] = queue[1:]
+	}
+	if update.remove {
+		return Definition{}, false
+	}
+	if update.manuallyStopped != nil {
+		definition.ManuallyStopped = *update.manuallyStopped
+	}
+
+	return definition, true
+}
+
+func boolPointer(value bool) *bool {
+	return &value
+}
+
+func cloneDefinitionCounts(counts map[string]int) map[string]int {
+	if len(counts) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]int, len(counts))
+	for key, count := range counts {
+		cloned[key] = count
+	}
+
+	return cloned
 }
 
 func (s *Service) createMissingProcess(ctx context.Context, pm2Path string, definition Definition) error {
@@ -556,6 +721,86 @@ func (s *Service) createMissingProcess(ctx context.Context, pm2Path string, defi
 	}
 
 	return nil
+}
+
+func (s *Service) inspectProcess(ctx context.Context, pm2Path string, processID int) (inspectedProcess, error) {
+	processes, err := s.inspectProcesses(ctx, pm2Path)
+	if err != nil {
+		return inspectedProcess{}, err
+	}
+
+	for _, process := range processes {
+		if process.ID == processID {
+			return process, nil
+		}
+	}
+
+	return inspectedProcess{}, fmt.Errorf("PM2 process %d was not found", processID)
+}
+
+func (s *Service) startStoredProcess(ctx context.Context, processID int) ([]Process, error) {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return nil, errors.New("PM2 is not installed")
+	}
+
+	definition, err := s.resolveStoredProcess(ctx, pm2Path, processID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.createMissingProcess(ctx, pm2Path, definition); err != nil {
+		return nil, err
+	}
+
+	return s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
+		definitionKey(definition): {{manuallyStopped: boolPointer(false)}},
+	})
+}
+
+func (s *Service) deleteStoredProcess(ctx context.Context, processID int) ([]Process, error) {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return nil, errors.New("PM2 is not installed")
+	}
+
+	definition, err := s.resolveStoredProcess(ctx, pm2Path, processID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
+		definitionKey(definition): {{remove: true}},
+	})
+}
+
+func (s *Service) resolveStoredProcess(ctx context.Context, pm2Path string, processID int) (Definition, error) {
+	storedDefinitions, err := s.loadDefinitions(ctx)
+	if err != nil {
+		return Definition{}, err
+	}
+	inspected, err := s.inspectProcesses(ctx, pm2Path)
+	if err != nil {
+		return Definition{}, err
+	}
+
+	matchedStoredCounts := preserveStoredDefinitionState(inspected, storedDefinitions)
+	virtualID := -1
+	for _, definition := range storedDefinitions {
+		key := definitionKey(definition)
+		if matchedStoredCounts[key] > 0 {
+			matchedStoredCounts[key]--
+			continue
+		}
+		if !definition.ManuallyStopped {
+			continue
+		}
+		if virtualID == processID {
+			return definition, nil
+		}
+		virtualID--
+	}
+
+	return Definition{}, fmt.Errorf("saved PM2 process %d was not found", processID)
 }
 
 func detectNodeBinary() (string, bool) {

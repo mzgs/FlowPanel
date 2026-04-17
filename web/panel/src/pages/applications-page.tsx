@@ -610,6 +610,10 @@ function canRestartPM2Process(process: PM2Process) {
   return status === "online" || status === "launching" || status === "waiting restart";
 }
 
+function isSavedPM2Process(process: PM2Process) {
+  return process.id < 0;
+}
+
 function getPM2PrimaryProcessAction(process: PM2Process) {
   if (canStopPM2Process(process)) {
     return {
@@ -2867,7 +2871,7 @@ export function ApplicationsPage() {
                               <div className="font-medium text-[var(--app-text)]">{process.name}</div>
                             </TableCell>
                             <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
-                              {process.id}
+                              {isSavedPM2Process(process) ? "Saved" : process.id}
                             </TableCell>
                             <TableCell className="py-3">
                               <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
@@ -2935,7 +2939,8 @@ export function ApplicationsPage() {
                                   onClick={() => {
                                     openPM2Logs(process);
                                   }}
-                                  disabled={actionsDisabled}
+                                  disabled={actionsDisabled || isSavedPM2Process(process)}
+                                  title={isSavedPM2Process(process) ? "Start the process to view logs." : undefined}
                                 >
                                   <TerminalSquare className="h-4 w-4" />
                                   Logs
