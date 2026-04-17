@@ -36,6 +36,7 @@ type Manager interface {
 	Sync(context.Context) ([]Process, error)
 	List(context.Context) ([]Process, error)
 	Logs(context.Context, int) (string, error)
+	ClearLogs(context.Context, int) error
 	CreateProcess(context.Context, CreateProcessInput) ([]Process, error)
 	StartProcess(context.Context, int) ([]Process, error)
 	StopProcess(context.Context, int) ([]Process, error)
@@ -264,6 +265,24 @@ func (s *Service) Logs(ctx context.Context, processID int) (string, error) {
 		"--nostream",
 		"--raw",
 	)
+}
+
+func (s *Service) ClearLogs(ctx context.Context, processID int) error {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return errors.New("PM2 is not installed")
+	}
+	if processID < 0 {
+		return errors.New("PM2 logs are unavailable until the saved process is started")
+	}
+	if _, err := s.inspectProcess(ctx, pm2Path, processID); err != nil {
+		return err
+	}
+	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, "flush", strconv.Itoa(processID)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) ([]Process, error) {

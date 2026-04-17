@@ -1177,6 +1177,39 @@ func (a *apiRoutes) registerPM2Routes(r chi.Router) {
 
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"output": output})
 	}))
+	r.Method(stdhttp.MethodPost, "/pm2/processes/{processID}/logs/clear", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.PM2 == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "pm2 runtime is not configured"})
+			return
+		}
+
+		processID, err := parseProcessID(r)
+		if err != nil {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		if err := a.app.PM2.ClearLogs(actionCtx, processID); err != nil {
+			a.app.Logger.Error("clear pm2 process logs failed", zap.Int("process_id", processID), zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "clear_logs", "pm2_process", strconv.Itoa(processID), fmt.Sprintf("PM2 process %d", processID), "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+
+		processLabel := fmt.Sprintf("PM2 process %d", processID)
+		if processes, err := a.app.PM2.List(actionCtx); err == nil {
+			for _, process := range processes {
+				if process.ID == processID {
+					processLabel = process.Name
+					break
+				}
+			}
+		}
+
+		a.mutationEvent(actionCtx, "runtime", "clear_logs", "pm2_process", strconv.Itoa(processID), processLabel, "succeeded", "Cleared PM2 logs.")
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+	}))
 
 	registerProcessAction := func(action, successMessage string, run func(context.Context, int) ([]pm2.Process, error)) stdhttp.HandlerFunc {
 		return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

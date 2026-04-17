@@ -35,6 +35,7 @@ import {
 } from "@/api/domains";
 import { fetchFileContent } from "@/api/files";
 import { fetchMariaDBDatabases, type MariaDBDatabase } from "@/api/mariadb";
+import { clearPM2ProcessLogs, fetchPM2ProcessLogs } from "@/api/pm2";
 import {
   fetchPHPStatus,
   installPHP,
@@ -64,6 +65,7 @@ import {
   PlayerStop,
   RefreshCw,
   TerminalSquare,
+  Trash2,
 } from "@/components/icons/tabler-icons";
 import { DomainBackupRestoreDialog } from "@/components/domain-backup-restore-dialog";
 import {
@@ -87,6 +89,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   getDatabaseNameFromBackupRecord,
   getSiteHostnameFromBackupRecord,
@@ -834,6 +837,11 @@ export function DomainDetailPage() {
   >(
     null,
   );
+  const [nodeJSLogsOpen, setNodeJSLogsOpen] = useState(false);
+  const [nodeJSLogsOutput, setNodeJSLogsOutput] = useState("");
+  const [nodeJSLogsLoading, setNodeJSLogsLoading] = useState(false);
+  const [nodeJSLogsClearing, setNodeJSLogsClearing] = useState(false);
+  const [nodeJSLogsError, setNodeJSLogsError] = useState<string | null>(null);
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [phpVersion, setPHPVersion] = useState("");
   const [savedPHPVersion, setSavedPHPVersion] = useState("");
@@ -870,6 +878,7 @@ export function DomainDetailPage() {
   >(null);
   const createdBackupTimeoutRef = useRef<number | null>(null);
   const restoredBackupTimeoutRef = useRef<number | null>(null);
+  const nodeJSLogsRequestRef = useRef(0);
   const wordPressDetailsRequestRef = useRef(0);
   const siteUrl = domain ? getDomainSiteUrl(domain.hostname) : "";
   const wordPressDetailSection =
@@ -935,6 +944,12 @@ export function DomainDetailPage() {
     setNodeJSLoading(false);
     setNodeJSError(null);
     setNodeJSAction(null);
+    setNodeJSLogsOpen(false);
+    setNodeJSLogsOutput("");
+    setNodeJSLogsLoading(false);
+    setNodeJSLogsClearing(false);
+    setNodeJSLogsError(null);
+    nodeJSLogsRequestRef.current += 1;
     setPHPStatus(null);
     setPHPVersion("");
     setSavedPHPVersion("");
@@ -1102,6 +1117,12 @@ export function DomainDetailPage() {
       setNodeJSLoading(false);
       setNodeJSError(null);
       setNodeJSAction(null);
+      setNodeJSLogsOpen(false);
+      setNodeJSLogsOutput("");
+      setNodeJSLogsLoading(false);
+      setNodeJSLogsClearing(false);
+      setNodeJSLogsError(null);
+      nodeJSLogsRequestRef.current += 1;
       return;
     }
 
@@ -1308,7 +1329,114 @@ export function DomainDetailPage() {
   const nodeJSToggleDisabled = nodeJSRunning
     ? nodeJSStopDisabled
     : nodeJSStartDisabled;
+  const nodeJSLogsProcess =
+    nodeJSStatus?.process && nodeJSStatus.process.id >= 0
+      ? nodeJSStatus.process
+      : null;
+  const nodeJSLogsDisabled =
+    nodeJSLoading || nodeJSAction !== null || nodeJSLogsProcess === null;
+  const nodeJSLogsLineCount = nodeJSLogsOutput
+    ? nodeJSLogsOutput.split(/\r?\n/).length
+    : 0;
   const activeDevToolActions = getActiveDevToolActions(domain?.kind);
+
+  async function loadNodeJSLogs(processID: number, processName: string) {
+    const requestID = nodeJSLogsRequestRef.current + 1;
+    nodeJSLogsRequestRef.current = requestID;
+    setNodeJSLogsLoading(true);
+    setNodeJSLogsError(null);
+
+    try {
+      const output = await fetchPM2ProcessLogs(processID);
+      if (nodeJSLogsRequestRef.current !== requestID) {
+        return;
+      }
+
+      setNodeJSLogsOutput(output.trim());
+    } catch (error) {
+      if (nodeJSLogsRequestRef.current !== requestID) {
+        return;
+      }
+
+      setNodeJSLogsOutput("");
+      setNodeJSLogsError(
+        getErrorMessage(error, `Failed to load logs for ${processName}.`),
+      );
+    } finally {
+      if (nodeJSLogsRequestRef.current === requestID) {
+        setNodeJSLogsLoading(false);
+      }
+    }
+  }
+
+  async function handleClearNodeJSLogs() {
+    if (nodeJSLogsProcess === null || nodeJSLogsLoading || nodeJSLogsClearing) {
+      return;
+    }
+
+    const requestID = nodeJSLogsRequestRef.current + 1;
+    nodeJSLogsRequestRef.current = requestID;
+    setNodeJSLogsClearing(true);
+    setNodeJSLogsError(null);
+
+    try {
+      await clearPM2ProcessLogs(nodeJSLogsProcess.id);
+      if (nodeJSLogsRequestRef.current !== requestID) {
+        return;
+      }
+
+      setNodeJSLogsOutput("");
+      toast.success("PM2 logs cleared.");
+    } catch (error) {
+      if (nodeJSLogsRequestRef.current !== requestID) {
+        return;
+      }
+
+      setNodeJSLogsError(
+        getErrorMessage(
+          error,
+          `Failed to clear logs for ${nodeJSLogsProcess.name}.`,
+        ),
+      );
+      toast.error(
+        getErrorMessage(
+          error,
+          `Failed to clear logs for ${nodeJSLogsProcess.name}.`,
+        ),
+      );
+    } finally {
+      if (nodeJSLogsRequestRef.current === requestID) {
+        setNodeJSLogsLoading(false);
+        setNodeJSLogsClearing(false);
+      }
+    }
+  }
+
+  function handleNodeJSLogsOpenChange(open: boolean) {
+    setNodeJSLogsOpen(open);
+    if (open) {
+      return;
+    }
+
+    nodeJSLogsRequestRef.current += 1;
+    setNodeJSLogsOutput("");
+    setNodeJSLogsLoading(false);
+    setNodeJSLogsClearing(false);
+    setNodeJSLogsError(null);
+  }
+
+  function openNodeJSLogs() {
+    if (nodeJSLogsProcess === null) {
+      return;
+    }
+
+    setNodeJSLogsOpen(true);
+    setNodeJSLogsOutput("");
+    setNodeJSLogsLoading(true);
+    setNodeJSLogsClearing(false);
+    setNodeJSLogsError(null);
+    void loadNodeJSLogs(nodeJSLogsProcess.id, nodeJSLogsProcess.name);
+  }
 
   useEffect(() => {
     if (!websiteCopyDialogOpen) {
@@ -2290,6 +2418,142 @@ export function DomainDetailPage() {
           />
         </DialogContent>
       </Dialog>
+      <Dialog open={nodeJSLogsOpen} onOpenChange={handleNodeJSLogsOpenChange}>
+        <DialogContent className="h-[min(80vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
+          <DialogHeader className="gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <DialogTitle>
+                  {nodeJSLogsProcess ? `${nodeJSLogsProcess.name} logs` : "PM2 logs"}
+                </DialogTitle>
+                <DialogDescription>
+                  {nodeJSLogsProcess
+                    ? `pm2 logs ${nodeJSLogsProcess.id} --lines 200 --nostream --raw`
+                    : "Recent PM2 output for the domain Node.js process."}
+                </DialogDescription>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {nodeJSLogsOutput ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                    onClick={() => {
+                      if (!nodeJSLogsOutput) {
+                        return;
+                      }
+
+                      void navigator.clipboard.writeText(nodeJSLogsOutput).then(
+                        () => {
+                          toast.success("PM2 logs copied.");
+                        },
+                        () => {
+                          toast.error("Failed to copy PM2 logs.");
+                        },
+                      );
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                    Copy logs
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                  onClick={() => {
+                    void handleClearNodeJSLogs();
+                  }}
+                  disabled={
+                    nodeJSLogsClearing ||
+                    nodeJSLogsLoading ||
+                    nodeJSLogsProcess === null
+                  }
+                >
+                  {nodeJSLogsClearing ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  Clear logs
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                  onClick={() => {
+                    if (nodeJSLogsProcess) {
+                      void loadNodeJSLogs(
+                        nodeJSLogsProcess.id,
+                        nodeJSLogsProcess.name,
+                      );
+                    }
+                  }}
+                  disabled={
+                    nodeJSLogsLoading ||
+                    nodeJSLogsClearing ||
+                    nodeJSLogsProcess === null
+                  }
+                >
+                  {nodeJSLogsLoading ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  Refresh
+                </Button>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+            <div className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-4 text-sm text-[var(--app-text-muted)]">
+              {nodeJSLogsProcess ? (
+                <>
+                  <span className="font-medium text-[var(--app-text)]">
+                    {nodeJSLogsProcess.name}
+                  </span>
+                  {" • "}
+                  {nodeJSLogsLineCount > 0
+                    ? `${nodeJSLogsLineCount} ${nodeJSLogsLineCount === 1 ? "line" : "lines"}`
+                    : "No captured output"}
+                </>
+              ) : (
+                "Start the Node.js process to load PM2 logs."
+              )}
+            </div>
+
+            {nodeJSLogsError ? (
+              <div className="flex h-full items-center justify-center p-5 sm:p-6">
+                <div className="max-w-xl rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
+                  {nodeJSLogsError}
+                </div>
+              </div>
+            ) : nodeJSLogsLoading ? (
+              <div className="flex h-full items-center justify-center gap-2 px-5 text-sm text-[var(--app-text-muted)] sm:px-6">
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                Loading PM2 logs...
+              </div>
+            ) : nodeJSLogsOutput ? (
+              <ScrollArea className="min-h-0 flex-1 bg-[var(--app-surface)]">
+                <pre className="p-5 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)] sm:p-6">
+                  {nodeJSLogsOutput}
+                </pre>
+              </ScrollArea>
+            ) : (
+              <div className="flex h-full items-center justify-center px-5 text-sm text-[var(--app-text-muted)] sm:px-6">
+                {nodeJSLogsProcess
+                  ? "No log output returned for this process."
+                  : "Start the Node.js process to load PM2 logs."}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       <PageHeader
         title={
           loading ? (
@@ -2498,24 +2762,42 @@ export function DomainDetailPage() {
                         </span>
                       </div>
                       <div className="shrink-0">
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-8 gap-1.5 px-3 text-xs"
-                          onClick={() => {
-                            void handleNodeJSAction(nodeJSToggleAction);
-                          }}
-                          disabled={nodeJSToggleDisabled}
-                        >
-                          {nodeJSAction === nodeJSToggleAction ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : nodeJSRunning ? (
-                            <PlayerStop className="h-4 w-4" />
-                          ) : (
-                            <PlayerPlay className="h-4 w-4" />
-                          )}
-                          {nodeJSRunning ? "Stop" : "Start"}
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5 px-3 text-xs"
+                            onClick={openNodeJSLogs}
+                            disabled={nodeJSLogsDisabled}
+                            title={
+                              nodeJSLogsProcess === null
+                                ? "Start the Node.js process to view PM2 logs."
+                                : undefined
+                            }
+                          >
+                            <TerminalSquare className="h-4 w-4" />
+                            PM2 Logs
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-8 gap-1.5 px-3 text-xs"
+                            onClick={() => {
+                              void handleNodeJSAction(nodeJSToggleAction);
+                            }}
+                            disabled={nodeJSToggleDisabled}
+                          >
+                            {nodeJSAction === nodeJSToggleAction ? (
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            ) : nodeJSRunning ? (
+                              <PlayerStop className="h-4 w-4" />
+                            ) : (
+                              <PlayerPlay className="h-4 w-4" />
+                            )}
+                            {nodeJSRunning ? "Stop" : "Start"}
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </section>

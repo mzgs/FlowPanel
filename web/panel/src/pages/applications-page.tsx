@@ -22,6 +22,7 @@ import {
   type NodeJSStatus,
 } from "@/api/nodejs";
 import {
+  clearPM2ProcessLogs,
   createPM2Process,
   deletePM2Process,
   fetchPM2ProcessLogs,
@@ -1472,6 +1473,7 @@ export function ApplicationsPage() {
   const [pm2LogsTarget, setPM2LogsTarget] = useState<PM2Process | null>(null);
   const [pm2LogsOutput, setPM2LogsOutput] = useState("");
   const [pm2LogsLoading, setPM2LogsLoading] = useState(false);
+  const [pm2LogsClearing, setPM2LogsClearing] = useState(false);
   const [pm2LogsError, setPM2LogsError] = useState<string | null>(null);
   const [pm2DeleteCandidate, setPM2DeleteCandidate] = useState<RemovablePM2Process | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
@@ -1493,6 +1495,7 @@ export function ApplicationsPage() {
   function resetPM2LogsState() {
     pm2LogsRequestIdRef.current += 1;
     setPM2LogsLoading(false);
+    setPM2LogsClearing(false);
     setPM2LogsError(null);
     setPM2LogsOutput("");
   }
@@ -1625,6 +1628,40 @@ export function ApplicationsPage() {
     } finally {
       if (pm2LogsRequestIdRef.current === requestId) {
         setPM2LogsLoading(false);
+      }
+    }
+  }
+
+  async function handlePM2ClearLogs(process: PM2Process) {
+    if (pm2LogsLoading || pm2LogsClearing) {
+      return;
+    }
+
+    const requestId = pm2LogsRequestIdRef.current + 1;
+    pm2LogsRequestIdRef.current = requestId;
+    setPM2LogsClearing(true);
+    setPM2LogsError(null);
+
+    try {
+      await clearPM2ProcessLogs(process.id);
+      if (pm2LogsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2LogsOutput("");
+      toast.success("PM2 logs cleared.");
+    } catch (error) {
+      if (pm2LogsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const message = getErrorMessage(error, `Failed to clear logs for ${process.name}.`);
+      setPM2LogsError(message);
+      toast.error(message);
+    } finally {
+      if (pm2LogsRequestIdRef.current === requestId) {
+        setPM2LogsLoading(false);
+        setPM2LogsClearing(false);
       }
     }
   }
@@ -2123,7 +2160,7 @@ export function ApplicationsPage() {
     }
 
     const intervalId = window.setInterval(() => {
-      if (pm2LogsLoading || pm2ProcessesBusy) {
+      if (pm2LogsLoading || pm2LogsClearing || pm2ProcessesBusy) {
         return;
       }
 
@@ -2133,7 +2170,7 @@ export function ApplicationsPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [pm2LogsOpen, pm2LogsTarget, pm2LogsLoading, pm2ProcessesBusy, pm2Status?.installed]);
+  }, [pm2LogsOpen, pm2LogsTarget, pm2LogsLoading, pm2LogsClearing, pm2ProcessesBusy, pm2Status?.installed]);
 
   useEffect(() => {
     if (!pm2ListOpen || pm2Status === null || pm2Status.installed) {
@@ -3116,10 +3153,25 @@ export function ApplicationsPage() {
                   className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
                   onClick={() => {
                     if (pm2LogsTarget) {
+                      void handlePM2ClearLogs(pm2LogsTarget);
+                    }
+                  }}
+                  disabled={pm2LogsLoading || pm2LogsClearing || pm2LogsTarget === null}
+                >
+                  {pm2LogsClearing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Clear logs
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                  onClick={() => {
+                    if (pm2LogsTarget) {
                       void loadPM2Logs(pm2LogsTarget);
                     }
                   }}
-                  disabled={pm2LogsLoading || pm2LogsTarget === null}
+                  disabled={pm2LogsLoading || pm2LogsClearing || pm2LogsTarget === null}
                 >
                   {pm2LogsLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                   Refresh

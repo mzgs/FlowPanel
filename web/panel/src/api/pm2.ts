@@ -108,6 +108,15 @@ export async function fetchPM2ProcessLogs(processID: number): Promise<string> {
   return payload.output;
 }
 
+export async function clearPM2ProcessLogs(processID: number): Promise<void> {
+  const response = await fetch(`/api/pm2/processes/${processID}/logs/clear`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  await parsePM2Response<{ ok: boolean }>(response);
+}
+
 async function runPM2ProcessAction(processID: number, action: "start" | "stop" | "restart" | "delete"): Promise<PM2Process[]> {
   const response = await fetch(`/api/pm2/processes/${processID}/${action}`, {
     method: "POST",
