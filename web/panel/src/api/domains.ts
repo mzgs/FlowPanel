@@ -1,5 +1,6 @@
 import { type PHPSettings } from "@/api/php";
 import { type WordPressStatus } from "@/api/domain-wordpress";
+import { type PM2Process } from "@/api/pm2";
 
 export type DomainKind =
   | "Static site"
@@ -12,6 +13,7 @@ export type DomainRecord = {
   hostname: string;
   kind: DomainKind;
   target: string;
+  nodejs_script_path?: string;
   php_version?: string;
   php_settings: PHPSettings;
   github_integration?: DomainGitHubIntegration | null;
@@ -47,6 +49,7 @@ export type CreateDomainInput = {
   hostname: string;
   kind: DomainKind;
   target?: string;
+  nodejs_script_path?: string;
   cache_enabled: boolean;
 };
 
@@ -54,7 +57,18 @@ export type UpdateDomainInput = {
   hostname: string;
   kind: DomainKind;
   target?: string;
+  nodejs_script_path?: string;
   cache_enabled: boolean;
+};
+
+export type DomainNodeJSStatus = {
+  supported: boolean;
+  configured: boolean;
+  pm2_installed: boolean;
+  script_path: string;
+  working_directory: string;
+  process: PM2Process | null;
+  message: string;
 };
 
 export type UpdateDomainGitHubIntegrationInput = {
@@ -130,6 +144,10 @@ export type UpdateDomainFTPInput = {
   username: string;
   enabled: boolean;
   password?: string;
+};
+
+type DomainNodeJSStatusPayload = {
+  nodejs: DomainNodeJSStatus;
 };
 
 export async function fetchDomains(): Promise<DomainsPayload> {
@@ -245,6 +263,53 @@ export async function fetchDomainFTPStatus(
 
   const payload = (await response.json()) as { ftp: DomainFTPStatus };
   return payload.ftp;
+}
+
+export async function fetchDomainNodeJSStatus(
+  hostname: string,
+): Promise<DomainNodeJSStatus> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/nodejs`,
+    {
+      credentials: "include",
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "load domain nodejs status");
+  }
+
+  const payload = (await response.json()) as DomainNodeJSStatusPayload;
+  return payload.nodejs;
+}
+
+async function mutateDomainNodeJS(
+  hostname: string,
+  action: "start" | "stop",
+): Promise<DomainNodeJSStatus> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/nodejs/${action}`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, `${action} domain nodejs`);
+  }
+
+  const payload = (await response.json()) as DomainNodeJSStatusPayload;
+  return payload.nodejs;
+}
+
+export function startDomainNodeJS(hostname: string): Promise<DomainNodeJSStatus> {
+  return mutateDomainNodeJS(hostname, "start");
+}
+
+export function stopDomainNodeJS(hostname: string): Promise<DomainNodeJSStatus> {
+  return mutateDomainNodeJS(hostname, "stop");
 }
 
 export async function updateDomainFTP(

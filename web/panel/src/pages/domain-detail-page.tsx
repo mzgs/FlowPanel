@@ -19,9 +19,13 @@ import {
 import {
   copyDomainWebsite,
   deployDomainGitHubIntegration,
+  fetchDomainNodeJSStatus,
   fetchDomainPreview,
   fetchDomains,
   getDomainSiteUrl,
+  startDomainNodeJS,
+  stopDomainNodeJS,
+  type DomainNodeJSStatus,
   type InstallDomainTemplateResult,
   updateDomainPHPSettings,
   type DomainApiError,
@@ -55,6 +59,8 @@ import {
   LoaderCircle,
   Monitor,
   Package,
+  PlayerPlay,
+  PlayerStop,
   RefreshCw,
   TerminalSquare,
 } from "@/components/icons/tabler-icons";
@@ -274,6 +280,62 @@ function isPHPActionState(state?: string | null) {
     state === "stopping" ||
     state === "restarting"
   );
+}
+
+function isNodeJSProcessRunning(status: DomainNodeJSStatus | null) {
+  const processStatus = status?.process?.status?.trim().toLowerCase();
+  return (
+    processStatus === "online" ||
+    processStatus === "launching" ||
+    processStatus === "waiting restart"
+  );
+}
+
+function canStartNodeJSDomain(status: DomainNodeJSStatus | null) {
+  if (!status?.supported || !status.configured || !status.pm2_installed) {
+    return false;
+  }
+
+  return !isNodeJSProcessRunning(status);
+}
+
+function canStopNodeJSDomain(status: DomainNodeJSStatus | null) {
+  if (!status?.process || status.process.id < 0) {
+    return false;
+  }
+
+  return isNodeJSProcessRunning(status);
+}
+
+function getNodeJSDomainBadge(status: DomainNodeJSStatus | null) {
+  if (!status) {
+    return "Loading";
+  }
+  if (!status.supported) {
+    return "Unavailable";
+  }
+  if (!status.configured) {
+    return "Not configured";
+  }
+  if (!status.pm2_installed) {
+    return "PM2 required";
+  }
+  if (!status.process) {
+    return "Not started";
+  }
+  if (isNodeJSProcessRunning(status)) {
+    return "Running";
+  }
+
+  return status.process.status || "Stopped";
+}
+
+function getNodeJSPortFromTarget(target: string) {
+  try {
+    return new URL(target).port || "80";
+  } catch {
+    return "";
+  }
 }
 
 type ActionIcon = ComponentType<{
@@ -744,6 +806,14 @@ export function DomainDetailPage() {
   );
   const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
+  const [nodeJSStatus, setNodeJSStatus] = useState<DomainNodeJSStatus | null>(
+    null,
+  );
+  const [nodeJSLoading, setNodeJSLoading] = useState(false);
+  const [nodeJSError, setNodeJSError] = useState<string | null>(null);
+  const [nodeJSAction, setNodeJSAction] = useState<"start" | "stop" | null>(
+    null,
+  );
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [phpVersion, setPHPVersion] = useState("");
   const [savedPHPVersion, setSavedPHPVersion] = useState("");
@@ -841,6 +911,10 @@ export function DomainDetailPage() {
     setPreviewErrorMessage(null);
     setPreviewRefreshing(false);
     setPreviewRefreshToken(0);
+    setNodeJSStatus(null);
+    setNodeJSLoading(false);
+    setNodeJSError(null);
+    setNodeJSAction(null);
     setPHPStatus(null);
     setPHPVersion("");
     setSavedPHPVersion("");
@@ -1003,6 +1077,50 @@ export function DomainDetailPage() {
   }, [domain?.hostname, previewRefreshToken]);
 
   useEffect(() => {
+    if (!domain || domain.kind !== "Node.js") {
+      setNodeJSStatus(null);
+      setNodeJSLoading(false);
+      setNodeJSError(null);
+      setNodeJSAction(null);
+      return;
+    }
+
+    let active = true;
+    setNodeJSLoading(true);
+    setNodeJSError(null);
+
+    async function loadNodeJSStatus() {
+      try {
+        const nextStatus = await fetchDomainNodeJSStatus(domain.hostname);
+        if (!active) {
+          return;
+        }
+
+        setNodeJSStatus(nextStatus);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setNodeJSStatus(null);
+        setNodeJSError(
+          getErrorMessage(error, "Failed to load the Node.js runtime status."),
+        );
+      } finally {
+        if (active) {
+          setNodeJSLoading(false);
+        }
+      }
+    }
+
+    void loadNodeJSStatus();
+
+    return () => {
+      active = false;
+    };
+  }, [domain?.hostname, domain?.kind]);
+
+  useEffect(() => {
     return () => {
       if (createdBackupTimeoutRef.current !== null) {
         window.clearTimeout(createdBackupTimeoutRef.current);
@@ -1155,6 +1273,12 @@ export function DomainDetailPage() {
   const websiteCopyTargets = allDomains.filter(
     (record) => record.hostname !== domain?.hostname,
   );
+  const nodeJSPort = domain?.kind === "Node.js" ? getNodeJSPortFromTarget(domain.target) : "";
+  const nodeJSRunning = isNodeJSProcessRunning(nodeJSStatus);
+  const nodeJSStartDisabled =
+    nodeJSLoading || nodeJSAction !== null || !canStartNodeJSDomain(nodeJSStatus);
+  const nodeJSStopDisabled =
+    nodeJSLoading || nodeJSAction !== null || !canStopNodeJSDomain(nodeJSStatus);
   const activeDevToolActions =
     domain?.kind === "Php site"
       ? devToolActions
@@ -1657,6 +1781,39 @@ export function DomainDetailPage() {
       toast.error(message);
     } finally {
       setWebsiteCopyPending(false);
+    }
+  }
+
+  async function handleNodeJSAction(action: "start" | "stop") {
+    if (!domain || domain.kind !== "Node.js" || nodeJSAction !== null) {
+      return;
+    }
+
+    setNodeJSAction(action);
+    setNodeJSError(null);
+
+    try {
+      const nextStatus =
+        action === "start"
+          ? await startDomainNodeJS(domain.hostname)
+          : await stopDomainNodeJS(domain.hostname);
+      setNodeJSStatus(nextStatus);
+      toast.success(
+        action === "start"
+          ? `Started Node.js for ${domain.hostname}.`
+          : `Stopped Node.js for ${domain.hostname}.`,
+      );
+    } catch (error) {
+      const message = getErrorMessage(
+        error,
+        action === "start"
+          ? "Failed to start the Node.js app."
+          : "Failed to stop the Node.js app.",
+      );
+      setNodeJSError(message);
+      toast.error(message);
+    } finally {
+      setNodeJSAction(null);
     }
   }
 
@@ -2257,6 +2414,89 @@ export function DomainDetailPage() {
                 </section>
               </aside>
               <div className="space-y-4">
+                {domain?.kind === "Node.js" ? (
+                  <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-5 shadow-[var(--app-shadow)]">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="text-base font-semibold text-[var(--app-text)]">
+                            Node.js Runtime
+                          </h2>
+                          <Badge variant="outline" className="rounded-full">
+                            {getNodeJSDomainBadge(nodeJSStatus)}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-[var(--app-text-muted)]">
+                          {nodeJSLoading
+                            ? "Loading the PM2 status for this domain..."
+                            : nodeJSError ??
+                              nodeJSStatus?.message ??
+                              "Node.js runtime status is unavailable."}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            void handleNodeJSAction("start");
+                          }}
+                          disabled={nodeJSStartDisabled}
+                        >
+                          {nodeJSAction === "start" ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <PlayerPlay className="h-4 w-4" />
+                          )}
+                          {nodeJSRunning ? "Running" : "Start"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            void handleNodeJSAction("stop");
+                          }}
+                          disabled={nodeJSStopDisabled}
+                        >
+                          {nodeJSAction === "stop" ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <PlayerStop className="h-4 w-4" />
+                          )}
+                          Stop
+                        </Button>
+                      </div>
+                    </div>
+
+                    <dl className="mt-4 grid gap-4 text-sm md:grid-cols-3">
+                      <div className="space-y-1">
+                        <dt className="text-[var(--app-text-muted)]">Port</dt>
+                        <dd className="font-mono text-[var(--app-text)]">
+                          {nodeJSPort || "-"}
+                        </dd>
+                      </div>
+                      <div className="space-y-1">
+                        <dt className="text-[var(--app-text-muted)]">
+                          Script path
+                        </dt>
+                        <dd className="font-mono text-[var(--app-text)]">
+                          {nodeJSStatus?.script_path ||
+                            domain.nodejs_script_path ||
+                            "-"}
+                        </dd>
+                      </div>
+                      <div className="space-y-1">
+                        <dt className="text-[var(--app-text-muted)]">
+                          Working directory
+                        </dt>
+                        <dd className="break-all font-mono text-[var(--app-text)]">
+                          {nodeJSStatus?.working_directory ||
+                            documentRootDisplayPath ||
+                            "-"}
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
+                ) : null}
                 <DomainActionSection
                   title="Files & Databases"
                   items={fileAndDatabaseActions}

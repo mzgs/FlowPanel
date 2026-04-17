@@ -43,6 +43,7 @@ type Record struct {
 	Hostname     string             `json:"hostname"`
 	Kind         Kind               `json:"kind"`
 	Target       string             `json:"target"`
+	NodeJSScript string             `json:"nodejs_script_path,omitempty"`
 	PHPVersion   string             `json:"php_version,omitempty"`
 	PHPSettings  phpenv.Settings    `json:"php_settings"`
 	Logs         LogPaths           `json:"logs"`
@@ -72,6 +73,7 @@ type CreateInput struct {
 	Hostname     string `json:"hostname"`
 	Kind         Kind   `json:"kind"`
 	Target       string `json:"target"`
+	NodeJSScript string `json:"nodejs_script_path"`
 	CacheEnabled bool   `json:"cache_enabled"`
 }
 
@@ -79,6 +81,7 @@ type UpdateInput struct {
 	Hostname     string `json:"hostname"`
 	Kind         Kind   `json:"kind"`
 	Target       string `json:"target"`
+	NodeJSScript string `json:"nodejs_script_path"`
 	CacheEnabled bool   `json:"cache_enabled"`
 }
 
@@ -285,7 +288,7 @@ func (s *Service) Delete(ctx context.Context, id string) (Record, bool, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
-	hostname, kind, target, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target)
+	hostname, kind, target, nodeJSScript, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target, input.NodeJSScript)
 	if err != nil {
 		return Record{}, err
 	}
@@ -309,6 +312,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		Hostname:     hostname,
 		Kind:         kind,
 		Target:       resolvedTarget,
+		NodeJSScript: nodeJSScript,
 		CacheEnabled: input.CacheEnabled,
 		CreatedAt:    time.Now().UTC(),
 	}
@@ -326,7 +330,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 }
 
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Record, Record, error) {
-	hostname, kind, target, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target)
+	hostname, kind, target, nodeJSScript, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target, input.NodeJSScript)
 	if err != nil {
 		return Record{}, Record{}, err
 	}
@@ -353,6 +357,7 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 	updated := current
 	updated.Kind = kind
 	updated.Target = resolvedTarget
+	updated.NodeJSScript = nodeJSScript
 	updated.CacheEnabled = input.CacheEnabled
 	updated = s.withTransientFields(updated)
 
@@ -372,6 +377,7 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 	defer s.mu.Unlock()
 
 	record.Kind, record.Target = normalizePersistedKindAndTarget(record.Kind, record.Target)
+	record.NodeJSScript = normalizePersistedNodeJSScript(record.Kind, record.NodeJSScript)
 	record = s.withTransientFields(record)
 
 	index, _, exists := s.findRecordLocked(record.ID)
@@ -490,9 +496,10 @@ func validateTarget(kind Kind, value string) string {
 	return ""
 }
 
-func normalizeAndValidateInput(hostname string, kind Kind, target string) (string, Kind, string, error) {
+func normalizeAndValidateInput(hostname string, kind Kind, target string, nodeJSScript string) (string, Kind, string, string, error) {
 	normalizedHostname := normalizeHostname(hostname)
 	normalizedKind, trimmedTarget := normalizePersistedKindAndTarget(kind, target)
+	normalizedNodeJSScript := normalizePersistedNodeJSScript(normalizedKind, nodeJSScript)
 
 	validation := ValidationErrors{}
 
@@ -509,12 +516,17 @@ func normalizeAndValidateInput(hostname string, kind Kind, target string) (strin
 			validation["target"] = message
 		}
 	}
-
-	if len(validation) > 0 {
-		return "", "", "", validation
+	if normalizedKind == KindNodeJS {
+		if message := validateNodeJSScript(normalizedNodeJSScript); message != "" {
+			validation["nodejs_script_path"] = message
+		}
 	}
 
-	return normalizedHostname, normalizedKind, trimmedTarget, nil
+	if len(validation) > 0 {
+		return "", "", "", "", validation
+	}
+
+	return normalizedHostname, normalizedKind, trimmedTarget, normalizedNodeJSScript, nil
 }
 
 func (s *Service) findRecordLocked(id string) (int, Record, bool) {
@@ -732,6 +744,43 @@ func normalizePersistedKindAndTarget(kind Kind, target string) (Kind, string) {
 	return KindReverseProxy, fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
+func validateNodeJSScript(value string) string {
+	if value == "" {
+		return "Script path is required."
+	}
+
+	return ""
+}
+
+func normalizePersistedNodeJSScript(kind Kind, value string) string {
+	if kind != KindNodeJS {
+		return ""
+	}
+
+	return normalizeNodeJSScript(value)
+}
+
+func normalizeNodeJSScript(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := filepath.ToSlash(filepath.Clean(trimmed))
+	switch normalized {
+	case ".", "/", "":
+		return ""
+	}
+	if normalized == ".." || strings.HasPrefix(normalized, "../") {
+		return ""
+	}
+	if strings.HasPrefix(normalized, "/") {
+		return ""
+	}
+
+	return normalized
+}
+
 func normalizeNodeJSTarget(target string) (string, error) {
 	trimmed := strings.TrimSpace(target)
 	if trimmed == "" {
@@ -758,6 +807,33 @@ func normalizeNodeJSTarget(target string) (string, error) {
 	}
 
 	return trimmed, nil
+}
+
+func ResolveNodeJSScriptPath(basePath string, record Record) (string, error) {
+	if record.Kind != KindNodeJS {
+		return "", fmt.Errorf("unsupported domain kind %q", record.Kind)
+	}
+
+	scriptPath := normalizePersistedNodeJSScript(record.Kind, record.NodeJSScript)
+	if scriptPath == "" {
+		return "", errors.New("nodejs script path is not configured")
+	}
+
+	documentRoot, err := ResolveDocumentRoot(basePath, record)
+	if err != nil {
+		return "", err
+	}
+
+	resolved := filepath.Clean(filepath.Join(documentRoot, filepath.FromSlash(scriptPath)))
+	relativePath, err := filepath.Rel(documentRoot, resolved)
+	if err != nil {
+		return "", err
+	}
+	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return "", errors.New("nodejs script path must stay inside the domain root")
+	}
+
+	return resolved, nil
 }
 
 func (s *Service) ensureSiteRoot(hostname string) (string, error) {

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS domains (
     hostname TEXT NOT NULL UNIQUE,
     kind TEXT NOT NULL,
     target TEXT NOT NULL,
+    nodejs_script_path TEXT NOT NULL DEFAULT '',
     php_version TEXT NOT NULL DEFAULT '',
     php_settings TEXT NOT NULL DEFAULT '',
     cache_enabled INTEGER NOT NULL DEFAULT 0,
@@ -60,6 +61,11 @@ CREATE TABLE IF NOT EXISTS domains (
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domains ADD COLUMN php_version TEXT NOT NULL DEFAULT ''`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("ensure domains.php_version column: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domains ADD COLUMN nodejs_script_path TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("ensure domains.nodejs_script_path column: %w", err)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `
@@ -99,7 +105,7 @@ func (s *Store) List(ctx context.Context) ([]Record, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, hostname, kind, target, php_version, php_settings, cache_enabled, created_at
+SELECT id, hostname, kind, target, nodejs_script_path, php_version, php_settings, cache_enabled, created_at
 FROM domains
 ORDER BY created_at DESC, id DESC
 `)
@@ -113,17 +119,19 @@ ORDER BY created_at DESC, id DESC
 		var (
 			record          Record
 			kind            string
+			nodeJSScript    string
 			phpVersion      string
 			phpSettingsJSON string
 			cacheEnabledInt int64
 			createdAtUnix   int64
 		)
 
-		if err := rows.Scan(&record.ID, &record.Hostname, &kind, &record.Target, &phpVersion, &phpSettingsJSON, &cacheEnabledInt, &createdAtUnix); err != nil {
+		if err := rows.Scan(&record.ID, &record.Hostname, &kind, &record.Target, &nodeJSScript, &phpVersion, &phpSettingsJSON, &cacheEnabledInt, &createdAtUnix); err != nil {
 			return nil, fmt.Errorf("scan domain row: %w", err)
 		}
 
 		record.Kind, record.Target = normalizePersistedKindAndTarget(Kind(kind), record.Target)
+		record.NodeJSScript = normalizePersistedNodeJSScript(record.Kind, nodeJSScript)
 		record.PHPVersion = strings.TrimSpace(phpVersion)
 		record.CacheEnabled = cacheEnabledInt != 0
 		if message := validateKind(record.Kind); message != "" {
@@ -150,9 +158,9 @@ func (s *Store) Insert(ctx context.Context, record Record) error {
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO domains (id, hostname, kind, target, php_version, php_settings, cache_enabled, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-`, record.ID, record.Hostname, string(record.Kind), record.Target, record.PHPVersion, encodePHPSettings(record), boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano())
+INSERT INTO domains (id, hostname, kind, target, nodejs_script_path, php_version, php_settings, cache_enabled, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, record.ID, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano())
 	if err == nil {
 		return nil
 	}
@@ -223,9 +231,9 @@ func (s *Store) Update(ctx context.Context, record Record) error {
 
 	result, err := s.db.ExecContext(ctx, `
 UPDATE domains
-SET hostname = ?, kind = ?, target = ?, php_version = ?, php_settings = ?, cache_enabled = ?, created_at = ?
+SET hostname = ?, kind = ?, target = ?, nodejs_script_path = ?, php_version = ?, php_settings = ?, cache_enabled = ?, created_at = ?
 WHERE id = ?
-`, record.Hostname, string(record.Kind), record.Target, record.PHPVersion, encodePHPSettings(record), boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano(), record.ID)
+`, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano(), record.ID)
 	if err == nil {
 		rowsAffected, rowsErr := result.RowsAffected()
 		if rowsErr != nil {

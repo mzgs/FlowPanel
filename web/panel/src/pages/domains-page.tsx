@@ -65,6 +65,7 @@ type FormState = {
   hostname: string;
   kind: DomainKind;
   target: string;
+  nodeJSScriptPath: string;
   cacheEnabled: boolean;
 };
 
@@ -72,6 +73,7 @@ type FormErrors = {
   hostname?: string;
   kind?: string;
   target?: string;
+  nodejs_script_path?: string;
 };
 
 type FormMode = "create" | "edit";
@@ -87,6 +89,7 @@ const initialFormState: FormState = {
   hostname: "",
   kind: "Php site",
   target: "",
+  nodeJSScriptPath: "",
   cacheEnabled: false,
 };
 
@@ -238,6 +241,23 @@ function isSiteBackedKind(kind: DomainKind) {
   return kind === "Static site" || kind === "Php site";
 }
 
+function validateNodeJSScriptPath(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "Script path is required.";
+  }
+
+  const normalized = trimmed.replace(/\\/g, "/");
+  if (normalized.startsWith("/")) {
+    return "Enter a path relative to the domain root.";
+  }
+  if (normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+    return "Enter a path relative to the domain root.";
+  }
+
+  return undefined;
+}
+
 function getNodeJSPort(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -258,6 +278,10 @@ function getNodeJSPort(value: string) {
 
 function getFormTargetValue(kind: DomainKind, target: string) {
   return kind === "Node.js" ? getNodeJSPort(target) : target;
+}
+
+function getFormScriptPathValue(kind: DomainKind, scriptPath?: string) {
+  return kind === "Node.js" ? scriptPath?.trim() ?? "" : "";
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -435,6 +459,10 @@ export function DomainsPage() {
       target: isSiteBackedKind(domain.kind)
         ? ""
         : getFormTargetValue(domain.kind, domain.target),
+      nodeJSScriptPath: getFormScriptPathValue(
+        domain.kind,
+        domain.nodejs_script_path,
+      ),
       cacheEnabled: domain.cache_enabled,
     });
     setErrors({});
@@ -468,11 +496,16 @@ export function DomainsPage() {
 
     const hostname = normalizeHostname(form.hostname);
     const target = form.target.trim();
+    const nodeJSScriptPath = form.nodeJSScriptPath.trim();
     const nextErrors: FormErrors = {
       hostname: validateHostname(hostname),
       target: isSiteBackedKind(form.kind)
         ? undefined
         : validateTarget(form.kind, target),
+      nodejs_script_path:
+        form.kind === "Node.js"
+          ? validateNodeJSScriptPath(nodeJSScriptPath)
+          : undefined,
     };
 
     if (
@@ -483,7 +516,7 @@ export function DomainsPage() {
     }
 
     setErrors(nextErrors);
-    if (nextErrors.hostname || nextErrors.target) {
+    if (nextErrors.hostname || nextErrors.target || nextErrors.nodejs_script_path) {
       return;
     }
 
@@ -495,6 +528,8 @@ export function DomainsPage() {
         hostname,
         kind: form.kind,
         target: isSiteBackedKind(form.kind) ? "" : target,
+        nodejs_script_path:
+          form.kind === "Node.js" ? nodeJSScriptPath : undefined,
         cache_enabled: form.cacheEnabled,
       };
 
@@ -522,6 +557,7 @@ export function DomainsPage() {
           hostname: domainError.fieldErrors.hostname,
           kind: domainError.fieldErrors.kind,
           target: domainError.fieldErrors.target,
+          nodejs_script_path: domainError.fieldErrors.nodejs_script_path,
         });
       }
 
@@ -1212,6 +1248,7 @@ export function DomainsPage() {
                           ...current,
                           kind: undefined,
                           target: undefined,
+                          nodejs_script_path: undefined,
                         }));
                       }}
                       aria-pressed={isActive}
@@ -1294,6 +1331,49 @@ export function DomainsPage() {
                 )}
               </div>
             )}
+
+            {form.kind === "Node.js" ? (
+              <div className="space-y-2">
+                <label
+                  htmlFor="domain-nodejs-script-path"
+                  className="text-[13px] font-medium text-[var(--app-text)]"
+                >
+                  Script path
+                </label>
+                <Input
+                  id="domain-nodejs-script-path"
+                  value={form.nodeJSScriptPath}
+                  onChange={(event) => {
+                    setForm((current) => ({
+                      ...current,
+                      nodeJSScriptPath: event.target.value,
+                    }));
+                    if (errors.nodejs_script_path) {
+                      setErrors((current) => ({
+                        ...current,
+                        nodejs_script_path: undefined,
+                      }));
+                    }
+                  }}
+                  placeholder="server.js"
+                  autoComplete="off"
+                  aria-invalid={errors.nodejs_script_path ? "true" : "false"}
+                  className={
+                    errors.nodejs_script_path ? "border-[var(--app-danger)]" : ""
+                  }
+                />
+                {errors.nodejs_script_path ? (
+                  <p className="text-[12px] text-[var(--app-danger)]">
+                    {errors.nodejs_script_path}
+                  </p>
+                ) : (
+                  <p className="text-[12px] text-[var(--app-text-muted)]">
+                    Use a path relative to the domain root, for example
+                    `server.js` or `dist/index.js`.
+                  </p>
+                )}
+              </div>
+            ) : null}
 
             <div className="space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
               <div className="flex items-center justify-between gap-4">

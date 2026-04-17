@@ -21,6 +21,7 @@ import (
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/ftp"
 	"flowpanel/internal/mariadb"
+	"flowpanel/internal/pm2"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -863,6 +864,143 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"domain": record})
 	})
 
+	domainsNodeJSStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		_, status, err := loadDomainNodeJSStatus(r.Context(), a.app.Domains, a.app.PM2, hostname)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+				return
+			}
+			a.app.Logger.Error("load domain nodejs status failed", zap.String("hostname", hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to load domain nodejs status"})
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"nodejs": status})
+	})
+
+	domainsNodeJSStartHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		record, status, err := loadDomainNodeJSStatus(r.Context(), a.app.Domains, a.app.PM2, hostname)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+				return
+			}
+			a.app.Logger.Error("load domain nodejs status before start failed", zap.String("hostname", hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to load domain nodejs status"})
+			return
+		}
+		if !status.Supported {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": status.Message})
+			return
+		}
+		if !status.Configured {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": status.Message})
+			return
+		}
+		if a.app.PM2 == nil || !status.PM2Installed {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": status.Message})
+			return
+		}
+		if status.Process != nil && !canStartDomainNodeJSProcess(*status.Process) {
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"nodejs": status})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		if status.Process != nil {
+			if _, err := a.app.PM2.StartProcess(actionCtx, status.Process.ID); err != nil {
+				a.app.Logger.Error("start domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.Int("process_id", status.Process.ID), zap.Error(err))
+				a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+		} else {
+			workingDirectory, err := domain.ResolveDocumentRoot(a.app.Domains.BasePath(), record)
+			if err != nil {
+				a.app.Logger.Error("resolve domain nodejs root failed", zap.String("hostname", record.Hostname), zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to resolve the domain root"})
+				return
+			}
+			scriptPath, err := domain.ResolveNodeJSScriptPath(a.app.Domains.BasePath(), record)
+			if err != nil {
+				a.app.Logger.Error("resolve domain nodejs script failed", zap.String("hostname", record.Hostname), zap.Error(err))
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+				return
+			}
+			if _, err := a.app.PM2.CreateProcess(actionCtx, pm2.CreateProcessInput{
+				Name:             record.Hostname,
+				ScriptPath:       scriptPath,
+				WorkingDirectory: workingDirectory,
+			}); err != nil {
+				a.app.Logger.Error("create domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.String("script_path", scriptPath), zap.String("working_directory", workingDirectory), zap.Error(err))
+				a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+		}
+
+		_, nextStatus, err := loadDomainNodeJSStatus(actionCtx, a.app.Domains, a.app.PM2, hostname)
+		if err != nil {
+			a.app.Logger.Error("reload domain nodejs status after start failed", zap.String("hostname", record.Hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "nodejs started but status could not be refreshed"})
+			return
+		}
+
+		a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Started Node.js for %q.", record.Hostname))
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"nodejs": nextStatus})
+	})
+
+	domainsNodeJSStopHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		record, status, err := loadDomainNodeJSStatus(r.Context(), a.app.Domains, a.app.PM2, hostname)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+				return
+			}
+			a.app.Logger.Error("load domain nodejs status before stop failed", zap.String("hostname", hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to load domain nodejs status"})
+			return
+		}
+		if !status.Supported {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": status.Message})
+			return
+		}
+		if !status.Configured {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": status.Message})
+			return
+		}
+		if a.app.PM2 == nil || !status.PM2Installed {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": status.Message})
+			return
+		}
+		if status.Process == nil || !canStopDomainNodeJSProcess(*status.Process) {
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"nodejs": status})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		if _, err := a.app.PM2.StopProcess(actionCtx, status.Process.ID); err != nil {
+			a.app.Logger.Error("stop domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.Int("process_id", status.Process.ID), zap.Error(err))
+			a.mutationEvent(actionCtx, "domains", "stop_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+
+		_, nextStatus, err := loadDomainNodeJSStatus(actionCtx, a.app.Domains, a.app.PM2, hostname)
+		if err != nil {
+			a.app.Logger.Error("reload domain nodejs status after stop failed", zap.String("hostname", record.Hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "nodejs stopped but status could not be refreshed"})
+			return
+		}
+
+		a.mutationEvent(actionCtx, "domains", "stop_nodejs", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Stopped Node.js for %q.", record.Hostname))
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"nodejs": nextStatus})
+	})
+
 	domainsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		var input domain.CreateInput
 		if err := decodeJSON(r, &input); err != nil {
@@ -1073,6 +1211,10 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				a.app.Logger.Warn("delete domain document root failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(cleanupErr))
 			}
 		}
+		if cleanupErr := deleteDomainNodeJSProcess(r.Context(), a.app.PM2, a.app.Domains.BasePath(), record); cleanupErr != nil {
+			warnings = append(warnings, "The Node.js PM2 process could not be removed.")
+			a.app.Logger.Warn("delete domain nodejs process failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(cleanupErr))
+		}
 
 		if a.app.FTPAccounts != nil {
 			if cleanupErr := a.app.FTPAccounts.DeleteDomain(r.Context(), record.ID); cleanupErr != nil {
@@ -1211,6 +1353,10 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/wordpress/themes/install", domainsWordPressExtensionInstallHandler("theme"))
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/wordpress/plugins/action", domainsWordPressExtensionActionHandler("plugin"))
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/wordpress/themes/action", domainsWordPressExtensionActionHandler("theme"))
+	r.Method(stdhttp.MethodGet, "/domains/{hostname}/nodejs", domainsNodeJSStatusHandler)
+	r.Method(stdhttp.MethodHead, "/domains/{hostname}/nodejs", domainsNodeJSStatusHandler)
+	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/start", domainsNodeJSStartHandler)
+	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/stop", domainsNodeJSStopHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/php-settings", domainsPHPSettingsUpdateHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/github", domainsGitHubUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/deploy", domainsGitHubDeployHandler)
@@ -1241,8 +1387,162 @@ type domainLogResponse struct {
 	Lines        []string   `json:"lines"`
 }
 
+type domainNodeJSStatusResponse struct {
+	Supported        bool         `json:"supported"`
+	Configured       bool         `json:"configured"`
+	PM2Installed     bool         `json:"pm2_installed"`
+	ScriptPath       string       `json:"script_path,omitempty"`
+	WorkingDirectory string       `json:"working_directory,omitempty"`
+	Process          *pm2.Process `json:"process"`
+	Message          string       `json:"message"`
+}
+
 func normalizeDomainLogHostname(value string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+}
+
+func canStartDomainNodeJSProcess(process pm2.Process) bool {
+	status := strings.ToLower(strings.TrimSpace(process.Status))
+	return status != "online" && status != "launching"
+}
+
+func canStopDomainNodeJSProcess(process pm2.Process) bool {
+	if process.ID < 0 {
+		return false
+	}
+
+	status := strings.ToLower(strings.TrimSpace(process.Status))
+	return status == "online" || status == "launching" || status == "waiting restart"
+}
+
+func loadDomainNodeJSStatus(
+	ctx context.Context,
+	domains *domain.Service,
+	pm2Manager pm2.Manager,
+	hostname string,
+) (domain.Record, domainNodeJSStatusResponse, error) {
+	record, ok := domains.FindByHostname(hostname)
+	if !ok {
+		return domain.Record{}, domainNodeJSStatusResponse{}, domain.ErrNotFound
+	}
+
+	status := domainNodeJSStatusResponse{
+		Supported:  record.Kind == domain.KindNodeJS,
+		Configured: strings.TrimSpace(record.NodeJSScript) != "",
+		ScriptPath: strings.TrimSpace(record.NodeJSScript),
+		Process:    nil,
+	}
+	if !status.Supported {
+		status.Message = "Node.js controls are available only for Node.js domains."
+		return record, status, nil
+	}
+
+	workingDirectory, err := domain.ResolveDocumentRoot(domains.BasePath(), record)
+	if err != nil {
+		return domain.Record{}, domainNodeJSStatusResponse{}, fmt.Errorf("resolve domain nodejs root: %w", err)
+	}
+	status.WorkingDirectory = workingDirectory
+	if !status.Configured {
+		status.Message = "Script path is not configured for this domain."
+		return record, status, nil
+	}
+	if pm2Manager == nil {
+		status.Message = "PM2 runtime is not configured."
+		return record, status, nil
+	}
+
+	pm2Status := pm2Manager.Status(ctx)
+	status.PM2Installed = pm2Status.Installed
+	if !pm2Status.Installed {
+		status.Message = pm2Status.Message
+		return record, status, nil
+	}
+
+	resolvedScriptPath, err := domain.ResolveNodeJSScriptPath(domains.BasePath(), record)
+	if err != nil {
+		status.Configured = false
+		status.Message = err.Error()
+		return record, status, nil
+	}
+
+	processes, err := pm2Manager.List(ctx)
+	if err != nil {
+		return domain.Record{}, domainNodeJSStatusResponse{}, fmt.Errorf("list pm2 processes: %w", err)
+	}
+
+	if process, ok := matchDomainNodeJSProcess(processes, resolvedScriptPath, workingDirectory); ok {
+		status.Process = &process
+		switch {
+		case canStopDomainNodeJSProcess(process):
+			status.Message = "The Node.js app is running under PM2."
+		case canStartDomainNodeJSProcess(process):
+			status.Message = "The Node.js app is stopped and can be started."
+		default:
+			status.Message = fmt.Sprintf("PM2 reports the Node.js app as %s.", strings.TrimSpace(process.Status))
+		}
+		return record, status, nil
+	}
+
+	status.Message = "The Node.js app has not been started with PM2 yet."
+	return record, status, nil
+}
+
+func matchDomainNodeJSProcess(processes []pm2.Process, scriptPath string, workingDirectory string) (pm2.Process, bool) {
+	wantScriptPath := filepath.Clean(strings.TrimSpace(scriptPath))
+	wantWorkingDirectory := filepath.Clean(strings.TrimSpace(workingDirectory))
+
+	var storedProcess pm2.Process
+	storedFound := false
+	for _, process := range processes {
+		if filepath.Clean(strings.TrimSpace(process.ScriptPath)) != wantScriptPath {
+			continue
+		}
+		if filepath.Clean(strings.TrimSpace(process.WorkingDirectory)) != wantWorkingDirectory {
+			continue
+		}
+		if process.ID >= 0 {
+			return process, true
+		}
+		if !storedFound {
+			storedProcess = process
+			storedFound = true
+		}
+	}
+
+	return storedProcess, storedFound
+}
+
+func deleteDomainNodeJSProcess(ctx context.Context, pm2Manager pm2.Manager, basePath string, record domain.Record) error {
+	if pm2Manager == nil || record.Kind != domain.KindNodeJS {
+		return nil
+	}
+	if !pm2Manager.Status(ctx).Installed {
+		return nil
+	}
+
+	workingDirectory, err := domain.ResolveDocumentRoot(basePath, record)
+	if err != nil {
+		return err
+	}
+	scriptPath, err := domain.ResolveNodeJSScriptPath(basePath, record)
+	if err != nil {
+		if strings.TrimSpace(record.NodeJSScript) == "" {
+			return nil
+		}
+		return err
+	}
+
+	processes, err := pm2Manager.List(ctx)
+	if err != nil {
+		return err
+	}
+	process, ok := matchDomainNodeJSProcess(processes, scriptPath, workingDirectory)
+	if !ok {
+		return nil
+	}
+
+	_, err = pm2Manager.DeleteProcess(ctx, process.ID)
+	return err
 }
 
 func readDomainLog(hostname string, logType string, filePath string, search string, limit int) domainLogResponse {
