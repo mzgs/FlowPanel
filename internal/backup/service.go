@@ -340,7 +340,7 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		)
 	}
 	if len(sites) > 0 {
-		contents = append(contents, "site roots for static and php domains")
+		contents = append(contents, "site roots for static, php, and node.js domains")
 	}
 	if len(databaseDumps) > 0 {
 		contents = append(contents, "sql dumps for managed mariadb databases")

@@ -79,6 +79,7 @@ type FormMode = "create" | "edit";
 const domainKinds: DomainKind[] = [
   "Static site",
   "Php site",
+  "Node.js",
   "Reverse proxy",
 ];
 
@@ -90,6 +91,10 @@ const initialFormState: FormState = {
 };
 
 function getDefaultTarget(kind: DomainKind) {
+  if (kind === "Node.js") {
+    return "3000";
+  }
+
   return kind === "Reverse proxy" ? "http://127.0.0.1:8080" : "";
 }
 
@@ -125,6 +130,13 @@ const kindConfig: Record<
     imageSrc: "/application-icons/php.svg",
     helpText:
       "FlowPanel uses the default PHP site directory automatically and requires PHP-FPM to be ready in Overview.",
+  },
+  "Node.js": {
+    imageSrc: "/application-icons/nodejs.svg",
+    targetLabel: "Port",
+    targetPlaceholder: "3000",
+    helpText:
+      "FlowPanel proxies this domain to `127.0.0.1` on the port you set here.",
   },
   "Reverse proxy": {
     imageSrc: "/application-icons/proxy_server.png",
@@ -177,6 +189,23 @@ function getDuplicateHostnameError(
 function validateTarget(kind: DomainKind, value: string) {
   const trimmed = value.trim();
 
+  if (kind === "Node.js") {
+    if (!trimmed) {
+      return "Port is required.";
+    }
+
+    if (!/^\d+$/.test(trimmed)) {
+      return "Enter a port between 1 and 65535.";
+    }
+
+    const port = Number.parseInt(trimmed, 10);
+    if (port < 1 || port > 65535) {
+      return "Enter a port between 1 and 65535.";
+    }
+
+    return undefined;
+  }
+
   if (kind === "Reverse proxy") {
     if (!trimmed) {
       return "Upstream URL is required.";
@@ -207,6 +236,28 @@ function validateTarget(kind: DomainKind, value: string) {
 
 function isSiteBackedKind(kind: DomainKind) {
   return kind === "Static site" || kind === "Php site";
+}
+
+function getNodeJSPort(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.port;
+  } catch {
+    return "";
+  }
+}
+
+function getFormTargetValue(kind: DomainKind, target: string) {
+  return kind === "Node.js" ? getNodeJSPort(target) : target;
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -381,7 +432,9 @@ export function DomainsPage() {
     setForm({
       hostname: domain.hostname,
       kind: domain.kind,
-      target: isSiteBackedKind(domain.kind) ? "" : domain.target,
+      target: isSiteBackedKind(domain.kind)
+        ? ""
+        : getFormTargetValue(domain.kind, domain.target),
       cacheEnabled: domain.cache_enabled,
     });
     setErrors({});
@@ -1067,7 +1120,7 @@ export function DomainsPage() {
             <DialogDescription>
               {isEditing
                 ? "Update the route target and domain type. Domains stay fixed after creation."
-                : "Define the domain and route target. Static and PHP domains use the default directories automatically."}
+                : "Define the domain and route target. Static, PHP, and Node.js domains keep the default site directory automatically."}
             </DialogDescription>
           </DialogHeader>
 
@@ -1272,8 +1325,8 @@ export function DomainsPage() {
 
             <DialogFooter className="border-t border-[var(--app-border)] pt-4">
               <div className="text-[12px] text-[var(--app-text-muted)]">
-                Static and PHP domains use the default directories
-                automatically.
+                Static, PHP, and Node.js domains keep the default site
+                directory automatically.
               </div>
               <div className="flex items-center justify-end gap-2">
                 <Button

@@ -34,6 +34,7 @@ type Kind string
 const (
 	KindStaticSite   Kind = "Static site"
 	KindPHP          Kind = "Php site"
+	KindNodeJS       Kind = "Node.js"
 	KindReverseProxy Kind = "Reverse proxy"
 )
 
@@ -145,7 +146,16 @@ func defaultSitesBasePath() string {
 
 func SupportsManagedDocumentRoot(kind Kind) bool {
 	switch kind {
-	case KindStaticSite, KindPHP, KindReverseProxy:
+	case KindStaticSite, KindPHP, KindNodeJS, KindReverseProxy:
+		return true
+	default:
+		return false
+	}
+}
+
+func usesUpstreamTarget(kind Kind) bool {
+	switch kind {
+	case KindNodeJS, KindReverseProxy:
 		return true
 	default:
 		return false
@@ -412,7 +422,7 @@ func normalizeHostname(value string) string {
 
 func validateKind(kind Kind) string {
 	switch kind {
-	case KindStaticSite, KindPHP, KindReverseProxy:
+	case KindStaticSite, KindPHP, KindNodeJS, KindReverseProxy:
 		return ""
 	default:
 		return "Select a valid domain type."
@@ -460,6 +470,10 @@ func validateTarget(kind Kind, value string) string {
 	}
 
 	switch kind {
+	case KindNodeJS:
+		if _, err := normalizeNodeJSTarget(trimmed); err != nil {
+			return err.Error()
+		}
 	case KindReverseProxy:
 		parsed, err := url.Parse(trimmed)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -490,7 +504,7 @@ func normalizeAndValidateInput(hostname string, kind Kind, target string) (strin
 		validation["hostname"] = message
 	}
 
-	if normalizedKind == KindReverseProxy {
+	if usesUpstreamTarget(normalizedKind) {
 		if message := validateTarget(normalizedKind, trimmedTarget); message != "" {
 			validation["target"] = message
 		}
@@ -691,7 +705,7 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 			return "", err
 		}
 		return siteRoot, nil
-	case KindReverseProxy:
+	case KindNodeJS, KindReverseProxy:
 		return target, nil
 	default:
 		return "", fmt.Errorf("unsupported domain kind %q", kind)
@@ -700,6 +714,12 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 
 func normalizePersistedKindAndTarget(kind Kind, target string) (Kind, string) {
 	trimmedTarget := strings.TrimSpace(target)
+	if kind == KindNodeJS {
+		if normalizedTarget, err := normalizeNodeJSTarget(trimmedTarget); err == nil {
+			return kind, normalizedTarget
+		}
+		return kind, trimmedTarget
+	}
 	if kind != "App" {
 		return kind, trimmedTarget
 	}
@@ -710,6 +730,34 @@ func normalizePersistedKindAndTarget(kind Kind, target string) (Kind, string) {
 	}
 
 	return KindReverseProxy, fmt.Sprintf("http://127.0.0.1:%d", port)
+}
+
+func normalizeNodeJSTarget(target string) (string, error) {
+	trimmed := strings.TrimSpace(target)
+	if trimmed == "" {
+		return "", errors.New("Port is required.")
+	}
+
+	port, err := strconv.Atoi(trimmed)
+	if err == nil {
+		if port < 1 || port > 65535 {
+			return "", errors.New("Enter a port between 1 and 65535.")
+		}
+		return fmt.Sprintf("http://127.0.0.1:%d", port), nil
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("Enter a port between 1 and 65535.")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("Enter a port between 1 and 65535.")
+	}
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("Enter a port between 1 and 65535.")
+	}
+
+	return trimmed, nil
 }
 
 func (s *Service) ensureSiteRoot(hostname string) (string, error) {

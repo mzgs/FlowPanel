@@ -547,7 +547,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 				Routes: phpSubrouteRoutes(root, fastCGIAddress, record.PHPSettings),
 			}, "handler", "subroute", nil),
 		)
-	case domain.KindReverseProxy:
+	case domain.KindNodeJS, domain.KindReverseProxy:
 		targetURL, err := parseUpstreamURL(record)
 		if err != nil {
 			return nil, false, err
@@ -790,16 +790,16 @@ func fastCGIDialAddress(address string) string {
 func parseUpstreamURL(record domain.Record) (*url.URL, error) {
 	targetURL, err := url.Parse(record.Target)
 	if err != nil {
-		return nil, fmt.Errorf("parse reverse proxy target for %q: %w", record.Hostname, err)
+		return nil, fmt.Errorf("parse upstream target for %q: %w", record.Hostname, err)
 	}
 	if targetURL.Scheme != "http" && targetURL.Scheme != "https" {
-		return nil, fmt.Errorf("reverse proxy target for %q must start with http:// or https://", record.Hostname)
+		return nil, fmt.Errorf("upstream target for %q must start with http:// or https://", record.Hostname)
 	}
 	if targetURL.Host == "" {
-		return nil, fmt.Errorf("reverse proxy target for %q must include a host", record.Hostname)
+		return nil, fmt.Errorf("upstream target for %q must include a host", record.Hostname)
 	}
 	if targetURL.User != nil || (targetURL.Path != "" && targetURL.Path != "/") || targetURL.RawQuery != "" || targetURL.Fragment != "" {
-		return nil, fmt.Errorf("reverse proxy target for %q must not include credentials, paths, queries, or fragments", record.Hostname)
+		return nil, fmt.Errorf("upstream target for %q must not include credentials, paths, queries, or fragments", record.Hostname)
 	}
 
 	return targetURL, nil

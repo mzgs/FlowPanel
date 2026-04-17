@@ -4,6 +4,10 @@ function normalizeFilesystemPath(value: string) {
   return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+function usesManagedHostnamePath(kind: DomainKind) {
+  return kind === "Node.js" || kind === "Reverse proxy";
+}
+
 export function getFilesPathFromDomainTarget(
   kind: DomainKind,
   hostname: string,
@@ -15,7 +19,7 @@ export function getFilesPathFromDomainTarget(
     return null;
   }
 
-  if (kind === "Reverse proxy") {
+  if (usesManagedHostnamePath(kind)) {
     return normalizedHostname;
   }
 
@@ -44,7 +48,7 @@ export function getDocumentRootDisplayPath(
   sitesBasePath: string,
   target: string,
 ) {
-  if (kind === "Static site" || kind === "Php site") {
+  if (!usesManagedHostnamePath(kind)) {
     return target.trim();
   }
 

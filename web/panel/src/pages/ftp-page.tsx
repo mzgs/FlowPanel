@@ -68,7 +68,7 @@ const initialForm: FormState = {
   enabled: true,
 };
 
-const supportedDomainKinds = new Set(["Static site", "Php site"]);
+const supportedDomainKinds = new Set(["Static site", "Php site", "Node.js"]);
 const tableHeaderCellClass = "px-3 py-2 text-left text-[13px] font-medium text-[var(--app-text-muted)]";
 const tableBodyCellClass = "px-3 py-3 align-middle text-[14px] text-[var(--app-text)]";
 const actionButtonClass =
