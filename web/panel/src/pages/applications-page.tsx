@@ -522,7 +522,18 @@ function getPM2ProcessStatusBadge(status: string) {
   const normalized = status.trim().toLowerCase();
 
   if (normalized === "online") {
-    return { label: "Online", variant: "default" as const };
+    return {
+      label: "Online",
+      variant: "outline" as const,
+      className: "border-[var(--app-ok)]/30 bg-[var(--app-ok-soft)] text-[var(--app-ok)]",
+    };
+  }
+  if (normalized === "stopped") {
+    return {
+      label: "Stopped",
+      variant: "outline" as const,
+      className: "border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] text-[var(--app-danger)]",
+    };
   }
   if (normalized === "launching" || normalized === "waiting restart") {
     return { label: formatPM2ProcessStatus(normalized), variant: "secondary" as const };
@@ -2874,7 +2885,9 @@ export function ApplicationsPage() {
                               {isSavedPM2Process(process) ? "Saved" : process.id}
                             </TableCell>
                             <TableCell className="py-3">
-                              <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+                              <Badge variant={statusBadge.variant} className={statusBadge.className}>
+                                {statusBadge.label}
+                              </Badge>
                             </TableCell>
                             <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
                               {formatPM2ProcessCPU(process.cpu)}
