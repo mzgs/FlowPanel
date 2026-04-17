@@ -3572,9 +3572,6 @@ export function ApplicationsPage() {
             removeTitle="Automatic Docker removal is only available for installed runtimes supported by this environment."
             meta={[
               { label: "Binary", value: dockerStatus?.binary_path?.trim() || "docker", mono: true },
-              ...(dockerStatus?.package_manager
-                ? [{ label: "Package manager", value: dockerStatus.package_manager }]
-                : []),
             ]}
             onInstall={() => {
               void handleDockerInstall();
@@ -3603,9 +3600,6 @@ export function ApplicationsPage() {
             removeTitle="Automatic FFmpeg removal is only available for installed runtimes supported by this environment."
             meta={[
               { label: "Toolchain", value: ffmpegStatus?.binary_path?.trim() || "ffmpeg", mono: true },
-              ...(ffmpegStatus?.package_manager
-                ? [{ label: "Package manager", value: ffmpegStatus.package_manager }]
-                : []),
             ]}
             onInstall={() => {
               void handleFFmpegInstall();
@@ -3624,9 +3618,6 @@ export function ApplicationsPage() {
             removeTitle="Automatic Redis removal is only available for installed runtimes supported by this environment."
             meta={[
               { label: "Binary", value: redisStatus?.binary_path?.trim() || "redis-server", mono: true },
-              ...(redisStatus?.package_manager
-                ? [{ label: "Package manager", value: redisStatus.package_manager }]
-                : []),
             ]}
             onInstall={() => {
               void handleRedisInstall();
@@ -3654,9 +3645,6 @@ export function ApplicationsPage() {
             removeTitle="Automatic MongoDB removal is only available for installed runtimes supported by this environment."
             meta={[
               { label: "Binary", value: mongoDBStatus?.binary_path?.trim() || "mongod", mono: true },
-              ...(mongoDBStatus?.package_manager
-                ? [{ label: "Package manager", value: mongoDBStatus.package_manager }]
-                : []),
             ]}
             onInstall={() => {
               void handleMongoDBInstall();
@@ -3684,9 +3672,6 @@ export function ApplicationsPage() {
             removeTitle="Automatic PostgreSQL removal is only available for installed runtimes supported by this environment."
             meta={[
               { label: "Binary", value: postgresqlStatus?.binary_path?.trim() || "postgres", mono: true },
-              ...(postgresqlStatus?.package_manager
-                ? [{ label: "Package manager", value: postgresqlStatus.package_manager }]
-                : []),
             ]}
             onInstall={() => {
               void handlePostgreSQLInstall();
@@ -3800,9 +3785,6 @@ export function ApplicationsPage() {
             badge={getGolangBadge(golangStatus)}
             meta={[
               { label: "Toolchain", value: golangStatus?.binary_path?.trim() || "go", mono: true },
-              ...(golangStatus?.package_manager
-                ? [{ label: "Package manager", value: golangStatus.package_manager }]
-                : []),
             ]}
             configAction={null}
             actions={
@@ -3863,9 +3845,6 @@ export function ApplicationsPage() {
               ...(nodeJSStatus?.npm_path?.trim()
                 ? [{ label: "NPM", value: nodeJSStatus.npm_path.trim(), mono: true }]
                 : []),
-              ...(nodeJSStatus?.package_manager
-                ? [{ label: "Package manager", value: nodeJSStatus.package_manager }]
-                : []),
             ]}
             configAction={null}
             actions={
@@ -3923,9 +3902,6 @@ export function ApplicationsPage() {
             badge={getPM2Badge(pm2Status)}
             meta={[
               { label: "Toolchain", value: pm2Status?.binary_path?.trim() || "pm2", mono: true },
-              ...(pm2Status?.package_manager
-                ? [{ label: "Package manager", value: pm2Status.package_manager }]
-                : []),
               ...(pm2Status?.installed ? [{ label: "Log rotation", value: "100 MB max" }] : []),
             ]}
             configAction={null}
