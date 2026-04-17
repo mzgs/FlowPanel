@@ -1281,6 +1281,9 @@ func (a *apiRoutes) registerPM2Routes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/pm2/processes/{processID}/restart", registerProcessAction("restart", "Restarted the PM2 process.", func(ctx context.Context, processID int) ([]pm2.Process, error) {
 		return a.app.PM2.RestartProcess(ctx, processID)
 	}))
+	r.Method(stdhttp.MethodPost, "/pm2/processes/{processID}/delete", registerProcessAction("delete", "Deleted the PM2 process.", func(ctx context.Context, processID int) ([]pm2.Process, error) {
+		return a.app.PM2.DeleteProcess(ctx, processID)
+	}))
 }
 
 func (a *apiRoutes) registerPackageRuntimeRoutes(r chi.Router, key, label string, manager packageruntime.Manager) {

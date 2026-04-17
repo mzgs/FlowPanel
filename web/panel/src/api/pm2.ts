@@ -108,7 +108,7 @@ export async function fetchPM2ProcessLogs(processID: number): Promise<string> {
   return payload.output;
 }
 
-async function runPM2ProcessAction(processID: number, action: "start" | "stop" | "restart"): Promise<PM2Process[]> {
+async function runPM2ProcessAction(processID: number, action: "start" | "stop" | "restart" | "delete"): Promise<PM2Process[]> {
   const response = await fetch(`/api/pm2/processes/${processID}/${action}`, {
     method: "POST",
     credentials: "include",
@@ -128,6 +128,10 @@ export function stopPM2Process(processID: number): Promise<PM2Process[]> {
 
 export function restartPM2Process(processID: number): Promise<PM2Process[]> {
   return runPM2ProcessAction(processID, "restart");
+}
+
+export function deletePM2Process(processID: number): Promise<PM2Process[]> {
+  return runPM2ProcessAction(processID, "delete");
 }
 
 export async function installPM2(): Promise<PM2Status> {

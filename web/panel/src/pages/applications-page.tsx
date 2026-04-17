@@ -23,6 +23,7 @@ import {
 } from "@/api/nodejs";
 import {
   createPM2Process,
+  deletePM2Process,
   fetchPM2ProcessLogs,
   fetchPM2Processes,
   fetchPM2Status,
@@ -167,6 +168,7 @@ type RemovableApplication =
   | { kind: "golang" }
   | { kind: "nodejs" }
   | { kind: "pm2" };
+type RemovablePM2Process = Pick<PM2Process, "id" | "name">;
 type RuntimeState = string | null | undefined;
 type InstallRemoveRuntimeStatus = {
   installed: boolean;
@@ -1413,6 +1415,7 @@ export function ApplicationsPage() {
   const [pm2LogsOutput, setPM2LogsOutput] = useState("");
   const [pm2LogsLoading, setPM2LogsLoading] = useState(false);
   const [pm2LogsError, setPM2LogsError] = useState<string | null>(null);
+  const [pm2DeleteCandidate, setPM2DeleteCandidate] = useState<RemovablePM2Process | null>(null);
   const [removeCandidate, setRemoveCandidate] = useState<RemovableApplication | null>(null);
   const [phpSettingsOpen, setPHPSettingsOpen] = useState(false);
   const [mariaDBSettingsOpen, setMariaDBSettingsOpen] = useState(false);
@@ -1465,6 +1468,7 @@ export function ApplicationsPage() {
     setPM2ProcessesLoading(false);
     setPM2ProcessesError(null);
     setPM2ProcessActionKey(null);
+    setPM2DeleteCandidate(null);
     setPM2Processes([]);
     handlePM2CreateOpenChange(false);
     handlePM2LogsOpenChange(false);
@@ -1480,13 +1484,25 @@ export function ApplicationsPage() {
   function syncPM2Processes(processes: PM2Process[]) {
     setPM2ProcessesError(null);
     setPM2Processes(processes);
+    setPM2DeleteCandidate((current) => (current && !processes.some((process) => process.id === current.id) ? null : current));
+    let closeLogs = false;
     setPM2LogsTarget((current) => {
       if (current === null) {
         return current;
       }
 
-      return processes.find((process) => process.id === current.id) ?? current;
+      const nextTarget = processes.find((process) => process.id === current.id) ?? null;
+      if (nextTarget !== null) {
+        return nextTarget;
+      }
+
+      closeLogs = true;
+      return null;
     });
+    if (closeLogs) {
+      setPM2LogsOpen(false);
+      resetPM2LogsState();
+    }
   }
 
   async function loadPM2Processes() {
@@ -1601,7 +1617,7 @@ export function ApplicationsPage() {
     }
   }
 
-  async function handlePM2ProcessAction(action: "start" | "stop" | "restart", process: PM2Process) {
+  async function handlePM2ProcessAction(action: "start" | "stop" | "restart" | "delete", process: Pick<PM2Process, "id" | "name">) {
     const actionKey = `${action}:${process.id}`;
     setPM2ProcessActionKey(actionKey);
     setPM2ProcessesError(null);
@@ -1612,13 +1628,17 @@ export function ApplicationsPage() {
         ? `${processLabel} started.`
         : action === "stop"
           ? `${processLabel} stopped.`
-          : `${processLabel} restarted.`;
+          : action === "restart"
+            ? `${processLabel} restarted.`
+            : `${processLabel} deleted.`;
     const fallbackMessage =
       action === "start"
         ? `Failed to start ${processLabel}.`
         : action === "stop"
           ? `Failed to stop ${processLabel}.`
-          : `Failed to restart ${processLabel}.`;
+          : action === "restart"
+            ? `Failed to restart ${processLabel}.`
+            : `Failed to delete ${processLabel}.`;
 
     try {
       const processes =
@@ -1626,7 +1646,9 @@ export function ApplicationsPage() {
           ? await startPM2Process(process.id)
           : action === "stop"
             ? await stopPM2Process(process.id)
-            : await restartPM2Process(process.id);
+            : action === "restart"
+              ? await restartPM2Process(process.id)
+              : await deletePM2Process(process.id);
       syncPM2Processes(processes);
       toast.success(successMessage);
     } catch (error) {
@@ -1636,6 +1658,16 @@ export function ApplicationsPage() {
     } finally {
       setPM2ProcessActionKey((current) => (current === actionKey ? null : current));
     }
+  }
+
+  async function handlePM2DeleteConfirm() {
+    if (pm2DeleteCandidate === null) {
+      return;
+    }
+
+    const candidate = pm2DeleteCandidate;
+    setPM2DeleteCandidate(null);
+    await handlePM2ProcessAction("delete", candidate);
   }
 
   async function loadPage(options?: {
@@ -2065,6 +2097,11 @@ export function ApplicationsPage() {
   const pm2InstallDisabled = runningAction !== null || !pm2Status?.install_available;
   const pm2NodeJSRequired = !nodeJSStatus?.installed;
   const pm2LogsLineCount = pm2LogsOutput ? pm2LogsOutput.split(/\r?\n/).length : 0;
+  const pm2DeleteActionKey = pm2DeleteCandidate ? `delete:${pm2DeleteCandidate.id}` : null;
+  const pm2DeleteDialogTitle = pm2DeleteCandidate ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`}` : "Delete PM2 process";
+  const pm2DeleteDialogDescription = pm2DeleteCandidate
+    ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`} from PM2? The process will be removed from the runtime list and must be created again to restore it.`
+    : "Delete this PM2 process?";
   const mariaDBServiceStartingAfterInstall =
     runningAction === "install-mariadb" &&
     Boolean(mariadbStatus?.server_installed) &&
@@ -2704,8 +2741,8 @@ export function ApplicationsPage() {
               <div className="min-w-0">
                 <DialogTitle>PM2 processes</DialogTitle>
                 <DialogDescription>
-                  Manage runtime processes with start, stop, restart, and log actions. This list refreshes automatically
-                  every 10 seconds.
+                  Manage runtime processes with start, stop, restart, delete, and log actions. This list refreshes
+                  automatically every 10 seconds.
                 </DialogDescription>
               </div>
 
@@ -2848,6 +2885,24 @@ export function ApplicationsPage() {
                                   <LoaderCircle className="h-4 w-4 animate-spin" />
                                 ) : (
                                   <RotateCcw className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-[var(--app-danger)] hover:text-[var(--app-danger)]"
+                                onClick={() => {
+                                  setPM2DeleteCandidate({ id: process.id, name: process.name });
+                                }}
+                                disabled={actionsDisabled}
+                                aria-label={`Delete ${process.name}`}
+                                title={`Delete ${process.name}`}
+                              >
+                                {activeAction === "delete" ? (
+                                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
                                 )}
                               </Button>
                               <Button
@@ -3054,6 +3109,24 @@ export function ApplicationsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ActionConfirmDialog
+        open={pm2DeleteCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPM2DeleteCandidate(null);
+          }
+        }}
+        title={pm2DeleteDialogTitle}
+        desc={pm2DeleteDialogDescription}
+        confirmText="Delete"
+        destructive
+        isLoading={pm2DeleteActionKey !== null && pm2ProcessActionKey === pm2DeleteActionKey}
+        handleConfirm={() => {
+          void handlePM2DeleteConfirm();
+        }}
+        className="sm:max-w-md"
+      />
 
       <ActionConfirmDialog
         open={removeCandidate !== null}

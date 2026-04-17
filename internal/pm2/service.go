@@ -39,6 +39,7 @@ type Manager interface {
 	StartProcess(context.Context, int) ([]Process, error)
 	StopProcess(context.Context, int) ([]Process, error)
 	RestartProcess(context.Context, int) ([]Process, error)
+	DeleteProcess(context.Context, int) ([]Process, error)
 	Install(context.Context) error
 	Remove(context.Context) error
 }
@@ -277,6 +278,10 @@ func (s *Service) StopProcess(ctx context.Context, processID int) ([]Process, er
 
 func (s *Service) RestartProcess(ctx context.Context, processID int) ([]Process, error) {
 	return s.runProcessAction(ctx, "restart", processID)
+}
+
+func (s *Service) DeleteProcess(ctx context.Context, processID int) ([]Process, error) {
+	return s.runProcessAction(ctx, "delete", processID)
 }
 
 func (s *Service) Remove(ctx context.Context) error {
