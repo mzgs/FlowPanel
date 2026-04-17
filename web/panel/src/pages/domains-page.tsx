@@ -1165,30 +1165,29 @@ export function DomainsPage() {
                       className={cn(
                         "flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border px-3 py-3 text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-text)]/20",
                         isActive
-                          ? "border-[var(--app-accent)] bg-[var(--app-surface)] text-[var(--app-text)] shadow-sm"
-                          : "border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-surface)]",
+                          ? "border-[var(--app-accent)] bg-[var(--app-surface-elev)] text-[var(--app-text)] shadow-sm"
+                          : "border-[var(--app-border)] bg-[var(--app-surface-elev)] text-[var(--app-text)] hover:bg-[var(--app-surface-elev)]",
                         errors.kind ? "border-[var(--app-danger)]" : "",
                       )}
                     >
-                      <span
-                        className={cn(
-                          "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border",
-                          isActive
-                            ? "border-[var(--app-accent)]/20 bg-[var(--app-accent-soft)] text-[var(--app-accent)]"
-                            : "border-[var(--app-border)] bg-[var(--app-bg-2)] text-[var(--app-text-muted)]",
-                        )}
-                      >
-                        {imageSrc ? (
-                          <img
-                            src={imageSrc}
-                            alt=""
-                            aria-hidden="true"
-                            className="h-5 w-5 shrink-0 object-contain"
-                          />
-                        ) : KindIcon ? (
-                          <KindIcon className="size-5 shrink-0" stroke={1.7} />
-                        ) : null}
-                      </span>
+                      {imageSrc ? (
+                        <img
+                          src={imageSrc}
+                          alt=""
+                          aria-hidden="true"
+                          className="h-8 w-8 shrink-0 object-contain"
+                        />
+                      ) : KindIcon ? (
+                        <KindIcon
+                          className={cn(
+                            "size-8 shrink-0",
+                            isActive
+                              ? "text-[var(--app-accent)]"
+                              : "text-[var(--app-text-muted)]",
+                          )}
+                          stroke={1.7}
+                        />
+                      ) : null}
                       <span className="text-[12px] font-semibold leading-4">
                         {kind}
                       </span>
