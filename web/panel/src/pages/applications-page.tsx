@@ -608,6 +608,32 @@ function canRestartPM2Process(process: PM2Process) {
   return status === "online" || status === "launching" || status === "waiting restart";
 }
 
+function isSamePM2Process(current: PM2Process, next: PM2Process) {
+  return (
+    current.id === next.id &&
+    current.name === next.name &&
+    current.status === next.status &&
+    current.cpu === next.cpu &&
+    current.memory_bytes === next.memory_bytes &&
+    current.restarts === next.restarts &&
+    current.uptime_unix_milli === next.uptime_unix_milli &&
+    current.script_path === next.script_path &&
+    current.namespace === next.namespace &&
+    current.version === next.version &&
+    current.exec_mode === next.exec_mode
+  );
+}
+
+function mergePM2Processes(current: PM2Process[], next: PM2Process[]) {
+  const currentByID = new Map(current.map((process) => [process.id, process]));
+  const merged = next.map((process) => {
+    const existing = currentByID.get(process.id);
+    return existing && isSamePM2Process(existing, process) ? existing : process;
+  });
+
+  return current.length === merged.length && current.every((process, index) => process === merged[index]) ? current : merged;
+}
+
 function getPHPMyAdminServiceStatus(status: PHPMyAdminStatus | null) {
   const actionLabel = getRuntimeActionLabel(status?.state);
   if (actionLabel) {
@@ -1402,6 +1428,7 @@ export function ApplicationsPage() {
   const [pm2ListOpen, setPM2ListOpen] = useState(false);
   const [pm2Processes, setPM2Processes] = useState<PM2Process[]>([]);
   const [pm2ProcessesLoading, setPM2ProcessesLoading] = useState(false);
+  const [pm2ProcessesRefreshing, setPM2ProcessesRefreshing] = useState(false);
   const [pm2ProcessesError, setPM2ProcessesError] = useState<string | null>(null);
   const [pm2ProcessActionKey, setPM2ProcessActionKey] = useState<string | null>(null);
   const [pm2CreateOpen, setPM2CreateOpen] = useState(false);
@@ -1466,6 +1493,7 @@ export function ApplicationsPage() {
   function resetPM2ProcessesState() {
     pm2ProcessListRequestIdRef.current += 1;
     setPM2ProcessesLoading(false);
+    setPM2ProcessesRefreshing(false);
     setPM2ProcessesError(null);
     setPM2ProcessActionKey(null);
     setPM2DeleteCandidate(null);
@@ -1483,7 +1511,7 @@ export function ApplicationsPage() {
 
   function syncPM2Processes(processes: PM2Process[]) {
     setPM2ProcessesError(null);
-    setPM2Processes(processes);
+    setPM2Processes((current) => mergePM2Processes(current, processes));
     setPM2DeleteCandidate((current) => (current && !processes.some((process) => process.id === current.id) ? null : current));
     let closeLogs = false;
     setPM2LogsTarget((current) => {
@@ -1505,16 +1533,21 @@ export function ApplicationsPage() {
     }
   }
 
-  async function loadPM2Processes() {
+  async function loadPM2Processes(options?: { background?: boolean }) {
     if (!pm2Status?.installed) {
       setPM2Processes([]);
       setPM2ProcessesError("PM2 is not installed.");
       return;
     }
 
+    const preserveContent = Boolean(options?.background && pm2Processes.length > 0);
     const requestId = pm2ProcessListRequestIdRef.current + 1;
     pm2ProcessListRequestIdRef.current = requestId;
-    setPM2ProcessesLoading(true);
+    if (preserveContent) {
+      setPM2ProcessesRefreshing(true);
+    } else {
+      setPM2ProcessesLoading(true);
+    }
     setPM2ProcessesError(null);
 
     try {
@@ -1529,11 +1562,11 @@ export function ApplicationsPage() {
         return;
       }
 
-      setPM2Processes([]);
       setPM2ProcessesError(getErrorMessage(error, "Failed to load PM2 processes."));
     } finally {
       if (pm2ProcessListRequestIdRef.current === requestId) {
         setPM2ProcessesLoading(false);
+        setPM2ProcessesRefreshing(false);
       }
     }
   }
@@ -2041,17 +2074,17 @@ export function ApplicationsPage() {
     }
 
     const intervalId = window.setInterval(() => {
-      if (pm2ProcessesLoading || pm2ProcessesBusy) {
+      if (pm2ProcessesLoading || pm2ProcessesRefreshing || pm2ProcessesBusy) {
         return;
       }
 
-      void loadPM2Processes();
+      void loadPM2Processes({ background: true });
     }, pm2ProcessesRefreshIntervalMs);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [pm2ListOpen, pm2ProcessesBusy, pm2Status?.installed, pm2ProcessesLoading]);
+  }, [pm2ListOpen, pm2ProcessesBusy, pm2ProcessesLoading, pm2ProcessesRefreshing, pm2Status?.installed]);
 
   useEffect(() => {
     if (!pm2LogsOpen || pm2LogsTarget === null || !pm2Status?.installed) {
@@ -2097,6 +2130,7 @@ export function ApplicationsPage() {
   const pm2InstallDisabled = runningAction !== null || !pm2Status?.install_available;
   const pm2NodeJSRequired = !nodeJSStatus?.installed;
   const pm2LogsLineCount = pm2LogsOutput ? pm2LogsOutput.split(/\r?\n/).length : 0;
+  const pm2ProcessesInitialLoading = pm2ProcessesLoading && pm2Processes.length === 0;
   const pm2DeleteActionKey = pm2DeleteCandidate ? `delete:${pm2DeleteCandidate.id}` : null;
   const pm2DeleteDialogTitle = pm2DeleteCandidate ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`}` : "Delete PM2 process";
   const pm2DeleteDialogDescription = pm2DeleteCandidate
@@ -2746,29 +2780,37 @@ export function ApplicationsPage() {
                 </DialogDescription>
               </div>
 
-              <Button
-                type="button"
-                size="sm"
-                className="shrink-0"
-                onClick={() => {
-                  handlePM2CreateOpenChange(true);
-                }}
-                disabled={pm2ProcessesBusy || pm2ProcessesLoading || !pm2Status?.installed}
-              >
-                <Plus className="h-4 w-4" />
-                New process
-              </Button>
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => {
+                    handlePM2CreateOpenChange(true);
+                  }}
+                  disabled={pm2ProcessesBusy || pm2ProcessesInitialLoading || !pm2Status?.installed}
+                >
+                  <Plus className="h-4 w-4" />
+                  New process
+                </Button>
+              </div>
             </div>
           </DialogHeader>
 
-          <div className="min-h-0 bg-[var(--app-surface)] text-[var(--app-text)]">
-            {pm2ProcessesError ? (
+          <div className="flex min-h-0 flex-col bg-[var(--app-surface)] text-[var(--app-text)]">
+            {pm2ProcessesError && pm2Processes.length > 0 ? (
+              <div className="border-b border-[var(--app-danger)]/20 bg-[var(--app-danger-soft)] px-6 py-3 text-sm text-[var(--app-danger)]">
+                {pm2ProcessesError}
+              </div>
+            ) : null}
+
+            {pm2ProcessesError && pm2Processes.length === 0 ? (
               <div className="flex h-full items-center justify-center p-6">
                 <div className="max-w-xl rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
                   {pm2ProcessesError}
                 </div>
               </div>
-            ) : pm2ProcessesLoading ? (
+            ) : pm2ProcessesInitialLoading ? (
               <div className="flex h-full items-center justify-center gap-2 px-6 text-sm text-[var(--app-text-muted)]">
                 <LoaderCircle className="h-4 w-4 animate-spin" />
                 Loading PM2 processes...
