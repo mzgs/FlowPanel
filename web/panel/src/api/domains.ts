@@ -312,6 +312,22 @@ export function stopDomainNodeJS(hostname: string): Promise<DomainNodeJSStatus> 
   return mutateDomainNodeJS(hostname, "stop");
 }
 
+export async function installDomainNodeJSPackages(
+  hostname: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/nodejs/npm-install`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "npm install");
+  }
+}
+
 export async function updateDomainFTP(
   domainID: string,
   input: UpdateDomainFTPInput,

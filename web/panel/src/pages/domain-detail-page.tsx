@@ -23,6 +23,7 @@ import {
   fetchDomainPreview,
   fetchDomains,
   getDomainSiteUrl,
+  installDomainNodeJSPackages,
   startDomainNodeJS,
   stopDomainNodeJS,
   type DomainNodeJSStatus,
@@ -579,6 +580,10 @@ const devToolActions: DomainActionItem[] = [
     icon: Download,
   },
 ];
+const nodeJSDevToolAction: DomainActionItem = {
+  title: "npm install",
+  icon: Download,
+};
 
 const siteBackupTargetKey = "__domain_site_backup__";
 const composerManifestName = "composer.json";
@@ -811,7 +816,9 @@ export function DomainDetailPage() {
   );
   const [nodeJSLoading, setNodeJSLoading] = useState(false);
   const [nodeJSError, setNodeJSError] = useState<string | null>(null);
-  const [nodeJSAction, setNodeJSAction] = useState<"start" | "stop" | null>(
+  const [nodeJSAction, setNodeJSAction] = useState<
+    "start" | "stop" | "install" | null
+  >(
     null,
   );
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
@@ -1291,7 +1298,12 @@ export function DomainDetailPage() {
   const activeDevToolActions =
     domain?.kind === "Php site"
       ? devToolActions
-      : devToolActions.filter((item) => item.title !== "Install PHP App");
+      : domain?.kind === "Node.js"
+        ? [
+            ...devToolActions.filter((item) => item.title !== "Install PHP App"),
+            nodeJSDevToolAction,
+          ]
+        : devToolActions.filter((item) => item.title !== "Install PHP App");
 
   useEffect(() => {
     if (!websiteCopyDialogOpen) {
@@ -1819,6 +1831,26 @@ export function DomainDetailPage() {
           ? "Failed to start the Node.js app."
           : "Failed to stop the Node.js app.",
       );
+      setNodeJSError(message);
+      toast.error(message);
+    } finally {
+      setNodeJSAction(null);
+    }
+  }
+
+  async function handleNodeJSInstall() {
+    if (!domain || domain.kind !== "Node.js" || nodeJSAction !== null) {
+      return;
+    }
+
+    setNodeJSAction("install");
+    setNodeJSError(null);
+
+    try {
+      await installDomainNodeJSPackages(domain.hostname);
+      toast.success(`Installed npm packages for ${domain.hostname}.`);
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to run npm install.");
       setNodeJSError(message);
       toast.error(message);
     } finally {
@@ -2577,6 +2609,18 @@ export function DomainDetailPage() {
                         }
 
                         setTerminalDialogOpen(true);
+                        return;
+                      }
+
+                      if (item.title === "npm install" && domain !== null) {
+                        if (domain.kind !== "Node.js") {
+                          toast.error(
+                            "npm install is available only for Node.js domains.",
+                          );
+                          return;
+                        }
+
+                        void handleNodeJSInstall();
                         return;
                       }
 

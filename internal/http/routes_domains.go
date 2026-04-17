@@ -1001,6 +1001,30 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"nodejs": nextStatus})
 	})
 
+	domainsNodeJSNPMInstallHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		actionCtx := backgroundRequestContext(r.Context())
+		record, err := runDomainNPMInstall(actionCtx, a.app.Domains, a.app.NodeJS, hostname)
+		if err != nil {
+			switch {
+			case errors.Is(err, domain.ErrNotFound):
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			case errors.Is(err, errDomainNPMUnsupportedDomain), errors.Is(err, errDomainNPMMissingManifest):
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			case errors.Is(err, errDomainNPMUnavailable):
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			default:
+				a.app.Logger.Error("run domain npm install failed", zap.String("hostname", hostname), zap.Error(err))
+				a.mutationEvent(actionCtx, "domains", "npm_install", "domain", hostname, hostname, "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			}
+			return
+		}
+
+		a.mutationEvent(actionCtx, "domains", "npm_install", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Ran npm install for %q.", record.Hostname))
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
+	})
+
 	domainsCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		var input domain.CreateInput
 		if err := decodeJSON(r, &input); err != nil {
@@ -1357,6 +1381,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodHead, "/domains/{hostname}/nodejs", domainsNodeJSStatusHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/start", domainsNodeJSStartHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/stop", domainsNodeJSStopHandler)
+	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/npm-install", domainsNodeJSNPMInstallHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/php-settings", domainsPHPSettingsUpdateHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/github", domainsGitHubUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/deploy", domainsGitHubDeployHandler)
