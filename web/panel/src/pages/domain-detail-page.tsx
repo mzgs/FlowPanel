@@ -584,6 +584,11 @@ const nodeJSDevToolAction: DomainActionItem = {
   title: "npm install",
   icon: Download,
 };
+const phpOnlyDevToolTitles = new Set([
+  "PHP",
+  "Install PHP App",
+  "PHP Composer",
+]);
 
 const siteBackupTargetKey = "__domain_site_backup__";
 const composerManifestName = "composer.json";
@@ -647,6 +652,14 @@ function getComposerManifestPath(path: string | null) {
   }
 
   return path ? `${path}/${composerManifestName}` : composerManifestName;
+}
+
+function getActiveDevToolActions(kind: DomainRecord["kind"] | undefined) {
+  const items = devToolActions.filter(
+    (item) => kind === "Php site" || !phpOnlyDevToolTitles.has(item.title),
+  );
+
+  return kind === "Node.js" ? [...items, nodeJSDevToolAction] : items;
 }
 
 function parseComposerPackages(content: string) {
@@ -1295,15 +1308,7 @@ export function DomainDetailPage() {
   const nodeJSToggleDisabled = nodeJSRunning
     ? nodeJSStopDisabled
     : nodeJSStartDisabled;
-  const activeDevToolActions =
-    domain?.kind === "Php site"
-      ? devToolActions
-      : domain?.kind === "Node.js"
-        ? [
-            ...devToolActions.filter((item) => item.title !== "Install PHP App"),
-            nodeJSDevToolAction,
-          ]
-        : devToolActions.filter((item) => item.title !== "Install PHP App");
+  const activeDevToolActions = getActiveDevToolActions(domain?.kind);
 
   useEffect(() => {
     if (!websiteCopyDialogOpen) {
@@ -1326,11 +1331,12 @@ export function DomainDetailPage() {
   }, [websiteCopyDialogOpen, websiteCopyTargetHostname, websiteCopyTargets]);
 
   useEffect(() => {
-    if (!composerDialogOpen || !domain || composerManifestPath === null) {
-      return;
-    }
-
-    if (domain.kind !== "Static site" && domain.kind !== "Php site") {
+    if (
+      !composerDialogOpen ||
+      !domain ||
+      domain.kind !== "Php site" ||
+      composerManifestPath === null
+    ) {
       return;
     }
 
@@ -1550,6 +1556,7 @@ export function DomainDetailPage() {
   async function handleComposerAction(action: "install" | "update") {
     if (
       !domain ||
+      domain.kind !== "Php site" ||
       composerManifestPath === null ||
       composerRunningAction !== null
     ) {
@@ -2099,7 +2106,7 @@ export function DomainDetailPage() {
         deletingBackupName={deletingBackupName}
       />
       <DomainComposerDialog
-        open={composerDialogOpen && domain !== null}
+        open={composerDialogOpen && domain?.kind === "Php site"}
         onOpenChange={setComposerDialogOpen}
         hostname={domain?.hostname ?? hostname}
         projectPath={documentRootDisplayPath}
@@ -2588,6 +2595,13 @@ export function DomainDetailPage() {
                       }
 
                       if (item.title === "PHP Composer" && domain !== null) {
+                        if (domain.kind !== "Php site") {
+                          toast.error(
+                            "Composer is available only for PHP site domains.",
+                          );
+                          return;
+                        }
+
                         setComposerDialogOpen(true);
                         return;
                       }
