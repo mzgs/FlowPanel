@@ -2711,9 +2711,8 @@ export function ApplicationsPage() {
 
               <Button
                 type="button"
-                variant="outline"
                 size="sm"
-                className="shrink-0 border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] hover:bg-[var(--app-bg-2)]"
+                className="shrink-0"
                 onClick={() => {
                   handlePM2CreateOpenChange(true);
                 }}
