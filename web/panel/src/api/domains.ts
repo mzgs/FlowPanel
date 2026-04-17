@@ -66,6 +66,7 @@ export type DomainNodeJSStatus = {
   supported: boolean;
   configured: boolean;
   pm2_installed: boolean;
+  runtime_version?: string;
   script_path: string;
   working_directory: string;
   process: PM2Process | null;

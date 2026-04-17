@@ -1326,6 +1326,10 @@ export function DomainDetailPage() {
     (record) => record.hostname !== domain?.hostname,
   );
   const runtimeLabel = getRuntimeDomainLabel(domain?.kind);
+  const runtimeVersion =
+    domain?.kind === "Python" && !nodeJSLoading && !nodeJSError
+      ? nodeJSStatus?.runtime_version ?? ""
+      : "";
   const nodeJSPort =
     domain && isRuntimeDomainKind(domain.kind)
       ? getNodeJSPortFromTarget(domain.target)
@@ -2746,7 +2750,18 @@ export function DomainDetailPage() {
                   <section className="overflow-x-auto rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow)]">
                     <div className="flex min-w-max items-center gap-4 text-xs">
                       <h2 className="shrink-0 text-sm font-semibold tracking-tight text-[var(--app-text)]">
-                        {runtimeLabel} Runtime
+                        {domain?.kind === "Python" ? (
+                          <span className="inline-flex items-baseline gap-1.5">
+                            <span>Python</span>
+                            {runtimeVersion ? (
+                              <span className="text-sm font-medium text-[var(--app-text-muted)]">
+                                {runtimeVersion}
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : (
+                          `${runtimeLabel} Runtime`
+                        )}
                       </h2>
                       <div className="inline-flex items-baseline gap-1.5">
                         <span className="shrink-0 text-[var(--app-text-muted)]">

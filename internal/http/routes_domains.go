@@ -11,7 +11,9 @@ import (
 	"io/fs"
 	stdhttp "net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +28,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
+
+const domainRuntimeVersionCommandTimeout = 3 * time.Second
+
+var pythonVersionPattern = regexp.MustCompile(`\b(\d+(?:\.\d+)+)\b`)
 
 func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	ftpAccountsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -1418,6 +1424,7 @@ type domainNodeJSStatusResponse struct {
 	Supported        bool         `json:"supported"`
 	Configured       bool         `json:"configured"`
 	PM2Installed     bool         `json:"pm2_installed"`
+	RuntimeVersion   string       `json:"runtime_version,omitempty"`
 	ScriptPath       string       `json:"script_path,omitempty"`
 	WorkingDirectory string       `json:"working_directory,omitempty"`
 	Process          *pm2.Process `json:"process"`
@@ -1458,6 +1465,9 @@ func loadDomainNodeJSStatus(
 		Configured: strings.TrimSpace(record.NodeJSScript) != "",
 		ScriptPath: strings.TrimSpace(record.NodeJSScript),
 		Process:    nil,
+	}
+	if record.Kind == domain.KindPython {
+		status.RuntimeVersion = detectDomainPythonRuntimeVersion(ctx)
 	}
 	runtimeLabel := domainRuntimeLabel(record.Kind)
 	if !status.Supported {
@@ -1583,6 +1593,31 @@ func domainRuntimeLabel(kind domain.Kind) string {
 	}
 
 	return "Node.js"
+}
+
+func detectDomainPythonRuntimeVersion(ctx context.Context) string {
+	runCtx := ctx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	if _, ok := runCtx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(runCtx, domainRuntimeVersionCommandTimeout)
+		defer cancel()
+	}
+
+	for _, candidate := range []string{"python3", "python"} {
+		output, err := exec.CommandContext(runCtx, candidate, "--version").CombinedOutput()
+		if err != nil && len(output) == 0 {
+			continue
+		}
+		match := pythonVersionPattern.FindStringSubmatch(string(output))
+		if len(match) >= 2 {
+			return match[1]
+		}
+	}
+
+	return ""
 }
 
 func readDomainLog(hostname string, logType string, filePath string, search string, limit int) domainLogResponse {
