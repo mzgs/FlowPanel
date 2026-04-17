@@ -94,7 +94,6 @@ import { PHPSettingsDialog } from "@/components/php-settings-dialog";
 import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialog";
 import {
   Copy,
-  DotsVertical,
   ExternalLink,
   List,
   LoaderCircle,
@@ -112,7 +111,6 @@ import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -2948,6 +2946,24 @@ export function ApplicationsPage() {
                                   type="button"
                                   variant="outline"
                                   size="sm"
+                                  className="h-7 w-7 p-0 text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
+                                  onClick={() => {
+                                    setPM2DeleteCandidate({ id: process.id, name: process.name });
+                                  }}
+                                  disabled={actionsDisabled}
+                                  aria-label={`Delete ${process.name}`}
+                                  title={`Delete ${process.name}`}
+                                >
+                                  {activeAction === "delete" ? (
+                                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-4 w-4" />
+                                  )}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
                                   className={compactActionButtonClassName}
                                   onClick={() => {
                                     openPM2Logs(process);
@@ -2958,33 +2974,6 @@ export function ApplicationsPage() {
                                   <TerminalSquare className="h-4 w-4" />
                                   Logs
                                 </Button>
-                                <DropdownMenu modal={false}>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      className="h-7 w-7 p-0"
-                                      disabled={actionsDisabled}
-                                      aria-label={`More actions for ${process.name}`}
-                                      title={`More actions for ${process.name}`}
-                                    >
-                                      <DotsVertical className="h-4 w-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-40">
-                                    <DropdownMenuItem
-                                      variant="destructive"
-                                      disabled={actionsDisabled}
-                                      onClick={() => {
-                                        setPM2DeleteCandidate({ id: process.id, name: process.name });
-                                      }}
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                      Delete
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
                               </div>
                             </TableCell>
                           </TableRow>
