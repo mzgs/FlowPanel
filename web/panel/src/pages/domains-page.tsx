@@ -116,15 +116,15 @@ const hostnamePattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/i;
 
 const domainAvatarPalettes = [
-  { backgroundColor: "#fce8e6", color: "#b45309" },
-  { backgroundColor: "#fdf1d6", color: "#a16207" },
-  { backgroundColor: "#e8f5e9", color: "#2f6f44" },
-  { backgroundColor: "#dff5f2", color: "#0f766e" },
-  { backgroundColor: "#e0f0ff", color: "#1d4ed8" },
-  { backgroundColor: "#e8ecff", color: "#4f46e5" },
-  { backgroundColor: "#f1e8ff", color: "#7c3aed" },
-  { backgroundColor: "#fbe7f2", color: "#be185d" },
-  { backgroundColor: "#ece8ff", color: "#5b21b6" },
+  { backgroundColor: "#b45309", color: "#fff7ed" },
+  { backgroundColor: "#a16207", color: "#fefce8" },
+  { backgroundColor: "#2f6f44", color: "#f0fdf4" },
+  { backgroundColor: "#0f766e", color: "#f0fdfa" },
+  { backgroundColor: "#1d4ed8", color: "#eff6ff" },
+  { backgroundColor: "#4f46e5", color: "#eef2ff" },
+  { backgroundColor: "#7c3aed", color: "#f5f3ff" },
+  { backgroundColor: "#be185d", color: "#fdf2f8" },
+  { backgroundColor: "#5b21b6", color: "#f5f3ff" },
 ] as const;
 
 const kindConfig: Record<
