@@ -115,6 +115,18 @@ const domainActionIconStroke = 1.5;
 const hostnamePattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/i;
 
+const domainAvatarPalettes = [
+  { backgroundColor: "#fee2e2", color: "#b91c1c" },
+  { backgroundColor: "#ffedd5", color: "#c2410c" },
+  { backgroundColor: "#fef3c7", color: "#b45309" },
+  { backgroundColor: "#dcfce7", color: "#15803d" },
+  { backgroundColor: "#ccfbf1", color: "#0f766e" },
+  { backgroundColor: "#dbeafe", color: "#1d4ed8" },
+  { backgroundColor: "#e0e7ff", color: "#4338ca" },
+  { backgroundColor: "#f3e8ff", color: "#7e22ce" },
+  { backgroundColor: "#fce7f3", color: "#be185d" },
+] as const;
+
 const kindConfig: Record<
   DomainKind,
   {
@@ -151,6 +163,18 @@ const kindConfig: Record<
 
 function normalizeHostname(value: string) {
   return value.trim().toLowerCase().replace(/\.$/, "");
+}
+
+function getDomainInitial(hostname: string) {
+  return hostname.trim().match(/[a-z0-9]/i)?.[0]?.toUpperCase() ?? "?";
+}
+
+function getDomainAvatarPalette(hostname: string) {
+  const hash = Array.from(hostname).reduce(
+    (value, char) => value + char.charCodeAt(0),
+    0,
+  );
+  return domainAvatarPalettes[hash % domainAvatarPalettes.length];
 }
 
 function validateHostname(value: string) {
@@ -929,30 +953,39 @@ export function DomainsPage() {
                         return (
                           <TableRow key={domain.id}>
                             <TableCell className="font-medium text-[var(--app-text)]">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Link
-                                  to="/domains/$hostname"
-                                  params={{ hostname: domain.hostname }}
-                                  className="transition-colors hover:text-primary hover:underline"
+                              <div className="flex items-center gap-2.5">
+                                <span
+                                  aria-hidden="true"
+                                  className="flex size-7 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold"
+                                  style={getDomainAvatarPalette(domain.hostname)}
                                 >
-                                  {domain.hostname}
-                                </Link>
-                                <Badge
-                                  asChild
-                                  variant="outline"
-                                  className="rounded-full"
-                                >
-                                  <a
-                                    href={getDomainSiteUrl(domain.hostname)}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    aria-label={`Visit ${domain.hostname}`}
-                                    title={`Visit ${domain.hostname}`}
+                                  {getDomainInitial(domain.hostname)}
+                                </span>
+                                <div className="min-w-0 flex flex-wrap items-center gap-2">
+                                  <Link
+                                    to="/domains/$hostname"
+                                    params={{ hostname: domain.hostname }}
+                                    className="transition-colors hover:text-primary hover:underline"
                                   >
-                                    <ExternalLink className="h-3 w-3" />
-                                    Visit
-                                  </a>
-                                </Badge>
+                                    {domain.hostname}
+                                  </Link>
+                                  <Badge
+                                    asChild
+                                    variant="outline"
+                                    className="rounded-full"
+                                  >
+                                    <a
+                                      href={getDomainSiteUrl(domain.hostname)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      aria-label={`Visit ${domain.hostname}`}
+                                      title={`Visit ${domain.hostname}`}
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                      Visit
+                                    </a>
+                                  </Badge>
+                                </div>
                               </div>
                             </TableCell>
                             <TableCell>{domain.kind}</TableCell>
