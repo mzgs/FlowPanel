@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const ftpAccountsTableName = "ftp_accounts"
-
 var ErrUsernameTaken = errors.New("ftp username already exists")
 
 type Account struct {

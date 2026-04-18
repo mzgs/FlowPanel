@@ -30,22 +30,6 @@ var supportedPHPVersions = []string{
 	"8.2",
 }
 
-var aptPHPPackages = []string{
-	"php-fpm",
-	"php-cli",
-	"php-common",
-	"php-opcache",
-	"php-bcmath",
-	"php-mysql",
-	"php-curl",
-	"php-gd",
-	"php-intl",
-	"php-imagick",
-	"php-mbstring",
-	"php-xml",
-	"php-zip",
-}
-
 var versionPattern = regexp.MustCompile(`\b(\d+\.\d+)`)
 
 type Manager interface {
@@ -1153,10 +1137,6 @@ func runCommands(ctx context.Context, commands ...[]string) error {
 
 func runCommand(ctx context.Context, name string, args ...string) (string, error) {
 	return runCommandWithOptions(ctx, "", nil, name, args...)
-}
-
-func runCommandInDir(ctx context.Context, dir string, name string, args ...string) (string, error) {
-	return runCommandWithOptions(ctx, dir, nil, name, args...)
 }
 
 func runCommandWithOptions(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {

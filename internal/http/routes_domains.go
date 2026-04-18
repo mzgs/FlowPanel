@@ -1374,43 +1374,6 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 	})
 
-	domainFTPResetPasswordHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		if a.app.FTPAccounts == nil {
-			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "ftp accounts are not configured"})
-			return
-		}
-
-		domainID := chi.URLParam(r, "domainID")
-		status, password, err := a.app.FTPAccounts.ResetPassword(r.Context(), domainID)
-		if err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
-				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
-				return
-			}
-
-			var validation ftp.ValidationErrors
-			if errors.As(err, &validation) {
-				writeValidationFailed(w, map[string]string(validation))
-				return
-			}
-
-			a.app.Logger.Error("reset domain ftp password failed", zap.String("domain_id", domainID), zap.Error(err))
-			a.mutationEvent(r.Context(), "domains", "reset_ftp_password", "domain", domainID, domainID, "failed", "Failed to reset the domain FTP password.")
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to reset ftp password"})
-			return
-		}
-
-		a.mutationEvent(r.Context(), "domains", "reset_ftp_password", "domain", domainID, status.Username, "succeeded", "Reset the domain FTP password.")
-		payload, err := domainFTPResponsePayload(r, a.app, status)
-		if err != nil {
-			a.app.Logger.Error("load ftp connection settings after password reset failed", zap.String("domain_id", domainID), zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "ftp password reset but connection settings could not be loaded"})
-			return
-		}
-		payload["password"] = password
-		writeJSON(w, stdhttp.StatusOK, payload)
-	})
-
 	r.Method(stdhttp.MethodGet, "/domains", domainsListHandler)
 	r.Method(stdhttp.MethodHead, "/domains", domainsListHandler)
 	r.Method(stdhttp.MethodGet, "/domains/logs", domainsLogsHandler)
@@ -1446,7 +1409,6 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodDelete, "/domains/{domainID}", domainsDeleteHandler)
 	r.Method(stdhttp.MethodGet, "/domains/{domainID}/ftp", domainFTPGetHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{domainID}/ftp", domainFTPUpdateHandler)
-	r.Method(stdhttp.MethodPost, "/domains/{domainID}/ftp/reset-password", domainFTPResetPasswordHandler)
 	r.Method(stdhttp.MethodGet, "/ftp/accounts", ftpAccountsListHandler)
 	r.Method(stdhttp.MethodHead, "/ftp/accounts", ftpAccountsListHandler)
 	r.Method(stdhttp.MethodPost, "/ftp/accounts", ftpAccountsCreateHandler)

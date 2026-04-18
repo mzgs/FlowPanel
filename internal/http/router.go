@@ -228,18 +228,6 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		api := newAPIRoutes(app)
 		r.Use(RequirePanelAuth(app))
 
-		bootstrapHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-			writeJSON(w, stdhttp.StatusOK, map[string]any{
-				"name":              "FlowPanel",
-				"status":            "ok",
-				"environment":       app.Config.Env,
-				"admin_listen_addr": app.Config.AdminListenAddr,
-				"phpmyadmin_addr":   app.Config.PHPMyAdminAddr,
-				"cron_enabled":      app.Config.Cron.Enabled,
-			})
-		})
-		r.Method(stdhttp.MethodGet, "/bootstrap", bootstrapHandler)
-		r.Method(stdhttp.MethodHead, "/bootstrap", bootstrapHandler)
 		r.Method(stdhttp.MethodGet, "/terminal/ws", newTerminalWebSocketHandler(app))
 
 		settingsGetHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

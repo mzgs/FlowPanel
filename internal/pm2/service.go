@@ -418,15 +418,6 @@ func (s *Service) sync(ctx context.Context, pm2Path string) ([]Process, error) {
 	return s.persistDefinitions(ctx, storedDefinitions, inspected, nil)
 }
 
-func parseProcesses(output string) ([]Process, error) {
-	inspected, err := parseInspectedProcesses(output)
-	if err != nil {
-		return nil, err
-	}
-
-	return toProcesses(inspected, nil, nil), nil
-}
-
 func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {

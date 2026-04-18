@@ -650,10 +650,6 @@ function mergeWordPressSectionDetails(
   }
 }
 
-function isSiteBackedKind(kind: DomainRecord["kind"]) {
-  return kind === "Static site" || kind === "Php site";
-}
-
 function isRuntimeDomainKind(kind: DomainRecord["kind"] | undefined | null) {
   return kind === "Node.js" || kind === "Python";
 }

@@ -312,7 +312,6 @@ func encodePHPSettings(record Record) string {
 func decodePHPSettings(raw string, record *Record) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		record.PHPSettings = record.PHPSettings
 		return nil
 	}
 

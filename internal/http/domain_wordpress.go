@@ -847,22 +847,6 @@ func createWordPressDatabase(
 	return record, err
 }
 
-func generateWordPressDatabaseUsername(databaseName string) (string, error) {
-	return generateTemplateDatabaseUsername(strings.TrimPrefix(databaseName, "wp_"), "wpu")
-}
-
-func generateWordPressDatabasePassword() (string, error) {
-	return generateTemplateDatabasePassword()
-}
-
-func generateWordPressRandomString(byteLength int) (string, error) {
-	return generateTemplateRandomString(byteLength)
-}
-
-func sanitizeWordPressIdentifier(value string) string {
-	return sanitizeTemplateIdentifier(value)
-}
-
 func squeezeUnderscores(value string) string {
 	var builder strings.Builder
 	builder.Grow(len(value))

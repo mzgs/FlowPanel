@@ -138,7 +138,7 @@ export async function uploadFiles(path: string, files: File[]): Promise<void> {
   }
 }
 
-export function getDownloadUrl(path: string) {
+function getDownloadUrl(path: string) {
   return `/api/files/download?path=${encodeURIComponent(path)}`;
 }
 

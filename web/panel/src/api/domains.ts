@@ -378,28 +378,6 @@ export async function updateDomainFTP(
   return payload.ftp;
 }
 
-export async function resetDomainFTPPassword(
-  domainID: string,
-): Promise<{ ftp: DomainFTPStatus; password: string }> {
-  const response = await fetch(
-    `/api/domains/${encodeURIComponent(domainID)}/ftp/reset-password`,
-    {
-      method: "POST",
-      credentials: "include",
-    },
-  );
-
-  if (!response.ok) {
-    throw await readDomainApiError(response, "reset ftp password");
-  }
-
-  const payload = (await response.json()) as {
-    ftp: DomainFTPStatus;
-    password: string;
-  };
-  return payload;
-}
-
 export async function updateDomainPHPSettings(
   hostname: string,
   input: UpdateDomainPHPSettingsInput,
@@ -495,10 +473,7 @@ export async function fetchDomainPreview(
     signal?: AbortSignal;
   },
 ): Promise<Blob> {
-  const previewUrl = new URL(
-    getDomainPreviewUrl(hostname),
-    window.location.origin,
-  );
+  const previewUrl = new URL(getDomainPreviewUrl(hostname), window.location.origin);
   if (options?.refresh) {
     previewUrl.searchParams.set("refresh", "1");
   }
@@ -518,7 +493,7 @@ export async function fetchDomainPreview(
   return response.blob();
 }
 
-export function getDomainPreviewUrl(hostname: string): string {
+function getDomainPreviewUrl(hostname: string): string {
   return `/api/domains/${encodeURIComponent(hostname)}/preview`;
 }
 

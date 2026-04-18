@@ -147,14 +147,6 @@ func pathWithin(root, target string) bool {
 	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
 }
 
-func lookupWorkerIDs(identity phpenv.WorkerIdentity) (int, int, error) {
-	worker, err := resolvePHPWorkerRuntime(identity)
-	if err != nil {
-		return 0, 0, err
-	}
-	return worker.uid, worker.gid, nil
-}
-
 type phpWorkerRuntime struct {
 	name    string
 	group   string

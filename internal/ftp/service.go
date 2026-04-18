@@ -2,7 +2,6 @@ package ftp
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -22,7 +21,6 @@ const (
 	defaultHost         = "0.0.0.0"
 	defaultPassivePorts = "30000-30100"
 	maxUsernameLength   = 64
-	generatedPassLength = 20
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -289,41 +287,6 @@ func (s *Service) UpdateDomain(ctx context.Context, domainID string, input Updat
 	}
 
 	return statusFromAccount(account), nil
-}
-
-func (s *Service) ResetPassword(ctx context.Context, domainID string) (DomainStatus, string, error) {
-	record, ok := s.findDomain(domainID)
-	if !ok {
-		return DomainStatus{}, "", domain.ErrNotFound
-	}
-	if !IsSupportedKind(record.Kind) {
-		return DomainStatus{}, "", ValidationErrors{
-			"domain": "FTP is not available for this domain.",
-		}
-	}
-
-	account, err := s.ensurePrimaryDomainAccount(ctx, record)
-	if err != nil {
-		return DomainStatus{}, "", err
-	}
-
-	password, err := generatePassword(generatedPassLength)
-	if err != nil {
-		return DomainStatus{}, "", fmt.Errorf("generate ftp password: %w", err)
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return DomainStatus{}, "", fmt.Errorf("hash ftp password: %w", err)
-	}
-
-	account.PasswordHash = string(hash)
-	account.UpdatedAt = s.now().UTC()
-	if err := s.store.Upsert(ctx, account); err != nil {
-		return DomainStatus{}, "", err
-	}
-
-	return statusFromAccount(account), password, nil
 }
 
 func (s *Service) Authenticate(ctx context.Context, username string, password string) (DomainStatus, bool, error) {
@@ -600,23 +563,4 @@ func statusFromAccount(account Account) DomainStatus {
 		RootPath:    account.RootPath,
 		HasPassword: strings.TrimSpace(account.PasswordHash) != "",
 	}
-}
-
-func generatePassword(length int) (string, error) {
-	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-	if length <= 0 {
-		length = generatedPassLength
-	}
-
-	buf := make([]byte, length)
-	random := make([]byte, length)
-	if _, err := rand.Read(random); err != nil {
-		return "", err
-	}
-
-	for i := range buf {
-		buf[i] = alphabet[int(random[i])%len(alphabet)]
-	}
-
-	return string(buf), nil
 }
