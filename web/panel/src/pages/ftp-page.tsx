@@ -39,7 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { formatDateTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 type DialogMode = "create" | "edit" | null;
@@ -80,14 +80,6 @@ const actionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
 const dangerActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 function generateFTPPassword(length = 20) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";

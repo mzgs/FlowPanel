@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	dbutil "flowpanel/internal/db"
 )
 
 type Store struct {
@@ -42,11 +44,10 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at
 ON events (created_at DESC, id DESC);
 `
 
-	if _, err := s.db.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("ensure events table: %w", err)
-	}
-
-	return nil
+	return dbutil.ExecStatements(ctx, s.db, dbutil.Statement{
+		SQL:          statement,
+		ErrorContext: "ensure events table",
+	})
 }
 
 func (s *Store) Insert(ctx context.Context, record Record) error {

@@ -100,16 +100,13 @@ import {
   getFilesPathFromDomainTarget,
 } from "@/lib/domain-targets";
 import { setPendingFilesPath } from "@/lib/files-navigation";
-import { cn } from "@/lib/utils";
+import {
+  emptyPHPSettings,
+  mergePHPSettingsForm,
+  samePHPSettings,
+} from "@/lib/php-settings";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 type GitHubFormState = {
   repositoryUrl: string;
@@ -122,25 +119,6 @@ const initialGitHubForm: GitHubFormState = {
   autoDeployOnPush: false,
   postFetchScript: "",
 };
-
-const defaultPHPErrorReporting = "E_ALL & ~E_NOTICE & ~E_DEPRECATED";
-const defaultDisabledFunctions =
-  "exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec";
-const phpErrorReportingOptions = new Set([
-  "E_ALL",
-  "E_ALL & ~E_NOTICE",
-  "E_ALL & ~E_DEPRECATED",
-  defaultPHPErrorReporting,
-]);
-
-function normalizePHPErrorReporting(value?: string | null) {
-  const normalized = value?.trim();
-  if (!normalized || !phpErrorReportingOptions.has(normalized)) {
-    return defaultPHPErrorReporting;
-  }
-
-  return normalized;
-}
 
 function toGitHubFormState(domain: DomainRecord | null): GitHubFormState {
   if (!domain?.github_integration) {
@@ -159,83 +137,6 @@ function sameGitHubFormState(left: GitHubFormState, right: GitHubFormState) {
     left.repositoryUrl === right.repositoryUrl &&
     left.autoDeployOnPush === right.autoDeployOnPush &&
     left.postFetchScript === right.postFetchScript
-  );
-}
-
-const initialPHPSettings: PHPSettings = {
-  max_execution_time: "",
-  max_input_time: "",
-  memory_limit: "",
-  post_max_size: "",
-  file_uploads: "On",
-  upload_max_filesize: "",
-  max_file_uploads: "",
-  default_socket_timeout: "",
-  error_reporting: defaultPHPErrorReporting,
-  display_errors: "Off",
-  disable_functions: defaultDisabledFunctions,
-};
-
-function toPHPSettingsForm(
-  status: PHPRuntimeStatus | null,
-  overrides?: PHPSettings | null,
-): PHPSettings {
-  const statusSettings = status?.settings ?? {};
-  const base = status
-    ? {
-        max_execution_time: statusSettings.max_execution_time ?? "",
-        max_input_time: statusSettings.max_input_time ?? "",
-        memory_limit: statusSettings.memory_limit ?? "",
-        post_max_size: statusSettings.post_max_size ?? "",
-        file_uploads: statusSettings.file_uploads ?? "On",
-        upload_max_filesize: statusSettings.upload_max_filesize ?? "",
-        max_file_uploads: statusSettings.max_file_uploads ?? "",
-        default_socket_timeout: statusSettings.default_socket_timeout ?? "",
-        error_reporting: normalizePHPErrorReporting(
-          statusSettings.error_reporting,
-        ),
-        display_errors: statusSettings.display_errors ?? "Off",
-        disable_functions:
-          statusSettings.disable_functions ?? defaultDisabledFunctions,
-      }
-    : initialPHPSettings;
-
-  if (!overrides) {
-    return base;
-  }
-
-  return {
-    max_execution_time: overrides.max_execution_time || base.max_execution_time,
-    max_input_time: overrides.max_input_time || base.max_input_time,
-    memory_limit: overrides.memory_limit || base.memory_limit,
-    post_max_size: overrides.post_max_size || base.post_max_size,
-    file_uploads: overrides.file_uploads || base.file_uploads,
-    upload_max_filesize:
-      overrides.upload_max_filesize || base.upload_max_filesize,
-    max_file_uploads: overrides.max_file_uploads || base.max_file_uploads,
-    default_socket_timeout:
-      overrides.default_socket_timeout || base.default_socket_timeout,
-    error_reporting: normalizePHPErrorReporting(
-      overrides.error_reporting || base.error_reporting,
-    ),
-    display_errors: overrides.display_errors || base.display_errors,
-    disable_functions: overrides.disable_functions || base.disable_functions,
-  };
-}
-
-function samePHPSettings(left: PHPSettings, right: PHPSettings) {
-  return (
-    left.max_execution_time === right.max_execution_time &&
-    left.max_input_time === right.max_input_time &&
-    left.memory_limit === right.memory_limit &&
-    left.post_max_size === right.post_max_size &&
-    left.file_uploads === right.file_uploads &&
-    left.upload_max_filesize === right.upload_max_filesize &&
-    left.max_file_uploads === right.max_file_uploads &&
-    left.default_socket_timeout === right.default_socket_timeout &&
-    left.error_reporting === right.error_reporting &&
-    left.display_errors === right.display_errors &&
-    left.disable_functions === right.disable_functions
   );
 }
 
@@ -861,9 +762,9 @@ export function DomainDetailPage() {
   const [phpStatus, setPHPStatus] = useState<PHPStatus | null>(null);
   const [phpVersion, setPHPVersion] = useState("");
   const [savedPHPVersion, setSavedPHPVersion] = useState("");
-  const [phpForm, setPHPForm] = useState<PHPSettings>(initialPHPSettings);
+  const [phpForm, setPHPForm] = useState<PHPSettings>(emptyPHPSettings);
   const [savedPHPForm, setSavedPHPForm] =
-    useState<PHPSettings>(initialPHPSettings);
+    useState<PHPSettings>(emptyPHPSettings);
   const [phpFieldErrors, setPHPFieldErrors] = useState<Record<string, string>>(
     {},
   );
@@ -969,8 +870,8 @@ export function DomainDetailPage() {
     setPHPStatus(null);
     setPHPVersion("");
     setSavedPHPVersion("");
-    setPHPForm(initialPHPSettings);
-    setSavedPHPForm(initialPHPSettings);
+    setPHPForm(emptyPHPSettings);
+    setSavedPHPForm(emptyPHPSettings);
     setPHPFieldErrors({});
     setPHPLoading(false);
     setPHPSaving(false);
@@ -1212,7 +1113,10 @@ export function DomainDetailPage() {
           domain?.php_version,
         );
         const nextRuntime = getPHPRuntimeStatus(nextStatus, nextVersion);
-        const nextForm = toPHPSettingsForm(nextRuntime, domain?.php_settings);
+        const nextForm = mergePHPSettingsForm(
+          nextRuntime?.settings,
+          domain?.php_settings,
+        );
         setPHPVersion(nextVersion);
         setSavedPHPVersion(nextVersion);
         setPHPForm(nextForm);
@@ -1846,7 +1750,10 @@ export function DomainDetailPage() {
       setPHPStatus(nextStatus);
       const nextVersion = getSelectedPHPVersion(nextStatus, phpVersion);
       const nextRuntime = getPHPRuntimeStatus(nextStatus, nextVersion);
-      const nextForm = toPHPSettingsForm(nextRuntime, domain?.php_settings);
+      const nextForm = mergePHPSettingsForm(
+        nextRuntime?.settings,
+        domain?.php_settings,
+      );
       setPHPVersion(nextVersion);
       setSavedPHPVersion(nextVersion);
       setPHPForm(nextForm);
@@ -1871,7 +1778,10 @@ export function DomainDetailPage() {
       setPHPStatus(nextStatus);
       const nextVersion = getSelectedPHPVersion(nextStatus, phpVersion);
       const nextRuntime = getPHPRuntimeStatus(nextStatus, nextVersion);
-      const nextForm = toPHPSettingsForm(nextRuntime, domain?.php_settings);
+      const nextForm = mergePHPSettingsForm(
+        nextRuntime?.settings,
+        domain?.php_settings,
+      );
       setPHPVersion(nextVersion);
       setSavedPHPVersion(nextVersion);
       setPHPForm(nextForm);
@@ -1915,8 +1825,8 @@ export function DomainDetailPage() {
         phpStatus,
         updatedDomain.php_version,
       );
-      const nextForm = toPHPSettingsForm(
-        nextRuntime,
+      const nextForm = mergePHPSettingsForm(
+        nextRuntime?.settings,
         updatedDomain.php_settings,
       );
       setDomain(updatedDomain);

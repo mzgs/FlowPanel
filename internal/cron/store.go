@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	dbutil "flowpanel/internal/db"
 )
 
 type Store struct {
@@ -48,11 +50,10 @@ CREATE INDEX IF NOT EXISTS idx_cron_job_runs_job_started_at
 ON cron_job_runs (job_id, started_at DESC, id DESC);
 `
 
-	if _, err := s.db.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("ensure cron jobs table: %w", err)
-	}
-
-	return nil
+	return dbutil.ExecStatements(ctx, s.db, dbutil.Statement{
+		SQL:          statement,
+		ErrorContext: "ensure cron jobs table",
+	})
 }
 
 func (s *Store) List(ctx context.Context) ([]Record, error) {

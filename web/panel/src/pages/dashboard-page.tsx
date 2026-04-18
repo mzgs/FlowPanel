@@ -8,6 +8,12 @@ import { DiskUsageCard } from "@/components/disk-usage-card";
 import { Database, Globe, LayoutDashboard, LoaderCircle, TerminalSquare } from "@/components/icons/tabler-icons";
 import { SystemStatusCard } from "@/components/system-status-card";
 import { Button } from "@/components/ui/button";
+import {
+  extractVersionNumber,
+  formatMariaDBVersion,
+  getRuntimeActionLabel,
+  isRuntimeActionState,
+} from "@/lib/runtime-status";
 
 function getActionError(error: unknown, fallback: string) {
   if (error instanceof Error && error.message && error.message !== "Failed to fetch") {
@@ -15,27 +21,6 @@ function getActionError(error: unknown, fallback: string) {
   }
 
   return fallback;
-}
-
-function getRuntimeActionLabel(state?: string | null) {
-  switch (state) {
-    case "installing":
-      return "Installing...";
-    case "removing":
-      return "Removing...";
-    case "starting":
-      return "Starting...";
-    case "stopping":
-      return "Stopping...";
-    case "restarting":
-      return "Restarting...";
-    default:
-      return null;
-  }
-}
-
-function isRuntimeActionState(state?: string | null) {
-  return getRuntimeActionLabel(state) !== null;
 }
 
 type OverviewData = {
@@ -338,20 +323,6 @@ function formatPHPVersion(status: PHPStatus | null) {
     full: version,
     short: extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version,
   };
-}
-
-function formatMariaDBVersion(version: string) {
-  return (
-    extractVersionNumber(version, /\bDistrib\s+(\d+(?:\.\d+)+)(?:-[A-Za-z0-9._-]+)?/i) ??
-    extractVersionNumber(version, /\bVer\s+(\d+(?:\.\d+)+)\b/i) ??
-    extractVersionNumber(version, /\b(\d+(?:\.\d+)+)\b/) ??
-    version
-  );
-}
-
-function extractVersionNumber(value: string, pattern: RegExp) {
-  const match = value.match(pattern);
-  return match?.[1] ?? null;
 }
 
 function formatHostname(status: SystemStatus | null) {

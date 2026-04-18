@@ -28,6 +28,7 @@ import {
 } from "@/components/icons/tabler-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
+import { FieldError } from "@/components/field-error";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -51,23 +52,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatBytes, formatDateTime } from "@/lib/format";
+import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
-
-function FieldError({ message }: { message?: string }) {
-  if (!message) {
-    return null;
-  }
-
-  return <p className="text-sm text-destructive">{message}</p>;
-}
 
 const initialScope: CreateBackupInput = {
   include_panel_data: true,

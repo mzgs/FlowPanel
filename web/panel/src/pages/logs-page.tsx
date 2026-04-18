@@ -33,7 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatBytes } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 
 type FilterState = {
   type: DomainLogType;
@@ -89,14 +89,6 @@ const apacheMonths: Record<string, string> = {
 
 const apacheCombinedLogPattern =
   /^(?<ip>\S+) \S+ \S+ \[(?<date>[^\]]+)] "(?<request>[^"]*)" (?<status>\d{3}) (?<size>\S+)(?: "(?<referer>[^"]*)" "(?<agent>[^"]*)")?/;
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 function buildRequestFilters(filters: FilterState, hostname: string): FetchDomainLogsInput {
   const limit = Number.parseInt(filters.limit, 10);

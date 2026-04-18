@@ -58,7 +58,7 @@ import { Switch } from "@/components/ui/switch";
 import { getSiteHostnameFromBackupRecord } from "@/lib/backup-records";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 import { setPendingFilesPath } from "@/lib/files-navigation";
-import { cn } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 type FormState = {
@@ -318,14 +318,6 @@ function getFormTargetValue(kind: DomainKind, target: string) {
 
 function getFormScriptPathValue(kind: DomainKind, scriptPath?: string) {
   return isRuntimeDomainKind(kind) ? scriptPath?.trim() ?? "" : "";
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
 }
 
 export function DomainsPage() {

@@ -82,7 +82,7 @@ import {
 } from "@/components/ui/sheet";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { consumePendingFilesPath } from "@/lib/files-navigation";
-import { cn } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 
 type ViewMode = "list" | "grid";
 type DialogMode = "folder" | "file" | "rename" | null;
@@ -147,14 +147,6 @@ const editableExtensions = new Set([
 const FileAceEditor = lazy(() =>
   import("@/components/file-ace-editor").then((module) => ({ default: module.FileAceEditor })),
 );
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 function readStoredViewMode(): ViewMode {
   if (typeof window === "undefined") {

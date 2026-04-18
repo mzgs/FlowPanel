@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
-import { cn, copyTextToClipboard, sleep } from "@/lib/utils";
+import { cn, copyTextToClipboard, getErrorMessage, sleep } from "@/lib/utils";
 import { toast } from "sonner";
 
 type FormState = {
@@ -58,14 +58,6 @@ const initialForm: FormState = {
   schedule: "",
   command: "",
 };
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 function getSchedulerBadge(enabled: boolean, started: boolean) {
   if (!enabled) {

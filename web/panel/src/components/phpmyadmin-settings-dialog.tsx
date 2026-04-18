@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { getErrorMessage } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
@@ -19,14 +20,6 @@ type PHPMyAdminSettingsDialogProps = {
   status: PHPMyAdminStatus | null;
   onStatusChange: (status: PHPMyAdminStatus) => void;
 };
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 export function PHPMyAdminSettingsDialog({
   open,

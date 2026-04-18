@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -38,6 +39,25 @@ import (
 	"go.uber.org/zap"
 )
 
+type storageEnsurer interface {
+	Ensure(context.Context) error
+}
+
+type panelStores struct {
+	Domain   *domain.Store
+	MariaDB  *mariadb.Store
+	PM2      *pm2.Store
+	Cron     *flowcron.Store
+	Events   *events.Store
+	Settings *settings.Store
+	FTP      *ftp.Store
+}
+
+type namedStore struct {
+	name  string
+	store storageEnsurer
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "flowpanel: %v\n", err)
@@ -59,6 +79,28 @@ func runCommand(args []string) error {
 	}
 
 	return fmt.Errorf("unknown command: %s", strings.Join(args, " "))
+}
+
+func newPanelStores(dbConn *sql.DB) panelStores {
+	return panelStores{
+		Domain:   domain.NewStore(dbConn),
+		MariaDB:  mariadb.NewStore(dbConn),
+		PM2:      pm2.NewStore(dbConn),
+		Cron:     flowcron.NewStore(dbConn),
+		Events:   events.NewStore(dbConn),
+		Settings: settings.NewStore(dbConn),
+		FTP:      ftp.NewStore(dbConn),
+	}
+}
+
+func ensureStores(ctx context.Context, stores ...namedStore) error {
+	for _, store := range stores {
+		if err := store.store.Ensure(ctx); err != nil {
+			return fmt.Errorf("ensure %s storage: %w", store.name, err)
+		}
+	}
+
+	return nil
 }
 
 func runBackupCreateCommand(args []string) error {
@@ -114,30 +156,24 @@ func runBackupCreateCommand(args []string) error {
 		_ = dbConn.Close()
 	}()
 
-	domainStore := domain.NewStore(dbConn)
-	if err := domainStore.Ensure(ctx); err != nil {
-		return fmt.Errorf("ensure domain storage: %w", err)
-	}
-	mariaDBStore := mariadb.NewStore(dbConn)
-	if err := mariaDBStore.Ensure(ctx); err != nil {
-		return fmt.Errorf("ensure mariadb storage: %w", err)
-	}
-	pm2Store := pm2.NewStore(dbConn)
-	if err := pm2Store.Ensure(ctx); err != nil {
-		return fmt.Errorf("ensure pm2 storage: %w", err)
+	stores := newPanelStores(dbConn)
+	if err := ensureStores(
+		ctx,
+		namedStore{name: "domain", store: stores.Domain},
+		namedStore{name: "mariadb", store: stores.MariaDB},
+		namedStore{name: "pm2", store: stores.PM2},
+		namedStore{name: "settings", store: stores.Settings},
+	); err != nil {
+		return err
 	}
 
-	domainService := domain.NewService(domainStore)
+	domainService := domain.NewService(stores.Domain)
 	if err := domainService.Load(ctx); err != nil {
 		return fmt.Errorf("load persisted domains: %w", err)
 	}
-	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
-	pm2Manager := pm2.NewService(logger.Named("pm2"), pm2Store)
-	settingsStore := settings.NewStore(dbConn)
-	if err := settingsStore.Ensure(ctx); err != nil {
-		return fmt.Errorf("ensure settings storage: %w", err)
-	}
-	settingsService := settings.NewService(settingsStore)
+	mariadbManager := mariadb.NewService(logger.Named("mariadb"), stores.MariaDB)
+	pm2Manager := pm2.NewService(logger.Named("pm2"), stores.PM2)
+	settingsService := settings.NewService(stores.Settings)
 	googleDriveService := googledrive.NewService(cfg.GoogleDrive)
 	backupService := backup.NewService(
 		logger.Named("backup"),
@@ -204,49 +240,34 @@ func runServer() error {
 		_ = dbConn.Close()
 	}()
 
-	domainStore := domain.NewStore(dbConn)
-	if err := domainStore.Ensure(startupCtx); err != nil {
-		return fmt.Errorf("ensure domain storage: %w", err)
-	}
-	mariaDBStore := mariadb.NewStore(dbConn)
-	if err := mariaDBStore.Ensure(startupCtx); err != nil {
-		return fmt.Errorf("ensure mariadb storage: %w", err)
-	}
-	pm2Store := pm2.NewStore(dbConn)
-	if err := pm2Store.Ensure(startupCtx); err != nil {
-		return fmt.Errorf("ensure pm2 storage: %w", err)
-	}
-	cronStore := flowcron.NewStore(dbConn)
-	if err := cronStore.Ensure(startupCtx); err != nil {
-		return fmt.Errorf("ensure cron storage: %w", err)
-	}
-	eventsStore := events.NewStore(dbConn)
-	if err := eventsStore.Ensure(startupCtx); err != nil {
-		return fmt.Errorf("ensure event storage: %w", err)
-	}
-	settingsStore := settings.NewStore(dbConn)
-	if err := settingsStore.Ensure(startupCtx); err != nil {
-		return fmt.Errorf("ensure settings storage: %w", err)
-	}
-	ftpStore := ftp.NewStore(dbConn)
-	if err := ftpStore.Ensure(startupCtx); err != nil {
-		return fmt.Errorf("ensure ftp storage: %w", err)
+	stores := newPanelStores(dbConn)
+	if err := ensureStores(
+		startupCtx,
+		namedStore{name: "domain", store: stores.Domain},
+		namedStore{name: "mariadb", store: stores.MariaDB},
+		namedStore{name: "pm2", store: stores.PM2},
+		namedStore{name: "cron", store: stores.Cron},
+		namedStore{name: "event", store: stores.Events},
+		namedStore{name: "settings", store: stores.Settings},
+		namedStore{name: "ftp", store: stores.FTP},
+	); err != nil {
+		return err
 	}
 
-	domainService := domain.NewService(domainStore)
+	domainService := domain.NewService(stores.Domain)
 	if err := domainService.Load(startupCtx); err != nil {
 		return fmt.Errorf("load persisted domains: %w", err)
 	}
 
 	sessionManager := auth.NewSessionManager(cfg)
-	scheduler := flowcron.NewScheduler(logger.Named("cron"), cfg.Cron.Enabled, cronStore)
+	scheduler := flowcron.NewScheduler(logger.Named("cron"), cfg.Cron.Enabled, stores.Cron)
 	if err := scheduler.Load(startupCtx); err != nil {
 		return fmt.Errorf("load persisted cron jobs: %w", err)
 	}
-	mariadbManager := mariadb.NewService(logger.Named("mariadb"), mariaDBStore)
+	mariadbManager := mariadb.NewService(logger.Named("mariadb"), stores.MariaDB)
 	golangManager := golang.NewService(logger.Named("golang"))
 	nodeJSManager := nodejs.NewService(logger.Named("nodejs"))
-	pm2Manager := pm2.NewService(logger.Named("pm2"), pm2Store)
+	pm2Manager := pm2.NewService(logger.Named("pm2"), stores.PM2)
 	redisManager := packageruntime.NewRedisService(logger.Named("redis"))
 	dockerManager := packageruntime.NewDockerService(logger.Named("docker"))
 	ffmpegManager := packageruntime.NewFFmpegService(logger.Named("ffmpeg"))
@@ -254,8 +275,8 @@ func runServer() error {
 	postgresqlManager := packageruntime.NewPostgreSQLService(logger.Named("postgresql"))
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
-	eventService := events.NewService(logger.Named("events"), eventsStore)
-	settingsService := settings.NewService(settingsStore)
+	eventService := events.NewService(logger.Named("events"), stores.Events)
+	settingsService := settings.NewService(stores.Settings)
 	phpManager.SetDefaultVersionResolver(func(ctx context.Context, status phpenv.Status) string {
 		record, err := settingsService.Get(ctx)
 		if err != nil {
@@ -266,7 +287,7 @@ func runServer() error {
 		}
 		return record.DefaultPHPVersion
 	})
-	ftpService := ftp.NewService(ftpStore, domainService)
+	ftpService := ftp.NewService(stores.FTP, domainService)
 	ftpRuntime := ftp.NewRuntime(logger.Named("ftp"), ftpService)
 	googleDriveService := googledrive.NewService(cfg.GoogleDrive)
 	backupService := backup.NewService(

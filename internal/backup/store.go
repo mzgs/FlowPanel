@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	dbutil "flowpanel/internal/db"
 )
 
 type Store struct {
@@ -34,11 +36,10 @@ CREATE TABLE IF NOT EXISTS google_drive_backups (
 );
 `
 
-	if _, err := s.db.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("ensure google drive backups table: %w", err)
-	}
-
-	return nil
+	return dbutil.ExecStatements(ctx, s.db, dbutil.Statement{
+		SQL:          statement,
+		ErrorContext: "ensure google drive backups table",
+	})
 }
 
 func (s *Store) ListGoogleDrive(ctx context.Context) ([]Record, error) {

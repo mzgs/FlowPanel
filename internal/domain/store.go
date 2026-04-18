@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	dbutil "flowpanel/internal/db"
 )
 
 type Store struct {
@@ -45,10 +47,15 @@ CREATE TABLE IF NOT EXISTS domains (
 );
 `
 
-	if _, err := s.db.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("ensure domains table: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `
+	return dbutil.ExecStatements(
+		ctx,
+		s.db,
+		dbutil.Statement{
+			SQL:          statement,
+			ErrorContext: "ensure domains table",
+		},
+		dbutil.Statement{
+			SQL: `
 CREATE TABLE IF NOT EXISTS domain_github_integrations (
     domain_id TEXT PRIMARY KEY,
     repository_url TEXT NOT NULL,
@@ -60,11 +67,10 @@ CREATE TABLE IF NOT EXISTS domain_github_integrations (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
-`); err != nil {
-		return fmt.Errorf("ensure domain github integrations table: %w", err)
-	}
-
-	return nil
+`,
+			ErrorContext: "ensure domain github integrations table",
+		},
+	)
 }
 
 func (s *Store) List(ctx context.Context) ([]Record, error) {

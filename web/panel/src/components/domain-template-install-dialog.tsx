@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 type DomainTemplateInstallDialogProps = {
@@ -166,14 +167,6 @@ function generatePassword(length = generatedPasswordLength) {
     randomBytes,
     (value) => alphabet[value % alphabet.length],
   ).join("");
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
 }
 
 export function DomainTemplateInstallDialog({

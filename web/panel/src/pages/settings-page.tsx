@@ -21,6 +21,7 @@ import {
   Upload,
   Wrench,
 } from "@/components/icons/tabler-icons";
+import { FieldError } from "@/components/field-error";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,14 +67,6 @@ function sameFormState(left: SettingsFormState, right: SettingsFormState) {
     left.ftp_port === right.ftp_port &&
     left.ftp_passive_ports === right.ftp_passive_ports
   );
-}
-
-function FieldError({ message }: { message?: string }) {
-  if (!message) {
-    return null;
-  }
-
-  return <p className="text-sm text-destructive">{message}</p>;
 }
 
 export function SettingsPage() {

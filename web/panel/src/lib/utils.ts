@@ -9,6 +9,14 @@ export function sleep(ms: number = 1000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallback;
+}
+
 export async function copyTextToClipboard(text: string) {
   if (typeof navigator !== "undefined" && typeof navigator.clipboard?.writeText === "function") {
     try {

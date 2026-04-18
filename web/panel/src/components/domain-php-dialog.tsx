@@ -1,5 +1,6 @@
 import { type DomainRecord } from "@/api/domains";
 import { type PHPRuntimeStatus, type PHPSettings } from "@/api/php";
+import { FieldError } from "@/components/field-error";
 import { LoaderCircle } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,16 +20,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-
-const phpErrorReportingOptions = [
-  { value: "E_ALL", label: "E_ALL" },
-  { value: "E_ALL & ~E_NOTICE", label: "E_ALL & ~E_NOTICE" },
-  { value: "E_ALL & ~E_DEPRECATED", label: "E_ALL & ~E_DEPRECATED" },
-  {
-    value: "E_ALL & ~E_NOTICE & ~E_DEPRECATED",
-    label: "E_ALL & ~E_NOTICE & ~E_DEPRECATED",
-  },
-] as const;
+import { phpErrorReportingOptions } from "@/lib/php-settings";
+import {
+  formatPHPVersion,
+  getPHPActionLabel,
+  getPHPServiceLabel,
+  isPHPActionState,
+} from "@/lib/php-runtime";
 
 type DomainPHPDialogProps = {
   open: boolean;
@@ -50,79 +48,6 @@ type DomainPHPDialogProps = {
   onStart: () => void;
   onSave: () => void;
 };
-
-function getPHPActionLabel(state?: string | null) {
-  switch (state) {
-    case "installing":
-      return "Installing...";
-    case "removing":
-      return "Removing...";
-    case "starting":
-      return "Starting...";
-    case "stopping":
-      return "Stopping...";
-    case "restarting":
-      return "Restarting...";
-    default:
-      return null;
-  }
-}
-
-function isPHPActionState(state?: string | null) {
-  return getPHPActionLabel(state) !== null;
-}
-
-function FieldError({ message }: { message?: string }) {
-  if (!message) {
-    return null;
-  }
-
-  return <p className="text-sm text-destructive">{message}</p>;
-}
-
-function extractVersionNumber(value: string, pattern: RegExp) {
-  const match = value.match(pattern);
-  return match?.[1] ?? null;
-}
-
-function formatPHPVersion(status: PHPRuntimeStatus | null) {
-  const actionLabel = getPHPActionLabel(status?.state);
-  if (actionLabel) {
-    return actionLabel;
-  }
-
-  if (!status?.php_installed) {
-    return "Not installed";
-  }
-
-  const version = status.php_version?.trim();
-  if (!version) {
-    return "Installed";
-  }
-
-  return extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version;
-}
-
-function getPHPServiceLabel(status: PHPRuntimeStatus | null) {
-  if (!status) {
-    return "Unavailable";
-  }
-
-  const actionLabel = getPHPActionLabel(status.state);
-  if (actionLabel) {
-    return actionLabel.replace("...", "");
-  }
-
-  if (status.service_running) {
-    return "Running";
-  }
-
-  if (status.fpm_installed) {
-    return "Installed";
-  }
-
-  return "Not installed";
-}
 
 export function DomainPHPDialog({
   open,

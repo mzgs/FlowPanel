@@ -20,6 +20,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 type FTPFormState = {
@@ -65,14 +66,6 @@ function getDomainAccounts(
 
       return left.username.localeCompare(right.username);
     });
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
 }
 
 function generateFTPPassword(length = ftpGeneratedPasswordLength) {

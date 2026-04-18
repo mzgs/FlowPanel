@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 type MariaDBSettingsDialogProps = {
@@ -17,14 +18,6 @@ type MariaDBSettingsDialogProps = {
   onOpenChange: (open: boolean) => void;
   status: MariaDBStatus | null;
 };
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 function getStatusBadge(status: MariaDBStatus | null) {
   if (!status) {

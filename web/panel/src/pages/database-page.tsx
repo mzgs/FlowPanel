@@ -46,7 +46,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { getDatabaseNameFromBackupRecord } from "@/lib/backup-records";
-import { cn, copyTextToClipboard } from "@/lib/utils";
+import { cn, copyTextToClipboard, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 type DialogMode = "create" | "edit" | null;
@@ -88,14 +88,6 @@ function validateIdentifier(value: string, label: string) {
   }
 
   return undefined;
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
 }
 
 function generateRootPassword() {

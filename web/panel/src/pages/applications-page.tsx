@@ -130,7 +130,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import {
+  extractVersionNumber,
+  formatMariaDBVersion,
+  getRuntimeActionLabel,
+  isRuntimeActionState,
+} from "@/lib/runtime-status";
+import { cn, getErrorMessage } from "@/lib/utils";
 import Skeleton, { SkeletonTheme } from "react-loading-skeleton";
 import { toast } from "sonner";
 
@@ -200,36 +206,6 @@ type ServiceRuntimeStatus = InstallRemoveRuntimeStatus & {
   restart_label?: string;
 };
 
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
-
-function extractVersionNumber(value: string, pattern: RegExp) {
-  const match = value.match(pattern);
-  return match?.[1] ?? null;
-}
-
-function getRuntimeActionLabel(state: RuntimeState) {
-  switch (state) {
-    case "installing":
-      return "Installing...";
-    case "removing":
-      return "Removing...";
-    case "starting":
-      return "Starting...";
-    case "stopping":
-      return "Stopping...";
-    case "restarting":
-      return "Restarting...";
-    default:
-      return null;
-  }
-}
-
 function getApplicationActionLabel(action: "install" | "start" | "stop" | "restart" | "remove") {
   switch (action) {
     case "install":
@@ -243,19 +219,6 @@ function getApplicationActionLabel(action: "install" | "start" | "stop" | "resta
     case "remove":
       return "Remove";
   }
-}
-
-function isRuntimeActionState(state: RuntimeState) {
-  return getRuntimeActionLabel(state) !== null;
-}
-
-function formatMariaDBVersion(version: string) {
-  return (
-    extractVersionNumber(version, /\bDistrib\s+(\d+(?:\.\d+)+)(?:-[A-Za-z0-9._-]+)?/i) ??
-    extractVersionNumber(version, /\bVer\s+(\d+(?:\.\d+)+)\b/i) ??
-    extractVersionNumber(version, /\b(\d+(?:\.\d+)+)\b/) ??
-    version
-  );
 }
 
 function formatMariaDBValue(status: MariaDBStatus | null) {

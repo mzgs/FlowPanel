@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	dbutil "flowpanel/internal/db"
 )
 
 var ErrUsernameTaken = errors.New("ftp username already exists")
@@ -52,17 +54,21 @@ CREATE TABLE IF NOT EXISTS ftp_accounts (
 );
 `
 
-	if _, err := s.db.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("ensure ftp accounts table: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `
+	return dbutil.ExecStatements(
+		ctx,
+		s.db,
+		dbutil.Statement{
+			SQL:          statement,
+			ErrorContext: "ensure ftp accounts table",
+		},
+		dbutil.Statement{
+			SQL: `
 CREATE INDEX IF NOT EXISTS idx_ftp_accounts_domain_id
 ON ftp_accounts(domain_id)
-`); err != nil {
-		return fmt.Errorf("ensure ftp accounts domain index: %w", err)
-	}
-
-	return nil
+`,
+			ErrorContext: "ensure ftp accounts domain index",
+		},
+	)
 }
 
 func (s *Store) List(ctx context.Context) ([]Account, error) {

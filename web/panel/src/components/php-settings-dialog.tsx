@@ -9,7 +9,6 @@ import {
   updatePHPSettings,
   updatePHPIni,
   type PHPApiError,
-  type PHPSettings,
   type PHPStatus,
   type PHPRuntimeStatus,
   type UpdatePHPSettingsInput,
@@ -17,6 +16,7 @@ import {
 import { CircleCheck, LoaderCircle } from "@/components/icons/tabler-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FieldError } from "@/components/field-error";
 import {
   Dialog,
   DialogContent,
@@ -35,17 +35,18 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import {
+  phpErrorReportingOptions,
+  samePHPSettings,
+  toPHPSettingsForm,
+} from "@/lib/php-settings";
+import {
+  formatPHPVersion,
+  getPHPActionLabel,
+  getPHPServiceLabel,
+  isPHPActionState,
+} from "@/lib/php-runtime";
 import { toast } from "sonner";
-
-const phpErrorReportingOptions = [
-  { value: "E_ALL", label: "E_ALL" },
-  { value: "E_ALL & ~E_NOTICE", label: "E_ALL & ~E_NOTICE" },
-  { value: "E_ALL & ~E_DEPRECATED", label: "E_ALL & ~E_DEPRECATED" },
-  {
-    value: "E_ALL & ~E_NOTICE & ~E_DEPRECATED",
-    label: "E_ALL & ~E_NOTICE & ~E_DEPRECATED",
-  },
-] as const;
 
 const phpSettingsSections = [
   {
@@ -84,23 +85,6 @@ type PHPSettingsDialogProps = {
 
 type PHPSettingsFormState = UpdatePHPSettingsInput;
 
-const defaultDisabledFunctions =
-  "exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec";
-
-const emptyForm: PHPSettingsFormState = {
-  max_execution_time: "",
-  max_input_time: "",
-  memory_limit: "",
-  post_max_size: "",
-  file_uploads: "On",
-  upload_max_filesize: "",
-  max_file_uploads: "",
-  default_socket_timeout: "",
-  error_reporting: "E_ALL",
-  display_errors: "Off",
-  disable_functions: defaultDisabledFunctions,
-};
-
 function buildExtensionOrder(
   catalog: PHPExtensionCatalogEntry[],
   installedExtensions: Set<string>,
@@ -122,59 +106,6 @@ function buildExtensionOrder(
   );
 }
 
-function toFormState(settings?: PHPSettings): PHPSettingsFormState {
-  return {
-    max_execution_time: settings?.max_execution_time ?? "",
-    max_input_time: settings?.max_input_time ?? "",
-    memory_limit: settings?.memory_limit ?? "",
-    post_max_size: settings?.post_max_size ?? "",
-    file_uploads: settings?.file_uploads ?? "On",
-    upload_max_filesize: settings?.upload_max_filesize ?? "",
-    max_file_uploads: settings?.max_file_uploads ?? "",
-    default_socket_timeout: settings?.default_socket_timeout ?? "",
-    error_reporting: settings?.error_reporting ?? "E_ALL",
-    display_errors: settings?.display_errors ?? "Off",
-    disable_functions: settings?.disable_functions ?? defaultDisabledFunctions,
-  };
-}
-
-function sameFormState(left: PHPSettingsFormState, right: PHPSettingsFormState) {
-  return (
-    left.max_execution_time === right.max_execution_time &&
-    left.max_input_time === right.max_input_time &&
-    left.memory_limit === right.memory_limit &&
-    left.post_max_size === right.post_max_size &&
-    left.file_uploads === right.file_uploads &&
-    left.upload_max_filesize === right.upload_max_filesize &&
-    left.max_file_uploads === right.max_file_uploads &&
-    left.default_socket_timeout === right.default_socket_timeout &&
-    left.error_reporting === right.error_reporting &&
-    left.display_errors === right.display_errors &&
-    left.disable_functions === right.disable_functions
-  );
-}
-
-function getPHPActionLabel(state?: string | null) {
-  switch (state) {
-    case "installing":
-      return "Installing...";
-    case "removing":
-      return "Removing...";
-    case "starting":
-      return "Starting...";
-    case "stopping":
-      return "Stopping...";
-    case "restarting":
-      return "Restarting...";
-    default:
-      return null;
-  }
-}
-
-function isPHPActionState(state?: string | null) {
-  return getPHPActionLabel(state) !== null;
-}
-
 function normalizePHPExtensionToken(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
@@ -185,58 +116,6 @@ function isPHPExtensionInstalled(
 ) {
   const candidates = [entry.id, ...(entry.aliases ?? [])].map(normalizePHPExtensionToken);
   return candidates.some((candidate) => installedExtensions.has(candidate));
-}
-
-function extractVersionNumber(value: string, pattern: RegExp) {
-  const match = value.match(pattern);
-  return match?.[1] ?? null;
-}
-
-function formatPHPVersion(status: PHPRuntimeStatus | null) {
-  const actionLabel = getPHPActionLabel(status?.state);
-  if (actionLabel) {
-    return actionLabel;
-  }
-
-  if (!status?.php_installed) {
-    return "Not installed";
-  }
-
-  const version = status.php_version?.trim();
-  if (!version) {
-    return "Installed";
-  }
-
-  return extractVersionNumber(version, /\bPHP\s+(\d+(?:\.\d+)+)\b/i) ?? version;
-}
-
-function getPHPServiceLabel(status: PHPRuntimeStatus | null) {
-  if (!status) {
-    return "Unavailable";
-  }
-
-  const actionLabel = getPHPActionLabel(status.state);
-  if (actionLabel) {
-    return actionLabel.replace("...", "");
-  }
-
-  if (status.service_running) {
-    return "Running";
-  }
-
-  if (status.fpm_installed) {
-    return "Installed";
-  }
-
-  return "Not installed";
-}
-
-function FieldError({ message }: { message?: string }) {
-  if (!message) {
-    return null;
-  }
-
-  return <p className="text-sm text-destructive">{message}</p>;
 }
 
 function formatValue(value?: string) {
@@ -299,8 +178,8 @@ export function PHPSettingsDialog({
 }: PHPSettingsDialogProps) {
   const [activeSection, setActiveSection] =
     useState<PHPSettingsSectionId>("runtime-settings");
-  const [form, setForm] = useState<PHPSettingsFormState>(emptyForm);
-  const [savedForm, setSavedForm] = useState<PHPSettingsFormState>(emptyForm);
+  const [form, setForm] = useState<PHPSettingsFormState>(toPHPSettingsForm());
+  const [savedForm, setSavedForm] = useState<PHPSettingsFormState>(toPHPSettingsForm());
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [settingDefault, setSettingDefault] = useState(false);
@@ -319,7 +198,7 @@ export function PHPSettingsDialog({
       return;
     }
 
-    const nextForm = toFormState(status?.settings);
+    const nextForm = toPHPSettingsForm(status?.settings);
     setActiveSection("runtime-settings");
     setForm(nextForm);
     setSavedForm(nextForm);
@@ -512,7 +391,7 @@ export function PHPSettingsDialog({
     settingDefault ||
     installingExtensionId !== null ||
     isPHPActionState(status?.state);
-  const dirty = !sameFormState(form, savedForm);
+  const dirty = !samePHPSettings(form, savedForm);
   const iniDirty = ini.content !== savedIniContent;
   const saveDisabled =
     activeSection === "php-ini"

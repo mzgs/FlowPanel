@@ -21,18 +21,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
-import { copyTextToClipboard } from "@/lib/utils";
+import { copyTextToClipboard, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 const messagePreviewLength = 200;
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 function formatAction(event: ActivityEvent) {
   return `${event.category} / ${event.action}`;

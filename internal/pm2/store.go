@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	dbutil "flowpanel/internal/db"
 )
 
 type Store struct {
@@ -42,11 +44,10 @@ CREATE TABLE IF NOT EXISTS pm2_processes (
 );
 `
 
-	if _, err := s.db.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("ensure pm2 processes table: %w", err)
-	}
-
-	return nil
+	return dbutil.ExecStatements(ctx, s.db, dbutil.Statement{
+		SQL:          statement,
+		ErrorContext: "ensure pm2 processes table",
+	})
 }
 
 func (s *Store) List(ctx context.Context) ([]Definition, error) {

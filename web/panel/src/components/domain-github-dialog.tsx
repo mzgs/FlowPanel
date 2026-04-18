@@ -1,3 +1,4 @@
+import { FieldError } from "@/components/field-error";
 import { LoaderCircle, RefreshCw, Trash2 } from "@/components/icons/tabler-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,14 +36,6 @@ type DomainGitHubDialogProps = {
   onDeploy: () => void;
   onDisconnect: () => void;
 };
-
-function FieldError({ message }: { message?: string }) {
-  if (!message) {
-    return null;
-  }
-
-  return <p className="text-sm text-destructive">{message}</p>;
-}
 
 export function DomainGitHubDialog({
   open,

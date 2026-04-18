@@ -1,4 +1,5 @@
 import { type DomainRecord } from "@/api/domains";
+import { FieldError } from "@/components/field-error";
 import { LoaderCircle } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,14 +34,6 @@ type DomainWebsiteCopyDialogProps = {
   onReplaceTargetFilesChange: (checked: boolean) => void;
   onCopy: () => void;
 };
-
-function FieldError({ message }: { message?: string }) {
-  if (!message) {
-    return null;
-  }
-
-  return <p className="text-sm text-destructive">{message}</p>;
-}
 
 export function DomainWebsiteCopyDialog({
   open,

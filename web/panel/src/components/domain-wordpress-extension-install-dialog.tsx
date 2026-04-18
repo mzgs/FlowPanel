@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 type WordPressExtensionInstallDialogProps = {
@@ -32,14 +33,6 @@ type WordPressExtensionInstallDialogProps = {
   installedItems: WordPressExtension[];
   onInstalled: (status: WordPressStatus) => void;
 };
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 function WordPressExtensionSearchThumbnail({
   item,

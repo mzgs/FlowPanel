@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import {
   Download,
   HardDrive,
@@ -8,7 +8,10 @@ import {
 } from "@/components/icons/tabler-icons";
 import { getBackupDownloadUrl, type BackupRecord } from "@/api/backups";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
-import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
+import {
+  BackupConfirmDialogs,
+  useBackupConfirmState,
+} from "@/components/backup-confirm-dialogs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -209,25 +212,20 @@ export function BackupRecordsDialog({
   deletingBackupName,
   actionIconStroke,
 }: BackupRecordsDialogProps) {
-  const [confirmDeleteBackupName, setConfirmDeleteBackupName] = useState<string | null>(null);
-  const [confirmRestoreBackupName, setConfirmRestoreBackupName] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      setConfirmDeleteBackupName(null);
-      setConfirmRestoreBackupName(null);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (
-      confirmDeleteBackupName !== null &&
-      deletingBackupName !== confirmDeleteBackupName &&
-      !backups.some((backup) => backup.name === confirmDeleteBackupName)
-    ) {
-      setConfirmDeleteBackupName(null);
-    }
-  }, [backups, confirmDeleteBackupName, deletingBackupName]);
+  const backupNames = useMemo(
+    () => new Set(backups.map((backup) => backup.name)),
+    [backups],
+  );
+  const {
+    confirmDeleteBackupName,
+    setConfirmDeleteBackupName,
+    confirmRestoreBackupName,
+    setConfirmRestoreBackupName,
+  } = useBackupConfirmState({
+    open,
+    backupNames,
+    deletingBackupName,
+  });
 
   return (
     <>
@@ -259,50 +257,17 @@ export function BackupRecordsDialog({
           />
         </DialogContent>
       </Dialog>
-      <ActionConfirmDialog
-        open={confirmRestoreBackupName !== null}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            setConfirmRestoreBackupName(null);
-          }
-        }}
-        title={restoreConfirmTitle}
-        desc={
-          confirmRestoreBackupName
-            ? (getRestoreConfirmDescription?.(confirmRestoreBackupName) ??
-              `Restore backup "${confirmRestoreBackupName}"?`)
-            : "Restore this backup?"
-        }
-        confirmText={restoreConfirmText}
-        handleConfirm={() => {
-          if (confirmRestoreBackupName !== null) {
-            onRestoreBackup(confirmRestoreBackupName);
-            setConfirmRestoreBackupName(null);
-          }
-        }}
-        className="sm:max-w-md"
-      />
-      <ActionConfirmDialog
-        open={confirmDeleteBackupName !== null}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            setConfirmDeleteBackupName(null);
-          }
-        }}
-        title="Delete backup"
-        desc={confirmDeleteBackupName ? `Delete backup "${confirmDeleteBackupName}"?` : "Delete this backup?"}
-        confirmText="Delete backup"
-        destructive
-        isLoading={
-          confirmDeleteBackupName !== null &&
-          deletingBackupName === confirmDeleteBackupName
-        }
-        handleConfirm={() => {
-          if (confirmDeleteBackupName !== null) {
-            onDeleteBackup(confirmDeleteBackupName);
-          }
-        }}
-        className="sm:max-w-md"
+      <BackupConfirmDialogs
+        confirmDeleteBackupName={confirmDeleteBackupName}
+        setConfirmDeleteBackupName={setConfirmDeleteBackupName}
+        confirmRestoreBackupName={confirmRestoreBackupName}
+        setConfirmRestoreBackupName={setConfirmRestoreBackupName}
+        onRestoreBackup={onRestoreBackup}
+        onDeleteBackup={onDeleteBackup}
+        deletingBackupName={deletingBackupName}
+        restoreConfirmTitle={restoreConfirmTitle}
+        restoreConfirmText={restoreConfirmText}
+        getRestoreConfirmDescription={getRestoreConfirmDescription}
       />
     </>
   );
