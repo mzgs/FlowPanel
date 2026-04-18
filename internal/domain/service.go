@@ -381,8 +381,8 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	record.Kind, record.Target = normalizePersistedKindAndTarget(record.Kind, record.Target)
-	record.NodeJSScript = normalizePersistedNodeJSScript(record.Kind, record.NodeJSScript)
+	record.Kind, record.Target = normalizeKindAndTarget(record.Kind, record.Target)
+	record.NodeJSScript = normalizeNodeJSScriptForKind(record.Kind, record.NodeJSScript)
 	record = s.withTransientFields(record)
 
 	index, _, exists := s.findRecordLocked(record.ID)
@@ -503,8 +503,8 @@ func validateTarget(kind Kind, value string) string {
 
 func normalizeAndValidateInput(hostname string, kind Kind, target string, nodeJSScript string) (string, Kind, string, string, error) {
 	normalizedHostname := normalizeHostname(hostname)
-	normalizedKind, trimmedTarget := normalizePersistedKindAndTarget(kind, target)
-	normalizedNodeJSScript := normalizePersistedNodeJSScript(normalizedKind, nodeJSScript)
+	normalizedKind, trimmedTarget := normalizeKindAndTarget(kind, target)
+	normalizedNodeJSScript := normalizeNodeJSScriptForKind(normalizedKind, nodeJSScript)
 
 	validation := ValidationErrors{}
 
@@ -729,24 +729,14 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 	}
 }
 
-func normalizePersistedKindAndTarget(kind Kind, target string) (Kind, string) {
+func normalizeKindAndTarget(kind Kind, target string) (Kind, string) {
 	trimmedTarget := strings.TrimSpace(target)
 	if usesScriptPath(kind) {
 		if normalizedTarget, err := normalizeNodeJSTarget(trimmedTarget); err == nil {
 			return kind, normalizedTarget
 		}
-		return kind, trimmedTarget
 	}
-	if kind != "App" {
-		return kind, trimmedTarget
-	}
-
-	port, err := strconv.Atoi(trimmedTarget)
-	if err != nil || port < 1 || port > 65535 {
-		return KindReverseProxy, trimmedTarget
-	}
-
-	return KindReverseProxy, fmt.Sprintf("http://127.0.0.1:%d", port)
+	return kind, trimmedTarget
 }
 
 func validateNodeJSScript(value string) string {
@@ -757,7 +747,7 @@ func validateNodeJSScript(value string) string {
 	return ""
 }
 
-func normalizePersistedNodeJSScript(kind Kind, value string) string {
+func normalizeNodeJSScriptForKind(kind Kind, value string) string {
 	if !usesScriptPath(kind) {
 		return ""
 	}
@@ -819,7 +809,7 @@ func ResolveNodeJSScriptPath(basePath string, record Record) (string, error) {
 		return "", fmt.Errorf("unsupported domain kind %q", record.Kind)
 	}
 
-	scriptPath := normalizePersistedNodeJSScript(record.Kind, record.NodeJSScript)
+	scriptPath := normalizeNodeJSScriptForKind(record.Kind, record.NodeJSScript)
 	if scriptPath == "" {
 		return "", errors.New("nodejs script path is not configured")
 	}

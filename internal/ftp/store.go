@@ -63,9 +63,6 @@ ON ftp_accounts(domain_id)
 `); err != nil {
 		return fmt.Errorf("ensure ftp accounts domain index: %w", err)
 	}
-	if err := s.migrateLegacyDomainAccounts(ctx); err != nil {
-		return err
-	}
 
 	return nil
 }
@@ -236,68 +233,6 @@ WHERE domain_id = ?
 
 	return nil
 }
-
-func (s *Store) migrateLegacyDomainAccounts(ctx context.Context) error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-
-	var count int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ftp_accounts`).Scan(&count); err != nil {
-		return fmt.Errorf("count ftp accounts: %w", err)
-	}
-	if count > 0 {
-		return nil
-	}
-
-	if !tableExists(ctx, s.db, "domain_ftp_accounts") {
-		return nil
-	}
-
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO ftp_accounts (
-    id,
-    domain_id,
-    username,
-    root_path,
-    password_hash,
-    enabled,
-    created_at,
-    updated_at
-)
-SELECT
-    lower(hex(randomblob(16))),
-    legacy.domain_id,
-    legacy.username,
-    COALESCE(domains.target, ''),
-    legacy.password_hash,
-    legacy.enabled,
-    legacy.created_at,
-    legacy.updated_at
-FROM domain_ftp_accounts AS legacy
-LEFT JOIN domains ON domains.id = legacy.domain_id
-`)
-	if err != nil {
-		return fmt.Errorf("migrate legacy ftp accounts: %w", err)
-	}
-
-	return nil
-}
-
-func tableExists(ctx context.Context, db *sql.DB, name string) bool {
-	if db == nil {
-		return false
-	}
-
-	var found string
-	err := db.QueryRowContext(ctx, `
-SELECT name
-FROM sqlite_master
-WHERE type = 'table' AND name = ?
-`, strings.TrimSpace(name)).Scan(&found)
-	return err == nil && found != ""
-}
-
 func scanAccount(scan func(dest ...any) error) (Account, error) {
 	var (
 		account     Account

@@ -3,27 +3,25 @@ package settings
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 )
 
 const (
-	settingsTableName        = "settings"
-	legacyPanelSettingsTable = "panel_settings"
-	panelSettingsKeyPrefix   = "panel."
-	panelNameKey             = panelSettingsKeyPrefix + "panel_name"
-	panelURLKey              = panelSettingsKeyPrefix + "panel_url"
-	gitHubTokenKey           = panelSettingsKeyPrefix + "github_token"
-	defaultPHPVersionKey     = panelSettingsKeyPrefix + "default_php_version"
-	ftpEnabledKey            = panelSettingsKeyPrefix + "ftp_enabled"
-	ftpHostKey               = panelSettingsKeyPrefix + "ftp_host"
-	ftpPortKey               = panelSettingsKeyPrefix + "ftp_port"
-	ftpPublicIPKey           = panelSettingsKeyPrefix + "ftp_public_ip"
-	ftpPassivePortsKey       = panelSettingsKeyPrefix + "ftp_passive_ports"
-	googleDriveEmailKey      = panelSettingsKeyPrefix + "google_drive_email"
-	googleDriveRefreshKey    = panelSettingsKeyPrefix + "google_drive_refresh_token"
+	settingsTableName      = "settings"
+	panelSettingsKeyPrefix = "panel."
+	panelNameKey           = panelSettingsKeyPrefix + "panel_name"
+	panelURLKey            = panelSettingsKeyPrefix + "panel_url"
+	gitHubTokenKey         = panelSettingsKeyPrefix + "github_token"
+	defaultPHPVersionKey   = panelSettingsKeyPrefix + "default_php_version"
+	ftpEnabledKey          = panelSettingsKeyPrefix + "ftp_enabled"
+	ftpHostKey             = panelSettingsKeyPrefix + "ftp_host"
+	ftpPortKey             = panelSettingsKeyPrefix + "ftp_port"
+	ftpPublicIPKey         = panelSettingsKeyPrefix + "ftp_public_ip"
+	ftpPassivePortsKey     = panelSettingsKeyPrefix + "ftp_passive_ports"
+	googleDriveEmailKey    = panelSettingsKeyPrefix + "google_drive_email"
+	googleDriveRefreshKey  = panelSettingsKeyPrefix + "google_drive_refresh_token"
 )
 
 var panelSettingKeys = []string{
@@ -63,11 +61,6 @@ func (s *Store) Ensure(ctx context.Context) error {
 	}
 
 	if err := ensureKeyValueTable(ctx, tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-
-	if err := migrateLegacyPanelSettings(ctx, tx); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -225,84 +218,6 @@ CREATE TABLE IF NOT EXISTS %s (
 	}
 
 	return nil
-}
-
-func migrateLegacyPanelSettings(ctx context.Context, tx *sql.Tx) error {
-	exists, err := tableExists(ctx, tx, legacyPanelSettingsTable)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return nil
-	}
-
-	var record Record
-
-	err = tx.QueryRowContext(ctx, fmt.Sprintf(`
-SELECT panel_name
-FROM %s
-WHERE id = 1
-`, legacyPanelSettingsTable)).Scan(
-		&record.PanelName,
-	)
-	switch {
-	case err == nil:
-		if err := upsertRecordTx(ctx, tx, record); err != nil {
-			return err
-		}
-	case errors.Is(err, sql.ErrNoRows):
-	default:
-		return fmt.Errorf("load legacy panel settings: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DROP TABLE %s`, legacyPanelSettingsTable)); err != nil {
-		return fmt.Errorf("drop legacy panel settings table: %w", err)
-	}
-
-	return nil
-}
-
-func upsertRecordTx(ctx context.Context, tx *sql.Tx, record Record) error {
-	statement := fmt.Sprintf(`
-INSERT INTO %s (key, value)
-VALUES (?, ?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value
-`, settingsTableName)
-
-	values := map[string]string{
-		panelNameKey:          record.PanelName,
-		panelURLKey:           record.PanelURL,
-		gitHubTokenKey:        record.GitHubToken,
-		ftpEnabledKey:         boolString(record.FTPEnabled),
-		ftpHostKey:            record.FTPHost,
-		ftpPortKey:            strconv.Itoa(record.FTPPort),
-		ftpPublicIPKey:        record.FTPPublicIP,
-		ftpPassivePortsKey:    record.FTPPassivePorts,
-		googleDriveEmailKey:   record.GoogleDriveEmail,
-		googleDriveRefreshKey: record.GoogleDriveRefreshToken,
-	}
-
-	for _, key := range panelSettingKeys {
-		if _, err := tx.ExecContext(ctx, statement, key, values[key]); err != nil {
-			return fmt.Errorf("migrate settings key %q: %w", key, err)
-		}
-	}
-
-	return nil
-}
-
-func tableExists(ctx context.Context, tx *sql.Tx, name string) (bool, error) {
-	var count int
-	err := tx.QueryRowContext(ctx, `
-SELECT COUNT(*)
-FROM sqlite_master
-WHERE type = 'table' AND name = ?
-`, name).Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("check table %q: %w", name, err)
-	}
-
-	return count > 0, nil
 }
 
 func boolString(value bool) string {

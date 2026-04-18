@@ -48,33 +48,6 @@ CREATE TABLE IF NOT EXISTS domains (
 	if _, err := s.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("ensure domains table: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domains ADD COLUMN cache_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("ensure domains.cache_enabled column: %w", err)
-		}
-	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domains ADD COLUMN php_settings TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("ensure domains.php_settings column: %w", err)
-		}
-	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domains ADD COLUMN php_version TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("ensure domains.php_version column: %w", err)
-		}
-	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domains ADD COLUMN nodejs_script_path TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("ensure domains.nodejs_script_path column: %w", err)
-		}
-	}
-	if _, err := s.db.ExecContext(ctx, `
-UPDATE domains
-SET kind = ?, target = 'http://127.0.0.1:' || target
-WHERE kind = 'App' AND target <> '' AND target NOT GLOB '*[^0-9]*'
-`, string(KindReverseProxy)); err != nil {
-		return fmt.Errorf("migrate app domains to reverse proxy: %w", err)
-	}
 	if _, err := s.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS domain_github_integrations (
     domain_id TEXT PRIMARY KEY,
@@ -89,11 +62,6 @@ CREATE TABLE IF NOT EXISTS domain_github_integrations (
 );
 `); err != nil {
 		return fmt.Errorf("ensure domain github integrations table: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE domain_github_integrations ADD COLUMN post_fetch_script TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("ensure domain_github_integrations.post_fetch_script column: %w", err)
-		}
 	}
 
 	return nil
@@ -130,8 +98,8 @@ ORDER BY created_at DESC, id DESC
 			return nil, fmt.Errorf("scan domain row: %w", err)
 		}
 
-		record.Kind, record.Target = normalizePersistedKindAndTarget(Kind(kind), record.Target)
-		record.NodeJSScript = normalizePersistedNodeJSScript(record.Kind, nodeJSScript)
+		record.Kind, record.Target = normalizeKindAndTarget(Kind(kind), record.Target)
+		record.NodeJSScript = normalizeNodeJSScriptForKind(record.Kind, nodeJSScript)
 		record.PHPVersion = strings.TrimSpace(phpVersion)
 		record.CacheEnabled = cacheEnabledInt != 0
 		if message := validateKind(record.Kind); message != "" {

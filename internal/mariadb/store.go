@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -39,11 +38,6 @@ CREATE TABLE IF NOT EXISTS databases (
 
 	if _, err := s.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("ensure mariadb databases table: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE databases ADD COLUMN domain TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("ensure mariadb databases.domain column: %w", err)
-		}
 	}
 
 	return nil

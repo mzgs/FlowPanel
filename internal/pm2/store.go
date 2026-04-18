@@ -37,18 +37,13 @@ CREATE TABLE IF NOT EXISTS pm2_processes (
     name TEXT NOT NULL DEFAULT '',
     script_path TEXT NOT NULL DEFAULT '',
     working_directory TEXT NOT NULL DEFAULT '',
-    interpreter TEXT NOT NULL DEFAULT ''
+    interpreter TEXT NOT NULL DEFAULT '',
+    manually_stopped INTEGER NOT NULL DEFAULT 0
 );
 `
 
 	if _, err := s.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("ensure pm2 processes table: %w", err)
-	}
-	if err := s.ensureColumn(ctx, "interpreter", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "manually_stopped", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
 	}
 
 	return nil
@@ -129,40 +124,6 @@ VALUES (?, ?, ?, ?, ?, ?)
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit pm2 process replace: %w", err)
-	}
-
-	return nil
-}
-
-func (s *Store) ensureColumn(ctx context.Context, columnName, definition string) error {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(pm2_processes)`)
-	if err != nil {
-		return fmt.Errorf("inspect pm2 processes columns: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var (
-			cid        int
-			name       string
-			columnType string
-			notNull    int
-			defaultVal sql.NullString
-			primaryKey int
-		)
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
-			return fmt.Errorf("scan pm2 processes column: %w", err)
-		}
-		if name == columnName {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate pm2 processes columns: %w", err)
-	}
-
-	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE pm2_processes ADD COLUMN %s %s", columnName, definition)); err != nil {
-		return fmt.Errorf("add pm2 processes column %s: %w", columnName, err)
 	}
 
 	return nil
