@@ -29,9 +29,16 @@ var ErrDuplicateHostname = errors.New("duplicate hostname")
 var ErrNotFound = errors.New("domain not found")
 
 var hostnamePattern = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$`)
+var environmentVariableKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var pythonInterpreterCandidates = []string{"python3", "python"}
 var pythonVirtualEnvNames = []string{".venv", "venv", "env"}
+
+const (
+	maxEnvironmentVariables      = 100
+	maxEnvironmentVariableKeyLen = 128
+	maxEnvironmentVariableValLen = 4096
+)
 
 type Kind string
 
@@ -44,17 +51,23 @@ const (
 )
 
 type Record struct {
-	ID           string             `json:"id"`
-	Hostname     string             `json:"hostname"`
-	Kind         Kind               `json:"kind"`
-	Target       string             `json:"target"`
-	NodeJSScript string             `json:"nodejs_script_path,omitempty"`
-	PHPVersion   string             `json:"php_version,omitempty"`
-	PHPSettings  phpenv.Settings    `json:"php_settings"`
-	Logs         LogPaths           `json:"logs"`
-	GitHub       *GitHubIntegration `json:"github_integration,omitempty"`
-	CacheEnabled bool               `json:"cache_enabled"`
-	CreatedAt    time.Time          `json:"created_at"`
+	ID                   string                `json:"id"`
+	Hostname             string                `json:"hostname"`
+	Kind                 Kind                  `json:"kind"`
+	Target               string                `json:"target"`
+	NodeJSScript         string                `json:"nodejs_script_path,omitempty"`
+	PHPVersion           string                `json:"php_version,omitempty"`
+	PHPSettings          phpenv.Settings       `json:"php_settings"`
+	EnvironmentVariables []EnvironmentVariable `json:"environment_variables,omitempty"`
+	Logs                 LogPaths              `json:"logs"`
+	GitHub               *GitHubIntegration    `json:"github_integration,omitempty"`
+	CacheEnabled         bool                  `json:"cache_enabled"`
+	CreatedAt            time.Time             `json:"created_at"`
+}
+
+type EnvironmentVariable struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 type GitHubIntegration struct {
@@ -93,6 +106,10 @@ type UpdateInput struct {
 type UpdatePHPInput struct {
 	PHPVersion string `json:"php_version"`
 	phpenv.UpdateSettingsInput
+}
+
+type UpdateEnvironmentInput struct {
+	EnvironmentVariables []EnvironmentVariable `json:"environment_variables"`
 }
 
 type ValidationErrors map[string]string
@@ -383,6 +400,7 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 
 	record.Kind, record.Target = normalizeKindAndTarget(record.Kind, record.Target)
 	record.NodeJSScript = normalizeNodeJSScriptForKind(record.Kind, record.NodeJSScript)
+	record.EnvironmentVariables = normalizeEnvironmentVariables(record.EnvironmentVariables)
 	record = s.withTransientFields(record)
 
 	index, _, exists := s.findRecordLocked(record.ID)
@@ -438,6 +456,10 @@ func validateKind(kind Kind) string {
 	default:
 		return "Select a valid domain type."
 	}
+}
+
+func SupportsEnvironmentVariables(kind Kind) bool {
+	return kind == KindPHP || kind == KindNodeJS || kind == KindPython
 }
 
 func validateHostname(value string) string {
@@ -694,6 +716,41 @@ func (s *Service) UpdatePHPSettings(
 	return record, nil
 }
 
+func (s *Service) UpdateEnvironmentVariables(
+	ctx context.Context,
+	hostname string,
+	input UpdateEnvironmentInput,
+) (Record, error) {
+	if s == nil {
+		return Record{}, ErrNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, record, ok := s.findRecordByHostnameLocked(hostname)
+	if !ok {
+		return Record{}, ErrNotFound
+	}
+
+	environmentVariables := normalizeEnvironmentVariables(input.EnvironmentVariables)
+	if validation := validateEnvironmentVariables(record.Kind, environmentVariables); len(validation) > 0 {
+		return Record{}, validation
+	}
+
+	record.EnvironmentVariables = environmentVariables
+	record = s.withTransientFields(record)
+
+	if s.store != nil {
+		if err := s.store.Update(ctx, record); err != nil {
+			return Record{}, err
+		}
+	}
+
+	s.records[index] = record
+	return record, nil
+}
+
 func (s *Service) findRecordByHostnameLocked(hostname string) (int, Record, bool) {
 	normalizedHostname := normalizeHostname(hostname)
 	for i, record := range s.records {
@@ -859,8 +916,96 @@ func ResolvePythonInterpreter(basePath string, record Record) (string, error) {
 	return "", errors.New("python interpreter was not found for this domain")
 }
 
+func EnvironmentMap(record Record) map[string]string {
+	if len(record.EnvironmentVariables) == 0 {
+		return nil
+	}
+
+	values := make(map[string]string, len(record.EnvironmentVariables))
+	for _, entry := range record.EnvironmentVariables {
+		key := strings.TrimSpace(entry.Key)
+		if key == "" {
+			continue
+		}
+		values[key] = entry.Value
+	}
+	if len(values) == 0 {
+		return nil
+	}
+
+	return values
+}
+
 func usesScriptPath(kind Kind) bool {
 	return kind == KindNodeJS || kind == KindPython
+}
+
+func normalizeEnvironmentVariables(values []EnvironmentVariable) []EnvironmentVariable {
+	if len(values) == 0 {
+		return nil
+	}
+
+	normalized := make([]EnvironmentVariable, 0, len(values))
+	for _, value := range values {
+		entry := EnvironmentVariable{
+			Key:   strings.TrimSpace(value.Key),
+			Value: value.Value,
+		}
+		if entry.Key == "" && strings.TrimSpace(entry.Value) == "" {
+			continue
+		}
+		normalized = append(normalized, entry)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	return normalized
+}
+
+func validateEnvironmentVariables(kind Kind, values []EnvironmentVariable) ValidationErrors {
+	validation := ValidationErrors{}
+	if !SupportsEnvironmentVariables(kind) {
+		validation["kind"] = "Environment variables are available only for PHP, Node.js, and Python domains."
+		return validation
+	}
+	if len(values) > maxEnvironmentVariables {
+		validation["environment_variables"] = fmt.Sprintf("Add at most %d environment variables.", maxEnvironmentVariables)
+		return validation
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	for index, value := range values {
+		fieldPrefix := fmt.Sprintf("environment_variables[%d]", index)
+		key := strings.TrimSpace(value.Key)
+		switch {
+		case key == "":
+			validation[fieldPrefix+".key"] = "Key is required."
+		case len(key) > maxEnvironmentVariableKeyLen:
+			validation[fieldPrefix+".key"] = fmt.Sprintf("Key must be %d characters or fewer.", maxEnvironmentVariableKeyLen)
+		case !environmentVariableKeyPattern.MatchString(key):
+			validation[fieldPrefix+".key"] = "Use letters, numbers, and underscores, and start with a letter or underscore."
+		case kind == KindPHP && (key == "PHP_VALUE" || key == "PHP_ADMIN_VALUE"):
+			validation[fieldPrefix+".key"] = fmt.Sprintf("%s is reserved for PHP runtime settings.", key)
+		default:
+			if _, exists := seen[key]; exists {
+				validation[fieldPrefix+".key"] = "Each key must be unique."
+			} else {
+				seen[key] = struct{}{}
+			}
+		}
+
+		switch {
+		case len(value.Value) > maxEnvironmentVariableValLen:
+			validation[fieldPrefix+".value"] = fmt.Sprintf("Value must be %d characters or fewer.", maxEnvironmentVariableValLen)
+		case strings.ContainsRune(value.Value, '\x00'):
+			validation[fieldPrefix+".value"] = "Value must not contain null bytes."
+		case strings.ContainsAny(value.Value, "\r\n"):
+			validation[fieldPrefix+".value"] = "Value must stay on a single line."
+		}
+	}
+
+	return validation
 }
 
 func pythonVirtualEnvBinaryPath() []string {

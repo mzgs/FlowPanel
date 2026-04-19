@@ -870,6 +870,53 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"domain": record})
 	})
 
+	domainsEnvironmentUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+
+		var input domain.UpdateEnvironmentInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		record, err := a.app.Domains.UpdateEnvironmentVariables(r.Context(), hostname, input)
+		if err != nil {
+			var validation domain.ValidationErrors
+			switch {
+			case errors.As(err, &validation):
+				writeValidationFailed(w, map[string]string(validation))
+			case errors.Is(err, domain.ErrNotFound):
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			default:
+				a.app.Logger.Error("update domain environment variables failed", zap.String("hostname", hostname), zap.Error(err))
+				a.mutationEvent(r.Context(), "domains", "update_environment", "domain", hostname, hostname, "failed", "Failed to update domain environment variables.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to update domain environment variables"})
+			}
+			return
+		}
+
+		switch record.Kind {
+		case domain.KindPHP:
+			if err := a.syncDomainsWithCaddy(r.Context()); err != nil {
+				a.app.Logger.Error("sync domains after environment update failed", zap.String("hostname", hostname), zap.Error(err))
+				a.mutationEvent(r.Context(), "domains", "update_environment", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Saved environment variables but failed to republish routes.", err))
+				status, message := syncDomainsErrorResponse(err, "environment variables saved but routes could not be refreshed")
+				writeJSON(w, status, map[string]any{"error": message})
+				return
+			}
+		case domain.KindNodeJS, domain.KindPython:
+			if err := a.reconcileDomainRuntimeEnvironment(r.Context(), record); err != nil {
+				a.app.Logger.Error("reconcile domain runtime environment failed", zap.String("hostname", hostname), zap.Error(err))
+				a.mutationEvent(r.Context(), "domains", "update_environment", "domain", record.ID, record.Hostname, "failed", err.Error())
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+		}
+
+		a.mutationEvent(r.Context(), "domains", "update_environment", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Updated environment variables for %q.", record.Hostname))
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"domain": record})
+	})
+
 	domainsNodeJSStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hostname := chi.URLParam(r, "hostname")
 		_, status, err := loadDomainNodeJSStatus(r.Context(), a.app.Domains, a.app.PM2, hostname)
@@ -965,6 +1012,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				ScriptPath:       runtimeConfig.ScriptPath,
 				WorkingDirectory: runtimeConfig.WorkingDirectory,
 				Interpreter:      runtimeConfig.InterpreterPath,
+				Environment:      domain.EnvironmentMap(record),
 			}); err != nil {
 				a.app.Logger.Error("create domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.String("script_path", runtimeConfig.ScriptPath), zap.String("working_directory", runtimeConfig.WorkingDirectory), zap.String("interpreter", runtimeConfig.InterpreterPath), zap.Error(err))
 				a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
@@ -1401,6 +1449,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/nodejs/npm-install", domainsNodeJSNPMInstallHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/python/requirements-install", domainsPythonRequirementsInstallHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/php-settings", domainsPHPSettingsUpdateHandler)
+	r.Method(stdhttp.MethodPut, "/domains/{hostname}/environment", domainsEnvironmentUpdateHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/github", domainsGitHubUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/deploy", domainsGitHubDeployHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/webhook", domainsGitHubWebhookHandler)
@@ -1662,6 +1711,47 @@ func runtimeProcessNeedsRecreate(process pm2.Process, config domainRuntimeProces
 	}
 
 	return filepath.Clean(strings.TrimSpace(process.Interpreter)) != filepath.Clean(strings.TrimSpace(config.InterpreterPath))
+}
+
+func (a *apiRoutes) reconcileDomainRuntimeEnvironment(ctx context.Context, record domain.Record) error {
+	if a == nil || a.app == nil || a.app.PM2 == nil || !supportsDomainRuntime(record.Kind) {
+		return nil
+	}
+	if !a.app.PM2.Status(ctx).Installed {
+		return nil
+	}
+
+	_, status, err := loadDomainNodeJSStatus(ctx, a.app.Domains, a.app.PM2, record.Hostname)
+	if err != nil {
+		return err
+	}
+	if status.Process == nil {
+		return nil
+	}
+
+	wasRunning := canStopDomainNodeJSProcess(*status.Process)
+	if _, err := a.app.PM2.DeleteProcess(ctx, status.Process.ID); err != nil {
+		return err
+	}
+	if !wasRunning {
+		return nil
+	}
+
+	runtimeConfig, err := resolveDomainRuntimeProcessConfig(a.app.Domains.BasePath(), record)
+	if err != nil {
+		return err
+	}
+	if _, err := a.app.PM2.CreateProcess(ctx, pm2.CreateProcessInput{
+		Name:             record.Hostname,
+		ScriptPath:       runtimeConfig.ScriptPath,
+		WorkingDirectory: runtimeConfig.WorkingDirectory,
+		Interpreter:      runtimeConfig.InterpreterPath,
+		Environment:      domain.EnvironmentMap(record),
+	}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func detectDomainPythonRuntimeVersion(ctx context.Context, interpreterPath string) string {

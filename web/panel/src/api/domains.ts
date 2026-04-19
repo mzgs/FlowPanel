@@ -9,6 +9,11 @@ export type DomainKind =
   | "Python"
   | "Reverse proxy";
 
+export type EnvironmentVariable = {
+  key: string;
+  value: string;
+};
+
 export type DomainRecord = {
   id: string;
   hostname: string;
@@ -17,6 +22,7 @@ export type DomainRecord = {
   nodejs_script_path?: string;
   php_version?: string;
   php_settings: PHPSettings;
+  environment_variables: EnvironmentVariable[];
   github_integration?: DomainGitHubIntegration | null;
   cache_enabled: boolean;
   created_at: string;
@@ -92,6 +98,10 @@ export type UpdateDomainPHPSettingsInput = {
   error_reporting: string;
   display_errors: string;
   disable_functions: string;
+};
+
+export type UpdateDomainEnvironmentInput = {
+  environment_variables: EnvironmentVariable[];
 };
 
 export type CopyDomainWebsiteInput = {
@@ -395,6 +405,25 @@ export async function updateDomainPHPSettings(
   );
 
   return readDomainMutationResponse(response, "save php settings");
+}
+
+export async function updateDomainEnvironmentVariables(
+  hostname: string,
+  input: UpdateDomainEnvironmentInput,
+): Promise<DomainRecord> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/environment`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+
+  return readDomainMutationResponse(response, "save environment variables");
 }
 
 export async function deployDomainGitHubIntegration(

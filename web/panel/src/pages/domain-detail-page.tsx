@@ -27,9 +27,11 @@ import {
   installDomainPythonRequirements,
   startDomainNodeJS,
   stopDomainNodeJS,
+  type EnvironmentVariable,
   type DomainNodeJSStatus,
   type InstallDomainTemplateResult,
   updateDomainPHPSettings,
+  updateDomainEnvironmentVariables,
   type DomainApiError,
   type DomainRecord,
   updateDomainGitHubIntegration,
@@ -65,6 +67,7 @@ import {
   PlayerPlay,
   PlayerStop,
   RefreshCw,
+  Settings,
   TerminalSquare,
   Trash2,
 } from "@/components/icons/tabler-icons";
@@ -73,6 +76,7 @@ import {
   DomainComposerDialog,
   type ComposerPackage,
 } from "@/components/domain-composer-dialog";
+import { DomainEnvironmentDialog } from "@/components/domain-environment-dialog";
 import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { DomainPHPDialog } from "@/components/domain-php-dialog";
@@ -114,6 +118,11 @@ type GitHubFormState = {
   postFetchScript: string;
 };
 
+const emptyEnvironmentVariable: EnvironmentVariable = {
+  key: "",
+  value: "",
+};
+
 const initialGitHubForm: GitHubFormState = {
   repositoryUrl: "",
   autoDeployOnPush: false,
@@ -137,6 +146,30 @@ function sameGitHubFormState(left: GitHubFormState, right: GitHubFormState) {
     left.repositoryUrl === right.repositoryUrl &&
     left.autoDeployOnPush === right.autoDeployOnPush &&
     left.postFetchScript === right.postFetchScript
+  );
+}
+
+function toEnvironmentFormState(
+  domain: DomainRecord | null,
+): EnvironmentVariable[] {
+  return (domain?.environment_variables ?? []).map((variable) => ({
+    key: variable.key,
+    value: variable.value,
+  }));
+}
+
+function sameEnvironmentFormState(
+  left: EnvironmentVariable[],
+  right: EnvironmentVariable[],
+) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every(
+    (variable, index) =>
+      variable.key === right[index]?.key &&
+      variable.value === right[index]?.value,
   );
 }
 
@@ -453,6 +486,10 @@ const fileAndDatabaseActions: DomainActionItem[] = [
 
 const devToolActions: DomainActionItem[] = [
   {
+    title: "Environment",
+    icon: Settings,
+  },
+  {
     title: "PHP",
     icon: FileCode2,
   },
@@ -555,6 +592,12 @@ function isRuntimeDomainKind(kind: DomainRecord["kind"] | undefined | null) {
   return kind === "Node.js" || kind === "Python";
 }
 
+function supportsEnvironmentVariables(
+  kind: DomainRecord["kind"] | undefined | null,
+) {
+  return kind === "Php site" || kind === "Node.js" || kind === "Python";
+}
+
 function getRuntimeDomainLabel(kind: DomainRecord["kind"] | undefined | null) {
   return kind === "Python" ? "Python" : "Node.js";
 }
@@ -569,7 +612,9 @@ function getComposerManifestPath(path: string | null) {
 
 function getActiveDevToolActions(kind: DomainRecord["kind"] | undefined) {
   const items = devToolActions.filter(
-    (item) => kind === "Php site" || !phpOnlyDevToolTitles.has(item.title),
+    (item) =>
+      (supportsEnvironmentVariables(kind) || item.title !== "Environment") &&
+      (kind === "Php site" || !phpOnlyDevToolTitles.has(item.title)),
   );
 
   if (kind === "Node.js") {
@@ -685,6 +730,7 @@ export function DomainDetailPage() {
   const [backupDataError, setBackupDataError] = useState<string | null>(null);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [composerDialogOpen, setComposerDialogOpen] = useState(false);
+  const [environmentDialogOpen, setEnvironmentDialogOpen] = useState(false);
   const [ftpDialogOpen, setFTPDialogOpen] = useState(false);
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
   const [phpDialogOpen, setPHPDialogOpen] = useState(false);
@@ -721,6 +767,17 @@ export function DomainDetailPage() {
   const [githubFieldErrors, setGitHubFieldErrors] = useState<
     Record<string, string>
   >({});
+  const [environmentForm, setEnvironmentForm] = useState<EnvironmentVariable[]>(
+    [],
+  );
+  const [savedEnvironmentForm, setSavedEnvironmentForm] = useState<
+    EnvironmentVariable[]
+  >([]);
+  const [environmentFieldErrors, setEnvironmentFieldErrors] = useState<
+    Record<string, string>
+  >({});
+  const [environmentSaving, setEnvironmentSaving] = useState(false);
+  const [environmentError, setEnvironmentError] = useState<string | null>(null);
   const [creatingBackupTarget, setCreatingBackupTarget] = useState<
     string | null
   >(null);
@@ -823,6 +880,7 @@ export function DomainDetailPage() {
     setBackupDataError(null);
     setBackupDialogOpen(false);
     setComposerDialogOpen(false);
+    setEnvironmentDialogOpen(false);
     setFTPDialogOpen(false);
     setGitHubDialogOpen(false);
     setPHPDialogOpen(false);
@@ -846,6 +904,11 @@ export function DomainDetailPage() {
     setGitHubError(null);
     setGitHubFeedback(null);
     setGitHubFieldErrors({});
+    setEnvironmentForm([]);
+    setSavedEnvironmentForm([]);
+    setEnvironmentFieldErrors({});
+    setEnvironmentSaving(false);
+    setEnvironmentError(null);
     setCreatingBackupTarget(null);
     setCreatedBackupTarget(null);
     setRestoringBackupName(null);
@@ -904,6 +967,7 @@ export function DomainDetailPage() {
             (record) => record.hostname === hostname,
           ) ?? null;
         const nextGitHubForm = toGitHubFormState(matchedDomain);
+        const nextEnvironmentForm = toEnvironmentFormState(matchedDomain);
 
         setSitesBasePath(domainsResult.value.sites_base_path);
         setAllDomains(domainsResult.value.domains);
@@ -912,6 +976,10 @@ export function DomainDetailPage() {
         setSavedGitHubForm(nextGitHubForm);
         setGitHubError(null);
         setGitHubFieldErrors({});
+        setEnvironmentForm(nextEnvironmentForm);
+        setSavedEnvironmentForm(nextEnvironmentForm);
+        setEnvironmentError(null);
+        setEnvironmentFieldErrors({});
         setLoadError(
           matchedDomain ? null : "The selected domain could not be found.",
         );
@@ -1470,6 +1538,10 @@ export function DomainDetailPage() {
     backups: databaseBackups[database.name] ?? [],
   }));
   const githubDirty = !sameGitHubFormState(githubForm, savedGitHubForm);
+  const environmentDirty = !sameEnvironmentFormState(
+    environmentForm,
+    savedEnvironmentForm,
+  );
   const activePHPRuntime = getPHPRuntimeStatus(phpStatus, phpVersion);
   const phpDirty =
     phpVersion !== savedPHPVersion || !samePHPSettings(phpForm, savedPHPForm);
@@ -1848,6 +1920,66 @@ export function DomainDetailPage() {
     }
   }
 
+  async function handleSaveEnvironmentVariables() {
+    if (!domain) {
+      return;
+    }
+
+    setEnvironmentSaving(true);
+    setEnvironmentError(null);
+    setEnvironmentFieldErrors({});
+
+    const nextVariables = environmentForm.filter(
+      (variable) =>
+        variable.key.trim() !== "" || variable.value.trim() !== "",
+    );
+    const runtimeWasRunning = isNodeJSProcessRunning(nodeJSStatus);
+
+    try {
+      const updatedDomain = await updateDomainEnvironmentVariables(
+        domain.hostname,
+        {
+          environment_variables: nextVariables,
+        },
+      );
+      const nextEnvironmentForm = toEnvironmentFormState(updatedDomain);
+      setDomain(updatedDomain);
+      setEnvironmentForm(nextEnvironmentForm);
+      setSavedEnvironmentForm(nextEnvironmentForm);
+
+      if (isRuntimeDomainKind(updatedDomain.kind)) {
+        try {
+          const nextStatus = await fetchDomainNodeJSStatus(
+            updatedDomain.hostname,
+          );
+          setNodeJSStatus(nextStatus);
+          setNodeJSError(null);
+        } catch (error) {
+          setNodeJSError(
+            getErrorMessage(error, "Failed to refresh runtime status."),
+          );
+        }
+      }
+
+      setEnvironmentDialogOpen(false);
+      toast.success(
+        isRuntimeDomainKind(updatedDomain.kind) && runtimeWasRunning
+          ? "Environment variables saved and runtime refreshed."
+          : "Environment variables saved.",
+      );
+    } catch (error) {
+      const environmentUpdateError = error as DomainApiError;
+      setEnvironmentFieldErrors(environmentUpdateError.fieldErrors ?? {});
+      const message =
+        environmentUpdateError.message ||
+        "Environment variables could not be saved.";
+      setEnvironmentError(message);
+      toast.error(message);
+    } finally {
+      setEnvironmentSaving(false);
+    }
+  }
+
   async function handleCopyWebsite() {
     if (!domain || websiteCopyPending) {
       return;
@@ -2218,6 +2350,72 @@ export function DomainDetailPage() {
           hostname={domain.hostname}
           documentRoot={documentRootDisplayPath}
           onInstalled={(result) => handleTemplateInstalled(result)}
+        />
+      ) : null}
+      {domain && supportsEnvironmentVariables(domain.kind) ? (
+        <DomainEnvironmentDialog
+          open={environmentDialogOpen}
+          onOpenChange={(open) => {
+            setEnvironmentDialogOpen(open);
+            if (!open && !environmentSaving) {
+              setEnvironmentForm(savedEnvironmentForm);
+              setEnvironmentFieldErrors({});
+              setEnvironmentError(null);
+            }
+          }}
+          hostname={domain.hostname}
+          kind={domain.kind}
+          variables={environmentForm}
+          fieldErrors={environmentFieldErrors}
+          error={environmentError}
+          saving={environmentSaving}
+          dirty={environmentDirty}
+          onAdd={() => {
+            setEnvironmentError(null);
+            setEnvironmentFieldErrors({});
+            setEnvironmentForm((current) => [
+              ...current,
+              { ...emptyEnvironmentVariable },
+            ]);
+          }}
+          onRemove={(index) => {
+            setEnvironmentError(null);
+            setEnvironmentFieldErrors({});
+            setEnvironmentForm((current) =>
+              current.filter((_, currentIndex) => currentIndex !== index),
+            );
+          }}
+          onKeyChange={(index, value) => {
+            setEnvironmentError(null);
+            setEnvironmentFieldErrors((current) => {
+              const next = { ...current };
+              delete next[`environment_variables[${index}].key`];
+              return next;
+            });
+            setEnvironmentForm((current) =>
+              current.map((variable, currentIndex) =>
+                currentIndex === index ? { ...variable, key: value } : variable,
+              ),
+            );
+          }}
+          onValueChange={(index, value) => {
+            setEnvironmentError(null);
+            setEnvironmentFieldErrors((current) => {
+              const next = { ...current };
+              delete next[`environment_variables[${index}].value`];
+              return next;
+            });
+            setEnvironmentForm((current) =>
+              current.map((variable, currentIndex) =>
+                currentIndex === index
+                  ? { ...variable, value }
+                  : variable,
+              ),
+            );
+          }}
+          onSave={() => {
+            void handleSaveEnvironmentVariables();
+          }}
         />
       ) : null}
       <DomainFTPDialog
@@ -2824,6 +3022,18 @@ export function DomainDetailPage() {
                     title="Dev Tools"
                     items={activeDevToolActions}
                     onItemClick={(item) => {
+                      if (item.title === "Environment" && domain !== null) {
+                        if (!supportsEnvironmentVariables(domain.kind)) {
+                          toast.error(
+                            "Environment variables are available only for PHP, Node.js, and Python domains.",
+                          );
+                          return;
+                        }
+
+                        setEnvironmentDialogOpen(true);
+                        return;
+                      }
+
                       if (item.title === "PHP" && domain !== null) {
                         if (domain.kind !== "Php site") {
                           toast.error(

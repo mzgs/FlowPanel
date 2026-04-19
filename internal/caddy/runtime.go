@@ -544,7 +544,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 
 		originHandlers = append(originHandlers,
 			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
-				Routes: phpSubrouteRoutes(root, fastCGIAddress, record.PHPSettings),
+				Routes: phpSubrouteRoutes(root, fastCGIAddress, record.PHPSettings, domain.EnvironmentMap(record)),
 			}, "handler", "subroute", nil),
 		)
 	case domain.KindNodeJS, domain.KindPython, domain.KindReverseProxy:
@@ -590,7 +590,7 @@ func routeForPHPMyAdmin(config phpMyAdminRouteConfig) caddyhttp.Route {
 	return caddyhttp.Route{
 		HandlersRaw: []json.RawMessage{
 			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
-				Routes: phpSubrouteRoutes(config.root, config.fastCGIAddress, phpenv.Settings{}),
+				Routes: phpSubrouteRoutes(config.root, config.fastCGIAddress, phpenv.Settings{}, nil),
 			}, "handler", "subroute", nil),
 		},
 		Terminal: true,
@@ -641,7 +641,7 @@ func pathExists(path string) bool {
 	return false
 }
 
-func phpSubrouteRoutes(root, fastCGIAddress string, settings phpenv.Settings) caddyhttp.RouteList {
+func phpSubrouteRoutes(root, fastCGIAddress string, settings phpenv.Settings, environment map[string]string) caddyhttp.RouteList {
 	return caddyhttp.RouteList{
 		{
 			MatcherSetsRaw: []caddyv2.ModuleMap{{
@@ -689,7 +689,7 @@ func phpSubrouteRoutes(root, fastCGIAddress string, settings phpenv.Settings) ca
 					TransportRaw: caddyconfig.JSONModuleObject(fastcgi.Transport{
 						Root:      root,
 						SplitPath: []string{".php"},
-						EnvVars:   phpFastCGIEnv(settings),
+						EnvVars:   phpFastCGIEnv(settings, environment),
 					}, "protocol", "fastcgi", nil),
 					Upstreams: reverseproxy.UpstreamPool{
 						&reverseproxy.Upstream{
@@ -710,15 +710,20 @@ func phpSubrouteRoutes(root, fastCGIAddress string, settings phpenv.Settings) ca
 	}
 }
 
-func phpFastCGIEnv(settings phpenv.Settings) map[string]string {
+func phpFastCGIEnv(settings phpenv.Settings, environment map[string]string) map[string]string {
+	values := cloneStringMap(environment)
 	phpValue := phpSettingsValue(settings)
-	if phpValue == "" {
+	if phpValue != "" {
+		if values == nil {
+			values = make(map[string]string, 1)
+		}
+		values["PHP_VALUE"] = phpValue
+	}
+	if len(values) == 0 {
 		return nil
 	}
 
-	return map[string]string{
-		"PHP_VALUE": phpValue,
-	}
+	return values
 }
 
 func phpSettingsValue(settings phpenv.Settings) string {
@@ -744,6 +749,19 @@ func phpSettingsValue(settings phpenv.Settings) string {
 	appendSetting("disable_functions", settings.DisableFunctions)
 
 	return strings.Join(lines, "\n")
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+
+	return cloned
 }
 
 func (c *phpRouteConfig) fastCGIAddressFor(version string) (string, error) {

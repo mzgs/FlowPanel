@@ -51,6 +51,7 @@ type CreateProcessInput struct {
 	ScriptPath       string
 	WorkingDirectory string
 	Interpreter      string
+	Environment      map[string]string
 }
 
 type Process struct {
@@ -91,6 +92,7 @@ type Service struct {
 
 type definitionUpdate struct {
 	manuallyStopped *bool
+	environment     map[string]string
 	remove          bool
 }
 
@@ -298,23 +300,34 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 	if scriptPath == "" {
 		return nil, errors.New("PM2 script path is required")
 	}
+	definition := Definition{
+		Name:             strings.TrimSpace(input.Name),
+		ScriptPath:       scriptPath,
+		WorkingDirectory: strings.TrimSpace(input.WorkingDirectory),
+		Interpreter:      strings.TrimSpace(input.Interpreter),
+		Environment:      cloneEnvironmentMap(input.Environment),
+	}
 
 	args := []string{"start", scriptPath}
-	if name := strings.TrimSpace(input.Name); name != "" {
-		args = append(args, "--name", name)
+	if definition.Name != "" {
+		args = append(args, "--name", definition.Name)
 	}
-	if workingDirectory := strings.TrimSpace(input.WorkingDirectory); workingDirectory != "" {
-		args = append(args, "--cwd", workingDirectory)
+	if definition.WorkingDirectory != "" {
+		args = append(args, "--cwd", definition.WorkingDirectory)
 	}
-	if interpreter := strings.TrimSpace(input.Interpreter); interpreter != "" {
-		args = append(args, "--interpreter", interpreter)
+	if definition.Interpreter != "" {
+		args = append(args, "--interpreter", definition.Interpreter)
 	}
 
-	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, args...); err != nil {
+	if _, err := runInspectCommandWithTimeoutAndEnv(ctx, actionCommandTimeout, definition.Environment, pm2Path, args...); err != nil {
 		return nil, err
 	}
 
-	processes, err := s.refresh(ctx, pm2Path, nil)
+	processes, err := s.refresh(ctx, pm2Path, map[string][]definitionUpdate{
+		definitionKey(definition): {{
+			environment: definition.Environment,
+		}},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -665,6 +678,7 @@ func preserveStoredDefinitionState(inspected []inspectedProcess, stored []Defini
 			continue
 		}
 		inspected[i].Definition.ManuallyStopped = queue[0].ManuallyStopped
+		inspected[i].Definition.Environment = cloneEnvironmentMap(queue[0].Environment)
 		storedQueues[key] = queue[1:]
 		matchedCounts[key]++
 	}
@@ -719,6 +733,9 @@ func applyDefinitionUpdate(definition Definition, updates map[string][]definitio
 	if update.manuallyStopped != nil {
 		definition.ManuallyStopped = *update.manuallyStopped
 	}
+	if update.environment != nil {
+		definition.Environment = cloneEnvironmentMap(update.environment)
+	}
 
 	return definition, true
 }
@@ -756,7 +773,7 @@ func (s *Service) createMissingProcess(ctx context.Context, pm2Path string, defi
 	if interpreter := strings.TrimSpace(definition.Interpreter); interpreter != "" {
 		args = append(args, "--interpreter", interpreter)
 	}
-	if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, args...); err != nil {
+	if _, err := runInspectCommandWithTimeoutAndEnv(ctx, actionCommandTimeout, definition.Environment, pm2Path, args...); err != nil {
 		return err
 	}
 
@@ -914,6 +931,10 @@ func runInspectCommand(ctx context.Context, name string, args ...string) (string
 }
 
 func runInspectCommandWithTimeout(ctx context.Context, timeout time.Duration, name string, args ...string) (string, error) {
+	return runInspectCommandWithTimeoutAndEnv(ctx, timeout, nil, name, args...)
+}
+
+func runInspectCommandWithTimeoutAndEnv(ctx context.Context, timeout time.Duration, environment map[string]string, name string, args ...string) (string, error) {
 	runCtx := ctx
 	if runCtx == nil {
 		runCtx = context.Background()
@@ -925,7 +946,7 @@ func runInspectCommandWithTimeout(ctx context.Context, timeout time.Duration, na
 		defer cancel()
 	}
 
-	return runCommand(runCtx, name, args...)
+	return runCommand(runCtx, environment, name, args...)
 }
 
 func runCommands(ctx context.Context, commands ...[]string) error {
@@ -933,7 +954,7 @@ func runCommands(ctx context.Context, commands ...[]string) error {
 		if len(command) == 0 {
 			continue
 		}
-		if _, err := runCommand(ctx, command[0], command[1:]...); err != nil {
+		if _, err := runCommand(ctx, nil, command[0], command[1:]...); err != nil {
 			return err
 		}
 	}
@@ -941,14 +962,14 @@ func runCommands(ctx context.Context, commands ...[]string) error {
 	return nil
 }
 
-func runCommand(ctx context.Context, name string, args ...string) (string, error) {
+func runCommand(ctx context.Context, environment map[string]string, name string, args ...string) (string, error) {
 	runCtx := ctx
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
 
 	cmd := exec.CommandContext(runCtx, name, args...)
-	cmd.Env = commandEnv()
+	cmd.Env = commandEnv(environment)
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -971,18 +992,69 @@ func runCommand(ctx context.Context, name string, args ...string) (string, error
 	}
 }
 
-func commandEnv() []string {
+func commandEnv(environment map[string]string) []string {
 	pathEntry := filepath.Join(managedNodeRoot, "bin")
 	currentPath := strings.TrimSpace(os.Getenv("PATH"))
+	base := os.Environ()
 	for _, entry := range filepath.SplitList(currentPath) {
 		if strings.TrimSpace(entry) == pathEntry {
-			return os.Environ()
+			return appendEnvironment(base, environment)
 		}
 	}
 
 	if currentPath == "" {
-		return append(os.Environ(), "PATH="+pathEntry)
+		base = append(base, "PATH="+pathEntry)
+		return appendEnvironment(base, environment)
 	}
 
-	return append(os.Environ(), "PATH="+pathEntry+string(os.PathListSeparator)+currentPath)
+	base = append(base, "PATH="+pathEntry+string(os.PathListSeparator)+currentPath)
+	return appendEnvironment(base, environment)
+}
+
+func appendEnvironment(base []string, environment map[string]string) []string {
+	if len(environment) == 0 {
+		return base
+	}
+
+	merged := make([]string, 0, len(base)+len(environment))
+	keys := make(map[string]struct{}, len(environment))
+	for key, value := range environment {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		keys[trimmedKey] = struct{}{}
+		merged = append(merged, trimmedKey+"="+value)
+	}
+	for _, entry := range base {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if _, exists := keys[name]; exists {
+				continue
+			}
+		}
+		merged = append(merged, entry)
+	}
+
+	return merged
+}
+
+func cloneEnvironmentMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		cloned[trimmedKey] = value
+	}
+	if len(cloned) == 0 {
+		return nil
+	}
+
+	return cloned
 }
