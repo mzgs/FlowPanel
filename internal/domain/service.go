@@ -527,6 +527,9 @@ func normalizeAndValidateInput(hostname string, kind Kind, target string, nodeJS
 	normalizedHostname := normalizeHostname(hostname)
 	normalizedKind, trimmedTarget := normalizeKindAndTarget(kind, target)
 	normalizedNodeJSScript := normalizeNodeJSScriptForKind(normalizedKind, nodeJSScript)
+	if normalizedNodeJSScript == "" {
+		normalizedNodeJSScript = defaultNodeJSScriptForKind(normalizedKind)
+	}
 
 	validation := ValidationErrors{}
 
@@ -810,6 +813,17 @@ func normalizeNodeJSScriptForKind(kind Kind, value string) string {
 	}
 
 	return normalizeNodeJSScript(value)
+}
+
+func defaultNodeJSScriptForKind(kind Kind) string {
+	switch kind {
+	case KindNodeJS:
+		return "bin/www"
+	case KindPython:
+		return "app.py"
+	default:
+		return ""
+	}
 }
 
 func normalizeNodeJSScript(value string) string {

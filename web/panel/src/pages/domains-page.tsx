@@ -102,6 +102,14 @@ function getDefaultTarget(kind: DomainKind) {
   return kind === "Reverse proxy" ? "http://127.0.0.1:8080" : "";
 }
 
+function getDefaultScriptPath(kind: DomainKind) {
+  if (kind === "Python") {
+    return "app.py";
+  }
+
+  return kind === "Node.js" ? "bin/www" : "";
+}
+
 const initialDeleteDomainOptions = {
   deleteDatabase: false,
   deleteDocumentRoot: false,
@@ -317,7 +325,9 @@ function getFormTargetValue(kind: DomainKind, target: string) {
 }
 
 function getFormScriptPathValue(kind: DomainKind, scriptPath?: string) {
-  return isRuntimeDomainKind(kind) ? scriptPath?.trim() ?? "" : "";
+  return isRuntimeDomainKind(kind)
+    ? scriptPath?.trim() || getDefaultScriptPath(kind)
+    : "";
 }
 
 export function DomainsPage() {
@@ -1280,6 +1290,10 @@ export function DomainsPage() {
                             current.kind === kind
                               ? current.target
                               : getDefaultTarget(kind),
+                          nodeJSScriptPath:
+                            current.kind === kind
+                              ? current.nodeJSScriptPath
+                              : getDefaultScriptPath(kind),
                         }));
                         setErrors((current) => ({
                           ...current,
@@ -1392,7 +1406,7 @@ export function DomainsPage() {
                       }));
                     }
                   }}
-                  placeholder={form.kind === "Python" ? "app.py" : "server.js"}
+                  placeholder={getDefaultScriptPath(form.kind)}
                   autoComplete="off"
                   aria-invalid={errors.nodejs_script_path ? "true" : "false"}
                   className={
@@ -1407,7 +1421,7 @@ export function DomainsPage() {
                   <p className="text-[12px] text-[var(--app-text-muted)]">
                     {form.kind === "Python"
                       ? "Use a path relative to the domain root, for example `app.py` or `src/main.py`."
-                      : "Use a path relative to the domain root, for example `server.js` or `dist/index.js`."}
+                      : "Use a path relative to the domain root, for example `bin/www` or `dist/index.js`."}
                   </p>
                 )}
               </div>
