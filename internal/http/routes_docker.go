@@ -21,6 +21,7 @@ import (
 const (
 	dockerListCommandTimeout   = 5 * time.Second
 	dockerSearchCommandTimeout = 10 * time.Second
+	dockerActionCommandTimeout = 30 * time.Second
 	dockerCreateCommandTimeout = 2 * time.Minute
 	dockerSearchResultLimit    = 100
 )
@@ -172,9 +173,59 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusCreated, map[string]any{"container": container})
 	})
 
+	registerContainerAction := func(action string, run func(context.Context, string) (dockerContainerListItem, error)) stdhttp.HandlerFunc {
+		return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if a.app.Docker == nil {
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+				return
+			}
+
+			containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+			if containerID == "" {
+				writeValidationFailed(w, map[string]string{
+					"container_id": "Container ID is required.",
+				})
+				return
+			}
+
+			actionCtx := backgroundRequestContext(r.Context())
+			container, err := run(actionCtx, containerID)
+			if err != nil {
+				a.app.Logger.Error(action+" docker container failed", zap.String("container_id", containerID), zap.Error(err))
+				a.mutationEvent(actionCtx, "runtime", action, "docker_container", containerID, shortDockerID(containerID), "failed", err.Error())
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+				return
+			}
+
+			label := container.Name
+			if label == "" {
+				label = shortDockerID(containerID)
+			}
+			resourceID := container.ID
+			if resourceID == "" {
+				resourceID = containerID
+			}
+
+			a.mutationEvent(
+				actionCtx,
+				"runtime",
+				action,
+				"docker_container",
+				resourceID,
+				label,
+				"succeeded",
+				fmt.Sprintf("%s Docker container %q.", dockerContainerActionPastTense(action), label),
+			)
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
+		}
+	}
+
 	r.Method(stdhttp.MethodGet, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodHead, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers", createContainerHandler)
+	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/start", registerContainerAction("start", startDockerContainer))
+	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/stop", registerContainerAction("stop", stopDockerContainer))
+	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/restart", registerContainerAction("restart", restartDockerContainer))
 	r.Method(stdhttp.MethodGet, "/docker/images", imagesHandler)
 	r.Method(stdhttp.MethodHead, "/docker/images", imagesHandler)
 	r.Method(stdhttp.MethodGet, "/docker/search-images", searchHandler)
@@ -392,6 +443,40 @@ func createDockerContainer(ctx context.Context, image string) (dockerContainerLi
 	}, nil
 }
 
+func startDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {
+	return runDockerContainerAction(ctx, containerID, "start")
+}
+
+func stopDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {
+	return runDockerContainerAction(ctx, containerID, "stop")
+}
+
+func restartDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {
+	return runDockerContainerAction(ctx, containerID, "restart")
+}
+
+func runDockerContainerAction(ctx context.Context, containerID, action string) (dockerContainerListItem, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return dockerContainerListItem{}, errors.New("Docker is not installed on this server.")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerActionCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, "docker", action, containerID)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return dockerContainerListItem{}, fmt.Errorf("Timed out while %s the Docker container.", dockerContainerActionPresentParticiple(action))
+		}
+		return dockerContainerListItem{}, formatDockerCommandError(stderr.String(), err)
+	}
+
+	return inspectDockerContainer(commandCtx, containerID)
+}
+
 func inspectDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {
 	cmd := exec.CommandContext(ctx, "docker", "ps", "--all", "--filter", "id="+containerID, "--format", "{{json .}}")
 	var stdout bytes.Buffer
@@ -445,6 +530,8 @@ func formatDockerCommandError(stderr string, fallback error) error {
 		strings.Contains(lowerMessage, "is the docker daemon running"),
 		strings.Contains(lowerMessage, "error during connect"):
 		return errors.New("Docker is installed, but the daemon is unavailable right now.")
+	case strings.Contains(lowerMessage, "no such container"):
+		return errors.New("Docker container was not found.")
 	case strings.Contains(lowerMessage, "permission denied"):
 		return errors.New("FlowPanel does not have permission to access the Docker daemon.")
 	case strings.Contains(lowerMessage, "toomanyrequests"),
@@ -535,4 +622,30 @@ func shortDockerID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+func dockerContainerActionPastTense(action string) string {
+	switch strings.TrimSpace(action) {
+	case "start":
+		return "Started"
+	case "stop":
+		return "Stopped"
+	case "restart":
+		return "Restarted"
+	default:
+		return "Updated"
+	}
+}
+
+func dockerContainerActionPresentParticiple(action string) string {
+	switch strings.TrimSpace(action) {
+	case "start":
+		return "starting"
+	case "stop":
+		return "stopping"
+	case "restart":
+		return "restarting"
+	default:
+		return "updating"
+	}
 }

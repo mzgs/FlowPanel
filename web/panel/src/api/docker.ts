@@ -96,6 +96,15 @@ async function parseDockerContainersResponse(response: Response): Promise<Docker
   return payload.containers;
 }
 
+async function parseDockerContainerResponse(response: Response): Promise<DockerContainer> {
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
+
+  const payload = (await response.json()) as DockerContainerPayload;
+  return payload.container;
+}
+
 async function parseDockerImagesResponse(response: Response): Promise<DockerImage[]> {
   if (!response.ok) {
     throw await parseDockerError(response);
@@ -202,10 +211,26 @@ export async function createDockerContainer(input: { image: string }): Promise<D
     body: JSON.stringify(input),
   });
 
-  if (!response.ok) {
-    throw await parseDockerError(response);
-  }
+  return parseDockerContainerResponse(response);
+}
 
-  const payload = (await response.json()) as DockerContainerPayload;
-  return payload.container;
+async function runDockerContainerAction(containerID: string, action: "start" | "stop" | "restart"): Promise<DockerContainer> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/${action}`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parseDockerContainerResponse(response);
+}
+
+export async function startDockerContainer(containerID: string): Promise<DockerContainer> {
+  return runDockerContainerAction(containerID, "start");
+}
+
+export async function stopDockerContainer(containerID: string): Promise<DockerContainer> {
+  return runDockerContainerAction(containerID, "stop");
+}
+
+export async function restartDockerContainer(containerID: string): Promise<DockerContainer> {
+  return runDockerContainerAction(containerID, "restart");
 }

@@ -4,6 +4,9 @@ import {
   fetchDockerContainers,
   fetchDockerImages,
   fetchDockerStatus,
+  restartDockerContainer,
+  startDockerContainer,
+  stopDockerContainer,
   type DockerContainer,
   type DockerHubImage,
   type DockerImage,
@@ -11,18 +14,25 @@ import {
   searchDockerHubImages,
 } from "@/api/docker";
 import {
-  AdjustmentsHorizontal,
   ChevronDownIcon,
   Docker,
-  DotsVertical,
   LoaderCircle,
   Package,
+  PlayerPlayFilled,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
+  PlayerStop,
 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +49,7 @@ type LoadOptions = {
 };
 
 type DockerTab = "containers" | "images";
+type DockerContainerAction = "start" | "stop" | "restart";
 
 function getContainerStateMeta(state: DockerContainer["state"]) {
   switch (state) {
@@ -49,11 +60,11 @@ function getContainerStateMeta(state: DockerContainer["state"]) {
     case "paused":
       return { label: "Paused", dotClassName: "bg-[var(--app-warning)]" };
     case "created":
-      return { label: "Created", dotClassName: "bg-muted-foreground/60" };
+      return { label: "Stopped", dotClassName: "bg-muted-foreground/60" };
     case "dead":
       return { label: "Dead", dotClassName: "bg-[var(--app-danger)]" };
     case "exited":
-      return { label: "Exited", dotClassName: "bg-muted-foreground/60" };
+      return { label: "Stopped", dotClassName: "bg-muted-foreground/60" };
     default:
       return { label: "Unknown", dotClassName: "bg-muted-foreground/60" };
   }
@@ -109,24 +120,68 @@ function getContainerLabel(container: DockerContainer) {
   return container.id.slice(0, 12);
 }
 
+function isContainerStartable(state: DockerContainer["state"]) {
+  switch (state) {
+    case "running":
+    case "restarting":
+    case "paused":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function getContainerActions(container: DockerContainer) {
+  if (isContainerStartable(container.state)) {
+    return [{ key: "start", label: "Start", icon: PlayerPlayFilled }] as const;
+  }
+
+  return [
+    { key: "stop", label: "Stop", icon: PlayerStop },
+    { key: "restart", label: "Restart", icon: RotateCcw },
+  ] as const;
+}
+
+function getContainerActionPendingLabel(action: DockerContainerAction | null) {
+  switch (action) {
+    case "start":
+      return "Starting...";
+    case "stop":
+      return "Stopping...";
+    case "restart":
+      return "Restarting...";
+    default:
+      return "";
+  }
+}
+
+function getContainerActionSuccessMessage(action: DockerContainerAction, container: DockerContainer) {
+  switch (action) {
+    case "start":
+      return `Started container ${getContainerLabel(container)}.`;
+    case "stop":
+      return `Stopped container ${getContainerLabel(container)}.`;
+    case "restart":
+      return `Restarted container ${getContainerLabel(container)}.`;
+  }
+}
+
 function ContainersSkeleton() {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(140px,0.55fr)_72px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(170px,0.65fr)] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
         <div>Name</div>
         <div>Image</div>
         <div>Status</div>
-        <div />
       </div>
       {Array.from({ length: 4 }).map((_, index) => (
         <div
           key={index}
-          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(140px,0.55fr)_72px] md:px-6"
+          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(170px,0.65fr)] md:px-6"
         >
           <div className="h-5 w-40 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-52 animate-pulse rounded bg-[var(--app-surface)]" />
-          <div className="h-5 w-24 animate-pulse rounded bg-[var(--app-surface)]" />
-          <div className="hidden h-5 w-12 animate-pulse rounded bg-[var(--app-surface)] md:block" />
+          <div className="h-9 w-32 animate-pulse rounded-xl bg-[var(--app-surface)]" />
         </div>
       ))}
     </div>
@@ -136,23 +191,21 @@ function ContainersSkeleton() {
 function ImagesSkeleton() {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.2fr)_160px_140px_140px_72px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1.2fr)_160px_140px_140px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
         <div>Repository</div>
         <div>Tag</div>
         <div>Size</div>
         <div>Created</div>
-        <div />
       </div>
       {Array.from({ length: 4 }).map((_, index) => (
         <div
           key={index}
-          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.2fr)_160px_140px_140px_72px] md:px-6"
+          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.2fr)_160px_140px_140px] md:px-6"
         >
           <div className="h-5 w-44 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-20 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-16 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-24 animate-pulse rounded bg-[var(--app-surface)]" />
-          <div className="hidden h-5 w-12 animate-pulse rounded bg-[var(--app-surface)] md:block" />
         </div>
       ))}
     </div>
@@ -217,26 +270,38 @@ function TabButton({
   );
 }
 
-function ContainerList({ containers }: { containers: DockerContainer[] }) {
+function ContainerList({
+  containers,
+  actionContainerID,
+  pendingAction,
+  onAction,
+}: {
+  containers: DockerContainer[];
+  actionContainerID: string | null;
+  pendingAction: DockerContainerAction | null;
+  onAction: (container: DockerContainer, action: DockerContainerAction) => void;
+}) {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(140px,0.55fr)_72px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(170px,0.65fr)] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
         <div className="flex items-center gap-3">
           <ChevronDownIcon className="h-4 w-4 text-muted-foreground/70" />
           <span>Name</span>
         </div>
         <div>Image ↑</div>
         <div>Status</div>
-        <div />
       </div>
 
       {containers.map((container) => {
         const stateMeta = getContainerStateMeta(container.state);
+        const busy = actionContainerID === container.id;
+        const actions = getContainerActions(container);
+        const pendingLabel = busy ? getContainerActionPendingLabel(pendingAction) : null;
 
         return (
           <div
             key={container.id || `${container.name}-${container.image}`}
-            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(140px,0.55fr)_72px] md:px-6 md:py-5"
+            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(170px,0.65fr)] md:px-6 md:py-5"
           >
             <div className="space-y-1">
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
@@ -244,7 +309,7 @@ function ContainerList({ containers }: { containers: DockerContainer[] }) {
               </div>
               <div className="flex min-w-0 items-center gap-3">
                 <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground/70" />
-                <div className="truncate text-[15px] font-medium text-foreground">{container.name}</div>
+                <div className="truncate text-[15px] font-medium text-foreground">{getContainerLabel(container)}</div>
               </div>
             </div>
 
@@ -262,19 +327,48 @@ function ContainerList({ containers }: { containers: DockerContainer[] }) {
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
                 Status
               </div>
-              <div className="inline-flex items-center gap-2 text-[15px] font-medium text-foreground" title={container.status}>
-                <span className={`h-2.5 w-2.5 rounded-full ${stateMeta.dotClassName}`} />
-                <span>{stateMeta.label}</span>
-              </div>
-            </div>
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    className="h-auto w-full justify-between rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-[15px] font-medium text-foreground hover:bg-[var(--app-surface)]/80"
+                    title={container.status}
+                  >
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      {busy ? (
+                        <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                      ) : (
+                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${stateMeta.dotClassName}`} />
+                      )}
+                      <span className="truncate">{pendingLabel || stateMeta.label}</span>
+                    </span>
+                    {!busy ? <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground/70" /> : null}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="w-40 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
+                >
+                  {actions.map((action) => {
+                    const Icon = action.icon;
 
-            <div className="hidden items-center justify-end gap-1 text-muted-foreground/70 md:flex">
-              <span className="rounded-full p-2">
-                <AdjustmentsHorizontal className="h-4 w-4" />
-              </span>
-              <span className="rounded-full p-2">
-                <DotsVertical className="h-4 w-4" />
-              </span>
+                    return (
+                      <DropdownMenuItem
+                        key={action.key}
+                        onSelect={() => {
+                          onAction(container, action.key);
+                        }}
+                      >
+                        <Icon className="h-4 w-4" />
+                        {action.label}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         );
@@ -286,7 +380,7 @@ function ContainerList({ containers }: { containers: DockerContainer[] }) {
 function ImageList({ images }: { images: DockerImage[] }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.2fr)_160px_140px_140px_72px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1.2fr)_160px_140px_140px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
         <div className="flex items-center gap-3">
           <Package className="h-4 w-4 text-muted-foreground/70" />
           <span>Repository</span>
@@ -294,7 +388,6 @@ function ImageList({ images }: { images: DockerImage[] }) {
         <div>Tag</div>
         <div>Size</div>
         <div>Created</div>
-        <div />
       </div>
 
       {images.map((image) => {
@@ -304,7 +397,7 @@ function ImageList({ images }: { images: DockerImage[] }) {
         return (
           <div
             key={`${image.id}-${repository}-${tag}`}
-            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.2fr)_160px_140px_140px_72px] md:px-6 md:py-5"
+            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.2fr)_160px_140px_140px] md:px-6 md:py-5"
           >
             <div className="space-y-1">
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
@@ -335,15 +428,6 @@ function ImageList({ images }: { images: DockerImage[] }) {
                 Created
               </div>
               <div className="truncate text-[15px] text-foreground">{image.created_since || "—"}</div>
-            </div>
-
-            <div className="hidden items-center justify-end gap-1 text-muted-foreground/70 md:flex">
-              <span className="rounded-full p-2">
-                <AdjustmentsHorizontal className="h-4 w-4" />
-              </span>
-              <span className="rounded-full p-2">
-                <DotsVertical className="h-4 w-4" />
-              </span>
             </div>
           </div>
         );
@@ -594,7 +678,22 @@ export function DockerPage() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [containersError, setContainersError] = useState<string | null>(null);
   const [imagesError, setImagesError] = useState<string | null>(null);
+  const [actionContainerID, setActionContainerID] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<DockerContainerAction | null>(null);
   const latestRequestRef = useRef(0);
+  const latestDataRef = useRef<{
+    status: DockerStatus | null;
+    containers: DockerContainer[];
+    images: DockerImage[];
+  }>({
+    status: null,
+    containers: [],
+    images: [],
+  });
+
+  useEffect(() => {
+    latestDataRef.current = { status, containers, images };
+  }, [status, containers, images]);
 
   async function loadDocker(options: LoadOptions = {}) {
     const requestId = latestRequestRef.current + 1;
@@ -620,19 +719,19 @@ export function DockerPage() {
       statusResult.status === "fulfilled"
         ? statusResult.value
         : options.silent
-          ? status
+          ? latestDataRef.current.status
           : null;
     const nextContainers =
       containersResult.status === "fulfilled"
         ? containersResult.value
         : options.silent
-          ? containers
+          ? latestDataRef.current.containers
           : [];
     const nextImages =
       imagesResult.status === "fulfilled"
         ? imagesResult.value
         : options.silent
-          ? images
+          ? latestDataRef.current.images
           : [];
 
     setStatus(nextStatus);
@@ -668,10 +767,46 @@ export function DockerPage() {
     };
   }, []);
 
+  async function handleContainerAction(container: DockerContainer, action: DockerContainerAction) {
+    if (actionContainerID !== null) {
+      return;
+    }
+
+    const runAction =
+      action === "start"
+        ? startDockerContainer
+        : action === "stop"
+          ? stopDockerContainer
+          : restartDockerContainer;
+
+    setActionContainerID(container.id);
+    setPendingAction(action);
+
+    try {
+      const nextContainer = await runAction(container.id);
+      setContainers((current) =>
+        current.map((item) => (item.id === container.id ? nextContainer : item)),
+      );
+      toast.success(getContainerActionSuccessMessage(action, nextContainer));
+      void loadDocker({ silent: true });
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, `Failed to ${action} container ${getContainerLabel(container)}.`),
+      );
+    } finally {
+      setActionContainerID(null);
+      setPendingAction(null);
+    }
+  }
+
   const canCreateContainer = Boolean(status?.installed && status.service_running);
   const actions = (
     <>
-      <Button size="sm" onClick={() => setCreateDialogOpen(true)} disabled={!canCreateContainer || loading}>
+      <Button
+        size="sm"
+        onClick={() => setCreateDialogOpen(true)}
+        disabled={!canCreateContainer || loading || actionContainerID !== null}
+      >
         <Plus className="h-4 w-4" />
         Add Container
       </Button>
@@ -679,7 +814,7 @@ export function DockerPage() {
         variant="outline"
         size="sm"
         onClick={() => void loadDocker({ silent: true })}
-        disabled={loading || refreshing}
+        disabled={loading || refreshing || actionContainerID !== null}
       >
         {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         Refresh
@@ -788,7 +923,14 @@ export function DockerPage() {
             />
           ) : null}
 
-          {!loading && activeTab === "containers" && containers.length > 0 ? <ContainerList containers={containers} /> : null}
+          {!loading && activeTab === "containers" && containers.length > 0 ? (
+            <ContainerList
+              containers={containers}
+              actionContainerID={actionContainerID}
+              pendingAction={pendingAction}
+              onAction={handleContainerAction}
+            />
+          ) : null}
           {!loading && activeTab === "images" && images.length > 0 ? <ImageList images={images} /> : null}
         </div>
       </section>
