@@ -12,6 +12,7 @@ import {
   Clock,
   Database,
   ChevronRight,
+  Docker,
   FolderOpen,
   HardDrive,
   LayoutDashboard,
@@ -48,6 +49,7 @@ import { ApplicationsPage } from "@/pages/applications-page";
 import { BackupsPage } from "@/pages/backups-page";
 import { DatabasePage } from "@/pages/database-page";
 import { DashboardPage } from "@/pages/dashboard-page";
+import { DockerPage } from "@/pages/docker-page";
 import { DomainsPage } from "@/pages/domains-page";
 import { FilesPage } from "@/pages/files-page";
 import { FTPPage } from "@/pages/ftp-page";
@@ -59,6 +61,7 @@ const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/domains", label: "Domains", icon: World },
   { to: "/database", label: "Database", icon: Database },
+  { to: "/docker", label: "Docker", icon: Docker },
   { to: "/ftp", label: "FTP", icon: Server },
   { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/applications", label: "Applications", icon: Package },
@@ -311,6 +314,12 @@ const databaseRoute = createRoute({
   component: DatabasePage,
 });
 
+const dockerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/docker",
+  component: DockerPage,
+});
+
 const applicationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/applications",
@@ -372,6 +381,7 @@ const routeTree = rootRoute.addChildren([
   domainsRoute,
   domainDetailRoute,
   databaseRoute,
+  dockerRoute,
   applicationsRoute,
   ftpRoute,
   backupsRoute,
