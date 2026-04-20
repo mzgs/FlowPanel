@@ -43,6 +43,11 @@ export type DockerContainerDetails = {
   ports: DockerContainerPortMapping[];
 };
 
+export type DockerContainerSettings = {
+  ports: DockerContainerPortMapping[];
+  publish_all_ports: boolean;
+};
+
 export type DockerImage = {
   id: string;
   repository: string;
@@ -86,19 +91,36 @@ type DockerContainerDetailsPayload = {
   details: DockerContainerDetails;
 };
 
-async function parseDockerError(response: Response): Promise<Error> {
+type DockerContainerSettingsPayload = {
+  settings: DockerContainerSettings;
+};
+
+export type DockerApiError = Error & {
+  fieldErrors?: Record<string, string>;
+};
+
+async function parseDockerError(response: Response): Promise<DockerApiError> {
   let message = `docker request failed with status ${response.status}`;
+  let fieldErrors: Record<string, string> | undefined;
 
   try {
-    const payload = await response.json();
+    const payload = (await response.json()) as {
+      error?: unknown;
+      field_errors?: unknown;
+    };
     if (typeof payload.error === "string" && payload.error) {
       message = payload.error;
+    }
+    if (payload.field_errors && typeof payload.field_errors === "object") {
+      fieldErrors = payload.field_errors as Record<string, string>;
     }
   } catch {
     // Keep the default error message when the payload is not JSON.
   }
 
-  return new Error(message);
+  const error = new Error(message) as DockerApiError;
+  error.fieldErrors = fieldErrors;
+  return error;
 }
 
 async function parseDockerResponse(response: Response): Promise<DockerStatus> {
@@ -228,6 +250,36 @@ export async function fetchDockerContainerDetails(containerID: string): Promise<
 
   const payload = (await response.json()) as DockerContainerDetailsPayload;
   return payload.details;
+}
+
+export async function fetchDockerContainerSettings(containerID: string): Promise<DockerContainerSettings> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/settings`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
+
+  const payload = (await response.json()) as DockerContainerSettingsPayload;
+  return payload.settings;
+}
+
+export async function updateDockerContainerSettings(
+  containerID: string,
+  input: { ports: DockerContainerPortMapping[] },
+): Promise<DockerContainer> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/settings`, {
+    method: "PUT",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  return parseDockerContainerResponse(response);
 }
 
 export async function fetchDockerImages(): Promise<DockerImage[]> {

@@ -91,6 +91,19 @@ type saveDockerContainerImageRequest struct {
 	Image string `json:"image"`
 }
 
+type dockerContainerSettings struct {
+	Ports           []dockerContainerPortMapping `json:"ports"`
+	PublishAllPorts bool                         `json:"publish_all_ports"`
+}
+
+type dockerContainerSettingsResponse struct {
+	Settings dockerContainerSettings `json:"settings"`
+}
+
+type updateDockerContainerSettingsRequest struct {
+	Ports []dockerContainerPortMapping `json:"ports"`
+}
+
 type dockerInspectRecord struct {
 	ID         string                   `json:"Id"`
 	Name       string                   `json:"Name"`
@@ -561,10 +574,101 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"details": details})
 	})
 
+	containerSettingsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		record, err := inspectDockerContainerConfig(r.Context(), containerID)
+		if err != nil {
+			a.app.Logger.Error("inspect docker container settings failed", zap.String("container_id", containerID), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusOK, dockerContainerSettingsResponse{
+			Settings: dockerContainerSettingsFromRecord(record),
+		})
+	})
+
+	updateContainerSettingsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		var input updateDockerContainerSettingsRequest
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		commandCtx, cancel := context.WithTimeout(actionCtx, dockerCreateCommandTimeout)
+		defer cancel()
+
+		record, err := inspectDockerContainerConfig(commandCtx, containerID)
+		if err != nil {
+			a.app.Logger.Error("inspect docker container settings before update failed", zap.String("container_id", containerID), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		if fieldErrors := applyDockerContainerPorts(&record, input.Ports); len(fieldErrors) > 0 {
+			writeValidationFailed(w, fieldErrors)
+			return
+		}
+
+		container, err := recreateDockerContainerWithConfig(commandCtx, containerID, record)
+		if err != nil {
+			a.app.Logger.Error("update docker container settings failed", zap.String("container_id", containerID), zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "update", "docker_container", containerID, shortDockerID(containerID), "failed", err.Error())
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		label := container.Name
+		if label == "" {
+			label = shortDockerID(container.ID)
+		}
+
+		a.mutationEvent(
+			actionCtx,
+			"runtime",
+			"update",
+			"docker_container",
+			container.ID,
+			label,
+			"succeeded",
+			fmt.Sprintf("Updated Docker container %q settings.", label),
+		)
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
+	})
+
 	r.Method(stdhttp.MethodGet, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodHead, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers", createContainerHandler)
 	r.Method(stdhttp.MethodDelete, "/docker/containers/{containerID}", deleteContainerHandler)
+	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/settings", containerSettingsHandler)
+	r.Method(stdhttp.MethodHead, "/docker/containers/{containerID}/settings", containerSettingsHandler)
+	r.Method(stdhttp.MethodPut, "/docker/containers/{containerID}/settings", updateContainerSettingsHandler)
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/details", containerDetailsHandler)
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/logs", containerLogsHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/start", registerContainerAction("start", startDockerContainer))
@@ -752,6 +856,13 @@ func inspectDockerContainerDetails(ctx context.Context, containerID string) (doc
 	return details, nil
 }
 
+func dockerContainerSettingsFromRecord(record dockerInspectRecord) dockerContainerSettings {
+	return dockerContainerSettings{
+		Ports:           dockerContainerPortMappings(record),
+		PublishAllPorts: record.HostConfig.PublishAllPorts,
+	}
+}
+
 func searchDockerHubImages(ctx context.Context, query string, limit int) ([]dockerHubSearchImage, error) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return nil, errors.New("Docker is not installed on this server.")
@@ -899,19 +1010,27 @@ func recreateDockerContainer(ctx context.Context, containerID string) (dockerCon
 		return dockerContainerListItem{}, err
 	}
 
+	return recreateDockerContainerWithConfig(commandCtx, containerID, record)
+}
+
+func recreateDockerContainerWithConfig(
+	ctx context.Context,
+	containerID string,
+	record dockerInspectRecord,
+) (dockerContainerListItem, error) {
 	args := dockerCreateArgs(record)
-	if err := deleteDockerContainer(commandCtx, containerID); err != nil {
+	if err := deleteDockerContainer(ctx, containerID); err != nil {
 		return dockerContainerListItem{}, err
 	}
 
-	cmd := exec.CommandContext(commandCtx, "docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return dockerContainerListItem{}, errors.New("Timed out while recreating the Docker container.")
 		}
 		return dockerContainerListItem{}, formatDockerCommandError(stderr.String(), err)
@@ -923,12 +1042,12 @@ func recreateDockerContainer(ctx context.Context, containerID string) (dockerCon
 	}
 
 	if record.State.Running {
-		if _, err := runDockerContainerAction(commandCtx, newContainerID, "start"); err != nil {
+		if _, err := runDockerContainerAction(ctx, newContainerID, "start"); err != nil {
 			return dockerContainerListItem{}, err
 		}
 	}
 
-	return inspectDockerContainer(commandCtx, newContainerID)
+	return inspectDockerContainer(ctx, newContainerID)
 }
 
 func saveDockerContainerImage(ctx context.Context, containerID, image string) error {
@@ -1221,7 +1340,8 @@ func dockerCreateArgs(record dockerInspectRecord) []string {
 	if record.HostConfig.ShmSize > 0 {
 		args = append(args, "--shm-size", strconv.FormatInt(record.HostConfig.ShmSize, 10))
 	}
-	if entrypoint := dockerEntrypointValue(record.Config.Entrypoint); entrypoint != "" {
+	entrypoint, entrypointArgs := dockerCommandParts(record.Config.Entrypoint)
+	if entrypoint != "" {
 		args = append(args, "--entrypoint", entrypoint)
 	}
 	if restart := dockerRestartPolicyValue(record.HostConfig.RestartPolicy); restart != "" {
@@ -1365,9 +1485,101 @@ func dockerCreateArgs(record dockerInspectRecord) []string {
 		image = strings.TrimSpace(record.ID)
 	}
 	args = append(args, image)
+	args = append(args, entrypointArgs...)
 	args = append(args, record.Config.Cmd...)
 
 	return args
+}
+
+func applyDockerContainerPorts(record *dockerInspectRecord, requested []dockerContainerPortMapping) map[string]string {
+	if record == nil {
+		return map[string]string{
+			"ports": "Container settings are unavailable.",
+		}
+	}
+
+	knownPorts := dockerKnownContainerPorts(*record)
+	fieldErrors := make(map[string]string)
+	nextBindings := make(map[string][]dockerPortBinding)
+	seen := make(map[string]struct{})
+
+	for index, port := range requested {
+		fieldName := fmt.Sprintf("ports[%d].host_port", index)
+		containerPort := strings.TrimSpace(port.ContainerPort)
+		hostIP := strings.TrimSpace(port.HostIP)
+		hostPort := strings.TrimSpace(port.HostPort)
+
+		if containerPort == "" {
+			fieldErrors[fieldName] = "Container port is required."
+			continue
+		}
+		if _, ok := knownPorts[containerPort]; !ok {
+			fieldErrors[fieldName] = "This container port is no longer available."
+			continue
+		}
+		if hostPort == "" {
+			continue
+		}
+		if !validDockerPortNumber(hostPort) {
+			fieldErrors[fieldName] = "Enter a port between 1 and 65535."
+			continue
+		}
+
+		bindingKey := containerPort + "|" + hostIP + "|" + hostPort
+		if _, exists := seen[bindingKey]; exists {
+			fieldErrors[fieldName] = "This published port is duplicated."
+			continue
+		}
+
+		seen[bindingKey] = struct{}{}
+		nextBindings[containerPort] = append(nextBindings[containerPort], dockerPortBinding{
+			HostIP:   hostIP,
+			HostPort: hostPort,
+		})
+	}
+
+	if len(fieldErrors) > 0 {
+		return fieldErrors
+	}
+
+	if len(nextBindings) == 0 {
+		record.HostConfig.PortBindings = nil
+	} else {
+		record.HostConfig.PortBindings = nextBindings
+	}
+	record.HostConfig.PublishAllPorts = false
+	return nil
+}
+
+func dockerKnownContainerPorts(record dockerInspectRecord) map[string]struct{} {
+	ports := make(map[string]struct{}, len(record.Config.ExposedPorts)+len(record.HostConfig.PortBindings))
+	for key := range record.Config.ExposedPorts {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			ports[key] = struct{}{}
+		}
+	}
+	for key := range record.HostConfig.PortBindings {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			ports[key] = struct{}{}
+		}
+	}
+	for _, port := range dockerContainerPortMappings(record) {
+		key := strings.TrimSpace(port.ContainerPort)
+		if key != "" {
+			ports[key] = struct{}{}
+		}
+	}
+	return ports
+}
+
+func validDockerPortNumber(value string) bool {
+	port, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	return port >= 1 && port <= 65535
 }
 
 func formatDockerCommandError(stderr string, fallback error) error {
@@ -1516,18 +1728,18 @@ func dockerRestartPolicyValue(policy dockerRestartPolicy) string {
 	return name
 }
 
-func dockerEntrypointValue(entrypoint []string) string {
-	trimmed := make([]string, 0, len(entrypoint))
-	for _, value := range entrypoint {
+func dockerCommandParts(command []string) (string, []string) {
+	trimmed := make([]string, 0, len(command))
+	for _, value := range command {
 		value = strings.TrimSpace(value)
 		if value != "" {
 			trimmed = append(trimmed, value)
 		}
 	}
 	if len(trimmed) == 0 {
-		return ""
+		return "", nil
 	}
-	return strings.Join(trimmed, " ")
+	return trimmed[0], trimmed[1:]
 }
 
 func dockerPublishValue(containerPort string, binding dockerPortBinding) string {

@@ -4,6 +4,7 @@ import {
   deleteDockerContainer,
   downloadDockerContainerSnapshot,
   fetchDockerContainerDetails,
+  fetchDockerContainerSettings,
   fetchDockerContainerLogs,
   fetchDockerContainers,
   fetchDockerImages,
@@ -16,11 +17,15 @@ import {
   type DockerContainer,
   type DockerContainerDetails,
   type DockerContainerPortMapping,
+  type DockerContainerSettings,
+  type DockerApiError,
   type DockerHubImage,
   type DockerImage,
   type DockerStatus,
   searchDockerHubImages,
+  updateDockerContainerSettings,
 } from "@/api/docker";
+import { FieldError } from "@/components/field-error";
 import {
   Adjustments,
   ChevronDownIcon,
@@ -52,6 +57,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -67,7 +73,7 @@ type LoadOptions = {
 type DockerTab = "containers" | "images";
 type DockerContainerAction = "start" | "stop" | "restart";
 type DockerContainerMenuAction = "recreate" | "delete" | "snapshot" | "save-image";
-type DockerContainerOperation = DockerContainerAction | DockerContainerMenuAction;
+type DockerContainerOperation = DockerContainerAction | DockerContainerMenuAction | "settings";
 type DockerContainerLogsState = {
   output: string;
   loading: boolean;
@@ -194,6 +200,8 @@ function getContainerOperationPendingLabel(action: DockerContainerOperation | nu
       return "Deleting...";
     case "recreate":
       return "Recreating...";
+    case "settings":
+      return "Saving...";
     case "snapshot":
       return "Downloading...";
     case "save-image":
@@ -246,6 +254,93 @@ function createDockerContainerResourcesState(): DockerContainerResourcesState {
     refreshing: false,
     error: null,
   };
+}
+
+function sameDockerPortMappings(left: DockerContainerPortMapping[], right: DockerContainerPortMapping[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((port, index) => {
+    const other = right[index];
+    return (
+      port.container_port === other.container_port &&
+      port.host_ip === other.host_ip &&
+      port.host_port === other.host_port
+    );
+  });
+}
+
+type DockerContainerPortSettingsRow = {
+  containerPort: string;
+  hostPort: string;
+  hostIPs: string[];
+  indexes: number[];
+};
+
+function isDockerPublicHostIP(hostIP: string) {
+  const normalized = hostIP.trim().toLowerCase();
+  return normalized === "" || normalized === "0.0.0.0" || normalized === "::" || normalized === "[::]";
+}
+
+function dockerPortSettingsGroupKey(port: DockerContainerPortMapping) {
+  const hostIP = port.host_ip.trim();
+  const scope = isDockerPublicHostIP(hostIP) ? "public" : hostIP;
+  return `${port.container_port}|${port.host_port}|${scope}`;
+}
+
+function getDockerPortSettingsRows(ports: DockerContainerPortMapping[]) {
+  const rows: DockerContainerPortSettingsRow[] = [];
+  const rowIndexes = new Map<string, number>();
+
+  ports.forEach((port, index) => {
+    const key = dockerPortSettingsGroupKey(port);
+    const existingIndex = rowIndexes.get(key);
+    if (existingIndex == null) {
+      rows.push({
+        containerPort: port.container_port,
+        hostPort: port.host_port,
+        hostIPs: [port.host_ip],
+        indexes: [index],
+      });
+      rowIndexes.set(key, rows.length - 1);
+      return;
+    }
+
+    const row = rows[existingIndex];
+    row.hostIPs.push(port.host_ip);
+    row.indexes.push(index);
+  });
+
+  return rows;
+}
+
+function formatDockerPortSettingsBinding(row: DockerContainerPortSettingsRow) {
+  if (!row.hostPort) {
+    return "Unpublished";
+  }
+
+  const uniqueHostIPs = Array.from(new Set(row.hostIPs.map((hostIP) => hostIP.trim())));
+  const hasIPv4Public = uniqueHostIPs.some((hostIP) => hostIP === "" || hostIP === "0.0.0.0");
+  const hasIPv6Public = uniqueHostIPs.some((hostIP) => hostIP === "::" || hostIP === "[::]");
+
+  if (hasIPv4Public && hasIPv6Public) {
+    return `Public IPv4 + IPv6:${row.hostPort}`;
+  }
+
+  if (hasIPv4Public) {
+    return `0.0.0.0:${row.hostPort}`;
+  }
+
+  if (hasIPv6Public) {
+    return `:::${row.hostPort}`;
+  }
+
+  if (uniqueHostIPs.length === 1 && uniqueHostIPs[0]) {
+    return `${uniqueHostIPs[0]}:${row.hostPort}`;
+  }
+
+  return row.hostPort;
 }
 
 function clampPercent(value: number | null | undefined) {
@@ -575,6 +670,7 @@ function ContainerList({
   containerResources,
   onAction,
   onMenuAction,
+  onOpenSettings,
   onToggleExpandedContainer,
   onClearContainerLogs,
 }: {
@@ -587,6 +683,7 @@ function ContainerList({
   containerResources: DockerContainerResourcesState;
   onAction: (container: DockerContainer, action: DockerContainerAction) => void;
   onMenuAction: (container: DockerContainer, action: DockerContainerMenuAction) => void;
+  onOpenSettings: (container: DockerContainer) => void;
   onToggleExpandedContainer: (container: DockerContainer) => void;
   onClearContainerLogs: (container: DockerContainer) => void;
 }) {
@@ -641,6 +738,7 @@ function ContainerList({
             pendingOperation === "restart");
         const logRegionID = `docker-container-logs-${container.id}`;
         const actionError = actionErrors[container.id];
+        const settingsBusy = busy && pendingOperation === "settings";
 
         return (
           <div
@@ -742,8 +840,15 @@ function ContainerList({
                     className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
                     aria-label={`Open settings for ${getContainerLabel(container)}`}
                     title={`Open settings for ${getContainerLabel(container)}`}
+                    onClick={() => {
+                      onOpenSettings(container);
+                    }}
                   >
-                    <Adjustments className="h-4 w-4" />
+                    {settingsBusy ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Adjustments className="h-4 w-4" />
+                    )}
                   </Button>
                   <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
@@ -945,6 +1050,237 @@ function ImageList({ images }: { images: DockerImage[] }) {
         );
       })}
     </div>
+  );
+}
+
+type DockerContainerSettingsDialogProps = {
+  open: boolean;
+  container: DockerContainer | null;
+  saving: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (container: DockerContainer, ports: DockerContainerPortMapping[]) => Promise<void>;
+};
+
+function DockerContainerSettingsDialog({
+  open,
+  container,
+  saving,
+  onOpenChange,
+  onSave,
+}: DockerContainerSettingsDialogProps) {
+  const [settings, setSettings] = useState<DockerContainerSettings | null>(null);
+  const [ports, setPorts] = useState<DockerContainerPortMapping[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const requestIDRef = useRef(0);
+
+  useEffect(() => {
+    requestIDRef.current += 1;
+
+    if (!open || !container) {
+      setSettings(null);
+      setPorts([]);
+      setLoading(false);
+      setError(null);
+      setFieldErrors({});
+      return;
+    }
+
+    const requestID = requestIDRef.current;
+    setSettings(null);
+    setPorts([]);
+    setLoading(true);
+    setError(null);
+    setFieldErrors({});
+
+    void (async () => {
+      try {
+        const nextSettings = await fetchDockerContainerSettings(container.id);
+        if (requestIDRef.current !== requestID) {
+          return;
+        }
+
+        setSettings(nextSettings);
+        setPorts(nextSettings.ports);
+      } catch (loadError) {
+        if (requestIDRef.current !== requestID) {
+          return;
+        }
+
+        setError(getErrorMessage(loadError, `Failed to load settings for ${getContainerLabel(container)}.`));
+      } finally {
+        if (requestIDRef.current === requestID) {
+          setLoading(false);
+        }
+      }
+    })();
+  }, [container, open]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!container || loading || saving) {
+      return;
+    }
+
+    setError(null);
+    setFieldErrors({});
+
+    try {
+      await onSave(
+        container,
+        ports.map((port) => ({
+          ...port,
+          host_port: port.host_port.trim(),
+        })),
+      );
+    } catch (saveError) {
+      const dockerError = saveError as DockerApiError;
+      setFieldErrors(dockerError.fieldErrors ?? {});
+      setError(getErrorMessage(saveError, `Failed to save settings for ${getContainerLabel(container)}.`));
+    }
+  }
+
+  const dirty = settings ? !sameDockerPortMappings(ports, settings.ports) : false;
+  const canSave = !loading && !saving && container !== null && settings !== null && ports.length > 0 && dirty;
+  const portRows = getDockerPortSettingsRows(ports);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && saving) {
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent className="gap-4 sm:max-w-2xl" showCloseButton={!saving}>
+        <DialogHeader>
+          <DialogTitle>Container settings</DialogTitle>
+          <DialogDescription>
+            Change published ports for {container ? getContainerLabel(container) : "this container"}. Saving recreates
+            the container with the new port mapping.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error ? (
+            <div className="rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
+              {error}
+            </div>
+          ) : null}
+
+          {settings?.publish_all_ports ? (
+            <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 text-sm text-muted-foreground">
+              This container is using Docker&apos;s publish-all-ports behavior. Saving here switches it to explicit port
+              mappings.
+            </div>
+          ) : null}
+
+          {loading ? (
+            <div className="flex items-center gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-sm text-muted-foreground">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              Loading container settings...
+            </div>
+          ) : null}
+
+          {!loading && settings && portRows.length === 0 ? (
+            <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-sm text-muted-foreground">
+              No configurable ports were detected for this container.
+            </div>
+          ) : null}
+
+          {!loading && portRows.length > 0 ? (
+            <div className="space-y-3">
+              {portRows.map((row, index) => {
+                const fieldNames = row.indexes.map((portIndex) => `ports[${portIndex}].host_port`);
+                const fieldError = fieldNames.map((name) => fieldErrors[name]).find(Boolean);
+                const hostTarget = formatDockerPortSettingsBinding(row);
+
+                return (
+                  <section
+                    key={`${row.containerPort}-${row.hostPort}-${index}`}
+                    className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-4"
+                  >
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">Container port</label>
+                        <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-foreground">
+                          {row.containerPort}
+                        </div>
+                        <p className="text-xs text-muted-foreground">Current binding: {hostTarget}</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label htmlFor={`docker-port-${index}`} className="text-sm font-medium text-foreground">
+                          Host port
+                        </label>
+                        <Input
+                          id={`docker-port-${index}`}
+                          inputMode="numeric"
+                          value={row.hostPort}
+                          onChange={(event) => {
+                            const value = event.target.value.replace(/[^\d]/g, "");
+                            setPorts((current) =>
+                              current.map((item, itemIndex) =>
+                                row.indexes.includes(itemIndex) ? { ...item, host_port: value } : item,
+                              ),
+                            );
+                            setFieldErrors((current) => {
+                              const nextErrors = { ...current };
+                              let changed = false;
+                              for (const fieldName of fieldNames) {
+                                if (!(fieldName in nextErrors)) {
+                                  continue;
+                                }
+                                delete nextErrors[fieldName];
+                                changed = true;
+                              }
+                              if (!changed) {
+                                return current;
+                              }
+                              return nextErrors;
+                            });
+                          }}
+                          placeholder="8080"
+                          autoComplete="off"
+                          disabled={saving}
+                          aria-invalid={fieldError ? true : undefined}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Leave empty to keep this port unpublished.
+                        </p>
+                        <FieldError message={fieldError} />
+                      </div>
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!canSave}>
+              {saving ? (
+                <>
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Adjustments className="h-4 w-4" />
+                  Save ports
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1322,6 +1658,7 @@ export function DockerPage() {
   const [expandedContainerResources, setExpandedContainerResources] = useState<DockerContainerResourcesState>(
     createDockerContainerResourcesState,
   );
+  const [settingsContainer, setSettingsContainer] = useState<DockerContainer | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     action: Extract<DockerContainerMenuAction, "delete" | "recreate">;
     container: DockerContainer;
@@ -1708,6 +2045,42 @@ export function DockerPage() {
     }
   }
 
+  async function handleSaveContainerSettings(
+    container: DockerContainer,
+    ports: DockerContainerPortMapping[],
+  ) {
+    if (activeContainerID !== null) {
+      return;
+    }
+
+    setActiveContainerID(container.id);
+    setPendingOperation("settings");
+    clearContainerActionError(container.id);
+
+    try {
+      const nextContainer = await updateDockerContainerSettings(container.id, { ports });
+      clearContainerActionError(container.id);
+      setContainers((current) =>
+        sortDockerContainers([
+          ...current.filter((item) => item.id !== container.id),
+          nextContainer,
+        ]),
+      );
+      if (expandedContainerIDRef.current === container.id) {
+        resetExpandedContainerPanel();
+      }
+      setSettingsContainer(null);
+      toast.success(`Updated ports for ${getContainerLabel(nextContainer)}.`);
+      void loadDocker({ silent: true });
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to save settings for ${getContainerLabel(container)}.`));
+      throw error;
+    } finally {
+      setActiveContainerID(null);
+      setPendingOperation(null);
+    }
+  }
+
   async function handleConfirmedContainerAction(container: DockerContainer, action: "delete" | "recreate") {
     if (activeContainerID !== null) {
       return;
@@ -1828,6 +2201,21 @@ export function DockerPage() {
           toast.success(`Created container ${getContainerLabel(container)}.`);
           void loadDocker({ silent: true });
         }}
+      />
+      <DockerContainerSettingsDialog
+        open={settingsContainer !== null}
+        container={settingsContainer}
+        saving={
+          settingsContainer !== null &&
+          activeContainerID === settingsContainer.id &&
+          pendingOperation === "settings"
+        }
+        onOpenChange={(open) => {
+          if (!open && activeContainerID === null) {
+            setSettingsContainer(null);
+          }
+        }}
+        onSave={handleSaveContainerSettings}
       />
       <SaveDockerContainerImageDialog
         open={saveImageContainer !== null}
@@ -1972,6 +2360,7 @@ export function DockerPage() {
               containerResources={expandedContainerResources}
               onAction={handleContainerAction}
               onMenuAction={handleContainerMenuAction}
+              onOpenSettings={setSettingsContainer}
               onToggleExpandedContainer={handleToggleContainerLogs}
               onClearContainerLogs={handleClearContainerLogs}
             />
