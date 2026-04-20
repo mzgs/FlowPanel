@@ -179,7 +179,7 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
   const cpuPercent = clampPercent(status.cpu_usage_percent ?? null);
 
   return (
-    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 pt-5 pb-0 shadow-[var(--app-shadow)]">
+    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <GaugePanel
           caption="Load average"

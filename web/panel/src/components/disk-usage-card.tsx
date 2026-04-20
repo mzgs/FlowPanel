@@ -86,31 +86,6 @@ function getDiskTone(percent: number | null): DiskTone {
   };
 }
 
-function MetricCard({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3">
-      <div className="text-[12px] text-[var(--app-text-muted)]">{label}</div>
-      <div
-        className={
-          mono
-            ? "mt-1 font-mono text-[12px] text-[var(--app-text)]"
-            : "mt-1 text-[14px] font-semibold tracking-tight text-[var(--app-text)]"
-        }
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
 export function DiskUsageCard({ status }: { status: SystemStatus }) {
   const diskPercent = getDiskPercent(status);
   const diskTone = getDiskTone(diskPercent);
@@ -119,38 +94,38 @@ export function DiskUsageCard({ status }: { status: SystemStatus }) {
   const diskCapacity = formatDiskValue(status.disk_total_bytes);
 
   return (
-    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
-      <div className="space-y-4">
-        <h2 className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Disk status</h2>
+    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
+      <div className="space-y-3">
+        <h2 className="text-[14px] font-semibold tracking-tight text-[var(--app-text)]">Disk status</h2>
 
-        <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-3">
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
               <div
-                className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[var(--app-border)] text-[var(--app-text-muted)]"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] border border-[var(--app-border)] text-[var(--app-text-muted)]"
                 style={{ backgroundColor: diskTone.surface }}
               >
-                <HardDrive className="h-4 w-4" />
+                <HardDrive className="h-[15px] w-[15px]" />
               </div>
-              <div className="space-y-1">
-                <div className="text-[14px] font-medium text-[var(--app-text)]">{diskTone.title}</div>
-                <div className="text-[12px] text-[var(--app-text-muted)]">{diskTone.label}</div>
+              <div className="min-w-0 space-y-0.5">
+                <div className="text-[13px] font-medium leading-5 text-[var(--app-text)]">{diskTone.title}</div>
+                <div className="text-[11px] leading-4 text-[var(--app-text-muted)]">{diskTone.label}</div>
               </div>
             </div>
 
-            <div className="text-right">
-              <div className="text-[28px] font-semibold tracking-tight text-[var(--app-text)]">
+            <div className="shrink-0 text-right">
+              <div className="text-[24px] font-semibold leading-none tracking-tight text-[var(--app-text)]">
                 {formatPercent(diskPercent)}
               </div>
-              <div className="text-[12px] text-[var(--app-text-muted)]">used</div>
-              <div className="mt-1 text-[12px] text-[var(--app-text-muted)]">
+              <div className="mt-0.5 text-[11px] text-[var(--app-text-muted)]">used</div>
+              <div className="mt-1 text-[11px] leading-4 text-[var(--app-text-muted)]">
                 {formatFreePercent(diskPercent)}
               </div>
             </div>
           </div>
 
-          <div className="mt-5">
-            <div className="mb-2 flex items-center justify-between gap-3 text-[12px] text-[var(--app-text-muted)]">
+          <div className="border-t border-[var(--app-border)] pt-3">
+            <div className="mb-1.5 flex items-center justify-between gap-3 text-[11px] text-[var(--app-text-muted)]">
               <span>Usage</span>
               <span>
                 {diskUsed} of {diskCapacity}
@@ -161,7 +136,7 @@ export function DiskUsageCard({ status }: { status: SystemStatus }) {
               aria-valuemax={100}
               aria-valuemin={0}
               aria-valuenow={diskPercent == null ? undefined : Math.round(diskPercent)}
-              className="h-3 overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-surface)]"
+              className="h-2.5 overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-surface)]"
               role="progressbar"
             >
               <div
@@ -175,14 +150,23 @@ export function DiskUsageCard({ status }: { status: SystemStatus }) {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <MetricCard label="Used" value={diskUsed} />
-          <MetricCard label="Free" value={diskFree} />
-          <MetricCard label="Capacity" value={diskCapacity} />
+        <div className="grid gap-px overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-border)] sm:grid-cols-3">
+          {[
+            { label: "Used", value: diskUsed },
+            { label: "Free", value: diskFree },
+            { label: "Capacity", value: diskCapacity },
+          ].map((metric) => (
+            <div key={metric.label} className="bg-[var(--app-surface-muted)] px-3 py-2.5">
+              <div className="text-[11px] text-[var(--app-text-muted)]">{metric.label}</div>
+              <div className="mt-0.5 text-[13px] font-semibold tracking-tight text-[var(--app-text)]">
+                {metric.value}
+              </div>
+            </div>
+          ))}
         </div>
 
         {status.disk_total_bytes == null || status.disk_used_bytes == null ? (
-          <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-[13px] text-[var(--app-text-muted)]">
+          <div className="border-t border-[var(--app-border)] pt-2.5 text-[12px] text-[var(--app-text-muted)]">
             Disk metrics are not available for this host yet.
           </div>
         ) : null}
