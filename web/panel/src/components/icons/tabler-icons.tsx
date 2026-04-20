@@ -24,6 +24,7 @@ export const CheckIcon = pick("IconCheck");
 export const Clipboard = pick("IconClipboard", "IconClipboardText");
 export const Clock = pick("IconClock");
 export const AdjustmentsHorizontal = pick("IconAdjustmentsHorizontal", "IconSlidersHorizontal", "IconSettings");
+export const Adjustments = pick("IconAdjustments", "IconAdjustmentsHorizontal", "IconSettings");
 export const ChevronDownIcon = pick("IconChevronDown");
 export const ChevronRight = pick("IconChevronRight");
 export const ChevronUpIcon = pick("IconChevronUp");

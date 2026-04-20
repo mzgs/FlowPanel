@@ -22,6 +22,7 @@ import {
   searchDockerHubImages,
 } from "@/api/docker";
 import {
+  Adjustments,
   ChevronDownIcon,
   Docker,
   Download,
@@ -34,7 +35,6 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Settings,
   PlayerStop,
   Trash2,
 } from "@/components/icons/tabler-icons";
@@ -743,7 +743,7 @@ function ContainerList({
                     aria-label={`Open settings for ${getContainerLabel(container)}`}
                     title={`Open settings for ${getContainerLabel(container)}`}
                   >
-                    <Settings className="h-4 w-4" />
+                    <Adjustments className="h-4 w-4" />
                   </Button>
                   <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
