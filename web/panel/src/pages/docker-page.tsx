@@ -181,7 +181,7 @@ function ContainersSkeleton() {
         >
           <div className="h-5 w-40 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-52 animate-pulse rounded bg-[var(--app-surface)]" />
-          <div className="h-9 w-32 animate-pulse rounded-xl bg-[var(--app-surface)]" />
+          <div className="h-5 w-24 animate-pulse rounded bg-[var(--app-surface)]" />
         </div>
       ))}
     </div>
@@ -334,7 +334,7 @@ function ContainerList({
                     variant="ghost"
                     size="sm"
                     disabled={busy}
-                    className="h-auto w-full justify-between rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-[15px] font-medium text-foreground hover:bg-[var(--app-surface)]/80"
+                    className="h-auto w-fit max-w-full justify-start px-0 py-0 text-[15px] font-medium text-foreground hover:bg-transparent hover:text-foreground"
                     title={container.status}
                   >
                     <span className="inline-flex min-w-0 items-center gap-2">
@@ -345,7 +345,6 @@ function ContainerList({
                       )}
                       <span className="truncate">{pendingLabel || stateMeta.label}</span>
                     </span>
-                    {!busy ? <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground/70" /> : null}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
