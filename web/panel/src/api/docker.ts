@@ -26,6 +26,7 @@ export type DockerContainer = {
   image: string;
   status: string;
   state: string;
+  ports: DockerContainerPortMapping[];
 };
 
 export type DockerContainerPortMapping = {
@@ -99,6 +100,17 @@ export type DockerApiError = Error & {
   fieldErrors?: Record<string, string>;
 };
 
+function normalizeDockerPortMappings(ports: DockerContainerPortMapping[] | null | undefined): DockerContainerPortMapping[] {
+  return Array.isArray(ports) ? ports : [];
+}
+
+function normalizeDockerContainer(container: DockerContainer): DockerContainer {
+  return {
+    ...container,
+    ports: normalizeDockerPortMappings(container.ports),
+  };
+}
+
 async function parseDockerError(response: Response): Promise<DockerApiError> {
   let message = `docker request failed with status ${response.status}`;
   let fieldErrors: Record<string, string> | undefined;
@@ -138,7 +150,7 @@ async function parseDockerContainersResponse(response: Response): Promise<Docker
   }
 
   const payload = (await response.json()) as DockerContainersPayload;
-  return payload.containers;
+  return payload.containers.map(normalizeDockerContainer);
 }
 
 async function parseDockerContainerResponse(response: Response): Promise<DockerContainer> {
@@ -147,7 +159,7 @@ async function parseDockerContainerResponse(response: Response): Promise<DockerC
   }
 
   const payload = (await response.json()) as DockerContainerPayload;
-  return payload.container;
+  return normalizeDockerContainer(payload.container);
 }
 
 async function parseDockerImagesResponse(response: Response): Promise<DockerImage[]> {
@@ -249,7 +261,10 @@ export async function fetchDockerContainerDetails(containerID: string): Promise<
   }
 
   const payload = (await response.json()) as DockerContainerDetailsPayload;
-  return payload.details;
+  return {
+    ...payload.details,
+    ports: normalizeDockerPortMappings(payload.details.ports),
+  };
 }
 
 export async function fetchDockerContainerSettings(containerID: string): Promise<DockerContainerSettings> {
@@ -263,7 +278,10 @@ export async function fetchDockerContainerSettings(containerID: string): Promise
   }
 
   const payload = (await response.json()) as DockerContainerSettingsPayload;
-  return payload.settings;
+  return {
+    ...payload.settings,
+    ports: normalizeDockerPortMappings(payload.settings.ports),
+  };
 }
 
 export async function updateDockerContainerSettings(

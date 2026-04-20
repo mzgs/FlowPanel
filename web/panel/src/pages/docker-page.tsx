@@ -343,6 +343,10 @@ function formatDockerPortSettingsBinding(row: DockerContainerPortSettingsRow) {
   return row.hostPort;
 }
 
+function getDockerPortSettingsRowKey(row: DockerContainerPortSettingsRow) {
+  return `${row.containerPort}-${row.indexes.join("-")}`;
+}
+
 function clampPercent(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) {
     return null;
@@ -408,6 +412,10 @@ function formatDockerPortMapping(port: DockerContainerPortMapping) {
   return `${containerPort} to ${port.host_port}`;
 }
 
+function getDockerContainerPortSummary(ports: DockerContainerPortMapping[]) {
+  return Array.from(new Set(ports.map((port) => formatDockerPortMapping(port))));
+}
+
 function ResourceMeter({
   detail,
   label,
@@ -448,19 +456,24 @@ function ResourceMeter({
 function ContainersSkeleton() {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
         <div>Name</div>
         <div>Image</div>
+        <div>Ports</div>
         <div>Status</div>
         <div className="text-right">Actions</div>
       </div>
       {Array.from({ length: 4 }).map((_, index) => (
         <div
           key={index}
-          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] md:px-6"
+          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] md:px-6"
         >
           <div className="h-5 w-40 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-52 animate-pulse rounded bg-[var(--app-surface)]" />
+          <div className="space-y-2">
+            <div className="h-5 w-24 animate-pulse rounded bg-[var(--app-surface)]" />
+            <div className="h-5 w-32 animate-pulse rounded bg-[var(--app-surface)]" />
+          </div>
           <div className="h-5 w-24 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="flex justify-start gap-2 md:justify-end">
             <div className="h-9 w-9 animate-pulse rounded-md bg-[var(--app-surface)]" />
@@ -715,18 +728,20 @@ function ContainerList({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
         <div className="flex items-center gap-3">
           <ChevronDownIcon className="h-4 w-4 text-muted-foreground/70" />
           <span>Name</span>
         </div>
         <div>Image ↑</div>
+        <div>Ports</div>
         <div>Status</div>
         <div className="text-right">Actions</div>
       </div>
 
       {containers.map((container) => {
         const stateMeta = getContainerStateMeta(container.state);
+        const portSummary = getDockerContainerPortSummary(container.ports);
         const busy = activeContainerID === container.id;
         const actions = getContainerActions(container);
         const pendingLabel = busy ? getContainerOperationPendingLabel(pendingOperation) : null;
@@ -745,7 +760,7 @@ function ContainerList({
             key={container.id || `${container.name}-${container.image}`}
             className="border-b border-[var(--app-border)] last:border-b-0"
           >
-            <div className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] md:px-6 md:py-5">
+            <div className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] md:px-6 md:py-5">
               <div className="space-y-1">
                 <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
                   Name
@@ -778,6 +793,30 @@ function ContainerList({
                   <Docker className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="truncate">{container.image}</span>
                 </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
+                  Ports
+                </div>
+                {portSummary.length > 0 ? (
+                  <div className="space-y-1">
+                    {portSummary.slice(0, 2).map((port) => (
+                      <div
+                        key={port}
+                        className="truncate text-sm text-foreground"
+                        title={port}
+                      >
+                        {port}
+                      </div>
+                    ))}
+                    {portSummary.length > 2 ? (
+                      <div className="text-xs text-muted-foreground">+{portSummary.length - 2} more</div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">No ports</div>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -1200,7 +1239,7 @@ function DockerContainerSettingsDialog({
 
                 return (
                   <section
-                    key={`${row.containerPort}-${row.hostPort}-${index}`}
+                    key={getDockerPortSettingsRowKey(row)}
                     className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-4"
                   >
                     <div className="grid gap-4 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">

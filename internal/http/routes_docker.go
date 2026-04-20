@@ -31,11 +31,12 @@ const (
 )
 
 type dockerContainerListItem struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Image  string `json:"image"`
-	Status string `json:"status"`
-	State  string `json:"state"`
+	ID     string                       `json:"id"`
+	Name   string                       `json:"name"`
+	Image  string                       `json:"image"`
+	Status string                       `json:"status"`
+	State  string                       `json:"state"`
+	Ports  []dockerContainerPortMapping `json:"ports"`
 }
 
 type dockerPSRecord struct {
@@ -43,6 +44,7 @@ type dockerPSRecord struct {
 	Image  string `json:"Image"`
 	Status string `json:"Status"`
 	Names  string `json:"Names"`
+	Ports  string `json:"Ports"`
 }
 
 type dockerContainerDetails struct {
@@ -723,6 +725,7 @@ func listDockerContainers(ctx context.Context) ([]dockerContainerListItem, error
 			Image:  strings.TrimSpace(record.Image),
 			Status: strings.TrimSpace(record.Status),
 			State:  dockerContainerState(record.Status),
+			Ports:  dockerPSPortMappings(record.Ports),
 		})
 	}
 	if err := scanner.Err(); err != nil {
@@ -1123,6 +1126,7 @@ func inspectDockerContainer(ctx context.Context, containerID string) (dockerCont
 			Image:  strings.TrimSpace(record.Image),
 			Status: strings.TrimSpace(record.Status),
 			State:  dockerContainerState(record.Status),
+			Ports:  dockerPSPortMappings(record.Ports),
 		}, nil
 	}
 	if err := scanner.Err(); err != nil {
@@ -1216,6 +1220,64 @@ func dockerContainerPortMappings(record dockerInspectRecord) []dockerContainerPo
 	}
 
 	return ports
+}
+
+func dockerPSPortMappings(value string) []dockerContainerPortMapping {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	ports := make([]dockerContainerPortMapping, 0, len(parts))
+	for _, part := range parts {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
+			continue
+		}
+
+		hostBinding, containerPort, hasBinding := strings.Cut(entry, "->")
+		if !hasBinding {
+			ports = append(ports, dockerContainerPortMapping{ContainerPort: entry})
+			continue
+		}
+
+		hostIP, hostPort := parseDockerPSHostBinding(hostBinding)
+		ports = append(ports, dockerContainerPortMapping{
+			ContainerPort: strings.TrimSpace(containerPort),
+			HostIP:        hostIP,
+			HostPort:      hostPort,
+			Public:        hostPort != "" && dockerPortBindingPublic(hostIP),
+		})
+	}
+
+	if len(ports) == 0 {
+		return nil
+	}
+
+	return ports
+}
+
+func parseDockerPSHostBinding(value string) (string, string) {
+	host := strings.TrimSpace(value)
+	if host == "" {
+		return "", ""
+	}
+
+	if strings.HasPrefix(host, "[") {
+		if end := strings.LastIndex(host, "]:"); end > 0 {
+			return strings.TrimSpace(host[:end+1]), strings.TrimSpace(host[end+2:])
+		}
+	}
+
+	if strings.HasPrefix(host, ":::") {
+		return "::", strings.TrimSpace(host[3:])
+	}
+
+	if lastColon := strings.LastIndex(host, ":"); lastColon >= 0 {
+		return strings.TrimSpace(host[:lastColon]), strings.TrimSpace(host[lastColon+1:])
+	}
+
+	return "", host
 }
 
 func dockerPortBindingPublic(hostIP string) bool {
