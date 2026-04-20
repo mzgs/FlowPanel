@@ -28,6 +28,7 @@ const (
 	dockerSearchCommandTimeout = 10 * time.Second
 	dockerActionCommandTimeout = 30 * time.Second
 	dockerCreateCommandTimeout = 2 * time.Minute
+	dockerPullCommandTimeout   = 5 * time.Minute
 	dockerExportCommandTimeout = 2 * time.Minute
 	dockerSearchResultLimit    = 100
 	dockerLogsTailLines        = 200
@@ -69,6 +70,7 @@ type dockerImageListItem struct {
 	ID           string `json:"id"`
 	Repository   string `json:"repository"`
 	Tag          string `json:"tag"`
+	Reference    string `json:"reference"`
 	Size         string `json:"size"`
 	CreatedSince string `json:"created_since"`
 }
@@ -89,6 +91,14 @@ type dockerHubSearchImage struct {
 }
 
 type createDockerContainerRequest struct {
+	Image string `json:"image"`
+}
+
+type pullDockerImageRequest struct {
+	Image string `json:"image"`
+}
+
+type deleteDockerImageRequest struct {
 	Image string `json:"image"`
 }
 
@@ -262,6 +272,47 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"results": results})
 	})
 
+	pullImageHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		var input pullDockerImageRequest
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		input.Image = strings.TrimSpace(input.Image)
+		if input.Image == "" {
+			writeValidationFailed(w, map[string]string{
+				"image": "Image name is required.",
+			})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		if err := pullDockerImage(actionCtx, input.Image); err != nil {
+			a.app.Logger.Error("pull docker image failed", zap.String("image", input.Image), zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "pull", "docker_image", input.Image, input.Image, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		a.mutationEvent(
+			actionCtx,
+			"runtime",
+			"pull",
+			"docker_image",
+			input.Image,
+			input.Image,
+			"succeeded",
+			fmt.Sprintf("Pulled Docker image %q.", input.Image),
+		)
+		w.WriteHeader(stdhttp.StatusNoContent)
+	})
+
 	createContainerHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app.Docker == nil {
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
@@ -306,6 +357,47 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			fmt.Sprintf("Created Docker container %q from %q.", label, input.Image),
 		)
 		writeJSON(w, stdhttp.StatusCreated, map[string]any{"container": container})
+	})
+
+	deleteImageHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		var input deleteDockerImageRequest
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		input.Image = strings.TrimSpace(input.Image)
+		if input.Image == "" {
+			writeValidationFailed(w, map[string]string{
+				"image": "Image name is required.",
+			})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		if err := deleteDockerImage(actionCtx, input.Image); err != nil {
+			a.app.Logger.Error("delete docker image failed", zap.String("image", input.Image), zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "delete", "docker_image", input.Image, input.Image, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		a.mutationEvent(
+			actionCtx,
+			"runtime",
+			"delete",
+			"docker_image",
+			input.Image,
+			input.Image,
+			"succeeded",
+			fmt.Sprintf("Deleted Docker image %q.", input.Image),
+		)
+		w.WriteHeader(stdhttp.StatusNoContent)
 	})
 
 	registerContainerAction := func(action string, run func(context.Context, string) (dockerContainerListItem, error)) stdhttp.HandlerFunc {
@@ -714,11 +806,21 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/snapshot", snapshotContainerHandler)
 	r.Method(stdhttp.MethodGet, "/docker/images", imagesHandler)
 	r.Method(stdhttp.MethodHead, "/docker/images", imagesHandler)
+	r.Method(stdhttp.MethodPost, "/docker/images/pull", pullImageHandler)
+	r.Method(stdhttp.MethodPost, "/docker/images/delete", deleteImageHandler)
 	r.Method(stdhttp.MethodGet, "/docker/search-images", searchHandler)
 	r.Method(stdhttp.MethodHead, "/docker/search-images", searchHandler)
 }
 
 func listDockerContainers(ctx context.Context) ([]dockerContainerListItem, error) {
+	return listDockerContainersByArgs(ctx, "ps", "--all", "--format", "{{json .}}")
+}
+
+func listDockerContainersByAncestor(ctx context.Context, image string) ([]dockerContainerListItem, error) {
+	return listDockerContainersByArgs(ctx, "ps", "--all", "--filter", "ancestor="+image, "--format", "{{json .}}")
+}
+
+func listDockerContainersByArgs(ctx context.Context, args ...string) ([]dockerContainerListItem, error) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return nil, errors.New("Docker is not installed on this server.")
 	}
@@ -726,7 +828,7 @@ func listDockerContainers(ctx context.Context) ([]dockerContainerListItem, error
 	commandCtx, cancel := context.WithTimeout(ctx, dockerListCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(commandCtx, "docker", "ps", "--all", "--format", "{{json .}}")
+	cmd := exec.CommandContext(commandCtx, "docker", args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -810,6 +912,7 @@ func listDockerImages(ctx context.Context) ([]dockerImageListItem, error) {
 			ID:           strings.TrimSpace(record.ID),
 			Repository:   strings.TrimSpace(record.Repository),
 			Tag:          strings.TrimSpace(record.Tag),
+			Reference:    dockerImageReference(strings.TrimSpace(record.Repository), strings.TrimSpace(record.Tag), strings.TrimSpace(record.ID)),
 			Size:         strings.TrimSpace(record.Size),
 			CreatedSince: strings.TrimSpace(record.CreatedSince),
 		})
@@ -1196,6 +1299,28 @@ func createDockerContainer(ctx context.Context, image string) (dockerContainerLi
 	}, nil
 }
 
+func pullDockerImage(ctx context.Context, image string) error {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return errors.New("Docker is not installed on this server.")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerPullCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, "docker", "pull", image)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return errors.New("Timed out while pulling the Docker image.")
+		}
+		return formatDockerCommandError(stderr.String(), err)
+	}
+
+	return nil
+}
+
 func startDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {
 	return runDockerContainerAction(ctx, containerID, "start")
 }
@@ -1223,6 +1348,36 @@ func deleteDockerContainer(ctx context.Context, containerID string) error {
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 			return errors.New("Timed out while deleting the Docker container.")
+		}
+		return formatDockerCommandError(stderr.String(), err)
+	}
+
+	return nil
+}
+
+func deleteDockerImage(ctx context.Context, image string) error {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return errors.New("Docker is not installed on this server.")
+	}
+
+	containers, err := listDockerContainersByAncestor(ctx, image)
+	if err != nil {
+		return err
+	}
+	if len(containers) > 0 {
+		return fmt.Errorf("Remove containers using image %q first: %s.", image, dockerContainerLabelsSummary(containers, 3))
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerActionCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, "docker", "image", "rm", image)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return errors.New("Timed out while deleting the Docker image.")
 		}
 		return formatDockerCommandError(stderr.String(), err)
 	}
@@ -2076,6 +2231,8 @@ func formatDockerCommandError(stderr string, fallback error) error {
 		return errors.New("Docker is installed, but the daemon is unavailable right now.")
 	case strings.Contains(lowerMessage, "no such container"):
 		return errors.New("Docker container was not found.")
+	case strings.Contains(lowerMessage, "no such image"):
+		return errors.New("Docker image was not found.")
 	case strings.Contains(lowerMessage, "permission denied"):
 		return errors.New("FlowPanel does not have permission to access the Docker daemon.")
 	case strings.Contains(lowerMessage, "toomanyrequests"),
@@ -2166,6 +2323,44 @@ func shortDockerID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+func dockerImageReference(repository, tag, imageID string) string {
+	repository = strings.TrimSpace(repository)
+	tag = strings.TrimSpace(tag)
+	imageID = strings.TrimSpace(imageID)
+	if repository != "" && repository != "<none>" && tag != "" && tag != "<none>" {
+		return repository + ":" + tag
+	}
+	return imageID
+}
+
+func dockerContainerLabelsSummary(containers []dockerContainerListItem, limit int) string {
+	if len(containers) == 0 {
+		return ""
+	}
+
+	labels := make([]string, 0, min(len(containers), limit))
+	for _, container := range containers {
+		label := strings.TrimSpace(container.Name)
+		if label == "" {
+			label = shortDockerID(container.ID)
+		}
+		if label != "" {
+			labels = append(labels, strconv.Quote(label))
+		}
+		if len(labels) == limit {
+			break
+		}
+	}
+
+	if len(labels) == 0 {
+		return fmt.Sprintf("%d container(s)", len(containers))
+	}
+	if len(containers) > len(labels) {
+		return strings.Join(labels, ", ") + fmt.Sprintf(", and %d more", len(containers)-len(labels))
+	}
+	return strings.Join(labels, ", ")
 }
 
 func dockerContainerActionPastTense(action string) string {

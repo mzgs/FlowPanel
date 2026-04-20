@@ -64,6 +64,7 @@ export type DockerImage = {
   id: string;
   repository: string;
   tag: string;
+  reference: string;
   size: string;
   created_since: string;
 };
@@ -132,6 +133,26 @@ function normalizeDockerContainer(container: DockerContainer): DockerContainer {
   };
 }
 
+function normalizeDockerImage(image: DockerImage): DockerImage {
+  const reference = image.reference?.trim();
+  if (reference) {
+    return image;
+  }
+
+  const repository = image.repository?.trim();
+  const tag = image.tag?.trim();
+  const hasNamedReference =
+    repository &&
+    repository !== "<none>" &&
+    tag &&
+    tag !== "<none>";
+
+  return {
+    ...image,
+    reference: hasNamedReference ? `${repository}:${tag}` : image.id,
+  };
+}
+
 async function parseDockerError(response: Response): Promise<DockerApiError> {
   let message = `docker request failed with status ${response.status}`;
   let fieldErrors: Record<string, string> | undefined;
@@ -189,7 +210,7 @@ async function parseDockerImagesResponse(response: Response): Promise<DockerImag
   }
 
   const payload = (await response.json()) as DockerImagesPayload;
-  return payload.images;
+  return payload.images.map(normalizeDockerImage);
 }
 
 export async function fetchDockerStatus(): Promise<DockerStatus> {
@@ -334,6 +355,36 @@ export async function fetchDockerImages(): Promise<DockerImage[]> {
   });
 
   return parseDockerImagesResponse(response);
+}
+
+export async function pullDockerImage(image: string): Promise<void> {
+  const response = await fetch("/api/docker/images/pull", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ image }),
+  });
+
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
+}
+
+export async function deleteDockerImage(image: string): Promise<void> {
+  const response = await fetch("/api/docker/images/delete", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ image }),
+  });
+
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
 }
 
 export async function searchDockerHubImages(query: string): Promise<DockerHubImage[]> {

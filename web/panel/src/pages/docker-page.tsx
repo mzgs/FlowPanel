@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   createDockerContainer,
   deleteDockerContainer,
+  deleteDockerImage,
   downloadDockerContainerSnapshot,
   fetchDockerContainerDetails,
   fetchDockerContainerSettings,
@@ -9,6 +10,7 @@ import {
   fetchDockerContainers,
   fetchDockerImages,
   fetchDockerStatus,
+  pullDockerImage,
   recreateDockerContainer,
   restartDockerContainer,
   saveDockerContainerAsImage,
@@ -78,6 +80,7 @@ type DockerTab = "containers" | "images";
 type DockerContainerAction = "start" | "stop" | "restart";
 type DockerContainerMenuAction = "recreate" | "delete" | "snapshot" | "save-image";
 type DockerContainerOperation = DockerContainerAction | DockerContainerMenuAction | "settings";
+type DockerImageOperation = "create" | "delete" | "pull";
 type DockerContainerLogsState = {
   output: string;
   loading: boolean;
@@ -233,6 +236,26 @@ function getSuggestedDockerImageName(container: DockerContainer) {
     .replace(/^-|-$/g, "");
 
   return `${label || "container"}:snapshot`;
+}
+
+function getDockerImageReference(image: DockerImage) {
+  const reference = image.reference.trim();
+  if (reference !== "") {
+    return reference;
+  }
+
+  const repository = image.repository.trim();
+  const tag = image.tag.trim();
+  if (repository !== "" && repository !== "<none>" && tag !== "" && tag !== "<none>") {
+    return `${repository}:${tag}`;
+  }
+
+  return image.id.trim();
+}
+
+function getDockerImageLabel(image: DockerImage) {
+  const reference = getDockerImageReference(image);
+  return reference !== "" ? reference : image.id.trim() || "Docker image";
 }
 
 function getContainerActionSuccessMessage(action: DockerContainerAction, container: DockerContainer) {
@@ -1090,10 +1113,199 @@ function ContainerList({
   );
 }
 
-function ImageList({ images }: { images: DockerImage[] }) {
+type DockerHubImageSearchState = {
+  query: string;
+  trimmedQuery: string;
+  results: DockerHubImage[];
+  loading: boolean;
+  error: string | null;
+  setQuery: (value: string) => void;
+  setError: (value: string | null) => void;
+};
+
+function useDockerHubImageSearch(open: boolean): DockerHubImageSearchState {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<DockerHubImage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestIDRef = useRef(0);
+  const trimmedQuery = query.trim();
+
+  useEffect(() => {
+    requestIDRef.current += 1;
+    setQuery("");
+    setResults([]);
+    setLoading(false);
+    setError(null);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    if (trimmedQuery.length === 0 || trimmedQuery.length < 2) {
+      setResults([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    const requestID = requestIDRef.current + 1;
+    requestIDRef.current = requestID;
+    setLoading(true);
+    setError(null);
+
+    const timeoutID = window.setTimeout(async () => {
+      try {
+        const nextResults = await searchDockerHubImages(trimmedQuery);
+        if (requestIDRef.current !== requestID) {
+          return;
+        }
+
+        setResults(nextResults);
+      } catch (searchError) {
+        if (requestIDRef.current !== requestID) {
+          return;
+        }
+
+        setResults([]);
+        setError(getErrorMessage(searchError, "Failed to search Docker Hub."));
+      } finally {
+        if (requestIDRef.current === requestID) {
+          setLoading(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutID);
+    };
+  }, [open, trimmedQuery]);
+
+  return {
+    query,
+    trimmedQuery,
+    results,
+    loading,
+    error,
+    setQuery,
+    setError,
+  };
+}
+
+type DockerHubImageResultsProps = {
+  trimmedQuery: string;
+  results: DockerHubImage[];
+  loading: boolean;
+  busyImage: string | null;
+  disabled: boolean;
+  actionLabel: string;
+  busyLabel: string;
+  onAction: (image: string) => void;
+};
+
+function DockerHubImageResults({
+  trimmedQuery,
+  results,
+  loading,
+  busyImage,
+  disabled,
+  actionLabel,
+  busyLabel,
+  onAction,
+}: DockerHubImageResultsProps) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+      <div className="flex items-center gap-2 border-b border-[var(--app-border)] px-4 py-3 text-sm text-muted-foreground">
+        <Docker className="h-4 w-4" />
+        <span>Docker Hub results</span>
+      </div>
+
+      <div className="max-h-[420px] overflow-y-auto">
+        {loading ? (
+          <div className="flex items-center gap-2 px-4 py-5 text-sm text-muted-foreground">
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+            Searching Docker Hub...
+          </div>
+        ) : trimmedQuery.length < 2 ? (
+          <div className="px-4 py-5 text-sm text-muted-foreground">Enter at least 2 characters to search Docker Hub.</div>
+        ) : results.length === 0 ? (
+          <div className="px-4 py-5 text-sm text-muted-foreground">No images matched "{trimmedQuery}".</div>
+        ) : (
+          <div className="divide-y divide-[var(--app-border)]">
+            {results.map((result) => {
+              const busy = busyImage === result.name;
+
+              return (
+                <div key={result.name} className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <div className="truncate text-sm font-medium text-foreground" title={result.name}>
+                        {result.name}
+                      </div>
+                      {result.is_official ? (
+                        <span className="rounded-full border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                          Official
+                        </span>
+                      ) : null}
+                      <span className="text-xs text-muted-foreground">{result.star_count.toLocaleString()} stars</span>
+                    </div>
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      {result.description || "No Docker Hub description was provided for this image."}
+                    </p>
+                    <div className="font-mono text-[12px] text-muted-foreground">docker pull {result.name}</div>
+                  </div>
+
+                  <div className="flex items-start md:justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={disabled}
+                      onClick={() => {
+                        onAction(result.name);
+                      }}
+                    >
+                      {busy ? (
+                        <>
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                          {busyLabel}
+                        </>
+                      ) : (
+                        actionLabel
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+type ImageListProps = {
+  images: DockerImage[];
+  activeImageReference: string | null;
+  pendingOperation: DockerImageOperation | null;
+  disabled: boolean;
+  onCreateContainer: (image: DockerImage) => void;
+  onDelete: (image: DockerImage) => void;
+};
+
+function ImageList({
+  images,
+  activeImageReference,
+  pendingOperation,
+  disabled,
+  onCreateContainer,
+  onDelete,
+}: ImageListProps) {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.2fr)_160px_140px_140px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1.2fr)_160px_140px_140px_auto] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
         <div className="flex items-center gap-3">
           <Package className="h-4 w-4 text-muted-foreground/70" />
           <span>Repository</span>
@@ -1101,16 +1313,21 @@ function ImageList({ images }: { images: DockerImage[] }) {
         <div>Tag</div>
         <div>Size</div>
         <div>Created</div>
+        <div className="text-right">Actions</div>
       </div>
 
       {images.map((image) => {
         const repository = image.repository || "<none>";
         const tag = image.tag || "<none>";
+        const imageReference = getDockerImageReference(image);
+        const busy = activeImageReference === imageReference;
+        const createBusy = busy && pendingOperation === "create";
+        const deleteBusy = busy && pendingOperation === "delete";
 
         return (
           <div
             key={`${image.id}-${repository}-${tag}`}
-            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.2fr)_160px_140px_140px] md:px-6 md:py-5"
+            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.2fr)_160px_140px_140px_auto] md:px-6 md:py-5"
           >
             <div className="space-y-1">
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
@@ -1120,6 +1337,7 @@ function ImageList({ images }: { images: DockerImage[] }) {
                 <Package className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{repository}</span>
               </div>
+              <div className="truncate font-mono text-[12px] text-muted-foreground">{imageReference}</div>
             </div>
 
             <div className="space-y-1">
@@ -1141,6 +1359,51 @@ function ImageList({ images }: { images: DockerImage[] }) {
                 Created
               </div>
               <div className="truncate text-[15px] text-foreground">{image.created_since || "—"}</div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 md:justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={disabled}
+                onClick={() => {
+                  onCreateContainer(image);
+                }}
+              >
+                {createBusy ? (
+                  <>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4" />
+                    Create container
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={disabled}
+                onClick={() => {
+                  onDelete(image);
+                }}
+              >
+                {deleteBusy ? (
+                  <>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </>
+                )}
+              </Button>
             </div>
           </div>
         );
@@ -1532,73 +1795,12 @@ function AddDockerContainerDialog({
   onOpenChange,
   onCreated,
 }: AddDockerContainerDialogProps) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<DockerHubImage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { query, trimmedQuery, results, loading, error, setQuery, setError } = useDockerHubImageSearch(open);
   const [creatingImage, setCreatingImage] = useState<string | null>(null);
-  const requestIDRef = useRef(0);
-  const trimmedQuery = query.trim();
 
   useEffect(() => {
-    requestIDRef.current += 1;
-    setQuery("");
-    setResults([]);
-    setLoading(false);
-    setError(null);
     setCreatingImage(null);
   }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    if (trimmedQuery.length === 0) {
-      setResults([]);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
-    if (trimmedQuery.length < 2) {
-      setResults([]);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
-    const requestID = requestIDRef.current + 1;
-    requestIDRef.current = requestID;
-    setLoading(true);
-    setError(null);
-
-    const timeoutID = window.setTimeout(async () => {
-      try {
-        const nextResults = await searchDockerHubImages(trimmedQuery);
-        if (requestIDRef.current !== requestID) {
-          return;
-        }
-
-        setResults(nextResults);
-      } catch (searchError) {
-        if (requestIDRef.current !== requestID) {
-          return;
-        }
-
-        setResults([]);
-        setError(getErrorMessage(searchError, "Failed to search Docker Hub."));
-      } finally {
-        if (requestIDRef.current === requestID) {
-          setLoading(false);
-        }
-      }
-    }, 250);
-
-    return () => {
-      window.clearTimeout(timeoutID);
-    };
-  }, [open, trimmedQuery]);
 
   async function handleCreate(image: string) {
     if (creatingImage !== null) {
@@ -1667,87 +1869,142 @@ function AddDockerContainerDialog({
           </div>
         ) : null}
 
-        <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-          <div className="flex items-center gap-2 border-b border-[var(--app-border)] px-4 py-3 text-sm text-muted-foreground">
-            <Docker className="h-4 w-4" />
-            <span>Docker Hub results</span>
+        <DockerHubImageResults
+          trimmedQuery={trimmedQuery}
+          results={results}
+          loading={loading}
+          busyImage={creatingImage}
+          disabled={creatingImage !== null}
+          actionLabel="Create Container"
+          busyLabel="Creating..."
+          onAction={(image) => {
+            void handleCreate(image);
+          }}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type PullDockerImageDialogProps = {
+  open: boolean;
+  busyImage: string | null;
+  onOpenChange: (open: boolean) => void;
+  onPull: (image: string) => Promise<void>;
+};
+
+function PullDockerImageDialog({
+  open,
+  busyImage,
+  onOpenChange,
+  onPull,
+}: PullDockerImageDialogProps) {
+  const { query, trimmedQuery, results, loading, error, setQuery, setError } = useDockerHubImageSearch(open);
+
+  async function handlePull(image: string) {
+    if (busyImage !== null) {
+      return;
+    }
+
+    const target = image.trim();
+    if (target === "") {
+      return;
+    }
+
+    setError(null);
+
+    try {
+      await onPull(target);
+      onOpenChange(false);
+    } catch (pullError) {
+      setError(getErrorMessage(pullError, `Failed to pull Docker image ${target}.`));
+    }
+  }
+
+  const exactPullBusy = busyImage === trimmedQuery && trimmedQuery !== "";
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && busyImage !== null) {
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent className="gap-4 sm:max-w-3xl" showCloseButton={busyImage === null}>
+        <DialogHeader>
+          <DialogTitle>Pull Image</DialogTitle>
+          <DialogDescription>
+            Pull an image onto this node before creating any containers. Enter an exact image reference or search
+            Docker Hub and pull one of the results.
+          </DialogDescription>
+        </DialogHeader>
+
+        <section className="space-y-3">
+          <label htmlFor="docker-pull-image-search" className="text-sm font-medium text-foreground">
+            Image reference or Docker Hub search
+          </label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="docker-pull-image-search"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+              }}
+              placeholder="Enter redis:7 or search nginx, postgres, rabbitmq..."
+              className="pl-9"
+              autoComplete="off"
+              disabled={busyImage !== null}
+            />
           </div>
-
-          <div className="max-h-[420px] overflow-y-auto">
-            {loading ? (
-              <div className="flex items-center gap-2 px-4 py-5 text-sm text-muted-foreground">
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-                Searching Docker Hub...
-              </div>
-            ) : trimmedQuery.length < 2 ? (
-              <div className="px-4 py-5 text-sm text-muted-foreground">
-                Enter at least 2 characters to search Docker Hub.
-              </div>
-            ) : results.length === 0 ? (
-              <div className="px-4 py-5 text-sm text-muted-foreground">
-                No images matched "{trimmedQuery}".
-              </div>
-            ) : (
-              <div className="divide-y divide-[var(--app-border)]">
-                {results.map((result) => {
-                  const busy = creatingImage === result.name;
-
-                  return (
-                    <div
-                      key={result.name}
-                      className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto]"
-                    >
-                      <div className="min-w-0 space-y-2">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <div className="truncate text-sm font-medium text-foreground" title={result.name}>
-                            {result.name}
-                          </div>
-                          {result.is_official ? (
-                            <span className="rounded-full border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                              Official
-                            </span>
-                          ) : null}
-                          <span className="text-xs text-muted-foreground">
-                            {result.star_count.toLocaleString()} stars
-                          </span>
-                        </div>
-                        <p className="text-sm leading-6 text-muted-foreground">
-                          {result.description || "No Docker Hub description was provided for this image."}
-                        </p>
-                        <div className="font-mono text-[12px] text-muted-foreground">
-                          docker pull {result.name}
-                        </div>
-                      </div>
-
-                      <div className="flex items-start md:justify-end">
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={creatingImage !== null}
-                          onClick={() => {
-                            void handleCreate(result.name);
-                          }}
-                        >
-                          {busy ? (
-                            <>
-                              <LoaderCircle className="h-4 w-4 animate-spin" />
-                              Creating...
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="h-4 w-4" />
-                              Create Container
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3">
+            <p className="text-sm text-muted-foreground">
+              Pull exact image references directly, even when they do not appear in Docker Hub search results.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busyImage !== null || trimmedQuery === ""}
+              onClick={() => {
+                void handlePull(trimmedQuery);
+              }}
+            >
+              {exactPullBusy ? (
+                <>
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Pulling...
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4" />
+                  Pull {trimmedQuery !== "" ? `"${trimmedQuery}"` : "image"}
+                </>
+              )}
+            </Button>
           </div>
         </section>
+
+        {error ? (
+          <div className="rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
+            {error}
+          </div>
+        ) : null}
+
+        <DockerHubImageResults
+          trimmedQuery={trimmedQuery}
+          results={results}
+          loading={loading}
+          busyImage={busyImage}
+          disabled={busyImage !== null}
+          actionLabel="Pull Image"
+          busyLabel="Pulling..."
+          onAction={(image) => {
+            void handlePull(image);
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -1881,6 +2138,7 @@ export function DockerPage() {
   const [containers, setContainers] = useState<DockerContainer[]>([]);
   const [images, setImages] = useState<DockerImage[]>([]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [pullDialogOpen, setPullDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -1889,6 +2147,8 @@ export function DockerPage() {
   const [containerActionErrors, setContainerActionErrors] = useState<DockerContainerActionErrors>({});
   const [activeContainerID, setActiveContainerID] = useState<string | null>(null);
   const [pendingOperation, setPendingOperation] = useState<DockerContainerOperation | null>(null);
+  const [activeImageReference, setActiveImageReference] = useState<string | null>(null);
+  const [pendingImageOperation, setPendingImageOperation] = useState<DockerImageOperation | null>(null);
   const [expandedContainerID, setExpandedContainerID] = useState<string | null>(null);
   const [expandedContainerLogs, setExpandedContainerLogs] = useState<DockerContainerLogsState>(
     createDockerContainerLogsState,
@@ -1901,6 +2161,7 @@ export function DockerPage() {
     action: Extract<DockerContainerMenuAction, "delete" | "recreate">;
     container: DockerContainer;
   } | null>(null);
+  const [confirmDeleteImage, setConfirmDeleteImage] = useState<DockerImage | null>(null);
   const [saveImageContainer, setSaveImageContainer] = useState<DockerContainer | null>(null);
   const latestRequestRef = useRef(0);
   const expandedContainerIDRef = useRef<string | null>(null);
@@ -2361,6 +2622,75 @@ export function DockerPage() {
     }
   }
 
+  async function handleCreateContainerFromImage(image: DockerImage) {
+    if (activeContainerID !== null || activeImageReference !== null) {
+      return;
+    }
+
+    const imageReference = getDockerImageReference(image);
+    setActiveImageReference(imageReference);
+    setPendingImageOperation("create");
+
+    try {
+      const container = await createDockerContainer({ image: imageReference });
+      toast.success(`Created container ${getContainerLabel(container)} from ${getDockerImageLabel(image)}.`);
+      void loadDocker({ silent: true });
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to create a container from ${getDockerImageLabel(image)}.`));
+    } finally {
+      setActiveImageReference(null);
+      setPendingImageOperation(null);
+    }
+  }
+
+  async function handlePullImage(image: string) {
+    if (activeContainerID !== null || activeImageReference !== null) {
+      return;
+    }
+
+    const target = image.trim();
+    if (target === "") {
+      return;
+    }
+
+    setActiveImageReference(target);
+    setPendingImageOperation("pull");
+
+    try {
+      await pullDockerImage(target);
+      toast.success(`Pulled image ${target}.`);
+      void loadDocker({ silent: true });
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to pull Docker image ${target}.`));
+      throw error;
+    } finally {
+      setActiveImageReference(null);
+      setPendingImageOperation(null);
+    }
+  }
+
+  async function handleConfirmedImageDelete(image: DockerImage) {
+    if (activeContainerID !== null || activeImageReference !== null) {
+      return;
+    }
+
+    const imageReference = getDockerImageReference(image);
+    setActiveImageReference(imageReference);
+    setPendingImageOperation("delete");
+
+    try {
+      await deleteDockerImage(imageReference);
+      setConfirmDeleteImage(null);
+      toast.success(`Deleted image ${getDockerImageLabel(image)}.`);
+      void loadDocker({ silent: true });
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to delete Docker image ${getDockerImageLabel(image)}.`));
+    } finally {
+      setActiveImageReference(null);
+      setPendingImageOperation(null);
+    }
+  }
+
   function handleContainerMenuAction(container: DockerContainer, action: DockerContainerMenuAction) {
     if (action === "snapshot") {
       void handleContainerSnapshot(container);
@@ -2403,13 +2733,14 @@ export function DockerPage() {
     toast.success(`Cleared logs for ${getContainerLabel(container)}.`);
   }
 
-  const canCreateContainer = Boolean(status?.installed && status.service_running);
+  const canManageDocker = Boolean(status?.installed && status.service_running);
+  const anyActionInFlight = activeContainerID !== null || activeImageReference !== null;
   const actions = (
     <>
       <Button
         size="sm"
         onClick={() => setCreateDialogOpen(true)}
-        disabled={!canCreateContainer || loading || activeContainerID !== null}
+        disabled={!canManageDocker || loading || anyActionInFlight}
       >
         <Plus className="h-4 w-4" />
         Add Container
@@ -2417,8 +2748,17 @@ export function DockerPage() {
       <Button
         variant="outline"
         size="sm"
+        onClick={() => setPullDialogOpen(true)}
+        disabled={!canManageDocker || loading || anyActionInFlight}
+      >
+        <Download className="h-4 w-4" />
+        Pull Image
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
         onClick={() => void loadDocker({ silent: true })}
-        disabled={loading || refreshing || activeContainerID !== null}
+        disabled={loading || refreshing || anyActionInFlight}
       >
         {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         Refresh
@@ -2441,6 +2781,12 @@ export function DockerPage() {
           toast.success(`Created container ${getContainerLabel(container)}.`);
           void loadDocker({ silent: true });
         }}
+      />
+      <PullDockerImageDialog
+        open={pullDialogOpen}
+        busyImage={pendingImageOperation === "pull" ? activeImageReference : null}
+        onOpenChange={setPullDialogOpen}
+        onPull={handlePullImage}
       />
       <DockerContainerSettingsDialog
         open={settingsContainer !== null}
@@ -2471,6 +2817,30 @@ export function DockerPage() {
           }
         }}
         onSave={handleSaveContainerImage}
+      />
+      <ConfirmDialog
+        open={confirmDeleteImage !== null}
+        onOpenChange={(open) => {
+          if (!open && activeImageReference === null) {
+            setConfirmDeleteImage(null);
+          }
+        }}
+        title={`Delete ${confirmDeleteImage ? getDockerImageLabel(confirmDeleteImage) : "image"}?`}
+        desc="This removes the local Docker image from this node. Docker will block the deletion if any containers still use it."
+        confirmText="Delete image"
+        destructive
+        isLoading={
+          confirmDeleteImage !== null &&
+          activeImageReference === getDockerImageReference(confirmDeleteImage) &&
+          pendingImageOperation === "delete"
+        }
+        handleConfirm={() => {
+          if (!confirmDeleteImage) {
+            return;
+          }
+
+          void handleConfirmedImageDelete(confirmDeleteImage);
+        }}
       />
       <ConfirmDialog
         open={confirmAction !== null}
@@ -2585,7 +2955,7 @@ export function DockerPage() {
           {!loading && activeTab === "images" && !imagesError && !statusUnavailable && images.length === 0 ? (
             <DockerEmptyState
               title="No images found"
-              description="Pulled and built Docker images will appear here as soon as Docker starts caching them on this node."
+              description="Pulled and built Docker images will appear here as soon as Docker starts caching them on this node. Use Pull Image to download one without creating a container yet."
             />
           ) : null}
 
@@ -2605,7 +2975,18 @@ export function DockerPage() {
               onClearContainerLogs={handleClearContainerLogs}
             />
           ) : null}
-          {!loading && activeTab === "images" && images.length > 0 ? <ImageList images={images} /> : null}
+          {!loading && activeTab === "images" && images.length > 0 ? (
+            <ImageList
+              images={images}
+              activeImageReference={activeImageReference}
+              pendingOperation={pendingImageOperation}
+              disabled={anyActionInFlight}
+              onCreateContainer={(image) => {
+                void handleCreateContainerFromImage(image);
+              }}
+              onDelete={setConfirmDeleteImage}
+            />
+          ) : null}
         </div>
       </section>
     </div>
