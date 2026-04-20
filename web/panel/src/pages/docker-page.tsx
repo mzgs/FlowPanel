@@ -51,6 +51,7 @@ import {
   RotateCcw,
   Search,
   PlayerStop,
+  Star,
   Trash2,
   XIcon,
 } from "@/components/icons/tabler-icons";
@@ -1396,7 +1397,10 @@ function DockerHubImageResults({
                           Official
                         </span>
                       ) : null}
-                      <span className="text-xs text-muted-foreground">{result.star_count.toLocaleString()} stars</span>
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <span>{result.star_count.toLocaleString()}</span>
+                        <Star className="h-3.5 w-3.5" />
+                      </span>
                     </div>
                     <p className="text-sm leading-6 text-muted-foreground">
                       {result.description || "No Docker Hub description was provided for this image."}

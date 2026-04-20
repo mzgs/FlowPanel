@@ -68,6 +68,7 @@ export const Search = pick("IconSearch");
 export const Server = pick("IconServer");
 export const Settings = pick("IconSettings");
 export const ShieldCheck = pick("IconShieldCheck");
+export const Star = pick("IconStarFilled", "IconStar");
 export const TerminalSquare = pick("IconTerminal2");
 export const TimerReset = pick("IconClockRefresh", "IconRefresh");
 export const Trash2 = pick("IconTrash");
