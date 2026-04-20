@@ -142,6 +142,70 @@ function formatTotalCount(value: number | null) {
   return String(value);
 }
 
+function formatPublicIPv4(status: SystemStatus | null) {
+  const value = status?.public_ipv4?.trim();
+  return value || "Unavailable";
+}
+
+function formatCoreCount(status: SystemStatus | null) {
+  const cores = status?.cores;
+  if (!cores) {
+    return "Unavailable";
+  }
+
+  return `${cores} ${cores === 1 ? "core" : "cores"}`;
+}
+
+function formatMemoryTotal(status: SystemStatus | null) {
+  const totalBytes = status?.memory_total_bytes;
+  if (totalBytes == null || totalBytes <= 0) {
+    return "Unavailable";
+  }
+
+  const totalGigabytes = totalBytes / (1024 * 1024 * 1024);
+  const roundedGigabytes = Math.round(totalGigabytes * 10) / 10;
+  return `${Number.isInteger(roundedGigabytes) ? roundedGigabytes.toFixed(0) : roundedGigabytes.toFixed(1)} GB`;
+}
+
+function DetailItem({
+  label,
+  value,
+  valueClassName = "",
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="bg-[var(--app-surface-muted)] px-4 py-4">
+      <div className="text-[12px] text-[var(--app-text-muted)]">{label}</div>
+      <div className={`mt-1 text-[15px] font-semibold tracking-tight text-[var(--app-text)] ${valueClassName}`}>{value}</div>
+    </div>
+  );
+}
+
+function SystemInfoCard({ status }: { status: SystemStatus | null }) {
+  return (
+    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
+      <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Server details</div>
+      <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-border)] md:grid-cols-2 xl:grid-cols-3">
+        <DetailItem label="IPv4 public IP" value={formatPublicIPv4(status)} valueClassName="break-all font-mono text-[13px]" />
+        <DetailItem label="OS" value={formatPlatform(status)} />
+        <DetailItem label="Hostname" value={formatHostname(status)} valueClassName="break-all font-mono text-[13px]" />
+        <DetailItem label="CPU" value={formatCoreCount(status)} />
+        <DetailItem label="Memory" value={formatMemoryTotal(status)} />
+        <div className="bg-[var(--app-surface-muted)] px-4 py-4">
+          <div className="text-[12px] text-[var(--app-text-muted)]">Server time</div>
+          <div className="mt-1 text-[15px] font-semibold tracking-tight text-[var(--app-text)]">
+            {formatServerTime(status)}
+          </div>
+          <div className="mt-1 font-mono text-[12px] text-[var(--app-text-muted)]">{formatTimezone(status)}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function DashboardPage() {
   const [databaseCount, setDatabaseCount] = useState<number | null>(null);
   const [siteCount, setSiteCount] = useState<number | null>(null);
@@ -194,28 +258,8 @@ export function DashboardPage() {
   return (
     <>
       <div className="px-4 py-6 sm:px-6 lg:px-8">
-        <div className="grid gap-3 sm:grid-cols-2 xl:max-w-5xl xl:grid-cols-3">
-          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3 shadow-[var(--app-shadow)]">
-            <div className="text-[12px] text-[var(--app-text-muted)]">Operating system</div>
-            <div className="mt-1 text-[15px] font-semibold tracking-tight text-[var(--app-text)]">
-              {formatPlatform(systemStatus)}
-            </div>
-          </section>
-          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3 shadow-[var(--app-shadow)]">
-            <div className="text-[12px] text-[var(--app-text-muted)]">Hostname</div>
-            <div className="mt-1 font-mono text-[13px] text-[var(--app-text)]">{formatHostname(systemStatus)}</div>
-          </section>
-          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3 shadow-[var(--app-shadow)]">
-            <div className="text-[12px] text-[var(--app-text-muted)]">Server time</div>
-            <div className="mt-1 flex items-baseline gap-2">
-              <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">
-                {formatServerTime(systemStatus)}
-              </div>
-              <div className="font-mono text-[12px] text-[var(--app-text-muted)]">
-                {formatTimezone(systemStatus)}
-              </div>
-            </div>
-          </section>
+        <div className="xl:max-w-5xl">
+          <SystemInfoCard status={systemStatus} />
         </div>
       </div>
 

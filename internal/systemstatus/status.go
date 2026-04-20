@@ -2,9 +2,13 @@ package systemstatus
 
 import (
 	"context"
+	"io"
+	"net"
+	stdhttp "net/http"
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -16,6 +20,14 @@ import (
 )
 
 const cpuSampleWindow = 200 * time.Millisecond
+const publicIPv4CacheTTL = 10 * time.Minute
+const publicIPv4RetryDelay = 1 * time.Minute
+
+var publicIPv4Cache struct {
+	mu        sync.Mutex
+	value     string
+	expiresAt time.Time
+}
 
 type Status struct {
 	Cores             int      `json:"cores"`
@@ -33,6 +45,7 @@ type Status struct {
 	Platform          string   `json:"platform"`
 	PlatformName      string   `json:"platform_name"`
 	PlatformVersion   string   `json:"platform_version,omitempty"`
+	PublicIPv4        string   `json:"public_ipv4,omitempty"`
 	ServerTime        string   `json:"server_time"`
 	ServerTimeDisplay string   `json:"server_time_display"`
 	Timezone          string   `json:"timezone"`
@@ -87,6 +100,8 @@ func Inspect(ctx context.Context) Status {
 		status.DiskFreeBytes = uint64Ptr(usage.Free)
 	}
 
+	status.PublicIPv4 = cachedPublicIPv4(ctx)
+
 	return status
 }
 
@@ -108,6 +123,60 @@ func float64Ptr(value float64) *float64 {
 
 func uint64Ptr(value uint64) *uint64 {
 	return &value
+}
+
+func cachedPublicIPv4(ctx context.Context) string {
+	publicIPv4Cache.mu.Lock()
+	defer publicIPv4Cache.mu.Unlock()
+
+	now := time.Now()
+	if now.Before(publicIPv4Cache.expiresAt) {
+		return publicIPv4Cache.value
+	}
+
+	staleValue := publicIPv4Cache.value
+	value := fetchPublicIPv4(ctx)
+	if value != "" {
+		publicIPv4Cache.value = value
+		publicIPv4Cache.expiresAt = now.Add(publicIPv4CacheTTL)
+		return value
+	}
+
+	publicIPv4Cache.expiresAt = now.Add(publicIPv4RetryDelay)
+	return staleValue
+}
+
+func fetchPublicIPv4(ctx context.Context) string {
+	lookupCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+
+	req, err := stdhttp.NewRequestWithContext(lookupCtx, stdhttp.MethodGet, "https://api4.ipify.org", nil)
+	if err != nil {
+		return ""
+	}
+
+	resp, err := stdhttp.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != stdhttp.StatusOK {
+		return ""
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return ""
+	}
+
+	ip := strings.TrimSpace(string(body))
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil || parsedIP.To4() == nil {
+		return ""
+	}
+
+	return parsedIP.String()
 }
 
 func defaultPlatformName(goos string) string {

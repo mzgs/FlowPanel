@@ -14,6 +14,7 @@ export type SystemStatus = {
   platform: string;
   platform_name: string;
   platform_version?: string;
+  public_ipv4?: string;
   server_time: string;
   server_time_display: string;
   timezone: string;
