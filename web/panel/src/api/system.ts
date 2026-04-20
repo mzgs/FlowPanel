@@ -18,6 +18,7 @@ export type SystemStatus = {
   server_time: string;
   server_time_display: string;
   timezone: string;
+  uptime_seconds?: number;
 };
 
 type SystemStatusPayload = {

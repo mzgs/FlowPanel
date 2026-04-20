@@ -134,6 +134,38 @@ function formatMemoryTotal(status: SystemStatus | null) {
   return `${Number.isInteger(roundedGigabytes) ? roundedGigabytes.toFixed(0) : roundedGigabytes.toFixed(1)} GB`;
 }
 
+function formatServerTime(status: SystemStatus | null) {
+  const displayValue = status?.server_time_display?.trim();
+  const timezone = status?.timezone?.trim();
+
+  if (!displayValue) {
+    return "Unavailable";
+  }
+
+  return timezone ? `${displayValue} ${timezone}` : displayValue;
+}
+
+function formatUptime(status: SystemStatus | null) {
+  const totalSeconds = status?.uptime_seconds;
+  if (totalSeconds == null || totalSeconds <= 0) {
+    return "Unavailable";
+  }
+
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+
+  if (days > 0) {
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  }
+
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  return `${Math.max(minutes, 1)}m`;
+}
+
 function DetailItem({ label, value, valueClassName = "" }: { label: string; value: string; valueClassName?: string }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2">
@@ -158,6 +190,8 @@ function SystemInfoCard({ status }: { status: SystemStatus | null }) {
     },
     { label: "CPU", value: formatCoreCount(status) },
     { label: "Memory", value: formatMemoryTotal(status) },
+    { label: "Uptime", value: formatUptime(status) },
+    { label: "Server time", value: formatServerTime(status) },
   ];
 
   return (

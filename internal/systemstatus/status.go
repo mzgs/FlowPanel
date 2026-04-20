@@ -49,6 +49,7 @@ type Status struct {
 	ServerTime        string   `json:"server_time"`
 	ServerTimeDisplay string   `json:"server_time_display"`
 	Timezone          string   `json:"timezone"`
+	UptimeSeconds     uint64   `json:"uptime_seconds,omitempty"`
 }
 
 func Inspect(ctx context.Context) Status {
@@ -75,6 +76,9 @@ func Inspect(ctx context.Context) Status {
 		}
 		if version := strings.TrimSpace(info.PlatformVersion); version != "" {
 			status.PlatformVersion = version
+		}
+		if info.Uptime > 0 {
+			status.UptimeSeconds = info.Uptime
 		}
 	}
 
