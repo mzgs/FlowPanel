@@ -101,39 +101,6 @@ function formatPlatform(status: SystemStatus | null) {
   }
 }
 
-function formatServerTime(status: SystemStatus | null) {
-  const displayValue = status?.server_time_display?.trim();
-  if (displayValue) {
-    return displayValue;
-  }
-
-  const rawValue = status?.server_time?.trim();
-  if (!rawValue) {
-    return "Unavailable";
-  }
-
-  return rawValue;
-}
-
-function formatTimezone(status: SystemStatus | null) {
-  const value = status?.timezone?.trim();
-  if (!value) {
-    return "Local";
-  }
-
-  const match = value.match(/^([+-])0?(\d{1,2})(?::?(\d{2}))?$/);
-  if (!match) {
-    return value;
-  }
-
-  const [, sign, hours, minutes] = match;
-  if (minutes && minutes !== "00") {
-    return `${sign}${Number(hours)}:${minutes}`;
-  }
-
-  return `${sign}${Number(hours)}`;
-}
-
 function formatTotalCount(value: number | null) {
   if (value === null) {
     return "Unavailable";
@@ -167,42 +134,45 @@ function formatMemoryTotal(status: SystemStatus | null) {
   return `${Number.isInteger(roundedGigabytes) ? roundedGigabytes.toFixed(0) : roundedGigabytes.toFixed(1)} GB`;
 }
 
-function DetailItem({
-  label,
-  value,
-  valueClassName = "",
-}: {
-  label: string;
-  value: string;
-  valueClassName?: string;
-}) {
+function DetailItem({ label, value, valueClassName = "" }: { label: string; value: string; valueClassName?: string }) {
   return (
-    <div className="bg-[var(--app-surface-muted)] px-4 py-4">
-      <div className="text-[12px] text-[var(--app-text-muted)]">{label}</div>
-      <div className={`mt-1 text-[15px] font-semibold tracking-tight text-[var(--app-text)] ${valueClassName}`}>{value}</div>
+    <div className="flex min-w-0 items-baseline gap-2">
+      <div className="shrink-0 text-[13px] font-semibold tracking-tight text-[var(--app-text)]">{label}:</div>
+      <div className={`min-w-0 text-[13px] text-[var(--app-text-muted)] sm:text-[14px] ${valueClassName}`}>{value}</div>
     </div>
   );
 }
 
 function SystemInfoCard({ status }: { status: SystemStatus | null }) {
+  const details = [
+    {
+      label: "IPv4 Public IP",
+      value: formatPublicIPv4(status),
+      valueClassName: "break-all font-mono text-[12px] sm:text-[13px]",
+    },
+    { label: "OS", value: formatPlatform(status) },
+    {
+      label: "Hostname",
+      value: formatHostname(status),
+      valueClassName: "break-all font-mono text-[12px] sm:text-[13px]",
+    },
+    { label: "CPU", value: formatCoreCount(status) },
+    { label: "Memory", value: formatMemoryTotal(status) },
+  ];
+
   return (
-    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
-      <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Server details</div>
-      <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-border)] md:grid-cols-2 xl:grid-cols-3">
-        <DetailItem label="IPv4 public IP" value={formatPublicIPv4(status)} valueClassName="break-all font-mono text-[13px]" />
-        <DetailItem label="OS" value={formatPlatform(status)} />
-        <DetailItem label="Hostname" value={formatHostname(status)} valueClassName="break-all font-mono text-[13px]" />
-        <DetailItem label="CPU" value={formatCoreCount(status)} />
-        <DetailItem label="Memory" value={formatMemoryTotal(status)} />
-        <div className="bg-[var(--app-surface-muted)] px-4 py-4">
-          <div className="text-[12px] text-[var(--app-text-muted)]">Server time</div>
-          <div className="mt-1 text-[15px] font-semibold tracking-tight text-[var(--app-text)]">
-            {formatServerTime(status)}
-          </div>
-          <div className="mt-1 font-mono text-[12px] text-[var(--app-text-muted)]">{formatTimezone(status)}</div>
+      <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3.5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-8">
+          {details.map((detail) => (
+            <DetailItem
+              key={detail.label}
+              label={detail.label}
+              value={detail.value}
+              valueClassName={detail.valueClassName}
+            />
+          ))}
         </div>
       </div>
-    </section>
   );
 }
 
@@ -258,9 +228,7 @@ export function DashboardPage() {
   return (
     <>
       <div className="px-4 py-6 sm:px-6 lg:px-8">
-        <div className="xl:max-w-5xl">
-          <SystemInfoCard status={systemStatus} />
-        </div>
+        <SystemInfoCard status={systemStatus} />
       </div>
 
       <div className="px-4 py-6 sm:px-6 lg:px-8">
