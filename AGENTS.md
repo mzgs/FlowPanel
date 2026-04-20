@@ -15,4 +15,9 @@ Use tight spacing, normal-height controls, modest headings, and dense layouts.
 Avoid giant padding, giant margins, oversized cards, tall buttons, and hero-like whitespace.
 When uncertain, make the interface 20–30% denser than your first instinct.
 
- 
+Never nest cards.
+
+Use cards only at the top level. 
+Inside a card, use divs, borders, spacing, and headings — not more cards.
+
+If you see a card inside a card, refactor it out.

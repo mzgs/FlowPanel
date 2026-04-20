@@ -274,14 +274,14 @@ export function DashboardPage() {
           <section className="space-y-5">
             {showOverview ? (
               <div className="space-y-5">
-                {hasTotals ? <OverviewCard databaseCount={databaseCount} siteCount={siteCount} /> : null}
-
                 {systemStatus ? (
                   <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
                     <SystemStatusCard status={systemStatus} />
                     <DiskUsageCard status={systemStatus} />
                   </div>
                 ) : null}
+
+                {hasTotals ? <OverviewCard databaseCount={databaseCount} siteCount={siteCount} /> : null}
               </div>
             ) : null}
           </section>
