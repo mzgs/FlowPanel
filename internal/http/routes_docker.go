@@ -6,10 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flowpanel/internal/config"
 	"fmt"
 	"io"
 	stdhttp "net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,9 +97,11 @@ type saveDockerContainerImageRequest struct {
 }
 
 type dockerContainerSettings struct {
-	Ports           []dockerContainerPortMapping `json:"ports"`
-	Environment     []dockerEnvironmentVariable  `json:"environment"`
-	PublishAllPorts bool                         `json:"publish_all_ports"`
+	Ports                []dockerContainerPortMapping `json:"ports"`
+	Environment          []dockerEnvironmentVariable  `json:"environment"`
+	Volumes              []dockerVolumeMapping        `json:"volumes"`
+	PublishAllPorts      bool                         `json:"publish_all_ports"`
+	VolumeSourceBasePath string                       `json:"volume_source_base_path,omitempty"`
 }
 
 type dockerContainerSettingsResponse struct {
@@ -106,11 +111,18 @@ type dockerContainerSettingsResponse struct {
 type updateDockerContainerSettingsRequest struct {
 	Ports       []dockerContainerPortMapping `json:"ports"`
 	Environment *[]dockerEnvironmentVariable `json:"environment"`
+	Volumes     *[]dockerVolumeMapping       `json:"volumes"`
 }
 
 type dockerEnvironmentVariable struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+type dockerVolumeMapping struct {
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	ReadOnly    bool   `json:"read_only"`
 }
 
 type dockerInspectRecord struct {
@@ -136,6 +148,7 @@ type dockerInspectConfig struct {
 	StopSignal   string            `json:"StopSignal"`
 	Tty          bool              `json:"Tty"`
 	OpenStdin    bool              `json:"OpenStdin"`
+	Volumes      map[string]any    `json:"Volumes"`
 	ExposedPorts map[string]any    `json:"ExposedPorts"`
 }
 
@@ -647,6 +660,12 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 				applyDockerContainerEnvironment(&record, *input.Environment),
 			)
 		}
+		if input.Volumes != nil {
+			fieldErrors = mergeDockerValidationErrors(
+				fieldErrors,
+				applyDockerContainerVolumes(&record, *input.Volumes),
+			)
+		}
 		if len(fieldErrors) > 0 {
 			writeValidationFailed(w, fieldErrors)
 			return
@@ -874,10 +893,17 @@ func inspectDockerContainerDetails(ctx context.Context, containerID string) (doc
 }
 
 func dockerContainerSettingsFromRecord(record dockerInspectRecord) dockerContainerSettings {
+	volumeSourceBasePath := ""
+	if path, err := dockerAutomaticVolumeBasePath(dockerAutomaticVolumeContainerName(record)); err == nil {
+		volumeSourceBasePath = path
+	}
+
 	return dockerContainerSettings{
-		Ports:           dockerContainerPortMappings(record),
-		Environment:     dockerContainerEnvironment(record),
-		PublishAllPorts: record.HostConfig.PublishAllPorts,
+		Ports:                dockerContainerPortMappings(record),
+		Environment:          dockerContainerEnvironment(record),
+		Volumes:              dockerContainerVolumeMappings(record),
+		PublishAllPorts:      record.HostConfig.PublishAllPorts,
+		VolumeSourceBasePath: volumeSourceBasePath,
 	}
 }
 
@@ -908,6 +934,149 @@ func dockerContainerEnvironment(record dockerInspectRecord) []dockerEnvironmentV
 	}
 
 	return values
+}
+
+func dockerContainerVolumeMappings(record dockerInspectRecord) []dockerVolumeMapping {
+	values := make([]dockerVolumeMapping, 0, len(record.HostConfig.Binds)+len(record.Mounts))
+	seenDestinations := make(map[string]struct{}, len(record.HostConfig.Binds)+len(record.Mounts))
+
+	for _, bind := range record.HostConfig.Binds {
+		mapping, ok := parseDockerVolumeSpec(bind)
+		if !ok {
+			continue
+		}
+		if _, exists := seenDestinations[mapping.Destination]; exists {
+			continue
+		}
+		seenDestinations[mapping.Destination] = struct{}{}
+		values = append(values, mapping)
+	}
+
+	for _, mount := range record.Mounts {
+		mapping, ok := dockerVolumeMappingFromMount(mount)
+		if !ok {
+			continue
+		}
+		if _, exists := seenDestinations[mapping.Destination]; exists {
+			continue
+		}
+		seenDestinations[mapping.Destination] = struct{}{}
+		values = append(values, mapping)
+	}
+
+	if len(values) == 0 {
+		return nil
+	}
+	return values
+}
+
+func dockerAutomaticVolumeMappings(record dockerInspectRecord) ([]dockerVolumeMapping, error) {
+	if len(record.Config.Volumes) == 0 {
+		return nil, nil
+	}
+
+	containerName := dockerAutomaticVolumeContainerName(record)
+	if containerName == "" {
+		return nil, errors.New("Docker container name is unavailable for automatic volume storage.")
+	}
+
+	destinations := make([]string, 0, len(record.Config.Volumes))
+	for destination := range record.Config.Volumes {
+		destination = strings.TrimSpace(destination)
+		if destination != "" {
+			destinations = append(destinations, destination)
+		}
+	}
+	sort.Strings(destinations)
+
+	values := make([]dockerVolumeMapping, 0, len(destinations))
+	for _, destination := range destinations {
+		source, err := dockerAutomaticVolumePath(containerName, destination)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.MkdirAll(source, 0o755); err != nil {
+			return nil, fmt.Errorf("create automatic Docker volume path %q: %w", source, err)
+		}
+		values = append(values, dockerVolumeMapping{
+			Source:      source,
+			Destination: destination,
+		})
+	}
+
+	if len(values) == 0 {
+		return nil, nil
+	}
+	return values, nil
+}
+
+func dockerAutomaticVolumeContainerName(record dockerInspectRecord) string {
+	containerName := strings.TrimPrefix(strings.TrimSpace(record.Name), "/")
+	if containerName == "" {
+		containerName = shortDockerID(record.ID)
+	}
+	return containerName
+}
+
+func dockerAutomaticVolumeBasePath(containerName string) (string, error) {
+	containerName = strings.TrimSpace(containerName)
+	if containerName == "" {
+		return "", errors.New("Docker container name is required for automatic volume storage.")
+	}
+
+	return filepath.Join(config.FlowPanelDataPath(), "docker_volumes", containerName), nil
+}
+
+func dockerAutomaticVolumePath(containerName, destination string) (string, error) {
+	basePath, err := dockerAutomaticVolumeBasePath(containerName)
+	if err != nil {
+		return "", err
+	}
+
+	relative := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(strings.TrimSpace(destination), "/")))
+	switch {
+	case relative == ".":
+		relative = "root"
+	case relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)):
+		return "", fmt.Errorf("Docker volume destination %q is invalid for automatic storage", destination)
+	}
+
+	return filepath.Join(basePath, relative), nil
+}
+
+func dockerVolumeMappingFromMount(mount dockerInspectMount) (dockerVolumeMapping, bool) {
+	destination := strings.TrimSpace(mount.Destination)
+	if destination == "" {
+		return dockerVolumeMapping{}, false
+	}
+
+	switch mount.Type {
+	case "bind":
+		source := strings.TrimSpace(mount.Source)
+		if source == "" {
+			return dockerVolumeMapping{}, false
+		}
+		return dockerVolumeMapping{
+			Source:      source,
+			Destination: destination,
+			ReadOnly:    !mount.RW,
+		}, true
+	case "volume":
+		source := strings.TrimSpace(mount.Name)
+		if source == "" {
+			source = strings.TrimSpace(mount.Source)
+		}
+		if source == "" {
+			return dockerVolumeMapping{}, false
+		}
+		return dockerVolumeMapping{
+			Source:      source,
+			Destination: destination,
+			ReadOnly:    !mount.RW,
+		}, true
+	default:
+		return dockerVolumeMapping{}, false
+	}
 }
 
 func searchDockerHubImages(ctx context.Context, query string, limit int) ([]dockerHubSearchImage, error) {
@@ -994,6 +1163,23 @@ func createDockerContainer(ctx context.Context, image string) (dockerContainerLi
 	containerID := strings.TrimSpace(stdout.String())
 	if containerID == "" {
 		return dockerContainerListItem{}, errors.New("Docker did not return the new container identifier.")
+	}
+
+	record, err := inspectDockerContainerConfig(commandCtx, containerID)
+	if err == nil {
+		managedVolumes, volumeErr := dockerAutomaticVolumeMappings(record)
+		if volumeErr != nil {
+			_ = deleteDockerContainer(commandCtx, containerID)
+			return dockerContainerListItem{}, volumeErr
+		}
+		if len(managedVolumes) > 0 {
+			if fieldErrors := applyDockerContainerVolumes(&record, managedVolumes); len(fieldErrors) > 0 {
+				_ = deleteDockerContainer(commandCtx, containerID)
+				return dockerContainerListItem{}, errors.New("FlowPanel could not prepare automatic Docker volume storage.")
+			}
+
+			return recreateDockerContainerWithConfig(commandCtx, containerID, record)
+		}
 	}
 
 	container, err := inspectDockerContainer(commandCtx, containerID)
@@ -1543,10 +1729,27 @@ func dockerCreateArgs(record dockerInspectRecord) []string {
 	}
 
 	for _, mount := range record.Mounts {
-		if strings.TrimSpace(mount.Destination) == "" || mount.Type != "volume" {
+		if strings.TrimSpace(mount.Destination) == "" {
 			continue
 		}
 		if _, exists := bindDestinations[mount.Destination]; exists {
+			continue
+		}
+
+		if mount.Type == "bind" {
+			source := strings.TrimSpace(mount.Source)
+			if source == "" {
+				continue
+			}
+			spec := source + ":" + strings.TrimSpace(mount.Destination)
+			if !mount.RW {
+				spec += ":ro"
+			}
+			args = append(args, "--volume", spec)
+			continue
+		}
+
+		if mount.Type != "volume" {
 			continue
 		}
 
@@ -1714,6 +1917,96 @@ func applyDockerContainerEnvironment(record *dockerInspectRecord, requested []do
 		record.Config.Env = nil
 	} else {
 		record.Config.Env = nextEnvironment
+	}
+
+	return nil
+}
+
+func applyDockerContainerVolumes(record *dockerInspectRecord, requested []dockerVolumeMapping) map[string]string {
+	if record == nil {
+		return map[string]string{
+			"volumes": "Container settings are unavailable.",
+		}
+	}
+
+	fieldErrors := make(map[string]string)
+	seenDestinations := make(map[string]struct{}, len(requested))
+	nextBinds := make([]string, 0, len(requested))
+
+	for index, volume := range requested {
+		fieldPrefix := fmt.Sprintf("volumes[%d]", index)
+		source := strings.TrimSpace(volume.Source)
+		destination := strings.TrimSpace(volume.Destination)
+
+		switch {
+		case source == "":
+			fieldErrors[fieldPrefix+".source"] = "Source is required."
+		case strings.ContainsRune(source, '\x00'):
+			fieldErrors[fieldPrefix+".source"] = "Source must not contain null bytes."
+		case strings.ContainsAny(source, "\r\n"):
+			fieldErrors[fieldPrefix+".source"] = "Source must stay on a single line."
+		case strings.Contains(source, ":"):
+			fieldErrors[fieldPrefix+".source"] = "Source must not contain :."
+		}
+
+		switch {
+		case destination == "":
+			fieldErrors[fieldPrefix+".destination"] = "Container path is required."
+		case !strings.HasPrefix(destination, "/"):
+			fieldErrors[fieldPrefix+".destination"] = "Container path must start with /."
+		case strings.ContainsRune(destination, '\x00'):
+			fieldErrors[fieldPrefix+".destination"] = "Container path must not contain null bytes."
+		case strings.ContainsAny(destination, "\r\n"):
+			fieldErrors[fieldPrefix+".destination"] = "Container path must stay on a single line."
+		case strings.Contains(destination, ":"):
+			fieldErrors[fieldPrefix+".destination"] = "Container path must not contain :."
+		default:
+			if _, exists := seenDestinations[destination]; exists {
+				fieldErrors[fieldPrefix+".destination"] = "Each container path must be unique."
+			} else {
+				seenDestinations[destination] = struct{}{}
+			}
+		}
+
+		if _, hasSourceError := fieldErrors[fieldPrefix+".source"]; hasSourceError {
+			continue
+		}
+		if _, hasDestinationError := fieldErrors[fieldPrefix+".destination"]; hasDestinationError {
+			continue
+		}
+
+		spec := source + ":" + destination
+		if volume.ReadOnly {
+			spec += ":ro"
+		}
+		nextBinds = append(nextBinds, spec)
+	}
+
+	if len(fieldErrors) > 0 {
+		return fieldErrors
+	}
+
+	if len(nextBinds) == 0 {
+		record.HostConfig.Binds = nil
+	} else {
+		record.HostConfig.Binds = nextBinds
+	}
+
+	if len(record.Mounts) == 0 {
+		return nil
+	}
+
+	nextMounts := make([]dockerInspectMount, 0, len(record.Mounts))
+	for _, mount := range record.Mounts {
+		if mount.Type == "volume" || mount.Type == "bind" {
+			continue
+		}
+		nextMounts = append(nextMounts, mount)
+	}
+	if len(nextMounts) == 0 {
+		record.Mounts = nil
+	} else {
+		record.Mounts = nextMounts
 	}
 
 	return nil
@@ -1941,12 +2234,39 @@ func dockerPublishValue(containerPort string, binding dockerPortBinding) string 
 	}
 }
 
-func dockerBindDestination(bind string) string {
-	parts := strings.Split(bind, ":")
+func parseDockerVolumeSpec(bind string) (dockerVolumeMapping, bool) {
+	parts := strings.Split(strings.TrimSpace(bind), ":")
 	if len(parts) < 2 {
+		return dockerVolumeMapping{}, false
+	}
+
+	source := strings.TrimSpace(parts[0])
+	destination := strings.TrimSpace(parts[1])
+	readOnly := false
+	if len(parts) > 2 {
+		source = strings.TrimSpace(strings.Join(parts[:len(parts)-2], ":"))
+		destination = strings.TrimSpace(parts[len(parts)-2])
+		mode := strings.ToLower(strings.TrimSpace(parts[len(parts)-1]))
+		readOnly = strings.Contains(mode, "ro")
+	}
+
+	if source == "" || destination == "" {
+		return dockerVolumeMapping{}, false
+	}
+
+	return dockerVolumeMapping{
+		Source:      source,
+		Destination: destination,
+		ReadOnly:    readOnly,
+	}, true
+}
+
+func dockerBindDestination(bind string) string {
+	mapping, ok := parseDockerVolumeSpec(bind)
+	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(parts[1])
+	return mapping.Destination
 }
 
 func dockerSnapshotFileName(container dockerContainerListItem) string {

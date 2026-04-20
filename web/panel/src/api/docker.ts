@@ -38,6 +38,12 @@ export type DockerContainerPortMapping = {
   public: boolean;
 };
 
+export type DockerContainerVolumeMapping = {
+  source: string;
+  destination: string;
+  read_only: boolean;
+};
+
 export type DockerContainerDetails = {
   cpu_percent?: number;
   memory_usage_bytes?: number;
@@ -50,6 +56,8 @@ export type DockerContainerSettings = {
   ports: DockerContainerPortMapping[];
   publish_all_ports: boolean;
   environment: EnvironmentVariable[];
+  volumes: DockerContainerVolumeMapping[];
+  volume_source_base_path?: string;
 };
 
 export type DockerImage = {
@@ -108,6 +116,12 @@ function normalizeDockerPortMappings(ports: DockerContainerPortMapping[] | null 
 }
 
 function normalizeEnvironmentVariables(values: EnvironmentVariable[] | null | undefined): EnvironmentVariable[] {
+  return Array.isArray(values) ? values : [];
+}
+
+function normalizeDockerVolumeMappings(
+  values: DockerContainerVolumeMapping[] | null | undefined,
+): DockerContainerVolumeMapping[] {
   return Array.isArray(values) ? values : [];
 }
 
@@ -289,12 +303,17 @@ export async function fetchDockerContainerSettings(containerID: string): Promise
     ...payload.settings,
     ports: normalizeDockerPortMappings(payload.settings.ports),
     environment: normalizeEnvironmentVariables(payload.settings.environment),
+    volumes: normalizeDockerVolumeMappings(payload.settings.volumes),
   };
 }
 
 export async function updateDockerContainerSettings(
   containerID: string,
-  input: { ports: DockerContainerPortMapping[]; environment: EnvironmentVariable[] },
+  input: {
+    ports: DockerContainerPortMapping[];
+    environment: EnvironmentVariable[];
+    volumes: DockerContainerVolumeMapping[];
+  },
 ): Promise<DockerContainer> {
   const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/settings`, {
     method: "PUT",

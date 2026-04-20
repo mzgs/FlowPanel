@@ -18,6 +18,7 @@ import {
   type DockerContainerDetails,
   type DockerContainerPortMapping,
   type DockerContainerSettings,
+  type DockerContainerVolumeMapping,
   type DockerApiError,
   type DockerHubImage,
   type DockerImage,
@@ -26,6 +27,7 @@ import {
   updateDockerContainerSettings,
 } from "@/api/docker";
 import { type EnvironmentVariable } from "@/api/domains";
+import { DockerVolumeMappingsEditor } from "@/components/docker-volume-mappings-editor";
 import { EnvironmentVariablesEditor } from "@/components/environment-variables-editor";
 import { FieldError } from "@/components/field-error";
 import {
@@ -94,6 +96,12 @@ type DockerContainerActionErrors = Record<string, string>;
 const emptyEnvironmentVariable: EnvironmentVariable = {
   key: "",
   value: "",
+};
+
+const emptyDockerVolumeMapping: DockerContainerVolumeMapping = {
+  source: "",
+  destination: "",
+  read_only: false,
 };
 
 function getContainerStateMeta(state: DockerContainer["state"]) {
@@ -285,6 +293,39 @@ function sameEnvironmentVariables(left: EnvironmentVariable[], right: Environmen
   return left.every(
     (variable, index) => variable.key === right[index]?.key && variable.value === right[index]?.value,
   );
+}
+
+function sameDockerVolumeMappings(left: DockerContainerVolumeMapping[], right: DockerContainerVolumeMapping[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every(
+    (volume, index) =>
+      volume.source === right[index]?.source &&
+      volume.destination === right[index]?.destination &&
+      volume.read_only === right[index]?.read_only,
+  );
+}
+
+function joinDockerVolumeSourcePath(basePath: string, leaf: string) {
+  const separator = basePath.includes("\\") && !basePath.includes("/") ? "\\" : "/";
+  return `${basePath.replace(/[\\/]+$/, "")}${separator}${leaf}`;
+}
+
+function nextDockerVolumeSourcePath(basePath: string, volumes: DockerContainerVolumeMapping[]) {
+  const existingSources = new Set(
+    volumes.map((volume) => volume.source.trim()).filter((source) => source !== ""),
+  );
+
+  let index = 1;
+  while (true) {
+    const candidate = joinDockerVolumeSourcePath(basePath, `volume-${index}`);
+    if (!existingSources.has(candidate)) {
+      return candidate;
+    }
+    index += 1;
+  }
 }
 
 type DockerContainerPortSettingsRow = {
@@ -1117,6 +1158,7 @@ type DockerContainerSettingsDialogProps = {
     container: DockerContainer,
     ports: DockerContainerPortMapping[],
     environment: EnvironmentVariable[],
+    volumes: DockerContainerVolumeMapping[],
   ) => Promise<void>;
 };
 
@@ -1130,6 +1172,7 @@ function DockerContainerSettingsDialog({
   const [settings, setSettings] = useState<DockerContainerSettings | null>(null);
   const [ports, setPorts] = useState<DockerContainerPortMapping[]>([]);
   const [environment, setEnvironment] = useState<EnvironmentVariable[]>([]);
+  const [volumes, setVolumes] = useState<DockerContainerVolumeMapping[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -1142,6 +1185,7 @@ function DockerContainerSettingsDialog({
       setSettings(null);
       setPorts([]);
       setEnvironment([]);
+      setVolumes([]);
       setLoading(false);
       setError(null);
       setFieldErrors({});
@@ -1152,6 +1196,7 @@ function DockerContainerSettingsDialog({
     setSettings(null);
     setPorts([]);
     setEnvironment([]);
+    setVolumes([]);
     setLoading(true);
     setError(null);
     setFieldErrors({});
@@ -1166,6 +1211,7 @@ function DockerContainerSettingsDialog({
         setSettings(nextSettings);
         setPorts(nextSettings.ports);
         setEnvironment(nextSettings.environment);
+        setVolumes(nextSettings.volumes);
       } catch (loadError) {
         if (requestIDRef.current !== requestID) {
           return;
@@ -1202,6 +1248,13 @@ function DockerContainerSettingsDialog({
             key: variable.key.trim(),
             value: variable.value,
           })),
+        volumes
+          .filter((volume) => volume.source.trim() !== "" || volume.destination.trim() !== "")
+          .map((volume) => ({
+            source: volume.source.trim(),
+            destination: volume.destination.trim(),
+            read_only: volume.read_only,
+          })),
       );
     } catch (saveError) {
       const dockerError = saveError as DockerApiError;
@@ -1211,7 +1264,9 @@ function DockerContainerSettingsDialog({
   }
 
   const dirty = settings
-    ? !sameDockerPortMappings(ports, settings.ports) || !sameEnvironmentVariables(environment, settings.environment)
+    ? !sameDockerPortMappings(ports, settings.ports) ||
+      !sameEnvironmentVariables(environment, settings.environment) ||
+      !sameDockerVolumeMappings(volumes, settings.volumes)
     : false;
   const canSave = !loading && !saving && container !== null && settings !== null && dirty;
   const portRows = getDockerPortSettingsRows(ports);
@@ -1230,7 +1285,7 @@ function DockerContainerSettingsDialog({
         <DialogHeader>
           <DialogTitle>Container settings</DialogTitle>
           <DialogDescription>
-            Change published ports and environment variables for{" "}
+            Change published ports, environment variables, and volume mappings for{" "}
             {container ? getContainerLabel(container) : "this container"}. Saving recreates the container with the new
             configuration.
           </DialogDescription>
@@ -1330,6 +1385,65 @@ function DockerContainerSettingsDialog({
                 );
               })}
             </div>
+          ) : null}
+
+          {!loading && settings ? (
+            <DockerVolumeMappingsEditor
+              title="Volume mappings"
+              description="FlowPanel automatically stores declared Docker volumes under data/docker_volumes. Adjust mappings only when you need a custom override."
+              volumes={volumes}
+              fieldErrors={fieldErrors}
+              fieldNamePrefix="volumes"
+              inputIdPrefix="docker_volume"
+              emptyMessage="No volume mappings were detected for this container."
+              disabled={saving}
+              onAdd={() => {
+                setError(null);
+                setFieldErrors({});
+                setVolumes((current) => [
+                  ...current,
+                  {
+                    ...emptyDockerVolumeMapping,
+                    source: settings?.volume_source_base_path
+                      ? nextDockerVolumeSourcePath(settings.volume_source_base_path, current)
+                      : "",
+                  },
+                ]);
+              }}
+              onRemove={(index) => {
+                setError(null);
+                setFieldErrors({});
+                setVolumes((current) => current.filter((_, currentIndex) => currentIndex !== index));
+              }}
+              onSourceChange={(index, value) => {
+                setError(null);
+                setFieldErrors((current) => {
+                  const next = { ...current };
+                  delete next.volumes;
+                  delete next[`volumes[${index}].source`];
+                  return next;
+                });
+                setVolumes((current) =>
+                  current.map((volume, currentIndex) =>
+                    currentIndex === index ? { ...volume, source: value } : volume,
+                  ),
+                );
+              }}
+              onDestinationChange={(index, value) => {
+                setError(null);
+                setFieldErrors((current) => {
+                  const next = { ...current };
+                  delete next.volumes;
+                  delete next[`volumes[${index}].destination`];
+                  return next;
+                });
+                setVolumes((current) =>
+                  current.map((volume, currentIndex) =>
+                    currentIndex === index ? { ...volume, destination: value } : volume,
+                  ),
+                );
+              }}
+            />
           ) : null}
 
           {!loading && settings ? (
@@ -1522,7 +1636,8 @@ function AddDockerContainerDialog({
           <DialogTitle>Add Container</DialogTitle>
           <DialogDescription>
             Search Docker Hub and create a stopped container from a selected image. FlowPanel pulls the
-            image first if it is missing locally.
+            image first if it is missing locally and automatically stores declared Docker volumes under
+            data/docker_volumes.
           </DialogDescription>
         </DialogHeader>
 
@@ -2172,6 +2287,7 @@ export function DockerPage() {
     container: DockerContainer,
     ports: DockerContainerPortMapping[],
     environment: EnvironmentVariable[],
+    volumes: DockerContainerVolumeMapping[],
   ) {
     if (activeContainerID !== null) {
       return;
@@ -2182,7 +2298,7 @@ export function DockerPage() {
     clearContainerActionError(container.id);
 
     try {
-      const nextContainer = await updateDockerContainerSettings(container.id, { ports, environment });
+      const nextContainer = await updateDockerContainerSettings(container.id, { ports, environment, volumes });
       clearContainerActionError(container.id);
       setContainers((current) =>
         sortDockerContainers([
