@@ -1,3 +1,5 @@
+import { type EnvironmentVariable } from "@/api/domains";
+
 export type DockerStatus = {
   platform: string;
   package_manager?: string;
@@ -47,6 +49,7 @@ export type DockerContainerDetails = {
 export type DockerContainerSettings = {
   ports: DockerContainerPortMapping[];
   publish_all_ports: boolean;
+  environment: EnvironmentVariable[];
 };
 
 export type DockerImage = {
@@ -102,6 +105,10 @@ export type DockerApiError = Error & {
 
 function normalizeDockerPortMappings(ports: DockerContainerPortMapping[] | null | undefined): DockerContainerPortMapping[] {
   return Array.isArray(ports) ? ports : [];
+}
+
+function normalizeEnvironmentVariables(values: EnvironmentVariable[] | null | undefined): EnvironmentVariable[] {
+  return Array.isArray(values) ? values : [];
 }
 
 function normalizeDockerContainer(container: DockerContainer): DockerContainer {
@@ -281,12 +288,13 @@ export async function fetchDockerContainerSettings(containerID: string): Promise
   return {
     ...payload.settings,
     ports: normalizeDockerPortMappings(payload.settings.ports),
+    environment: normalizeEnvironmentVariables(payload.settings.environment),
   };
 }
 
 export async function updateDockerContainerSettings(
   containerID: string,
-  input: { ports: DockerContainerPortMapping[] },
+  input: { ports: DockerContainerPortMapping[]; environment: EnvironmentVariable[] },
 ): Promise<DockerContainer> {
   const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/settings`, {
     method: "PUT",

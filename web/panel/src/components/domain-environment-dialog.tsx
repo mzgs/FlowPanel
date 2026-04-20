@@ -1,6 +1,7 @@
 import { type DomainKind, type EnvironmentVariable } from "@/api/domains";
 import { FieldError } from "@/components/field-error";
-import { LoaderCircle, Plus, Trash2 } from "@/components/icons/tabler-icons";
+import { EnvironmentVariablesEditor } from "@/components/environment-variables-editor";
+import { LoaderCircle } from "@/components/icons/tabler-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 
 type DomainEnvironmentDialogProps = {
   open: boolean;
@@ -52,8 +52,6 @@ export function DomainEnvironmentDialog({
   onValueChange,
   onSave,
 }: DomainEnvironmentDialogProps) {
-  const maxVariablesReached = variables.length >= 100;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="gap-4 sm:max-w-3xl">
@@ -68,105 +66,21 @@ export function DomainEnvironmentDialog({
           </div>
         ) : null}
 
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium text-[var(--app-text)]">Variables</div>
-              <div className="text-xs text-[var(--app-text-muted)]">
-                Add only plain-text values you want the app runtime to receive.
-              </div>
-            </div>
-            <Button type="button" variant="outline" onClick={onAdd} disabled={saving || maxVariablesReached}>
-              <Plus className="h-4 w-4" />
-              Add variable
-            </Button>
-          </div>
-
-          <FieldError message={fieldErrors.environment_variables} />
-
-          <div className="overflow-x-auto rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-            <table className="w-full table-fixed">
-              <thead>
-                <tr className="text-left text-xs font-medium tracking-[0.08em] text-[var(--app-text-muted)] uppercase">
-                  <th className="px-3 py-2 font-medium">Key</th>
-                  <th className="px-3 py-2 font-medium">Value</th>
-                  <th className="w-14 px-3 py-2 font-medium">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {variables.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={3}
-                      className="px-4 py-8 text-center text-sm text-[var(--app-text-muted)]"
-                    >
-                      No environment variables saved for this domain.
-                    </td>
-                  </tr>
-                ) : (
-                  variables.map((variable, index) => {
-                    const keyError = fieldErrors[`environment_variables[${index}].key`];
-                    const valueError = fieldErrors[`environment_variables[${index}].value`];
-
-                    return (
-                      <tr key={index} className="align-top">
-                        <td className="px-3 py-2">
-                          <div className="space-y-2">
-                            <Input
-                              id={`domain_env_key_${index}`}
-                              value={variable.key}
-                              onChange={(event) => onKeyChange(index, event.target.value)}
-                              placeholder="APP_ENV"
-                              spellCheck={false}
-                              autoComplete="off"
-                              disabled={saving}
-                              aria-label={`Environment variable key ${index + 1}`}
-                              aria-invalid={keyError ? true : undefined}
-                            />
-                            <FieldError message={keyError} />
-                          </div>
-                        </td>
-
-                        <td className="px-3 py-2">
-                          <div className="space-y-2">
-                            <Input
-                              id={`domain_env_value_${index}`}
-                              value={variable.value}
-                              onChange={(event) => onValueChange(index, event.target.value)}
-                              placeholder="production"
-                              spellCheck={false}
-                              autoComplete="off"
-                              disabled={saving}
-                              aria-label={`Environment variable value ${index + 1}`}
-                              aria-invalid={valueError ? true : undefined}
-                            />
-                            <FieldError message={valueError} />
-                          </div>
-                        </td>
-
-                        <td className="px-3 py-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            onClick={() => onRemove(index)}
-                            disabled={saving}
-                            aria-label={`Remove environment variable ${index + 1}`}
-                            title="Remove variable"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <EnvironmentVariablesEditor
+          title="Variables"
+          description="Add only plain-text values you want the app runtime to receive."
+          variables={variables}
+          fieldErrors={fieldErrors}
+          fieldNamePrefix="environment_variables"
+          inputIdPrefix="domain_env"
+          emptyMessage="No environment variables saved for this domain."
+          maxVariables={100}
+          disabled={saving}
+          onAdd={onAdd}
+          onRemove={onRemove}
+          onKeyChange={onKeyChange}
+          onValueChange={onValueChange}
+        />
 
         <DialogFooter className="border-t border-[var(--app-border)] pt-4">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>

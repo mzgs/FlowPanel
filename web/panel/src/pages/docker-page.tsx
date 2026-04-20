@@ -25,6 +25,8 @@ import {
   searchDockerHubImages,
   updateDockerContainerSettings,
 } from "@/api/docker";
+import { type EnvironmentVariable } from "@/api/domains";
+import { EnvironmentVariablesEditor } from "@/components/environment-variables-editor";
 import { FieldError } from "@/components/field-error";
 import {
   Adjustments,
@@ -89,6 +91,10 @@ type DockerContainerResourcesState = {
 };
 
 type DockerContainerActionErrors = Record<string, string>;
+const emptyEnvironmentVariable: EnvironmentVariable = {
+  key: "",
+  value: "",
+};
 
 function getContainerStateMeta(state: DockerContainer["state"]) {
   switch (state) {
@@ -269,6 +275,16 @@ function sameDockerPortMappings(left: DockerContainerPortMapping[], right: Docke
       port.host_port === other.host_port
     );
   });
+}
+
+function sameEnvironmentVariables(left: EnvironmentVariable[], right: EnvironmentVariable[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every(
+    (variable, index) => variable.key === right[index]?.key && variable.value === right[index]?.value,
+  );
 }
 
 type DockerContainerPortSettingsRow = {
@@ -1097,7 +1113,11 @@ type DockerContainerSettingsDialogProps = {
   container: DockerContainer | null;
   saving: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave: (container: DockerContainer, ports: DockerContainerPortMapping[]) => Promise<void>;
+  onSave: (
+    container: DockerContainer,
+    ports: DockerContainerPortMapping[],
+    environment: EnvironmentVariable[],
+  ) => Promise<void>;
 };
 
 function DockerContainerSettingsDialog({
@@ -1109,6 +1129,7 @@ function DockerContainerSettingsDialog({
 }: DockerContainerSettingsDialogProps) {
   const [settings, setSettings] = useState<DockerContainerSettings | null>(null);
   const [ports, setPorts] = useState<DockerContainerPortMapping[]>([]);
+  const [environment, setEnvironment] = useState<EnvironmentVariable[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -1120,6 +1141,7 @@ function DockerContainerSettingsDialog({
     if (!open || !container) {
       setSettings(null);
       setPorts([]);
+      setEnvironment([]);
       setLoading(false);
       setError(null);
       setFieldErrors({});
@@ -1129,6 +1151,7 @@ function DockerContainerSettingsDialog({
     const requestID = requestIDRef.current;
     setSettings(null);
     setPorts([]);
+    setEnvironment([]);
     setLoading(true);
     setError(null);
     setFieldErrors({});
@@ -1142,6 +1165,7 @@ function DockerContainerSettingsDialog({
 
         setSettings(nextSettings);
         setPorts(nextSettings.ports);
+        setEnvironment(nextSettings.environment);
       } catch (loadError) {
         if (requestIDRef.current !== requestID) {
           return;
@@ -1172,6 +1196,12 @@ function DockerContainerSettingsDialog({
           ...port,
           host_port: port.host_port.trim(),
         })),
+        environment
+          .filter((variable) => variable.key.trim() !== "" || variable.value.trim() !== "")
+          .map((variable) => ({
+            key: variable.key.trim(),
+            value: variable.value,
+          })),
       );
     } catch (saveError) {
       const dockerError = saveError as DockerApiError;
@@ -1180,8 +1210,10 @@ function DockerContainerSettingsDialog({
     }
   }
 
-  const dirty = settings ? !sameDockerPortMappings(ports, settings.ports) : false;
-  const canSave = !loading && !saving && container !== null && settings !== null && ports.length > 0 && dirty;
+  const dirty = settings
+    ? !sameDockerPortMappings(ports, settings.ports) || !sameEnvironmentVariables(environment, settings.environment)
+    : false;
+  const canSave = !loading && !saving && container !== null && settings !== null && dirty;
   const portRows = getDockerPortSettingsRows(ports);
 
   return (
@@ -1198,8 +1230,9 @@ function DockerContainerSettingsDialog({
         <DialogHeader>
           <DialogTitle>Container settings</DialogTitle>
           <DialogDescription>
-            Change published ports for {container ? getContainerLabel(container) : "this container"}. Saving recreates
-            the container with the new port mapping.
+            Change published ports and environment variables for{" "}
+            {container ? getContainerLabel(container) : "this container"}. Saving recreates the container with the new
+            configuration.
           </DialogDescription>
         </DialogHeader>
 
@@ -1299,6 +1332,57 @@ function DockerContainerSettingsDialog({
             </div>
           ) : null}
 
+          {!loading && settings ? (
+            <EnvironmentVariablesEditor
+              title="Environment variables"
+              description="These values are stored in plain text and passed to the recreated container."
+              variables={environment}
+              fieldErrors={fieldErrors}
+              fieldNamePrefix="environment"
+              inputIdPrefix="docker_env"
+              emptyMessage="No environment variables were detected for this container."
+              disabled={saving}
+              onAdd={() => {
+                setError(null);
+                setFieldErrors({});
+                setEnvironment((current) => [...current, { ...emptyEnvironmentVariable }]);
+              }}
+              onRemove={(index) => {
+                setError(null);
+                setFieldErrors({});
+                setEnvironment((current) => current.filter((_, currentIndex) => currentIndex !== index));
+              }}
+              onKeyChange={(index, value) => {
+                setError(null);
+                setFieldErrors((current) => {
+                  const next = { ...current };
+                  delete next.environment;
+                  delete next[`environment[${index}].key`];
+                  return next;
+                });
+                setEnvironment((current) =>
+                  current.map((variable, currentIndex) =>
+                    currentIndex === index ? { ...variable, key: value } : variable,
+                  ),
+                );
+              }}
+              onValueChange={(index, value) => {
+                setError(null);
+                setFieldErrors((current) => {
+                  const next = { ...current };
+                  delete next.environment;
+                  delete next[`environment[${index}].value`];
+                  return next;
+                });
+                setEnvironment((current) =>
+                  current.map((variable, currentIndex) =>
+                    currentIndex === index ? { ...variable, value } : variable,
+                  ),
+                );
+              }}
+            />
+          ) : null}
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               Cancel
@@ -1312,7 +1396,7 @@ function DockerContainerSettingsDialog({
               ) : (
                 <>
                   <Adjustments className="h-4 w-4" />
-                  Save ports
+                  Save settings
                 </>
               )}
             </Button>
@@ -2087,6 +2171,7 @@ export function DockerPage() {
   async function handleSaveContainerSettings(
     container: DockerContainer,
     ports: DockerContainerPortMapping[],
+    environment: EnvironmentVariable[],
   ) {
     if (activeContainerID !== null) {
       return;
@@ -2097,7 +2182,7 @@ export function DockerPage() {
     clearContainerActionError(container.id);
 
     try {
-      const nextContainer = await updateDockerContainerSettings(container.id, { ports });
+      const nextContainer = await updateDockerContainerSettings(container.id, { ports, environment });
       clearContainerActionError(container.id);
       setContainers((current) =>
         sortDockerContainers([
@@ -2109,7 +2194,7 @@ export function DockerPage() {
         resetExpandedContainerPanel();
       }
       setSettingsContainer(null);
-      toast.success(`Updated ports for ${getContainerLabel(nextContainer)}.`);
+      toast.success(`Updated settings for ${getContainerLabel(nextContainer)}.`);
       void loadDocker({ silent: true });
     } catch (error) {
       toast.error(getErrorMessage(error, `Failed to save settings for ${getContainerLabel(container)}.`));

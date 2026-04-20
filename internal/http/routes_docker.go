@@ -95,6 +95,7 @@ type saveDockerContainerImageRequest struct {
 
 type dockerContainerSettings struct {
 	Ports           []dockerContainerPortMapping `json:"ports"`
+	Environment     []dockerEnvironmentVariable  `json:"environment"`
 	PublishAllPorts bool                         `json:"publish_all_ports"`
 }
 
@@ -103,7 +104,13 @@ type dockerContainerSettingsResponse struct {
 }
 
 type updateDockerContainerSettingsRequest struct {
-	Ports []dockerContainerPortMapping `json:"ports"`
+	Ports       []dockerContainerPortMapping `json:"ports"`
+	Environment *[]dockerEnvironmentVariable `json:"environment"`
+}
+
+type dockerEnvironmentVariable struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 type dockerInspectRecord struct {
@@ -633,7 +640,14 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			return
 		}
 
-		if fieldErrors := applyDockerContainerPorts(&record, input.Ports); len(fieldErrors) > 0 {
+		fieldErrors := applyDockerContainerPorts(&record, input.Ports)
+		if input.Environment != nil {
+			fieldErrors = mergeDockerValidationErrors(
+				fieldErrors,
+				applyDockerContainerEnvironment(&record, *input.Environment),
+			)
+		}
+		if len(fieldErrors) > 0 {
 			writeValidationFailed(w, fieldErrors)
 			return
 		}
@@ -862,8 +876,38 @@ func inspectDockerContainerDetails(ctx context.Context, containerID string) (doc
 func dockerContainerSettingsFromRecord(record dockerInspectRecord) dockerContainerSettings {
 	return dockerContainerSettings{
 		Ports:           dockerContainerPortMappings(record),
+		Environment:     dockerContainerEnvironment(record),
 		PublishAllPorts: record.HostConfig.PublishAllPorts,
 	}
+}
+
+func dockerContainerEnvironment(record dockerInspectRecord) []dockerEnvironmentVariable {
+	if len(record.Config.Env) == 0 {
+		return nil
+	}
+
+	values := make([]dockerEnvironmentVariable, 0, len(record.Config.Env))
+	for _, entry := range record.Config.Env {
+		if strings.TrimSpace(entry) == "" {
+			continue
+		}
+
+		key, value, hasValue := strings.Cut(entry, "=")
+		key = strings.TrimSpace(key)
+		if !hasValue {
+			value = ""
+		}
+		values = append(values, dockerEnvironmentVariable{
+			Key:   key,
+			Value: value,
+		})
+	}
+
+	if len(values) == 0 {
+		return nil
+	}
+
+	return values
 }
 
 func searchDockerHubImages(ctx context.Context, query string, limit int) ([]dockerHubSearchImage, error) {
@@ -1611,6 +1655,84 @@ func applyDockerContainerPorts(record *dockerInspectRecord, requested []dockerCo
 	}
 	record.HostConfig.PublishAllPorts = false
 	return nil
+}
+
+func applyDockerContainerEnvironment(record *dockerInspectRecord, requested []dockerEnvironmentVariable) map[string]string {
+	if record == nil {
+		return map[string]string{
+			"environment": "Container settings are unavailable.",
+		}
+	}
+
+	fieldErrors := make(map[string]string)
+	seen := make(map[string]struct{}, len(requested))
+	nextEnvironment := make([]string, 0, len(requested))
+
+	for index, variable := range requested {
+		fieldPrefix := fmt.Sprintf("environment[%d]", index)
+		key := strings.TrimSpace(variable.Key)
+
+		switch {
+		case key == "":
+			fieldErrors[fieldPrefix+".key"] = "Key is required."
+		case strings.Contains(key, "="):
+			fieldErrors[fieldPrefix+".key"] = "Key must not contain =."
+		case strings.ContainsRune(key, '\x00'):
+			fieldErrors[fieldPrefix+".key"] = "Key must not contain null bytes."
+		case strings.ContainsAny(key, "\r\n"):
+			fieldErrors[fieldPrefix+".key"] = "Key must stay on a single line."
+		default:
+			if _, exists := seen[key]; exists {
+				fieldErrors[fieldPrefix+".key"] = "Each key must be unique."
+			} else {
+				seen[key] = struct{}{}
+			}
+		}
+
+		switch {
+		case strings.ContainsRune(variable.Value, '\x00'):
+			fieldErrors[fieldPrefix+".value"] = "Value must not contain null bytes."
+		case strings.ContainsAny(variable.Value, "\r\n"):
+			fieldErrors[fieldPrefix+".value"] = "Value must stay on a single line."
+		}
+
+		if _, hasKeyError := fieldErrors[fieldPrefix+".key"]; hasKeyError {
+			continue
+		}
+		if _, hasValueError := fieldErrors[fieldPrefix+".value"]; hasValueError {
+			continue
+		}
+
+		nextEnvironment = append(nextEnvironment, key+"="+variable.Value)
+	}
+
+	if len(fieldErrors) > 0 {
+		return fieldErrors
+	}
+
+	if len(nextEnvironment) == 0 {
+		record.Config.Env = nil
+	} else {
+		record.Config.Env = nextEnvironment
+	}
+
+	return nil
+}
+
+func mergeDockerValidationErrors(groups ...map[string]string) map[string]string {
+	var merged map[string]string
+	for _, group := range groups {
+		if len(group) == 0 {
+			continue
+		}
+		if merged == nil {
+			merged = make(map[string]string, len(group))
+		}
+		for key, value := range group {
+			merged[key] = value
+		}
+	}
+	return merged
 }
 
 func dockerKnownContainerPorts(record dockerInspectRecord) map[string]struct{} {
