@@ -82,6 +82,8 @@ type DockerContainerResourcesState = {
   error: string | null;
 };
 
+type DockerContainerActionErrors = Record<string, string>;
+
 function getContainerStateMeta(state: DockerContainer["state"]) {
   switch (state) {
     case "running":
@@ -567,6 +569,7 @@ function ContainerList({
   containers,
   activeContainerID,
   pendingOperation,
+  actionErrors,
   expandedContainerID,
   containerLogs,
   containerResources,
@@ -578,6 +581,7 @@ function ContainerList({
   containers: DockerContainer[];
   activeContainerID: string | null;
   pendingOperation: DockerContainerOperation | null;
+  actionErrors: DockerContainerActionErrors;
   expandedContainerID: string | null;
   containerLogs: DockerContainerLogsState;
   containerResources: DockerContainerResourcesState;
@@ -636,6 +640,7 @@ function ContainerList({
             pendingOperation === "stop" ||
             pendingOperation === "restart");
         const logRegionID = `docker-container-logs-${container.id}`;
+        const actionError = actionErrors[container.id];
 
         return (
           <div
@@ -801,6 +806,14 @@ function ContainerList({
                 </div>
               </div>
             </div>
+
+            {actionError ? (
+              <div className="px-4 pb-4 md:px-6">
+                <div className="rounded-xl border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
+                  {actionError}
+                </div>
+              </div>
+            ) : null}
 
             {expanded ? (
               <div id={logRegionID} className="border-t border-[var(--app-border)] bg-[var(--app-surface)]/55 px-4 py-4 md:px-6">
@@ -1299,6 +1312,7 @@ export function DockerPage() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [containersError, setContainersError] = useState<string | null>(null);
   const [imagesError, setImagesError] = useState<string | null>(null);
+  const [containerActionErrors, setContainerActionErrors] = useState<DockerContainerActionErrors>({});
   const [activeContainerID, setActiveContainerID] = useState<string | null>(null);
   const [pendingOperation, setPendingOperation] = useState<DockerContainerOperation | null>(null);
   const [expandedContainerID, setExpandedContainerID] = useState<string | null>(null);
@@ -1348,6 +1362,18 @@ export function DockerPage() {
     setExpandedContainerID(nextExpandedContainerID);
     setExpandedContainerLogs(createDockerContainerLogsState());
     setExpandedContainerResources(createDockerContainerResourcesState());
+  }
+
+  function clearContainerActionError(containerID: string) {
+    setContainerActionErrors((current) => {
+      if (!(containerID in current)) {
+        return current;
+      }
+
+      const nextErrors = { ...current };
+      delete nextErrors[containerID];
+      return nextErrors;
+    });
   }
 
   async function loadContainerLogs(
@@ -1507,6 +1533,22 @@ export function DockerPage() {
     setContainers(nextContainers);
     setImages(nextImages);
     setStatusError(statusResult.status === "rejected" ? getErrorMessage(statusResult.reason, "Failed to inspect Docker.") : null);
+    setContainerActionErrors((current) => {
+      if (Object.keys(current).length === 0) {
+        return current;
+      }
+
+      if (!nextStatus?.installed || !nextStatus.service_running) {
+        return {};
+      }
+
+      const visibleContainerIDs = new Set(nextContainers.map((container) => container.id));
+      const nextErrors = Object.fromEntries(
+        Object.entries(current).filter(([containerID]) => visibleContainerIDs.has(containerID)),
+      );
+
+      return Object.keys(nextErrors).length === Object.keys(current).length ? current : nextErrors;
+    });
 
     if (nextStatus && (!nextStatus.installed || !nextStatus.service_running)) {
       setContainersError(null);
@@ -1600,18 +1642,20 @@ export function DockerPage() {
 
     setActiveContainerID(container.id);
     setPendingOperation(action);
+    clearContainerActionError(container.id);
 
     try {
       const nextContainer = await runAction(container.id);
+      clearContainerActionError(container.id);
       setContainers((current) =>
         current.map((item) => (item.id === container.id ? nextContainer : item)),
       );
       toast.success(getContainerActionSuccessMessage(action, nextContainer));
       void loadDocker({ silent: true });
     } catch (error) {
-      toast.error(
-        getErrorMessage(error, `Failed to ${action} container ${getContainerLabel(container)}.`),
-      );
+      const message = getErrorMessage(error, `Failed to ${action} container ${getContainerLabel(container)}.`);
+      setContainerActionErrors((current) => ({ ...current, [container.id]: message }));
+      toast.error(message);
     } finally {
       setActiveContainerID(null);
       setPendingOperation(null);
@@ -1671,15 +1715,18 @@ export function DockerPage() {
 
     setActiveContainerID(container.id);
     setPendingOperation(action);
+    clearContainerActionError(container.id);
 
     try {
       if (action === "delete") {
         await deleteDockerContainer(container.id);
+        clearContainerActionError(container.id);
         setContainers((current) => current.filter((item) => item.id !== container.id));
         setConfirmAction(null);
         toast.success(`Deleted container ${getContainerLabel(container)}.`);
       } else {
         const nextContainer = await recreateDockerContainer(container.id);
+        clearContainerActionError(container.id);
         setContainers((current) =>
           sortDockerContainers([
             ...current.filter((item) => item.id !== container.id),
@@ -1692,9 +1739,9 @@ export function DockerPage() {
 
       void loadDocker({ silent: true });
     } catch (error) {
-      toast.error(
-        getErrorMessage(error, `Failed to ${action} container ${getContainerLabel(container)}.`),
-      );
+      const message = getErrorMessage(error, `Failed to ${action} container ${getContainerLabel(container)}.`);
+      setContainerActionErrors((current) => ({ ...current, [container.id]: message }));
+      toast.error(message);
     } finally {
       setActiveContainerID(null);
       setPendingOperation(null);
@@ -1919,6 +1966,7 @@ export function DockerPage() {
               containers={containers}
               activeContainerID={activeContainerID}
               pendingOperation={pendingOperation}
+              actionErrors={containerActionErrors}
               expandedContainerID={expandedContainerID}
               containerLogs={expandedContainerLogs}
               containerResources={expandedContainerResources}
