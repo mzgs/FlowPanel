@@ -348,6 +348,19 @@ export async function updateDockerContainerSettings(
   return parseDockerContainerResponse(response);
 }
 
+export async function renameDockerContainer(containerID: string, name: string): Promise<DockerContainer> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/rename`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+
+  return parseDockerContainerResponse(response);
+}
+
 export async function fetchDockerImages(): Promise<DockerImage[]> {
   const response = await fetch("/api/docker/images", {
     credentials: "include",

@@ -12,6 +12,7 @@ import {
   fetchDockerStatus,
   pullDockerImage,
   recreateDockerContainer,
+  renameDockerContainer,
   restartDockerContainer,
   saveDockerContainerAsImage,
   startDockerContainer,
@@ -35,6 +36,7 @@ import { FieldError } from "@/components/field-error";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import {
   Adjustments,
+  Check,
   ChevronDownIcon,
   Docker,
   Download,
@@ -42,6 +44,7 @@ import {
   HardDrive,
   LoaderCircle,
   Package,
+  Pencil,
   PlayerPlayFilled,
   Plus,
   RefreshCw,
@@ -49,6 +52,7 @@ import {
   Search,
   PlayerStop,
   Trash2,
+  XIcon,
 } from "@/components/icons/tabler-icons";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -80,7 +84,7 @@ type LoadOptions = {
 type DockerTab = "containers" | "images";
 type DockerContainerAction = "start" | "stop" | "restart";
 type DockerContainerMenuAction = "recreate" | "delete" | "snapshot" | "save-image";
-type DockerContainerOperation = DockerContainerAction | DockerContainerMenuAction | "settings";
+type DockerContainerOperation = DockerContainerAction | DockerContainerMenuAction | "rename" | "settings";
 type DockerImageOperation = "create" | "delete" | "pull";
 type DockerContainerLogsState = {
   output: string;
@@ -216,6 +220,8 @@ function getContainerOperationPendingLabel(action: DockerContainerOperation | nu
   switch (action) {
     case "delete":
       return "Deleting...";
+    case "rename":
+      return "Renaming...";
     case "recreate":
       return "Recreating...";
     case "settings":
@@ -763,7 +769,9 @@ function ContainerList({
   containerLogs,
   containerResources,
   onAction,
+  onClearActionError,
   onMenuAction,
+  onRename,
   onOpenSettings,
   onToggleExpandedContainer,
   onClearContainerLogs,
@@ -776,17 +784,62 @@ function ContainerList({
   containerLogs: DockerContainerLogsState;
   containerResources: DockerContainerResourcesState;
   onAction: (container: DockerContainer, action: DockerContainerAction) => void;
+  onClearActionError: (containerID: string) => void;
   onMenuAction: (container: DockerContainer, action: DockerContainerMenuAction) => void;
+  onRename: (container: DockerContainer, name: string) => Promise<void>;
   onOpenSettings: (container: DockerContainer) => void;
   onToggleExpandedContainer: (container: DockerContainer) => void;
   onClearContainerLogs: (container: DockerContainer) => void;
 }) {
   const expandedContainerLogsViewportRef = useRef<HTMLPreElement | null>(null);
   const shouldAutoScrollExpandedLogsRef = useRef(true);
+  const [renameState, setRenameState] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   useEffect(() => {
     shouldAutoScrollExpandedLogsRef.current = true;
   }, [expandedContainerID]);
+
+  useEffect(() => {
+    if (renameState === null) {
+      return;
+    }
+
+    if (containers.some((container) => container.id === renameState.id)) {
+      return;
+    }
+
+    setRenameState(null);
+  }, [containers, renameState]);
+
+  function handleStartEditing(container: DockerContainer) {
+    onClearActionError(container.id);
+    setRenameState({ id: container.id, name: getContainerLabel(container) });
+  }
+
+  function handleStopEditing() {
+    setRenameState(null);
+  }
+
+  async function handleRename(container: DockerContainer) {
+    if (renameState?.id !== container.id || activeContainerID !== null) {
+      return;
+    }
+
+    const nextName = renameState.name.trim();
+    if (nextName === "" || nextName === getContainerLabel(container) || activeContainerID !== null) {
+      return;
+    }
+
+    try {
+      await onRename(container, nextName);
+      handleStopEditing();
+    } catch {
+      // Keep inline edit mode open so the user can adjust the name.
+    }
+  }
 
   useEffect(() => {
     if (expandedContainerID === null || !shouldAutoScrollExpandedLogsRef.current) {
@@ -827,6 +880,7 @@ function ContainerList({
         const actions = getContainerActions(container);
         const pendingLabel = busy ? getContainerOperationPendingLabel(pendingOperation) : null;
         const expanded = expandedContainerID === container.id;
+        const editing = renameState?.id === container.id;
         const statusBusy =
           busy &&
           (pendingOperation === "start" ||
@@ -834,6 +888,10 @@ function ContainerList({
             pendingOperation === "restart");
         const logRegionID = `docker-container-logs-${container.id}`;
         const actionError = actionErrors[container.id];
+        const renameBusy = busy && pendingOperation === "rename";
+        const renameDisabled = activeContainerID !== null;
+        const renameName = editing ? renameState.name : "";
+        const renameUnchanged = renameName.trim() === "" || renameName.trim() === getContainerLabel(container);
         const settingsBusy = busy && pendingOperation === "settings";
 
         return (
@@ -842,7 +900,7 @@ function ContainerList({
             className="border-b border-[var(--app-border)] last:border-b-0"
           >
             <div className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] md:px-6 md:py-5">
-              <div className="space-y-1">
+              <div className="group/name space-y-1">
                 <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
                   Name
                 </div>
@@ -862,7 +920,91 @@ function ContainerList({
                       className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")}
                     />
                   </button>
-                  <div className="truncate text-[15px] font-medium text-foreground">{getContainerLabel(container)}</div>
+                  <div className="flex min-w-0 items-center gap-2">
+                    {editing ? (
+                      <>
+                        <Input
+                          autoFocus
+                          value={renameName}
+                          onChange={(event) => {
+                            setRenameState((current) =>
+                              current && current.id === container.id
+                                ? { ...current, name: event.target.value }
+                                : current,
+                            );
+                          }}
+                          onFocus={(event) => {
+                            event.currentTarget.select();
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void handleRename(container);
+                            }
+                            if (event.key === "Escape" && !renameBusy) {
+                              event.preventDefault();
+                              handleStopEditing();
+                            }
+                          }}
+                          className="h-9"
+                          disabled={renameBusy}
+                          aria-invalid={actionError ? true : undefined}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
+                          disabled={renameBusy || renameUnchanged}
+                          aria-label={`Save new name for ${getContainerLabel(container)}`}
+                          title={`Save new name for ${getContainerLabel(container)}`}
+                          onClick={() => {
+                            void handleRename(container);
+                          }}
+                        >
+                          {renameBusy ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Check className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
+                          disabled={renameBusy}
+                          aria-label={`Cancel renaming ${getContainerLabel(container)}`}
+                          title={`Cancel renaming ${getContainerLabel(container)}`}
+                          onClick={() => {
+                            handleStopEditing();
+                          }}
+                        >
+                          <XIcon className="h-4 w-4" />
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="truncate text-[15px] font-medium text-foreground">
+                          {getContainerLabel(container)}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          disabled={renameDisabled}
+                          className="h-8 w-8 shrink-0 rounded-md text-muted-foreground opacity-0 transition-opacity pointer-events-none hover:text-foreground group-hover/name:opacity-100 group-hover/name:pointer-events-auto group-focus-within/name:opacity-100 group-focus-within/name:pointer-events-auto"
+                          aria-label={`Rename ${getContainerLabel(container)}`}
+                          title={`Rename ${getContainerLabel(container)}`}
+                          onClick={() => {
+                            handleStartEditing(container);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -952,82 +1094,86 @@ function ContainerList({
                   Actions
                 </div>
                 <div className="flex items-center gap-1 md:justify-end">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    disabled={busy}
-                    className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
-                    aria-label={`Open settings for ${getContainerLabel(container)}`}
-                    title={`Open settings for ${getContainerLabel(container)}`}
-                    onClick={() => {
-                      onOpenSettings(container);
-                    }}
-                  >
-                    {settingsBusy ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Adjustments className="h-4 w-4" />
-                    )}
-                  </Button>
-                  <DropdownMenu modal={false}>
-                    <DropdownMenuTrigger asChild>
+                  {editing ? null : (
+                    <>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
                         disabled={busy}
                         className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
-                        aria-label={`Open more options for ${getContainerLabel(container)}`}
-                        title={`Open more options for ${getContainerLabel(container)}`}
+                        aria-label={`Open settings for ${getContainerLabel(container)}`}
+                        title={`Open settings for ${getContainerLabel(container)}`}
+                        onClick={() => {
+                          onOpenSettings(container);
+                        }}
                       >
-                        {busy && !statusBusy ? (
+                        {settingsBusy ? (
                           <LoaderCircle className="h-4 w-4 animate-spin" />
                         ) : (
-                          <DotsVertical className="h-4 w-4" />
+                          <Adjustments className="h-4 w-4" />
                         )}
                       </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="end"
-                      className="w-52 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
-                    >
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          onMenuAction(container, "recreate");
-                        }}
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                        Recreate
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          onMenuAction(container, "snapshot");
-                        }}
-                      >
-                        <Download className="h-4 w-4" />
-                        Download Snapshot
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          onMenuAction(container, "save-image");
-                        }}
-                      >
-                        <HardDrive className="h-4 w-4" />
-                        Save as Image
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onSelect={() => {
-                          onMenuAction(container, "delete");
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            disabled={busy}
+                            className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
+                            aria-label={`Open more options for ${getContainerLabel(container)}`}
+                            title={`Open more options for ${getContainerLabel(container)}`}
+                          >
+                            {busy && !statusBusy ? (
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <DotsVertical className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="end"
+                          className="w-52 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
+                        >
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              onMenuAction(container, "recreate");
+                            }}
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            Recreate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              onMenuAction(container, "snapshot");
+                            }}
+                          >
+                            <Download className="h-4 w-4" />
+                            Download Snapshot
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              onMenuAction(container, "save-image");
+                            }}
+                          >
+                            <HardDrive className="h-4 w-4" />
+                            Save as Image
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onSelect={() => {
+                              onMenuAction(container, "delete");
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -2513,6 +2659,38 @@ export function DockerPage() {
     }
   }
 
+  async function handleRenameContainer(container: DockerContainer, name: string) {
+    const nextName = name.trim();
+    if (nextName === "" || activeContainerID !== null) {
+      return;
+    }
+
+    setActiveContainerID(container.id);
+    setPendingOperation("rename");
+    clearContainerActionError(container.id);
+
+    try {
+      const nextContainer = await renameDockerContainer(container.id, nextName);
+      clearContainerActionError(container.id);
+      setContainers((current) =>
+        sortDockerContainers([
+          ...current.filter((item) => item.id !== container.id),
+          nextContainer,
+        ]),
+      );
+      toast.success(`Renamed container ${getContainerLabel(container)} to ${getContainerLabel(nextContainer)}.`);
+      void loadDocker({ silent: true });
+    } catch (error) {
+      const message = getErrorMessage(error, `Failed to rename container ${getContainerLabel(container)}.`);
+      setContainerActionErrors((current) => ({ ...current, [container.id]: message }));
+      toast.error(message);
+      throw error;
+    } finally {
+      setActiveContainerID(null);
+      setPendingOperation(null);
+    }
+  }
+
   async function handleContainerSnapshot(container: DockerContainer) {
     if (activeContainerID !== null) {
       return;
@@ -2995,7 +3173,9 @@ export function DockerPage() {
               containerLogs={expandedContainerLogs}
               containerResources={expandedContainerResources}
               onAction={handleContainerAction}
+              onClearActionError={clearContainerActionError}
               onMenuAction={handleContainerMenuAction}
+              onRename={handleRenameContainer}
               onOpenSettings={setSettingsContainer}
               onToggleExpandedContainer={handleToggleContainerLogs}
               onClearContainerLogs={handleClearContainerLogs}

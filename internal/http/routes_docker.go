@@ -94,6 +94,10 @@ type createDockerContainerRequest struct {
 	Image string `json:"image"`
 }
 
+type renameDockerContainerRequest struct {
+	Name string `json:"name"`
+}
+
 type pullDockerImageRequest struct {
 	Image string `json:"image"`
 }
@@ -446,6 +450,81 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
 		}
 	}
+
+	renameContainerHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		var input renameDockerContainerRequest
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		input.Name = strings.TrimSpace(input.Name)
+		if input.Name == "" {
+			writeValidationFailed(w, map[string]string{
+				"name": "Container name is required.",
+			})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		previousLabel := shortDockerID(containerID)
+		if container, err := inspectDockerContainer(actionCtx, containerID); err == nil {
+			if label := strings.TrimSpace(container.Name); label != "" {
+				previousLabel = label
+			}
+			if strings.TrimSpace(container.Name) == input.Name {
+				writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
+				return
+			}
+		}
+
+		container, err := renameDockerContainer(actionCtx, containerID, input.Name)
+		if err != nil {
+			a.app.Logger.Error(
+				"rename docker container failed",
+				zap.String("container_id", containerID),
+				zap.String("name", input.Name),
+				zap.Error(err),
+			)
+			a.mutationEvent(actionCtx, "runtime", "rename", "docker_container", containerID, previousLabel, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		label := strings.TrimSpace(container.Name)
+		if label == "" {
+			label = input.Name
+		}
+		resourceID := container.ID
+		if resourceID == "" {
+			resourceID = containerID
+		}
+
+		a.mutationEvent(
+			actionCtx,
+			"runtime",
+			"rename",
+			"docker_container",
+			resourceID,
+			label,
+			"succeeded",
+			fmt.Sprintf("Renamed Docker container %q to %q.", previousLabel, label),
+		)
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
+	})
 
 	deleteContainerHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app.Docker == nil {
@@ -801,6 +880,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/start", registerContainerAction("start", startDockerContainer))
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/stop", registerContainerAction("stop", stopDockerContainer))
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/restart", registerContainerAction("restart", restartDockerContainer))
+	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/rename", renameContainerHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/recreate", recreateContainerHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/save-image", saveContainerImageHandler)
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/snapshot", snapshotContainerHandler)
@@ -1331,6 +1411,28 @@ func stopDockerContainer(ctx context.Context, containerID string) (dockerContain
 
 func restartDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {
 	return runDockerContainerAction(ctx, containerID, "restart")
+}
+
+func renameDockerContainer(ctx context.Context, containerID, name string) (dockerContainerListItem, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return dockerContainerListItem{}, errors.New("Docker is not installed on this server.")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerActionCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, "docker", "rename", containerID, name)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return dockerContainerListItem{}, errors.New("Timed out while renaming the Docker container.")
+		}
+		return dockerContainerListItem{}, formatDockerCommandError(stderr.String(), err)
+	}
+
+	return inspectDockerContainer(commandCtx, containerID)
 }
 
 func deleteDockerContainer(ctx context.Context, containerID string) error {
