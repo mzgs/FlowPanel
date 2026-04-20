@@ -21,11 +21,13 @@ import (
 
 const (
 	dockerListCommandTimeout   = 5 * time.Second
+	dockerLogsCommandTimeout   = 10 * time.Second
 	dockerSearchCommandTimeout = 10 * time.Second
 	dockerActionCommandTimeout = 30 * time.Second
 	dockerCreateCommandTimeout = 2 * time.Minute
 	dockerExportCommandTimeout = 2 * time.Minute
 	dockerSearchResultLimit    = 100
+	dockerLogsTailLines        = 200
 )
 
 type dockerContainerListItem struct {
@@ -485,10 +487,35 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 		}
 	})
 
+	containerLogsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		output, err := dockerContainerLogs(r.Context(), containerID)
+		if err != nil {
+			a.app.Logger.Error("read docker container logs failed", zap.String("container_id", containerID), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"output": output})
+	})
+
 	r.Method(stdhttp.MethodGet, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodHead, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers", createContainerHandler)
 	r.Method(stdhttp.MethodDelete, "/docker/containers/{containerID}", deleteContainerHandler)
+	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/logs", containerLogsHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/start", registerContainerAction("start", startDockerContainer))
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/stop", registerContainerAction("stop", stopDockerContainer))
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/restart", registerContainerAction("restart", restartDockerContainer))
@@ -610,6 +637,30 @@ func listDockerImages(ctx context.Context) ([]dockerImageListItem, error) {
 	})
 
 	return images, nil
+}
+
+func dockerContainerLogs(ctx context.Context, containerID string) (string, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return "", errors.New("Docker is not installed on this server.")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerLogsCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, "docker", "logs", "--tail", strconv.Itoa(dockerLogsTailLines), containerID)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return "", errors.New("Timed out while reading Docker container logs.")
+		}
+		return "", formatDockerCommandError(stderr.String(), err)
+	}
+
+	return stdout.String(), nil
 }
 
 func searchDockerHubImages(ctx context.Context, query string, limit int) ([]dockerHubSearchImage, error) {

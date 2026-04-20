@@ -3,6 +3,7 @@ import {
   createDockerContainer,
   deleteDockerContainer,
   downloadDockerContainerSnapshot,
+  fetchDockerContainerLogs,
   fetchDockerContainers,
   fetchDockerImages,
   fetchDockerStatus,
@@ -63,6 +64,12 @@ type DockerTab = "containers" | "images";
 type DockerContainerAction = "start" | "stop" | "restart";
 type DockerContainerMenuAction = "recreate" | "delete" | "snapshot" | "save-image";
 type DockerContainerOperation = DockerContainerAction | DockerContainerMenuAction;
+type DockerContainerLogsState = {
+  output: string;
+  loading: boolean;
+  refreshing: boolean;
+  error: string | null;
+};
 
 function getContainerStateMeta(state: DockerContainer["state"]) {
   switch (state) {
@@ -210,6 +217,15 @@ function sortDockerContainers(containers: DockerContainer[]) {
   );
 }
 
+function createDockerContainerLogsState(): DockerContainerLogsState {
+  return {
+    output: "",
+    loading: false,
+    refreshing: false,
+    error: null,
+  };
+}
+
 function ContainersSkeleton() {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
@@ -323,15 +339,49 @@ function ContainerList({
   containers,
   activeContainerID,
   pendingOperation,
+  expandedContainerID,
+  containerLogs,
   onAction,
   onMenuAction,
+  onToggleExpandedContainer,
+  onRefreshContainerLogs,
 }: {
   containers: DockerContainer[];
   activeContainerID: string | null;
   pendingOperation: DockerContainerOperation | null;
+  expandedContainerID: string | null;
+  containerLogs: DockerContainerLogsState;
   onAction: (container: DockerContainer, action: DockerContainerAction) => void;
   onMenuAction: (container: DockerContainer, action: DockerContainerMenuAction) => void;
+  onToggleExpandedContainer: (container: DockerContainer) => void;
+  onRefreshContainerLogs: (container: DockerContainer) => void;
 }) {
+  const expandedContainerLogsViewportRef = useRef<HTMLPreElement | null>(null);
+  const shouldAutoScrollExpandedLogsRef = useRef(true);
+
+  useEffect(() => {
+    shouldAutoScrollExpandedLogsRef.current = true;
+  }, [expandedContainerID]);
+
+  useEffect(() => {
+    if (expandedContainerID === null || !shouldAutoScrollExpandedLogsRef.current) {
+      return;
+    }
+
+    const animationFrameID = window.requestAnimationFrame(() => {
+      const viewport = expandedContainerLogsViewportRef.current;
+      if (!viewport) {
+        return;
+      }
+
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameID);
+    };
+  }, [expandedContainerID, containerLogs.output]);
+
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
       <div className="hidden grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
@@ -349,160 +399,242 @@ function ContainerList({
         const busy = activeContainerID === container.id;
         const actions = getContainerActions(container);
         const pendingLabel = busy ? getContainerOperationPendingLabel(pendingOperation) : null;
+        const expanded = expandedContainerID === container.id;
         const statusBusy =
           busy &&
           (pendingOperation === "start" ||
             pendingOperation === "stop" ||
             pendingOperation === "restart");
+        const logRegionID = `docker-container-logs-${container.id}`;
 
         return (
           <div
             key={container.id || `${container.name}-${container.image}`}
-            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] md:px-6 md:py-5"
+            className="border-b border-[var(--app-border)] last:border-b-0"
           >
-            <div className="space-y-1">
-              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
-                Name
-              </div>
-              <div className="flex min-w-0 items-center gap-3">
-                <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground/70" />
-                <div className="truncate text-[15px] font-medium text-foreground">{getContainerLabel(container)}</div>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
-                Image
-              </div>
-              <div className="flex min-w-0 items-center gap-2.5 text-[15px] text-foreground">
-                <Docker className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="truncate">{container.image}</span>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
-                Status
-              </div>
-              <DropdownMenu modal={false}>
-                <DropdownMenuTrigger asChild>
-                  <Button
+            <div className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] md:px-6 md:py-5">
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
+                  Name
+                </div>
+                <div className="flex min-w-0 items-center gap-3">
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    className="h-auto w-fit max-w-full justify-start px-0 py-0 text-[15px] font-medium text-foreground hover:bg-transparent hover:text-foreground"
-                    title={container.status}
+                    aria-expanded={expanded}
+                    aria-controls={logRegionID}
+                    aria-label={`${expanded ? "Collapse" : "Expand"} logs for ${getContainerLabel(container)}`}
+                    title={`${expanded ? "Collapse" : "Expand"} logs for ${getContainerLabel(container)}`}
+                    onClick={() => {
+                      onToggleExpandedContainer(container);
+                    }}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[var(--app-surface)] hover:text-foreground"
                   >
-                    <span className="inline-flex min-w-0 items-center gap-2">
-                      {statusBusy ? (
-                        <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-                      ) : (
-                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${stateMeta.dotClassName}`} />
-                      )}
-                      <span className="truncate">{pendingLabel || stateMeta.label}</span>
-                    </span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  className="w-40 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
-                >
-                  {actions.map((action) => {
-                    const Icon = action.icon;
-
-                    return (
-                      <DropdownMenuItem
-                        key={action.key}
-                        onSelect={() => {
-                          onAction(container, action.key);
-                        }}
-                      >
-                        <Icon className="h-4 w-4" />
-                        {action.label}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
-                Actions
+                    <ChevronDownIcon
+                      className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")}
+                    />
+                  </button>
+                  <div className="truncate text-[15px] font-medium text-foreground">{getContainerLabel(container)}</div>
+                </div>
               </div>
-              <div className="flex items-center gap-1 md:justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  disabled={busy}
-                  className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
-                  aria-label={`Open settings for ${getContainerLabel(container)}`}
-                  title={`Open settings for ${getContainerLabel(container)}`}
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
+                  Image
+                </div>
+                <div className="flex min-w-0 items-center gap-2.5 text-[15px] text-foreground">
+                  <Docker className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{container.image}</span>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
+                  Status
+                </div>
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon"
+                      size="sm"
                       disabled={busy}
-                      className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
-                      aria-label={`Open more options for ${getContainerLabel(container)}`}
-                      title={`Open more options for ${getContainerLabel(container)}`}
+                      className="h-auto w-fit max-w-full justify-start px-0 py-0 text-[15px] font-medium text-foreground hover:bg-transparent hover:text-foreground"
+                      title={container.status}
                     >
-                      {busy && !statusBusy ? (
-                        <LoaderCircle className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <DotsVertical className="h-4 w-4" />
-                      )}
+                      <span className="inline-flex min-w-0 items-center gap-2">
+                        {statusBusy ? (
+                          <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                        ) : (
+                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${stateMeta.dotClassName}`} />
+                        )}
+                        <span className="truncate">{pendingLabel || stateMeta.label}</span>
+                      </span>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent
-                    align="end"
-                    className="w-52 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
+                    align="start"
+                    className="w-40 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
                   >
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        onMenuAction(container, "recreate");
-                      }}
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      Recreate
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        onMenuAction(container, "snapshot");
-                      }}
-                    >
-                      <Download className="h-4 w-4" />
-                      Download Snapshot
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        onMenuAction(container, "save-image");
-                      }}
-                    >
-                      <HardDrive className="h-4 w-4" />
-                      Save as Image
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onSelect={() => {
-                        onMenuAction(container, "delete");
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Delete
-                    </DropdownMenuItem>
+                    {actions.map((action) => {
+                      const Icon = action.icon;
+
+                      return (
+                        <DropdownMenuItem
+                          key={action.key}
+                          onSelect={() => {
+                            onAction(container, action.key);
+                          }}
+                        >
+                          <Icon className="h-4 w-4" />
+                          {action.label}
+                        </DropdownMenuItem>
+                      );
+                    })}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
+                  Actions
+                </div>
+                <div className="flex items-center gap-1 md:justify-end">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    disabled={busy}
+                    className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
+                    aria-label={`Open settings for ${getContainerLabel(container)}`}
+                    title={`Open settings for ${getContainerLabel(container)}`}
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Button>
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        disabled={busy}
+                        className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
+                        aria-label={`Open more options for ${getContainerLabel(container)}`}
+                        title={`Open more options for ${getContainerLabel(container)}`}
+                      >
+                        {busy && !statusBusy ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <DotsVertical className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      className="w-52 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
+                    >
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          onMenuAction(container, "recreate");
+                        }}
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        Recreate
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          onMenuAction(container, "snapshot");
+                        }}
+                      >
+                        <Download className="h-4 w-4" />
+                        Download Snapshot
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          onMenuAction(container, "save-image");
+                        }}
+                      >
+                        <HardDrive className="h-4 w-4" />
+                        Save as Image
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onSelect={() => {
+                          onMenuAction(container, "delete");
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
             </div>
+
+            {expanded ? (
+              <div id={logRegionID} className="border-t border-[var(--app-border)] bg-[var(--app-surface)]/55 px-4 py-4 md:px-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium text-foreground">Container logs</div>
+                    <div className="text-xs text-muted-foreground">
+                      Last 200 lines from `docker logs --tail 200 {getContainerLabel(container)}`.
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={containerLogs.loading || containerLogs.refreshing}
+                    onClick={() => {
+                      onRefreshContainerLogs(container);
+                    }}
+                  >
+                    {containerLogs.loading || containerLogs.refreshing ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    Refresh logs
+                  </Button>
+                </div>
+
+                {containerLogs.error ? (
+                  <div className="mt-4 rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
+                    {containerLogs.error}
+                  </div>
+                ) : null}
+
+                {containerLogs.loading && !containerLogs.output ? (
+                  <div className="mt-4 flex items-center gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-sm text-muted-foreground">
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    Loading logs...
+                  </div>
+                ) : null}
+
+                {!containerLogs.loading && !containerLogs.output && !containerLogs.error ? (
+                  <div className="mt-4 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-sm text-muted-foreground">
+                    No logs were returned for this container.
+                  </div>
+                ) : null}
+
+                {containerLogs.output ? (
+                  <div className="mt-4 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+                    <pre
+                      ref={expanded ? expandedContainerLogsViewportRef : null}
+                      onScroll={(event) => {
+                        const viewport = event.currentTarget;
+                        shouldAutoScrollExpandedLogsRef.current =
+                          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
+                      }}
+                      className="max-h-[360px] overflow-auto p-5 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)] sm:p-6"
+                    >
+                      {containerLogs.output}
+                    </pre>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         );
       })}
@@ -935,12 +1067,19 @@ export function DockerPage() {
   const [imagesError, setImagesError] = useState<string | null>(null);
   const [activeContainerID, setActiveContainerID] = useState<string | null>(null);
   const [pendingOperation, setPendingOperation] = useState<DockerContainerOperation | null>(null);
+  const [expandedContainerID, setExpandedContainerID] = useState<string | null>(null);
+  const [expandedContainerLogs, setExpandedContainerLogs] = useState<DockerContainerLogsState>(
+    createDockerContainerLogsState,
+  );
   const [confirmAction, setConfirmAction] = useState<{
     action: Extract<DockerContainerMenuAction, "delete" | "recreate">;
     container: DockerContainer;
   } | null>(null);
   const [saveImageContainer, setSaveImageContainer] = useState<DockerContainer | null>(null);
   const latestRequestRef = useRef(0);
+  const expandedContainerIDRef = useRef<string | null>(null);
+  const expandedContainerLogsRequestIdRef = useRef(0);
+  const expandedContainerLogsBusyRef = useRef(false);
   const latestDataRef = useRef<{
     status: DockerStatus | null;
     containers: DockerContainer[];
@@ -954,6 +1093,74 @@ export function DockerPage() {
   useEffect(() => {
     latestDataRef.current = { status, containers, images };
   }, [status, containers, images]);
+
+  useEffect(() => {
+    expandedContainerIDRef.current = expandedContainerID;
+  }, [expandedContainerID]);
+
+  function resetExpandedContainerLogs(nextExpandedContainerID: string | null = null) {
+    expandedContainerLogsRequestIdRef.current += 1;
+    expandedContainerLogsBusyRef.current = false;
+    expandedContainerIDRef.current = nextExpandedContainerID;
+    setExpandedContainerID(nextExpandedContainerID);
+    setExpandedContainerLogs(createDockerContainerLogsState());
+  }
+
+  async function loadContainerLogs(
+    container: DockerContainer,
+    options?: { preserveOutput?: boolean; background?: boolean },
+  ) {
+    if (expandedContainerLogsBusyRef.current) {
+      return;
+    }
+
+    const requestId = expandedContainerLogsRequestIdRef.current + 1;
+    expandedContainerLogsRequestIdRef.current = requestId;
+    expandedContainerLogsBusyRef.current = true;
+    expandedContainerIDRef.current = container.id;
+    setExpandedContainerID(container.id);
+    setExpandedContainerLogs((current) => ({
+      output: options?.preserveOutput ? current.output : "",
+      loading: options?.background ? false : true,
+      refreshing: Boolean(options?.background),
+      error: null,
+    }));
+
+    try {
+      const output = await fetchDockerContainerLogs(container.id);
+      if (
+        expandedContainerLogsRequestIdRef.current !== requestId ||
+        expandedContainerIDRef.current !== container.id
+      ) {
+        return;
+      }
+
+      setExpandedContainerLogs({
+        output: output.trim(),
+        loading: false,
+        refreshing: false,
+        error: null,
+      });
+    } catch (error) {
+      if (
+        expandedContainerLogsRequestIdRef.current !== requestId ||
+        expandedContainerIDRef.current !== container.id
+      ) {
+        return;
+      }
+
+      setExpandedContainerLogs((current) => ({
+        output: options?.preserveOutput ? current.output : "",
+        loading: false,
+        refreshing: false,
+        error: getErrorMessage(error, `Failed to load logs for ${getContainerLabel(container)}.`),
+      }));
+    } finally {
+      if (expandedContainerLogsRequestIdRef.current === requestId) {
+        expandedContainerLogsBusyRef.current = false;
+      }
+    }
+  }
 
   async function loadDocker(options: LoadOptions = {}) {
     const requestId = latestRequestRef.current + 1;
@@ -1024,8 +1231,52 @@ export function DockerPage() {
 
     return () => {
       latestRequestRef.current += 1;
+      expandedContainerLogsRequestIdRef.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "containers") {
+      return;
+    }
+
+    if (expandedContainerIDRef.current === null) {
+      return;
+    }
+
+    const expandedContainer = containers.find((container) => container.id === expandedContainerIDRef.current);
+    if (!expandedContainer) {
+      resetExpandedContainerLogs();
+      return;
+    }
+
+    void loadContainerLogs(expandedContainer, { preserveOutput: true });
+  }, [activeTab, containers]);
+
+  useEffect(() => {
+    if (activeTab !== "containers" || expandedContainerID === null) {
+      return;
+    }
+
+    const intervalID = window.setInterval(() => {
+      const expandedContainer = latestDataRef.current.containers.find(
+        (container) => container.id === expandedContainerIDRef.current,
+      );
+      if (!expandedContainer) {
+        resetExpandedContainerLogs();
+        return;
+      }
+
+      void loadContainerLogs(expandedContainer, {
+        preserveOutput: true,
+        background: true,
+      });
+    }, 2000);
+
+    return () => {
+      window.clearInterval(intervalID);
+    };
+  }, [activeTab, expandedContainerID]);
 
   async function handleContainerAction(container: DockerContainer, action: DockerContainerAction) {
     if (activeContainerID !== null) {
@@ -1154,6 +1405,16 @@ export function DockerPage() {
     }
 
     setConfirmAction({ action, container });
+  }
+
+  function handleToggleContainerLogs(container: DockerContainer) {
+    if (expandedContainerID === container.id) {
+      resetExpandedContainerLogs();
+      return;
+    }
+
+    resetExpandedContainerLogs(container.id);
+    void loadContainerLogs(container);
   }
 
   const canCreateContainer = Boolean(status?.installed && status.service_running);
@@ -1332,8 +1593,14 @@ export function DockerPage() {
               containers={containers}
               activeContainerID={activeContainerID}
               pendingOperation={pendingOperation}
+              expandedContainerID={expandedContainerID}
+              containerLogs={expandedContainerLogs}
               onAction={handleContainerAction}
               onMenuAction={handleContainerMenuAction}
+              onToggleExpandedContainer={handleToggleContainerLogs}
+              onRefreshContainerLogs={(container) => {
+                void loadContainerLogs(container, { preserveOutput: true });
+              }}
             />
           ) : null}
           {!loading && activeTab === "images" && images.length > 0 ? <ImageList images={images} /> : null}

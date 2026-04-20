@@ -63,6 +63,10 @@ type DockerContainerPayload = {
   container: DockerContainer;
 };
 
+type DockerContainerLogsPayload = {
+  output: string;
+};
+
 async function parseDockerError(response: Response): Promise<Error> {
   let message = `docker request failed with status ${response.status}`;
 
@@ -176,6 +180,20 @@ export async function fetchDockerContainers(): Promise<DockerContainer[]> {
   });
 
   return parseDockerContainersResponse(response);
+}
+
+export async function fetchDockerContainerLogs(containerID: string): Promise<string> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/logs`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
+
+  const payload = (await response.json()) as DockerContainerLogsPayload;
+  return payload.output;
 }
 
 export async function fetchDockerImages(): Promise<DockerImage[]> {
