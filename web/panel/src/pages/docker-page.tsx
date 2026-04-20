@@ -32,6 +32,7 @@ import { type EnvironmentVariable } from "@/api/domains";
 import { DockerVolumeMappingsEditor } from "@/components/docker-volume-mappings-editor";
 import { EnvironmentVariablesEditor } from "@/components/environment-variables-editor";
 import { FieldError } from "@/components/field-error";
+import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import {
   Adjustments,
   ChevronDownIcon,
@@ -1289,6 +1290,7 @@ function DockerHubImageResults({
 type ImageListProps = {
   images: DockerImage[];
   activeImageReference: string | null;
+  createdImageReference: string | null;
   pendingOperation: DockerImageOperation | null;
   disabled: boolean;
   onCreateContainer: (image: DockerImage) => void;
@@ -1298,6 +1300,7 @@ type ImageListProps = {
 function ImageList({
   images,
   activeImageReference,
+  createdImageReference,
   pendingOperation,
   disabled,
   onCreateContainer,
@@ -1322,6 +1325,7 @@ function ImageList({
         const imageReference = getDockerImageReference(image);
         const busy = activeImageReference === imageReference;
         const createBusy = busy && pendingOperation === "create";
+        const createDone = createdImageReference === imageReference;
         const deleteBusy = busy && pendingOperation === "delete";
 
         return (
@@ -1373,13 +1377,13 @@ function ImageList({
               >
                 {createBusy ? (
                   <>
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    <ActionFeedbackIcon busy icon={Plus} className="h-4 w-4" />
                     Creating...
                   </>
                 ) : (
                   <>
-                    <Plus className="h-4 w-4" />
-                    Create container
+                    <ActionFeedbackIcon done={createDone} icon={Plus} className="h-4 w-4" />
+                    {createDone ? "Created" : "Create container"}
                   </>
                 )}
               </Button>
@@ -2133,6 +2137,7 @@ function SaveDockerContainerImageDialog({
 }
 
 export function DockerPage() {
+  const imageCreateFeedbackDurationMs = 1500;
   const [activeTab, setActiveTab] = useState<DockerTab>("containers");
   const [status, setStatus] = useState<DockerStatus | null>(null);
   const [containers, setContainers] = useState<DockerContainer[]>([]);
@@ -2149,6 +2154,7 @@ export function DockerPage() {
   const [pendingOperation, setPendingOperation] = useState<DockerContainerOperation | null>(null);
   const [activeImageReference, setActiveImageReference] = useState<string | null>(null);
   const [pendingImageOperation, setPendingImageOperation] = useState<DockerImageOperation | null>(null);
+  const [createdImageReference, setCreatedImageReference] = useState<string | null>(null);
   const [expandedContainerID, setExpandedContainerID] = useState<string | null>(null);
   const [expandedContainerLogs, setExpandedContainerLogs] = useState<DockerContainerLogsState>(
     createDockerContainerLogsState,
@@ -2164,6 +2170,7 @@ export function DockerPage() {
   const [confirmDeleteImage, setConfirmDeleteImage] = useState<DockerImage | null>(null);
   const [saveImageContainer, setSaveImageContainer] = useState<DockerContainer | null>(null);
   const latestRequestRef = useRef(0);
+  const createdImageTimeoutRef = useRef<number | null>(null);
   const expandedContainerIDRef = useRef<string | null>(null);
   const expandedContainerLogsRequestIdRef = useRef(0);
   const expandedContainerLogsBusyRef = useRef(false);
@@ -2183,6 +2190,14 @@ export function DockerPage() {
   useEffect(() => {
     latestDataRef.current = { status, containers, images };
   }, [status, containers, images]);
+
+  useEffect(() => {
+    return () => {
+      if (createdImageTimeoutRef.current !== null) {
+        window.clearTimeout(createdImageTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     expandedContainerIDRef.current = expandedContainerID;
@@ -2628,11 +2643,21 @@ export function DockerPage() {
     }
 
     const imageReference = getDockerImageReference(image);
+    if (createdImageTimeoutRef.current !== null) {
+      window.clearTimeout(createdImageTimeoutRef.current);
+      createdImageTimeoutRef.current = null;
+    }
+    setCreatedImageReference((current) => (current === imageReference ? null : current));
     setActiveImageReference(imageReference);
     setPendingImageOperation("create");
 
     try {
       const container = await createDockerContainer({ image: imageReference });
+      setCreatedImageReference(imageReference);
+      createdImageTimeoutRef.current = window.setTimeout(() => {
+        setCreatedImageReference((current) => (current === imageReference ? null : current));
+        createdImageTimeoutRef.current = null;
+      }, imageCreateFeedbackDurationMs);
       toast.success(`Created container ${getContainerLabel(container)} from ${getDockerImageLabel(image)}.`);
       void loadDocker({ silent: true });
     } catch (error) {
@@ -2675,6 +2700,7 @@ export function DockerPage() {
     }
 
     const imageReference = getDockerImageReference(image);
+    setCreatedImageReference((current) => (current === imageReference ? null : current));
     setActiveImageReference(imageReference);
     setPendingImageOperation("delete");
 
@@ -2979,6 +3005,7 @@ export function DockerPage() {
             <ImageList
               images={images}
               activeImageReference={activeImageReference}
+              createdImageReference={createdImageReference}
               pendingOperation={pendingImageOperation}
               disabled={anyActionInFlight}
               onCreateContainer={(image) => {
