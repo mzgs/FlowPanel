@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   createDockerContainer,
+  deleteDockerContainer,
+  downloadDockerContainerSnapshot,
   fetchDockerContainers,
   fetchDockerImages,
   fetchDockerStatus,
+  recreateDockerContainer,
   restartDockerContainer,
+  saveDockerContainerAsImage,
   startDockerContainer,
   stopDockerContainer,
   type DockerContainer,
@@ -16,7 +20,9 @@ import {
 import {
   ChevronDownIcon,
   Docker,
+  Download,
   DotsVertical,
+  HardDrive,
   LoaderCircle,
   Package,
   PlayerPlayFilled,
@@ -26,13 +32,16 @@ import {
   Search,
   Settings,
   PlayerStop,
+  Trash2,
 } from "@/components/icons/tabler-icons";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -52,6 +61,8 @@ type LoadOptions = {
 
 type DockerTab = "containers" | "images";
 type DockerContainerAction = "start" | "stop" | "restart";
+type DockerContainerMenuAction = "recreate" | "delete" | "snapshot" | "save-image";
+type DockerContainerOperation = DockerContainerAction | DockerContainerMenuAction;
 
 function getContainerStateMeta(state: DockerContainer["state"]) {
   switch (state) {
@@ -157,6 +168,31 @@ function getContainerActionPendingLabel(action: DockerContainerAction | null) {
   }
 }
 
+function getContainerOperationPendingLabel(action: DockerContainerOperation | null) {
+  switch (action) {
+    case "delete":
+      return "Deleting...";
+    case "recreate":
+      return "Recreating...";
+    case "snapshot":
+      return "Downloading...";
+    case "save-image":
+      return "Saving...";
+    default:
+      return getContainerActionPendingLabel(action);
+  }
+}
+
+function getSuggestedDockerImageName(container: DockerContainer) {
+  const label = getContainerLabel(container)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return `${label || "container"}:snapshot`;
+}
+
 function getContainerActionSuccessMessage(action: DockerContainerAction, container: DockerContainer) {
   switch (action) {
     case "start":
@@ -166,6 +202,12 @@ function getContainerActionSuccessMessage(action: DockerContainerAction, contain
     case "restart":
       return `Restarted container ${getContainerLabel(container)}.`;
   }
+}
+
+function sortDockerContainers(containers: DockerContainer[]) {
+  return [...containers].sort((left, right) =>
+    getContainerLabel(left).toLowerCase().localeCompare(getContainerLabel(right).toLowerCase()),
+  );
 }
 
 function ContainersSkeleton() {
@@ -279,14 +321,16 @@ function TabButton({
 
 function ContainerList({
   containers,
-  actionContainerID,
-  pendingAction,
+  activeContainerID,
+  pendingOperation,
   onAction,
+  onMenuAction,
 }: {
   containers: DockerContainer[];
-  actionContainerID: string | null;
-  pendingAction: DockerContainerAction | null;
+  activeContainerID: string | null;
+  pendingOperation: DockerContainerOperation | null;
   onAction: (container: DockerContainer, action: DockerContainerAction) => void;
+  onMenuAction: (container: DockerContainer, action: DockerContainerMenuAction) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
@@ -302,9 +346,14 @@ function ContainerList({
 
       {containers.map((container) => {
         const stateMeta = getContainerStateMeta(container.state);
-        const busy = actionContainerID === container.id;
+        const busy = activeContainerID === container.id;
         const actions = getContainerActions(container);
-        const pendingLabel = busy ? getContainerActionPendingLabel(pendingAction) : null;
+        const pendingLabel = busy ? getContainerOperationPendingLabel(pendingOperation) : null;
+        const statusBusy =
+          busy &&
+          (pendingOperation === "start" ||
+            pendingOperation === "stop" ||
+            pendingOperation === "restart");
 
         return (
           <div
@@ -346,7 +395,7 @@ function ContainerList({
                     title={container.status}
                   >
                     <span className="inline-flex min-w-0 items-center gap-2">
-                      {busy ? (
+                      {statusBusy ? (
                         <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
                       ) : (
                         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${stateMeta.dotClassName}`} />
@@ -387,22 +436,71 @@ function ContainerList({
                   type="button"
                   variant="ghost"
                   size="icon"
+                  disabled={busy}
                   className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
                   aria-label={`Open settings for ${getContainerLabel(container)}`}
                   title={`Open settings for ${getContainerLabel(container)}`}
                 >
                   <Settings className="h-4 w-4" />
                 </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
-                  aria-label={`Open more options for ${getContainerLabel(container)}`}
-                  title={`Open more options for ${getContainerLabel(container)}`}
-                >
-                  <DotsVertical className="h-4 w-4" />
-                </Button>
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      disabled={busy}
+                      className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
+                      aria-label={`Open more options for ${getContainerLabel(container)}`}
+                      title={`Open more options for ${getContainerLabel(container)}`}
+                    >
+                      {busy && !statusBusy ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <DotsVertical className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-52 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
+                  >
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        onMenuAction(container, "recreate");
+                      }}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Recreate
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        onMenuAction(container, "snapshot");
+                      }}
+                    >
+                      <Download className="h-4 w-4" />
+                      Download Snapshot
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        onMenuAction(container, "save-image");
+                      }}
+                    >
+                      <HardDrive className="h-4 w-4" />
+                      Save as Image
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => {
+                        onMenuAction(container, "delete");
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           </div>
@@ -702,6 +800,128 @@ function AddDockerContainerDialog({
   );
 }
 
+type SaveDockerContainerImageDialogProps = {
+  open: boolean;
+  container: DockerContainer | null;
+  saving: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (image: string) => Promise<void>;
+};
+
+function SaveDockerContainerImageDialog({
+  open,
+  container,
+  saving,
+  onOpenChange,
+  onSave,
+}: SaveDockerContainerImageDialogProps) {
+  const [image, setImage] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !container) {
+      setImage("");
+      setError(null);
+      return;
+    }
+
+    setImage(getSuggestedDockerImageName(container));
+    setError(null);
+  }, [container, open]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!container || saving) {
+      return;
+    }
+
+    const trimmedImage = image.trim();
+    if (trimmedImage === "") {
+      setError("Image name is required.");
+      return;
+    }
+
+    setError(null);
+
+    try {
+      await onSave(trimmedImage);
+    } catch (saveError) {
+      setError(getErrorMessage(saveError, `Failed to save ${getContainerLabel(container)} as an image.`));
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && saving) {
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent className="gap-4 sm:max-w-lg" showCloseButton={!saving}>
+        <DialogHeader>
+          <DialogTitle>Save as Image</DialogTitle>
+          <DialogDescription>
+            Save the current filesystem state of {container ? getContainerLabel(container) : "this container"} as a
+            new Docker image.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label htmlFor="docker-save-image-name" className="text-sm font-medium text-foreground">
+              Image name
+            </label>
+            <Input
+              id="docker-save-image-name"
+              value={image}
+              onChange={(event) => {
+                setImage(event.target.value);
+              }}
+              placeholder="my-app:snapshot"
+              autoComplete="off"
+              disabled={saving}
+            />
+            <p className="text-xs text-muted-foreground">Use a Docker image reference like `my-app:snapshot`.</p>
+          </div>
+
+          {error ? (
+            <div className="rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="flex items-center justify-end gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? (
+                <>
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <HardDrive className="h-4 w-4" />
+                  Save Image
+                </>
+              )}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function DockerPage() {
   const [activeTab, setActiveTab] = useState<DockerTab>("containers");
   const [status, setStatus] = useState<DockerStatus | null>(null);
@@ -713,8 +933,13 @@ export function DockerPage() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [containersError, setContainersError] = useState<string | null>(null);
   const [imagesError, setImagesError] = useState<string | null>(null);
-  const [actionContainerID, setActionContainerID] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<DockerContainerAction | null>(null);
+  const [activeContainerID, setActiveContainerID] = useState<string | null>(null);
+  const [pendingOperation, setPendingOperation] = useState<DockerContainerOperation | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    action: Extract<DockerContainerMenuAction, "delete" | "recreate">;
+    container: DockerContainer;
+  } | null>(null);
+  const [saveImageContainer, setSaveImageContainer] = useState<DockerContainer | null>(null);
   const latestRequestRef = useRef(0);
   const latestDataRef = useRef<{
     status: DockerStatus | null;
@@ -803,7 +1028,7 @@ export function DockerPage() {
   }, []);
 
   async function handleContainerAction(container: DockerContainer, action: DockerContainerAction) {
-    if (actionContainerID !== null) {
+    if (activeContainerID !== null) {
       return;
     }
 
@@ -814,8 +1039,8 @@ export function DockerPage() {
           ? stopDockerContainer
           : restartDockerContainer;
 
-    setActionContainerID(container.id);
-    setPendingAction(action);
+    setActiveContainerID(container.id);
+    setPendingOperation(action);
 
     try {
       const nextContainer = await runAction(container.id);
@@ -829,9 +1054,106 @@ export function DockerPage() {
         getErrorMessage(error, `Failed to ${action} container ${getContainerLabel(container)}.`),
       );
     } finally {
-      setActionContainerID(null);
-      setPendingAction(null);
+      setActiveContainerID(null);
+      setPendingOperation(null);
     }
+  }
+
+  async function handleContainerSnapshot(container: DockerContainer) {
+    if (activeContainerID !== null) {
+      return;
+    }
+
+    setActiveContainerID(container.id);
+    setPendingOperation("snapshot");
+
+    try {
+      const fileName = await downloadDockerContainerSnapshot(container.id);
+      toast.success(`Downloaded ${fileName}.`);
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, `Failed to download a snapshot for ${getContainerLabel(container)}.`),
+      );
+    } finally {
+      setActiveContainerID(null);
+      setPendingOperation(null);
+    }
+  }
+
+  async function handleSaveContainerImage(image: string) {
+    if (!saveImageContainer || activeContainerID !== null) {
+      return;
+    }
+
+    const container = saveImageContainer;
+    setActiveContainerID(container.id);
+    setPendingOperation("save-image");
+
+    try {
+      await saveDockerContainerAsImage(container.id, image);
+      setSaveImageContainer(null);
+      toast.success(`Saved image ${image}.`);
+      void loadDocker({ silent: true });
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, `Failed to save ${getContainerLabel(container)} as image ${image}.`),
+      );
+      throw error;
+    } finally {
+      setActiveContainerID(null);
+      setPendingOperation(null);
+    }
+  }
+
+  async function handleConfirmedContainerAction(container: DockerContainer, action: "delete" | "recreate") {
+    if (activeContainerID !== null) {
+      return;
+    }
+
+    setActiveContainerID(container.id);
+    setPendingOperation(action);
+
+    try {
+      if (action === "delete") {
+        await deleteDockerContainer(container.id);
+        setContainers((current) => current.filter((item) => item.id !== container.id));
+        setConfirmAction(null);
+        toast.success(`Deleted container ${getContainerLabel(container)}.`);
+      } else {
+        const nextContainer = await recreateDockerContainer(container.id);
+        setContainers((current) =>
+          sortDockerContainers([
+            ...current.filter((item) => item.id !== container.id),
+            nextContainer,
+          ]),
+        );
+        setConfirmAction(null);
+        toast.success(`Recreated container ${getContainerLabel(nextContainer)}.`);
+      }
+
+      void loadDocker({ silent: true });
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, `Failed to ${action} container ${getContainerLabel(container)}.`),
+      );
+    } finally {
+      setActiveContainerID(null);
+      setPendingOperation(null);
+    }
+  }
+
+  function handleContainerMenuAction(container: DockerContainer, action: DockerContainerMenuAction) {
+    if (action === "snapshot") {
+      void handleContainerSnapshot(container);
+      return;
+    }
+
+    if (action === "save-image") {
+      setSaveImageContainer(container);
+      return;
+    }
+
+    setConfirmAction({ action, container });
   }
 
   const canCreateContainer = Boolean(status?.installed && status.service_running);
@@ -840,7 +1162,7 @@ export function DockerPage() {
       <Button
         size="sm"
         onClick={() => setCreateDialogOpen(true)}
-        disabled={!canCreateContainer || loading || actionContainerID !== null}
+        disabled={!canCreateContainer || loading || activeContainerID !== null}
       >
         <Plus className="h-4 w-4" />
         Add Container
@@ -849,7 +1171,7 @@ export function DockerPage() {
         variant="outline"
         size="sm"
         onClick={() => void loadDocker({ silent: true })}
-        disabled={loading || refreshing || actionContainerID !== null}
+        disabled={loading || refreshing || activeContainerID !== null}
       >
         {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         Refresh
@@ -871,6 +1193,53 @@ export function DockerPage() {
         onCreated={(container) => {
           toast.success(`Created container ${getContainerLabel(container)}.`);
           void loadDocker({ silent: true });
+        }}
+      />
+      <SaveDockerContainerImageDialog
+        open={saveImageContainer !== null}
+        container={saveImageContainer}
+        saving={
+          saveImageContainer !== null &&
+          activeContainerID === saveImageContainer.id &&
+          pendingOperation === "save-image"
+        }
+        onOpenChange={(open) => {
+          if (!open && activeContainerID === null) {
+            setSaveImageContainer(null);
+          }
+        }}
+        onSave={handleSaveContainerImage}
+      />
+      <ConfirmDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => {
+          if (!open && activeContainerID === null) {
+            setConfirmAction(null);
+          }
+        }}
+        title={
+          confirmAction?.action === "delete"
+            ? `Delete ${confirmAction ? getContainerLabel(confirmAction.container) : "container"}?`
+            : `Recreate ${confirmAction ? getContainerLabel(confirmAction.container) : "container"}?`
+        }
+        desc={
+          confirmAction?.action === "delete"
+            ? "This removes the container immediately. Any stopped or running state for this container will be lost."
+            : "This removes the current container and creates a new one from the same Docker configuration. Running containers are started again after recreation."
+        }
+        confirmText={confirmAction?.action === "delete" ? "Delete container" : "Recreate container"}
+        destructive={confirmAction?.action === "delete"}
+        isLoading={
+          confirmAction !== null &&
+          activeContainerID === confirmAction.container.id &&
+          pendingOperation === confirmAction.action
+        }
+        handleConfirm={() => {
+          if (!confirmAction) {
+            return;
+          }
+
+          void handleConfirmedContainerAction(confirmAction.container, confirmAction.action);
         }}
       />
 
@@ -961,9 +1330,10 @@ export function DockerPage() {
           {!loading && activeTab === "containers" && containers.length > 0 ? (
             <ContainerList
               containers={containers}
-              actionContainerID={actionContainerID}
-              pendingAction={pendingAction}
+              activeContainerID={activeContainerID}
+              pendingOperation={pendingOperation}
               onAction={handleContainerAction}
+              onMenuAction={handleContainerMenuAction}
             />
           ) : null}
           {!loading && activeTab === "images" && images.length > 0 ? <ImageList images={images} /> : null}

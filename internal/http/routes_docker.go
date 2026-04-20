@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	stdhttp "net/http"
 	"os/exec"
 	"sort"
@@ -23,6 +24,7 @@ const (
 	dockerSearchCommandTimeout = 10 * time.Second
 	dockerActionCommandTimeout = 30 * time.Second
 	dockerCreateCommandTimeout = 2 * time.Minute
+	dockerExportCommandTimeout = 2 * time.Minute
 	dockerSearchResultLimit    = 100
 )
 
@@ -66,6 +68,76 @@ type dockerHubSearchImage struct {
 
 type createDockerContainerRequest struct {
 	Image string `json:"image"`
+}
+
+type saveDockerContainerImageRequest struct {
+	Image string `json:"image"`
+}
+
+type dockerInspectRecord struct {
+	ID         string                   `json:"Id"`
+	Name       string                   `json:"Name"`
+	Config     dockerInspectConfig      `json:"Config"`
+	HostConfig dockerInspectHostConfig  `json:"HostConfig"`
+	Mounts     []dockerInspectMount     `json:"Mounts"`
+	State      dockerInspectStateRecord `json:"State"`
+}
+
+type dockerInspectConfig struct {
+	Image        string            `json:"Image"`
+	Env          []string          `json:"Env"`
+	Entrypoint   []string          `json:"Entrypoint"`
+	Cmd          []string          `json:"Cmd"`
+	WorkingDir   string            `json:"WorkingDir"`
+	User         string            `json:"User"`
+	Labels       map[string]string `json:"Labels"`
+	Hostname     string            `json:"Hostname"`
+	Domainname   string            `json:"Domainname"`
+	StopSignal   string            `json:"StopSignal"`
+	Tty          bool              `json:"Tty"`
+	OpenStdin    bool              `json:"OpenStdin"`
+	ExposedPorts map[string]any    `json:"ExposedPorts"`
+}
+
+type dockerInspectHostConfig struct {
+	Binds           []string                       `json:"Binds"`
+	PortBindings    map[string][]dockerPortBinding `json:"PortBindings"`
+	RestartPolicy   dockerRestartPolicy            `json:"RestartPolicy"`
+	NetworkMode     string                         `json:"NetworkMode"`
+	ExtraHosts      []string                       `json:"ExtraHosts"`
+	CapAdd          []string                       `json:"CapAdd"`
+	CapDrop         []string                       `json:"CapDrop"`
+	DNS             []string                       `json:"Dns"`
+	DNSSearch       []string                       `json:"DnsSearch"`
+	Tmpfs           map[string]string              `json:"Tmpfs"`
+	ShmSize         int64                          `json:"ShmSize"`
+	AutoRemove      bool                           `json:"AutoRemove"`
+	PublishAllPorts bool                           `json:"PublishAllPorts"`
+	ReadonlyRootfs  bool                           `json:"ReadonlyRootfs"`
+	Privileged      bool                           `json:"Privileged"`
+	Init            *bool                          `json:"Init"`
+}
+
+type dockerInspectMount struct {
+	Type        string `json:"Type"`
+	Name        string `json:"Name"`
+	Source      string `json:"Source"`
+	Destination string `json:"Destination"`
+	RW          bool   `json:"RW"`
+}
+
+type dockerInspectStateRecord struct {
+	Running bool `json:"Running"`
+}
+
+type dockerPortBinding struct {
+	HostIP   string `json:"HostIp"`
+	HostPort string `json:"HostPort"`
+}
+
+type dockerRestartPolicy struct {
+	Name              string `json:"Name"`
+	MaximumRetryCount int    `json:"MaximumRetryCount"`
 }
 
 func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
@@ -220,12 +292,209 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 		}
 	}
 
+	deleteContainerHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		label := shortDockerID(containerID)
+		if container, err := inspectDockerContainer(actionCtx, containerID); err == nil && strings.TrimSpace(container.Name) != "" {
+			label = container.Name
+		}
+
+		if err := deleteDockerContainer(actionCtx, containerID); err != nil {
+			a.app.Logger.Error("delete docker container failed", zap.String("container_id", containerID), zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "delete", "docker_container", containerID, label, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		a.mutationEvent(
+			actionCtx,
+			"runtime",
+			"delete",
+			"docker_container",
+			containerID,
+			label,
+			"succeeded",
+			fmt.Sprintf("Deleted Docker container %q.", label),
+		)
+		w.WriteHeader(stdhttp.StatusNoContent)
+	})
+
+	recreateContainerHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		container, err := recreateDockerContainer(actionCtx, containerID)
+		if err != nil {
+			a.app.Logger.Error("recreate docker container failed", zap.String("container_id", containerID), zap.Error(err))
+			a.mutationEvent(actionCtx, "runtime", "recreate", "docker_container", containerID, shortDockerID(containerID), "failed", err.Error())
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		label := container.Name
+		if label == "" {
+			label = shortDockerID(container.ID)
+		}
+
+		a.mutationEvent(
+			actionCtx,
+			"runtime",
+			"recreate",
+			"docker_container",
+			container.ID,
+			label,
+			"succeeded",
+			fmt.Sprintf("Recreated Docker container %q.", label),
+		)
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
+	})
+
+	saveContainerImageHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		var input saveDockerContainerImageRequest
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		input.Image = strings.TrimSpace(input.Image)
+		if input.Image == "" {
+			writeValidationFailed(w, map[string]string{
+				"image": "Image name is required.",
+			})
+			return
+		}
+
+		actionCtx := backgroundRequestContext(r.Context())
+		label := shortDockerID(containerID)
+		if container, err := inspectDockerContainer(actionCtx, containerID); err == nil && strings.TrimSpace(container.Name) != "" {
+			label = container.Name
+		}
+
+		if err := saveDockerContainerImage(actionCtx, containerID, input.Image); err != nil {
+			a.app.Logger.Error(
+				"save docker container as image failed",
+				zap.String("container_id", containerID),
+				zap.String("image", input.Image),
+				zap.Error(err),
+			)
+			a.mutationEvent(actionCtx, "runtime", "save_image", "docker_image", input.Image, input.Image, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		a.mutationEvent(
+			actionCtx,
+			"runtime",
+			"save_image",
+			"docker_image",
+			input.Image,
+			input.Image,
+			"succeeded",
+			fmt.Sprintf("Saved Docker container %q as image %q.", label, input.Image),
+		)
+		w.WriteHeader(stdhttp.StatusNoContent)
+	})
+
+	snapshotContainerHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		commandCtx, cancel := context.WithTimeout(r.Context(), dockerExportCommandTimeout)
+		defer cancel()
+
+		container, err := inspectDockerContainer(commandCtx, containerID)
+		if err != nil {
+			a.app.Logger.Error("inspect docker container for snapshot failed", zap.String("container_id", containerID), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		cmd := exec.CommandContext(commandCtx, "docker", "export", containerID)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			a.app.Logger.Error("create docker export stdout pipe failed", zap.String("container_id", containerID), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "Failed to prepare the Docker snapshot download."})
+			return
+		}
+
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+
+		if err := cmd.Start(); err != nil {
+			downloadErr := formatDockerCommandError(stderr.String(), err)
+			a.app.Logger.Error("start docker export failed", zap.String("container_id", containerID), zap.Error(downloadErr))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": downloadErr.Error()})
+			return
+		}
+
+		fileName := dockerSnapshotFileName(container)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+		w.Header().Set("Content-Type", "application/x-tar")
+		if _, err := io.Copy(w, stdout); err != nil {
+			a.app.Logger.Error("stream docker snapshot failed", zap.String("container_id", containerID), zap.Error(err))
+		}
+		if err := cmd.Wait(); err != nil {
+			a.app.Logger.Error("docker export failed", zap.String("container_id", containerID), zap.Error(formatDockerCommandError(stderr.String(), err)))
+		}
+	})
+
 	r.Method(stdhttp.MethodGet, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodHead, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers", createContainerHandler)
+	r.Method(stdhttp.MethodDelete, "/docker/containers/{containerID}", deleteContainerHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/start", registerContainerAction("start", startDockerContainer))
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/stop", registerContainerAction("stop", stopDockerContainer))
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/restart", registerContainerAction("restart", restartDockerContainer))
+	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/recreate", recreateContainerHandler)
+	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/save-image", saveContainerImageHandler)
+	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/snapshot", snapshotContainerHandler)
 	r.Method(stdhttp.MethodGet, "/docker/images", imagesHandler)
 	r.Method(stdhttp.MethodHead, "/docker/images", imagesHandler)
 	r.Method(stdhttp.MethodGet, "/docker/search-images", searchHandler)
@@ -455,6 +724,95 @@ func restartDockerContainer(ctx context.Context, containerID string) (dockerCont
 	return runDockerContainerAction(ctx, containerID, "restart")
 }
 
+func deleteDockerContainer(ctx context.Context, containerID string) error {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return errors.New("Docker is not installed on this server.")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerActionCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, "docker", "rm", "--force", containerID)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return errors.New("Timed out while deleting the Docker container.")
+		}
+		return formatDockerCommandError(stderr.String(), err)
+	}
+
+	return nil
+}
+
+func recreateDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return dockerContainerListItem{}, errors.New("Docker is not installed on this server.")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerCreateCommandTimeout)
+	defer cancel()
+
+	record, err := inspectDockerContainerConfig(commandCtx, containerID)
+	if err != nil {
+		return dockerContainerListItem{}, err
+	}
+
+	args := dockerCreateArgs(record)
+	if err := deleteDockerContainer(commandCtx, containerID); err != nil {
+		return dockerContainerListItem{}, err
+	}
+
+	cmd := exec.CommandContext(commandCtx, "docker", args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return dockerContainerListItem{}, errors.New("Timed out while recreating the Docker container.")
+		}
+		return dockerContainerListItem{}, formatDockerCommandError(stderr.String(), err)
+	}
+
+	newContainerID := strings.TrimSpace(stdout.String())
+	if newContainerID == "" {
+		return dockerContainerListItem{}, errors.New("Docker did not return the recreated container identifier.")
+	}
+
+	if record.State.Running {
+		if _, err := runDockerContainerAction(commandCtx, newContainerID, "start"); err != nil {
+			return dockerContainerListItem{}, err
+		}
+	}
+
+	return inspectDockerContainer(commandCtx, newContainerID)
+}
+
+func saveDockerContainerImage(ctx context.Context, containerID, image string) error {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return errors.New("Docker is not installed on this server.")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerCreateCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, "docker", "commit", containerID, image)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return errors.New("Timed out while saving the Docker container as an image.")
+		}
+		return formatDockerCommandError(stderr.String(), err)
+	}
+
+	return nil
+}
+
 func runDockerContainerAction(ctx context.Context, containerID, action string) (dockerContainerListItem, error) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return dockerContainerListItem{}, errors.New("Docker is not installed on this server.")
@@ -513,6 +871,223 @@ func inspectDockerContainer(ctx context.Context, containerID string) (dockerCont
 	}
 
 	return dockerContainerListItem{}, errors.New("Docker container details were unavailable.")
+}
+
+func inspectDockerContainerConfig(ctx context.Context, containerID string) (dockerInspectRecord, error) {
+	cmd := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", containerID)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return dockerInspectRecord{}, formatDockerCommandError(stderr.String(), err)
+	}
+
+	var records []dockerInspectRecord
+	if err := json.Unmarshal(stdout.Bytes(), &records); err != nil {
+		return dockerInspectRecord{}, errors.New("Docker returned unreadable container details.")
+	}
+	if len(records) == 0 {
+		return dockerInspectRecord{}, errors.New("Docker container details were unavailable.")
+	}
+
+	return records[0], nil
+}
+
+func dockerCreateArgs(record dockerInspectRecord) []string {
+	args := []string{"create", "-q"}
+
+	name := strings.TrimPrefix(strings.TrimSpace(record.Name), "/")
+	if name != "" {
+		args = append(args, "--name", name)
+	}
+	if record.Config.Hostname != "" {
+		args = append(args, "--hostname", record.Config.Hostname)
+	}
+	if record.Config.Domainname != "" {
+		args = append(args, "--domainname", record.Config.Domainname)
+	}
+	if record.Config.WorkingDir != "" {
+		args = append(args, "--workdir", record.Config.WorkingDir)
+	}
+	if record.Config.User != "" {
+		args = append(args, "--user", record.Config.User)
+	}
+	if record.Config.StopSignal != "" {
+		args = append(args, "--stop-signal", record.Config.StopSignal)
+	}
+	if record.Config.Tty {
+		args = append(args, "--tty")
+	}
+	if record.Config.OpenStdin {
+		args = append(args, "--interactive")
+	}
+	if record.HostConfig.AutoRemove {
+		args = append(args, "--rm")
+	}
+	if record.HostConfig.PublishAllPorts {
+		args = append(args, "--publish-all")
+	}
+	if record.HostConfig.ReadonlyRootfs {
+		args = append(args, "--read-only")
+	}
+	if record.HostConfig.Privileged {
+		args = append(args, "--privileged")
+	}
+	if record.HostConfig.Init != nil && *record.HostConfig.Init {
+		args = append(args, "--init")
+	}
+	if record.HostConfig.ShmSize > 0 {
+		args = append(args, "--shm-size", strconv.FormatInt(record.HostConfig.ShmSize, 10))
+	}
+	if entrypoint := dockerEntrypointValue(record.Config.Entrypoint); entrypoint != "" {
+		args = append(args, "--entrypoint", entrypoint)
+	}
+	if restart := dockerRestartPolicyValue(record.HostConfig.RestartPolicy); restart != "" {
+		args = append(args, "--restart", restart)
+	}
+	if networkMode := strings.TrimSpace(record.HostConfig.NetworkMode); networkMode != "" && networkMode != "default" {
+		args = append(args, "--network", networkMode)
+	}
+
+	labelKeys := make([]string, 0, len(record.Config.Labels))
+	for key := range record.Config.Labels {
+		labelKeys = append(labelKeys, key)
+	}
+	sort.Strings(labelKeys)
+	for _, key := range labelKeys {
+		args = append(args, "--label", key+"="+record.Config.Labels[key])
+	}
+
+	for _, env := range record.Config.Env {
+		env = strings.TrimSpace(env)
+		if env != "" {
+			args = append(args, "--env", env)
+		}
+	}
+
+	for _, host := range record.HostConfig.ExtraHosts {
+		host = strings.TrimSpace(host)
+		if host != "" {
+			args = append(args, "--add-host", host)
+		}
+	}
+
+	for _, dns := range record.HostConfig.DNS {
+		dns = strings.TrimSpace(dns)
+		if dns != "" {
+			args = append(args, "--dns", dns)
+		}
+	}
+
+	for _, dnsSearch := range record.HostConfig.DNSSearch {
+		dnsSearch = strings.TrimSpace(dnsSearch)
+		if dnsSearch != "" {
+			args = append(args, "--dns-search", dnsSearch)
+		}
+	}
+
+	for _, capability := range record.HostConfig.CapAdd {
+		capability = strings.TrimSpace(capability)
+		if capability != "" {
+			args = append(args, "--cap-add", capability)
+		}
+	}
+
+	for _, capability := range record.HostConfig.CapDrop {
+		capability = strings.TrimSpace(capability)
+		if capability != "" {
+			args = append(args, "--cap-drop", capability)
+		}
+	}
+
+	portKeys := make([]string, 0, len(record.HostConfig.PortBindings))
+	for key := range record.HostConfig.PortBindings {
+		portKeys = append(portKeys, key)
+	}
+	sort.Strings(portKeys)
+	for _, key := range portKeys {
+		bindings := record.HostConfig.PortBindings[key]
+		if len(bindings) == 0 {
+			args = append(args, "--expose", key)
+			continue
+		}
+
+		for _, binding := range bindings {
+			publish := dockerPublishValue(key, binding)
+			if publish != "" {
+				args = append(args, "--publish", publish)
+			}
+		}
+	}
+
+	for _, bind := range record.HostConfig.Binds {
+		bind = strings.TrimSpace(bind)
+		if bind != "" {
+			args = append(args, "--volume", bind)
+		}
+	}
+
+	bindDestinations := make(map[string]struct{}, len(record.HostConfig.Binds))
+	for _, bind := range record.HostConfig.Binds {
+		if destination := dockerBindDestination(bind); destination != "" {
+			bindDestinations[destination] = struct{}{}
+		}
+	}
+
+	for _, mount := range record.Mounts {
+		if strings.TrimSpace(mount.Destination) == "" || mount.Type != "volume" {
+			continue
+		}
+		if _, exists := bindDestinations[mount.Destination]; exists {
+			continue
+		}
+
+		spec := "type=volume"
+		if mount.Name != "" {
+			spec += ",src=" + mount.Name
+		}
+		spec += ",dst=" + mount.Destination
+		if !mount.RW {
+			spec += ",readonly"
+		}
+		args = append(args, "--mount", spec)
+	}
+
+	tmpfsKeys := make([]string, 0, len(record.HostConfig.Tmpfs))
+	for key := range record.HostConfig.Tmpfs {
+		tmpfsKeys = append(tmpfsKeys, key)
+	}
+	sort.Strings(tmpfsKeys)
+	for _, key := range tmpfsKeys {
+		spec := key
+		if value := strings.TrimSpace(record.HostConfig.Tmpfs[key]); value != "" {
+			spec += ":" + value
+		}
+		args = append(args, "--tmpfs", spec)
+	}
+
+	exposedPortKeys := make([]string, 0, len(record.Config.ExposedPorts))
+	for key := range record.Config.ExposedPorts {
+		exposedPortKeys = append(exposedPortKeys, key)
+	}
+	sort.Strings(exposedPortKeys)
+	for _, key := range exposedPortKeys {
+		if _, published := record.HostConfig.PortBindings[key]; published {
+			continue
+		}
+		args = append(args, "--expose", key)
+	}
+
+	image := strings.TrimSpace(record.Config.Image)
+	if image == "" {
+		image = strings.TrimSpace(record.ID)
+	}
+	args = append(args, image)
+	args = append(args, record.Config.Cmd...)
+
+	return args
 }
 
 func formatDockerCommandError(stderr string, fallback error) error {
@@ -648,4 +1223,73 @@ func dockerContainerActionPresentParticiple(action string) string {
 	default:
 		return "updating"
 	}
+}
+
+func dockerRestartPolicyValue(policy dockerRestartPolicy) string {
+	name := strings.TrimSpace(policy.Name)
+	if name == "" || name == "no" {
+		return ""
+	}
+	if name == "on-failure" && policy.MaximumRetryCount > 0 {
+		return fmt.Sprintf("%s:%d", name, policy.MaximumRetryCount)
+	}
+	return name
+}
+
+func dockerEntrypointValue(entrypoint []string) string {
+	trimmed := make([]string, 0, len(entrypoint))
+	for _, value := range entrypoint {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			trimmed = append(trimmed, value)
+		}
+	}
+	if len(trimmed) == 0 {
+		return ""
+	}
+	return strings.Join(trimmed, " ")
+}
+
+func dockerPublishValue(containerPort string, binding dockerPortBinding) string {
+	hostPort := strings.TrimSpace(binding.HostPort)
+	hostIP := strings.TrimSpace(binding.HostIP)
+	switch {
+	case hostIP != "" && hostPort != "":
+		return hostIP + ":" + hostPort + ":" + containerPort
+	case hostPort != "":
+		return hostPort + ":" + containerPort
+	case hostIP != "":
+		return hostIP + "::" + containerPort
+	default:
+		return containerPort
+	}
+}
+
+func dockerBindDestination(bind string) string {
+	parts := strings.Split(bind, ":")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
+}
+
+func dockerSnapshotFileName(container dockerContainerListItem) string {
+	label := strings.TrimSpace(container.Name)
+	if label == "" {
+		label = shortDockerID(container.ID)
+	}
+
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		" ", "-",
+	)
+	label = replacer.Replace(label)
+	label = strings.Trim(label, "-.")
+	if label == "" {
+		label = "docker-container"
+	}
+
+	return label + "-snapshot.tar"
 }

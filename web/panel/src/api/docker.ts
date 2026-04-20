@@ -214,6 +214,53 @@ export async function createDockerContainer(input: { image: string }): Promise<D
   return parseDockerContainerResponse(response);
 }
 
+export async function deleteDockerContainer(containerID: string): Promise<void> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
+}
+
+export async function recreateDockerContainer(containerID: string): Promise<DockerContainer> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/recreate`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parseDockerContainerResponse(response);
+}
+
+export async function downloadDockerContainerSnapshot(containerID: string): Promise<string> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/snapshot`, {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
+
+  return triggerDockerDownload(response, `${containerID}.tar`);
+}
+
+export async function saveDockerContainerAsImage(containerID: string, image: string): Promise<void> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/save-image`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ image }),
+  });
+
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
+}
+
 async function runDockerContainerAction(containerID: string, action: "start" | "stop" | "restart"): Promise<DockerContainer> {
   const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/${action}`, {
     method: "POST",
@@ -233,4 +280,41 @@ export async function stopDockerContainer(containerID: string): Promise<DockerCo
 
 export async function restartDockerContainer(containerID: string): Promise<DockerContainer> {
   return runDockerContainerAction(containerID, "restart");
+}
+
+async function triggerDockerDownload(response: Response, fallbackName: string): Promise<string> {
+  const blob = await response.blob();
+  const downloadURL = window.URL.createObjectURL(blob);
+  const fileName = getDockerDownloadFilename(response.headers.get("Content-Disposition"), fallbackName);
+  const anchor = document.createElement("a");
+
+  anchor.href = downloadURL;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(downloadURL);
+  }, 0);
+
+  return fileName;
+}
+
+function getDockerDownloadFilename(contentDisposition: string | null, fallbackName: string): string {
+  if (contentDisposition) {
+    const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (encodedMatch?.[1]) {
+      return decodeURIComponent(encodedMatch[1]);
+    }
+
+    const plainMatch = contentDisposition.match(/filename=\"([^\"]+)\"|filename=([^;]+)/i);
+    const value = plainMatch?.[1] ?? plainMatch?.[2];
+    if (value) {
+      return value.trim();
+    }
+  }
+
+  return fallbackName;
 }
