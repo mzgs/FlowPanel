@@ -16,6 +16,7 @@ import {
 import {
   ChevronDownIcon,
   Docker,
+  DotsVertical,
   LoaderCircle,
   Package,
   PlayerPlayFilled,
@@ -23,6 +24,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Settings,
   PlayerStop,
 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
@@ -169,19 +171,24 @@ function getContainerActionSuccessMessage(action: DockerContainerAction, contain
 function ContainersSkeleton() {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(170px,0.65fr)] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
         <div>Name</div>
         <div>Image</div>
         <div>Status</div>
+        <div className="text-right">Actions</div>
       </div>
       {Array.from({ length: 4 }).map((_, index) => (
         <div
           key={index}
-          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(170px,0.65fr)] md:px-6"
+          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] md:px-6"
         >
           <div className="h-5 w-40 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-52 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-24 animate-pulse rounded bg-[var(--app-surface)]" />
+          <div className="flex justify-start gap-2 md:justify-end">
+            <div className="h-9 w-9 animate-pulse rounded-md bg-[var(--app-surface)]" />
+            <div className="h-9 w-9 animate-pulse rounded-md bg-[var(--app-surface)]" />
+          </div>
         </div>
       ))}
     </div>
@@ -283,13 +290,14 @@ function ContainerList({
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(170px,0.65fr)] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
         <div className="flex items-center gap-3">
           <ChevronDownIcon className="h-4 w-4 text-muted-foreground/70" />
           <span>Name</span>
         </div>
         <div>Image ↑</div>
         <div>Status</div>
+        <div className="text-right">Actions</div>
       </div>
 
       {containers.map((container) => {
@@ -301,7 +309,7 @@ function ContainerList({
         return (
           <div
             key={container.id || `${container.name}-${container.image}`}
-            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(170px,0.65fr)] md:px-6 md:py-5"
+            className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(140px,0.55fr)_120px] md:px-6 md:py-5"
           >
             <div className="space-y-1">
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
@@ -368,6 +376,34 @@ function ContainerList({
                   })}
                 </DropdownMenuContent>
               </DropdownMenu>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
+                Actions
+              </div>
+              <div className="flex items-center gap-1 md:justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
+                  aria-label={`Open settings for ${getContainerLabel(container)}`}
+                  title={`Open settings for ${getContainerLabel(container)}`}
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
+                  aria-label={`Open more options for ${getContainerLabel(container)}`}
+                  title={`Open more options for ${getContainerLabel(container)}`}
+                >
+                  <DotsVertical className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
         );
