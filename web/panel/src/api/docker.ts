@@ -182,8 +182,9 @@ export async function fetchDockerContainers(): Promise<DockerContainer[]> {
   return parseDockerContainersResponse(response);
 }
 
-export async function fetchDockerContainerLogs(containerID: string): Promise<string> {
-  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/logs`, {
+export async function fetchDockerContainerLogs(containerID: string, options?: { since?: string }): Promise<string> {
+  const suffix = options?.since ? `?since=${encodeURIComponent(options.since)}` : "";
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/logs${suffix}`, {
     credentials: "include",
     cache: "no-store",
   });

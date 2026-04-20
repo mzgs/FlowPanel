@@ -501,7 +501,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			return
 		}
 
-		output, err := dockerContainerLogs(r.Context(), containerID)
+		output, err := dockerContainerLogs(r.Context(), containerID, trimmedQuery(r, "since"))
 		if err != nil {
 			a.app.Logger.Error("read docker container logs failed", zap.String("container_id", containerID), zap.Error(err))
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
@@ -639,7 +639,7 @@ func listDockerImages(ctx context.Context) ([]dockerImageListItem, error) {
 	return images, nil
 }
 
-func dockerContainerLogs(ctx context.Context, containerID string) (string, error) {
+func dockerContainerLogs(ctx context.Context, containerID, since string) (string, error) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return "", errors.New("Docker is not installed on this server.")
 	}
@@ -647,7 +647,13 @@ func dockerContainerLogs(ctx context.Context, containerID string) (string, error
 	commandCtx, cancel := context.WithTimeout(ctx, dockerLogsCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(commandCtx, "docker", "logs", "--tail", strconv.Itoa(dockerLogsTailLines), containerID)
+	args := []string{"logs", "--tail", strconv.Itoa(dockerLogsTailLines)}
+	if strings.TrimSpace(since) != "" {
+		args = append(args, "--since", strings.TrimSpace(since))
+	}
+	args = append(args, containerID)
+
+	cmd := exec.CommandContext(commandCtx, "docker", args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout

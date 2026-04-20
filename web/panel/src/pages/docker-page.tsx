@@ -344,7 +344,7 @@ function ContainerList({
   onAction,
   onMenuAction,
   onToggleExpandedContainer,
-  onRefreshContainerLogs,
+  onClearContainerLogs,
 }: {
   containers: DockerContainer[];
   activeContainerID: string | null;
@@ -354,7 +354,7 @@ function ContainerList({
   onAction: (container: DockerContainer, action: DockerContainerAction) => void;
   onMenuAction: (container: DockerContainer, action: DockerContainerMenuAction) => void;
   onToggleExpandedContainer: (container: DockerContainer) => void;
-  onRefreshContainerLogs: (container: DockerContainer) => void;
+  onClearContainerLogs: (container: DockerContainer) => void;
 }) {
   const expandedContainerLogsViewportRef = useRef<HTMLPreElement | null>(null);
   const shouldAutoScrollExpandedLogsRef = useRef(true);
@@ -581,22 +581,20 @@ function ContainerList({
                       Last 200 lines from `docker logs --tail 200 {getContainerLabel(container)}`.
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={containerLogs.loading || containerLogs.refreshing}
-                    onClick={() => {
-                      onRefreshContainerLogs(container);
-                    }}
-                  >
-                    {containerLogs.loading || containerLogs.refreshing ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                    Refresh logs
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={containerLogs.loading || containerLogs.refreshing}
+                      onClick={() => {
+                        onClearContainerLogs(container);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Clear logs
+                    </Button>
+                  </div>
                 </div>
 
                 {containerLogs.error ? (
@@ -1080,6 +1078,7 @@ export function DockerPage() {
   const expandedContainerIDRef = useRef<string | null>(null);
   const expandedContainerLogsRequestIdRef = useRef(0);
   const expandedContainerLogsBusyRef = useRef(false);
+  const expandedContainerLogsSinceRef = useRef<string | null>(null);
   const latestDataRef = useRef<{
     status: DockerStatus | null;
     containers: DockerContainer[];
@@ -1101,6 +1100,7 @@ export function DockerPage() {
   function resetExpandedContainerLogs(nextExpandedContainerID: string | null = null) {
     expandedContainerLogsRequestIdRef.current += 1;
     expandedContainerLogsBusyRef.current = false;
+    expandedContainerLogsSinceRef.current = null;
     expandedContainerIDRef.current = nextExpandedContainerID;
     setExpandedContainerID(nextExpandedContainerID);
     setExpandedContainerLogs(createDockerContainerLogsState());
@@ -1127,7 +1127,9 @@ export function DockerPage() {
     }));
 
     try {
-      const output = await fetchDockerContainerLogs(container.id);
+      const output = await fetchDockerContainerLogs(container.id, {
+        since: expandedContainerLogsSinceRef.current ?? undefined,
+      });
       if (
         expandedContainerLogsRequestIdRef.current !== requestId ||
         expandedContainerIDRef.current !== container.id
@@ -1417,6 +1419,23 @@ export function DockerPage() {
     void loadContainerLogs(container);
   }
 
+  function handleClearContainerLogs(container: DockerContainer) {
+    if (expandedContainerID !== container.id) {
+      return;
+    }
+
+    expandedContainerLogsRequestIdRef.current += 1;
+    expandedContainerLogsBusyRef.current = false;
+    expandedContainerLogsSinceRef.current = new Date().toISOString();
+    setExpandedContainerLogs({
+      output: "",
+      loading: false,
+      refreshing: false,
+      error: null,
+    });
+    toast.success(`Cleared logs for ${getContainerLabel(container)}.`);
+  }
+
   const canCreateContainer = Boolean(status?.installed && status.service_running);
   const actions = (
     <>
@@ -1598,9 +1617,7 @@ export function DockerPage() {
               onAction={handleContainerAction}
               onMenuAction={handleContainerMenuAction}
               onToggleExpandedContainer={handleToggleContainerLogs}
-              onRefreshContainerLogs={(container) => {
-                void loadContainerLogs(container, { preserveOutput: true });
-              }}
+              onClearContainerLogs={handleClearContainerLogs}
             />
           ) : null}
           {!loading && activeTab === "images" && images.length > 0 ? <ImageList images={images} /> : null}
