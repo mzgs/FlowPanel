@@ -45,6 +45,21 @@ type dockerPSRecord struct {
 	Names  string `json:"Names"`
 }
 
+type dockerContainerDetails struct {
+	CPUPerc          *float64                     `json:"cpu_percent,omitempty"`
+	MemoryUsageBytes *int64                       `json:"memory_usage_bytes,omitempty"`
+	MemoryLimitBytes *int64                       `json:"memory_limit_bytes,omitempty"`
+	MemoryPerc       *float64                     `json:"memory_percent,omitempty"`
+	Ports            []dockerContainerPortMapping `json:"ports"`
+}
+
+type dockerContainerPortMapping struct {
+	ContainerPort string `json:"container_port"`
+	HostIP        string `json:"host_ip"`
+	HostPort      string `json:"host_port"`
+	Public        bool   `json:"public"`
+}
+
 type dockerImageListItem struct {
 	ID           string `json:"id"`
 	Repository   string `json:"repository"`
@@ -82,6 +97,7 @@ type dockerInspectRecord struct {
 	Config     dockerInspectConfig      `json:"Config"`
 	HostConfig dockerInspectHostConfig  `json:"HostConfig"`
 	Mounts     []dockerInspectMount     `json:"Mounts"`
+	Network    dockerInspectNetwork     `json:"NetworkSettings"`
 	State      dockerInspectStateRecord `json:"State"`
 }
 
@@ -132,6 +148,10 @@ type dockerInspectStateRecord struct {
 	Running bool `json:"Running"`
 }
 
+type dockerInspectNetwork struct {
+	Ports map[string][]dockerPortBinding `json:"Ports"`
+}
+
 type dockerPortBinding struct {
 	HostIP   string `json:"HostIp"`
 	HostPort string `json:"HostPort"`
@@ -140,6 +160,12 @@ type dockerPortBinding struct {
 type dockerRestartPolicy struct {
 	Name              string `json:"Name"`
 	MaximumRetryCount int    `json:"MaximumRetryCount"`
+}
+
+type dockerStatsRecord struct {
+	CPUPerc  string `json:"CPUPerc"`
+	MemPerc  string `json:"MemPerc"`
+	MemUsage string `json:"MemUsage"`
 }
 
 func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
@@ -511,10 +537,35 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"output": output})
 	})
 
+	containerDetailsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{
+				"container_id": "Container ID is required.",
+			})
+			return
+		}
+
+		details, err := inspectDockerContainerDetails(r.Context(), containerID)
+		if err != nil {
+			a.app.Logger.Error("inspect docker container details failed", zap.String("container_id", containerID), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"details": details})
+	})
+
 	r.Method(stdhttp.MethodGet, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodHead, "/docker/containers", containersHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers", createContainerHandler)
 	r.Method(stdhttp.MethodDelete, "/docker/containers/{containerID}", deleteContainerHandler)
+	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/details", containerDetailsHandler)
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/logs", containerLogsHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/start", registerContainerAction("start", startDockerContainer))
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/stop", registerContainerAction("stop", stopDockerContainer))
@@ -667,6 +718,38 @@ func dockerContainerLogs(ctx context.Context, containerID, since string) (string
 	}
 
 	return stdout.String(), nil
+}
+
+func inspectDockerContainerDetails(ctx context.Context, containerID string) (dockerContainerDetails, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return dockerContainerDetails{}, errors.New("Docker is not installed on this server.")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, dockerListCommandTimeout)
+	defer cancel()
+
+	record, err := inspectDockerContainerConfig(commandCtx, containerID)
+	if err != nil {
+		return dockerContainerDetails{}, err
+	}
+
+	details := dockerContainerDetails{
+		Ports: dockerContainerPortMappings(record),
+	}
+
+	if !record.State.Running {
+		return details, nil
+	}
+
+	stats, err := dockerContainerStats(commandCtx, containerID)
+	if err != nil {
+		return dockerContainerDetails{}, err
+	}
+
+	details.CPUPerc = parseDockerStatsPercent(stats.CPUPerc)
+	details.MemoryPerc = parseDockerStatsPercent(stats.MemPerc)
+	details.MemoryUsageBytes, details.MemoryLimitBytes = parseDockerStatsMemoryUsage(stats.MemUsage)
+	return details, nil
 }
 
 func searchDockerHubImages(ctx context.Context, query string, limit int) ([]dockerHubSearchImage, error) {
@@ -950,6 +1033,146 @@ func inspectDockerContainerConfig(ctx context.Context, containerID string) (dock
 	}
 
 	return records[0], nil
+}
+
+func dockerContainerStats(ctx context.Context, containerID string) (dockerStatsRecord, error) {
+	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{json .}}", containerID)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return dockerStatsRecord{}, errors.New("Timed out while reading Docker container resource usage.")
+		}
+		return dockerStatsRecord{}, formatDockerCommandError(stderr.String(), err)
+	}
+
+	line := strings.TrimSpace(stdout.String())
+	if line == "" {
+		return dockerStatsRecord{}, errors.New("Docker container resource usage is unavailable right now.")
+	}
+
+	var record dockerStatsRecord
+	if err := json.Unmarshal([]byte(line), &record); err != nil {
+		return dockerStatsRecord{}, errors.New("Docker returned unreadable container resource details.")
+	}
+
+	return record, nil
+}
+
+func dockerContainerPortMappings(record dockerInspectRecord) []dockerContainerPortMapping {
+	source := record.Network.Ports
+	if len(source) == 0 {
+		source = record.HostConfig.PortBindings
+	}
+	if len(source) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(source))
+	for key := range source {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	ports := make([]dockerContainerPortMapping, 0, len(source))
+	for _, key := range keys {
+		bindings := source[key]
+		if len(bindings) == 0 {
+			ports = append(ports, dockerContainerPortMapping{ContainerPort: key})
+			continue
+		}
+
+		for _, binding := range bindings {
+			hostIP := strings.TrimSpace(binding.HostIP)
+			ports = append(ports, dockerContainerPortMapping{
+				ContainerPort: key,
+				HostIP:        hostIP,
+				HostPort:      strings.TrimSpace(binding.HostPort),
+				Public:        dockerPortBindingPublic(hostIP),
+			})
+		}
+	}
+
+	return ports
+}
+
+func dockerPortBindingPublic(hostIP string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(hostIP))
+	return normalized == "" || normalized == "0.0.0.0" || normalized == "::" || normalized == "[::]"
+}
+
+func parseDockerStatsPercent(value string) *float64 {
+	normalized := strings.TrimSuffix(strings.TrimSpace(value), "%")
+	if normalized == "" || normalized == "--" {
+		return nil
+	}
+
+	parsed, err := strconv.ParseFloat(normalized, 64)
+	if err != nil {
+		return nil
+	}
+
+	return &parsed
+}
+
+func parseDockerStatsMemoryUsage(value string) (*int64, *int64) {
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return nil, nil
+	}
+
+	used := parseDockerStatsBytes(parts[0])
+	limit := parseDockerStatsBytes(parts[1])
+	return used, limit
+}
+
+func parseDockerStatsBytes(value string) *int64 {
+	normalized := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(value), "B"))
+	if normalized == "" || normalized == "--" {
+		return nil
+	}
+
+	units := []struct {
+		suffix     string
+		multiplier float64
+	}{
+		{suffix: "ki", multiplier: 1024},
+		{suffix: "mi", multiplier: 1024 * 1024},
+		{suffix: "gi", multiplier: 1024 * 1024 * 1024},
+		{suffix: "ti", multiplier: 1024 * 1024 * 1024 * 1024},
+		{suffix: "k", multiplier: 1000},
+		{suffix: "m", multiplier: 1000 * 1000},
+		{suffix: "g", multiplier: 1000 * 1000 * 1000},
+		{suffix: "t", multiplier: 1000 * 1000 * 1000 * 1000},
+		{suffix: "b", multiplier: 1},
+	}
+
+	lower := strings.ToLower(normalized)
+	for _, unit := range units {
+		if !strings.HasSuffix(lower, unit.suffix) {
+			continue
+		}
+
+		number := strings.TrimSpace(normalized[:len(normalized)-len(unit.suffix)])
+		parsed, err := strconv.ParseFloat(number, 64)
+		if err != nil {
+			return nil
+		}
+
+		bytes := int64(parsed * unit.multiplier)
+		return &bytes
+	}
+
+	parsed, err := strconv.ParseFloat(normalized, 64)
+	if err != nil {
+		return nil
+	}
+
+	bytes := int64(parsed)
+	return &bytes
 }
 
 func dockerCreateArgs(record dockerInspectRecord) []string {

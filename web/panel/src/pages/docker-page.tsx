@@ -3,6 +3,7 @@ import {
   createDockerContainer,
   deleteDockerContainer,
   downloadDockerContainerSnapshot,
+  fetchDockerContainerDetails,
   fetchDockerContainerLogs,
   fetchDockerContainers,
   fetchDockerImages,
@@ -13,6 +14,8 @@ import {
   startDockerContainer,
   stopDockerContainer,
   type DockerContainer,
+  type DockerContainerDetails,
+  type DockerContainerPortMapping,
   type DockerHubImage,
   type DockerImage,
   type DockerStatus,
@@ -53,6 +56,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { formatBytes } from "@/lib/format";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -66,6 +70,13 @@ type DockerContainerMenuAction = "recreate" | "delete" | "snapshot" | "save-imag
 type DockerContainerOperation = DockerContainerAction | DockerContainerMenuAction;
 type DockerContainerLogsState = {
   output: string;
+  loading: boolean;
+  refreshing: boolean;
+  error: string | null;
+};
+
+type DockerContainerResourcesState = {
+  details: DockerContainerDetails | null;
   loading: boolean;
   refreshing: boolean;
   error: string | null;
@@ -226,6 +237,117 @@ function createDockerContainerLogsState(): DockerContainerLogsState {
   };
 }
 
+function createDockerContainerResourcesState(): DockerContainerResourcesState {
+  return {
+    details: null,
+    loading: false,
+    refreshing: false,
+    error: null,
+  };
+}
+
+function clampPercent(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(100, value));
+}
+
+function getResourceBarColor(percent: number | null) {
+  if (percent == null) {
+    return "var(--app-border-strong)";
+  }
+
+  if (percent < 70) {
+    return "var(--app-ok)";
+  }
+
+  if (percent < 90) {
+    return "var(--app-warning)";
+  }
+
+  return "var(--app-danger)";
+}
+
+function formatDockerResourcePercent(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) {
+    return "—";
+  }
+
+  return value >= 10 ? `${Math.round(value)}%` : `${value.toFixed(1)}%`;
+}
+
+function formatDockerMemorySummary(details: DockerContainerDetails | null) {
+  const used = details?.memory_usage_bytes;
+  const limit = details?.memory_limit_bytes;
+
+  if (used == null && limit == null) {
+    return "Live usage unavailable";
+  }
+
+  if (used != null && limit != null) {
+    return `${formatBytes(used)} of ${formatBytes(limit)}`;
+  }
+
+  return formatBytes(used ?? limit ?? 0);
+}
+
+function formatDockerPortMapping(port: DockerContainerPortMapping) {
+  const containerPort = port.container_port.split("/")[0] || port.container_port;
+
+  if (!port.host_port) {
+    return containerPort;
+  }
+
+  if (port.public) {
+    return `${containerPort} to ${port.host_port} (public)`;
+  }
+
+  if (port.host_ip) {
+    return `${containerPort} to ${port.host_ip}:${port.host_port}`;
+  }
+
+  return `${containerPort} to ${port.host_port}`;
+}
+
+function ResourceMeter({
+  detail,
+  label,
+  percent,
+}: {
+  detail: string;
+  label: string;
+  percent: number | null;
+}) {
+  const normalized = clampPercent(percent);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-sm font-medium text-foreground">{label}</div>
+        <div className="text-sm text-muted-foreground">{detail}</div>
+      </div>
+      <div
+        aria-label={`${label} usage`}
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={normalized == null ? undefined : Math.round(normalized)}
+        className="h-2.5 overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-bg-2)]"
+        role="progressbar"
+      >
+        <div
+          className="h-full rounded-[3px] transition-[width,background-color] duration-200"
+          style={{
+            width: `${normalized ?? 0}%`,
+            backgroundColor: getResourceBarColor(normalized),
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ContainersSkeleton() {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
@@ -335,12 +457,119 @@ function TabButton({
   );
 }
 
+function ContainerResourcesPanel({
+  container,
+  resources,
+}: {
+  container: DockerContainer;
+  resources: DockerContainerResourcesState;
+}) {
+  const cpuPercent = clampPercent(resources.details?.cpu_percent);
+  const memoryPercent = clampPercent(resources.details?.memory_percent);
+  const portMappings = resources.details?.ports ?? [];
+  const metricsUnavailable = cpuPercent == null && memoryPercent == null;
+
+  return (
+    <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-4 sm:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="text-sm font-medium text-foreground">Resources</div>
+          <div className="text-xs text-muted-foreground">Live usage and runtime details for this container.</div>
+        </div>
+      </div>
+
+      {resources.error ? (
+        <div className="mt-4 rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
+          {resources.error}
+        </div>
+      ) : null}
+
+      {resources.loading && !resources.details ? (
+        <div className="mt-4 space-y-5">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="h-4 w-16 animate-pulse rounded bg-[var(--app-surface)]" />
+              <div className="h-4 w-28 animate-pulse rounded bg-[var(--app-surface)]" />
+            </div>
+            <div className="h-2.5 animate-pulse rounded-md bg-[var(--app-surface)]" />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="h-4 w-12 animate-pulse rounded bg-[var(--app-surface)]" />
+              <div className="h-4 w-16 animate-pulse rounded bg-[var(--app-surface)]" />
+            </div>
+            <div className="h-2.5 animate-pulse rounded-md bg-[var(--app-surface)]" />
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-5">
+          <ResourceMeter
+            detail={formatDockerMemorySummary(resources.details)}
+            label="Memory"
+            percent={memoryPercent}
+          />
+          <ResourceMeter
+            detail={formatDockerResourcePercent(cpuPercent)}
+            label="CPU"
+            percent={cpuPercent}
+          />
+        </div>
+      )}
+
+      {metricsUnavailable && !resources.loading && !resources.error ? (
+        <div className="mt-4 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-xs text-muted-foreground">
+          {container.state === "running"
+            ? "Live metrics are not available for this container right now."
+            : "Live metrics appear when the container is running."}
+        </div>
+      ) : null}
+
+      <div className="mt-5 space-y-4 border-t border-[var(--app-border)] pt-4">
+        <div className="space-y-1">
+          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Container ID
+          </div>
+          <div className="break-all font-mono text-sm text-foreground">{container.id}</div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Port mapping
+          </div>
+          {resources.loading && !resources.details ? (
+            <div className="space-y-2">
+              <div className="h-4 w-40 animate-pulse rounded bg-[var(--app-surface)]" />
+              <div className="h-4 w-32 animate-pulse rounded bg-[var(--app-surface)]" />
+            </div>
+          ) : resources.error && !resources.details ? (
+            <div className="text-sm text-muted-foreground">Port details are unavailable right now.</div>
+          ) : portMappings.length > 0 ? (
+            <div className="space-y-2">
+              {portMappings.map((port) => (
+                <div
+                  key={`${port.container_port}-${port.host_ip}-${port.host_port}`}
+                  className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-foreground"
+                >
+                  {formatDockerPortMapping(port)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">No published ports.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ContainerList({
   containers,
   activeContainerID,
   pendingOperation,
   expandedContainerID,
   containerLogs,
+  containerResources,
   onAction,
   onMenuAction,
   onToggleExpandedContainer,
@@ -351,6 +580,7 @@ function ContainerList({
   pendingOperation: DockerContainerOperation | null;
   expandedContainerID: string | null;
   containerLogs: DockerContainerLogsState;
+  containerResources: DockerContainerResourcesState;
   onAction: (container: DockerContainer, action: DockerContainerAction) => void;
   onMenuAction: (container: DockerContainer, action: DockerContainerMenuAction) => void;
   onToggleExpandedContainer: (container: DockerContainer) => void;
@@ -574,63 +804,69 @@ function ContainerList({
 
             {expanded ? (
               <div id={logRegionID} className="border-t border-[var(--app-border)] bg-[var(--app-surface)]/55 px-4 py-4 md:px-6">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="space-y-1">
-                    <div className="text-sm font-medium text-foreground">Container logs</div>
-                    <div className="text-xs text-muted-foreground">
-                      Last 200 lines from `docker logs --tail 200 {getContainerLabel(container)}`.
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                  <div className="min-w-0 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-4 sm:p-5">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="space-y-1">
+                        <div className="text-sm font-medium text-foreground">Console Log</div>
+                        <div className="text-xs text-muted-foreground">
+                          Last 200 lines from `docker logs --tail 200 {getContainerLabel(container)}`.
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={containerLogs.loading || containerLogs.refreshing}
+                          onClick={() => {
+                            onClearContainerLogs(container);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Clear logs
+                        </Button>
+                      </div>
                     </div>
+
+                    {containerLogs.error ? (
+                      <div className="mt-4 rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
+                        {containerLogs.error}
+                      </div>
+                    ) : null}
+
+                    {containerLogs.loading && !containerLogs.output ? (
+                      <div className="mt-4 flex items-center gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-sm text-muted-foreground">
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                        Loading logs...
+                      </div>
+                    ) : null}
+
+                    {!containerLogs.loading && !containerLogs.output && !containerLogs.error ? (
+                      <div className="mt-4 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-sm text-muted-foreground">
+                        No logs were returned for this container.
+                      </div>
+                    ) : null}
+
+                    {containerLogs.output ? (
+                      <div className="mt-4 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+                        <pre
+                          ref={expanded ? expandedContainerLogsViewportRef : null}
+                          onScroll={(event) => {
+                            const viewport = event.currentTarget;
+                            shouldAutoScrollExpandedLogsRef.current =
+                              viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
+                          }}
+                          className="max-h-[360px] overflow-auto p-5 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)] sm:p-6"
+                        >
+                          {containerLogs.output}
+                        </pre>
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={containerLogs.loading || containerLogs.refreshing}
-                      onClick={() => {
-                        onClearContainerLogs(container);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Clear logs
-                    </Button>
-                  </div>
+
+                  <ContainerResourcesPanel container={container} resources={containerResources} />
                 </div>
-
-                {containerLogs.error ? (
-                  <div className="mt-4 rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
-                    {containerLogs.error}
-                  </div>
-                ) : null}
-
-                {containerLogs.loading && !containerLogs.output ? (
-                  <div className="mt-4 flex items-center gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-sm text-muted-foreground">
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                    Loading logs...
-                  </div>
-                ) : null}
-
-                {!containerLogs.loading && !containerLogs.output && !containerLogs.error ? (
-                  <div className="mt-4 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 text-sm text-muted-foreground">
-                    No logs were returned for this container.
-                  </div>
-                ) : null}
-
-                {containerLogs.output ? (
-                  <div className="mt-4 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
-                    <pre
-                      ref={expanded ? expandedContainerLogsViewportRef : null}
-                      onScroll={(event) => {
-                        const viewport = event.currentTarget;
-                        shouldAutoScrollExpandedLogsRef.current =
-                          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
-                      }}
-                      className="max-h-[360px] overflow-auto p-5 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)] sm:p-6"
-                    >
-                      {containerLogs.output}
-                    </pre>
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -1069,6 +1305,9 @@ export function DockerPage() {
   const [expandedContainerLogs, setExpandedContainerLogs] = useState<DockerContainerLogsState>(
     createDockerContainerLogsState,
   );
+  const [expandedContainerResources, setExpandedContainerResources] = useState<DockerContainerResourcesState>(
+    createDockerContainerResourcesState,
+  );
   const [confirmAction, setConfirmAction] = useState<{
     action: Extract<DockerContainerMenuAction, "delete" | "recreate">;
     container: DockerContainer;
@@ -1079,6 +1318,8 @@ export function DockerPage() {
   const expandedContainerLogsRequestIdRef = useRef(0);
   const expandedContainerLogsBusyRef = useRef(false);
   const expandedContainerLogsSinceRef = useRef<string | null>(null);
+  const expandedContainerResourcesRequestIdRef = useRef(0);
+  const expandedContainerResourcesBusyRef = useRef(false);
   const latestDataRef = useRef<{
     status: DockerStatus | null;
     containers: DockerContainer[];
@@ -1097,13 +1338,16 @@ export function DockerPage() {
     expandedContainerIDRef.current = expandedContainerID;
   }, [expandedContainerID]);
 
-  function resetExpandedContainerLogs(nextExpandedContainerID: string | null = null) {
+  function resetExpandedContainerPanel(nextExpandedContainerID: string | null = null) {
     expandedContainerLogsRequestIdRef.current += 1;
     expandedContainerLogsBusyRef.current = false;
     expandedContainerLogsSinceRef.current = null;
+    expandedContainerResourcesRequestIdRef.current += 1;
+    expandedContainerResourcesBusyRef.current = false;
     expandedContainerIDRef.current = nextExpandedContainerID;
     setExpandedContainerID(nextExpandedContainerID);
     setExpandedContainerLogs(createDockerContainerLogsState());
+    setExpandedContainerResources(createDockerContainerResourcesState());
   }
 
   async function loadContainerLogs(
@@ -1160,6 +1404,62 @@ export function DockerPage() {
     } finally {
       if (expandedContainerLogsRequestIdRef.current === requestId) {
         expandedContainerLogsBusyRef.current = false;
+      }
+    }
+  }
+
+  async function loadContainerResources(
+    container: DockerContainer,
+    options?: { preserveDetails?: boolean; background?: boolean },
+  ) {
+    if (expandedContainerResourcesBusyRef.current) {
+      return;
+    }
+
+    const requestId = expandedContainerResourcesRequestIdRef.current + 1;
+    expandedContainerResourcesRequestIdRef.current = requestId;
+    expandedContainerResourcesBusyRef.current = true;
+    expandedContainerIDRef.current = container.id;
+    setExpandedContainerID(container.id);
+    setExpandedContainerResources((current) => ({
+      details: options?.preserveDetails ? current.details : null,
+      loading: options?.background ? false : true,
+      refreshing: Boolean(options?.background),
+      error: null,
+    }));
+
+    try {
+      const details = await fetchDockerContainerDetails(container.id);
+      if (
+        expandedContainerResourcesRequestIdRef.current !== requestId ||
+        expandedContainerIDRef.current !== container.id
+      ) {
+        return;
+      }
+
+      setExpandedContainerResources({
+        details,
+        loading: false,
+        refreshing: false,
+        error: null,
+      });
+    } catch (error) {
+      if (
+        expandedContainerResourcesRequestIdRef.current !== requestId ||
+        expandedContainerIDRef.current !== container.id
+      ) {
+        return;
+      }
+
+      setExpandedContainerResources((current) => ({
+        details: options?.preserveDetails ? current.details : null,
+        loading: false,
+        refreshing: false,
+        error: getErrorMessage(error, `Failed to load resources for ${getContainerLabel(container)}.`),
+      }));
+    } finally {
+      if (expandedContainerResourcesRequestIdRef.current === requestId) {
+        expandedContainerResourcesBusyRef.current = false;
       }
     }
   }
@@ -1234,6 +1534,7 @@ export function DockerPage() {
     return () => {
       latestRequestRef.current += 1;
       expandedContainerLogsRequestIdRef.current += 1;
+      expandedContainerResourcesRequestIdRef.current += 1;
     };
   }, []);
 
@@ -1248,11 +1549,12 @@ export function DockerPage() {
 
     const expandedContainer = containers.find((container) => container.id === expandedContainerIDRef.current);
     if (!expandedContainer) {
-      resetExpandedContainerLogs();
+      resetExpandedContainerPanel();
       return;
     }
 
     void loadContainerLogs(expandedContainer, { preserveOutput: true });
+    void loadContainerResources(expandedContainer, { preserveDetails: true });
   }, [activeTab, containers]);
 
   useEffect(() => {
@@ -1265,7 +1567,7 @@ export function DockerPage() {
         (container) => container.id === expandedContainerIDRef.current,
       );
       if (!expandedContainer) {
-        resetExpandedContainerLogs();
+        resetExpandedContainerPanel();
         return;
       }
 
@@ -1273,7 +1575,11 @@ export function DockerPage() {
         preserveOutput: true,
         background: true,
       });
-    }, 2000);
+      void loadContainerResources(expandedContainer, {
+        preserveDetails: true,
+        background: true,
+      });
+    }, 10000);
 
     return () => {
       window.clearInterval(intervalID);
@@ -1411,12 +1717,13 @@ export function DockerPage() {
 
   function handleToggleContainerLogs(container: DockerContainer) {
     if (expandedContainerID === container.id) {
-      resetExpandedContainerLogs();
+      resetExpandedContainerPanel();
       return;
     }
 
-    resetExpandedContainerLogs(container.id);
+    resetExpandedContainerPanel(container.id);
     void loadContainerLogs(container);
+    void loadContainerResources(container);
   }
 
   function handleClearContainerLogs(container: DockerContainer) {
@@ -1614,6 +1921,7 @@ export function DockerPage() {
               pendingOperation={pendingOperation}
               expandedContainerID={expandedContainerID}
               containerLogs={expandedContainerLogs}
+              containerResources={expandedContainerResources}
               onAction={handleContainerAction}
               onMenuAction={handleContainerMenuAction}
               onToggleExpandedContainer={handleToggleContainerLogs}

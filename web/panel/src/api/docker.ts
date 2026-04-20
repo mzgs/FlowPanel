@@ -28,6 +28,21 @@ export type DockerContainer = {
   state: string;
 };
 
+export type DockerContainerPortMapping = {
+  container_port: string;
+  host_ip: string;
+  host_port: string;
+  public: boolean;
+};
+
+export type DockerContainerDetails = {
+  cpu_percent?: number;
+  memory_usage_bytes?: number;
+  memory_limit_bytes?: number;
+  memory_percent?: number;
+  ports: DockerContainerPortMapping[];
+};
+
 export type DockerImage = {
   id: string;
   repository: string;
@@ -65,6 +80,10 @@ type DockerContainerPayload = {
 
 type DockerContainerLogsPayload = {
   output: string;
+};
+
+type DockerContainerDetailsPayload = {
+  details: DockerContainerDetails;
 };
 
 async function parseDockerError(response: Response): Promise<Error> {
@@ -195,6 +214,20 @@ export async function fetchDockerContainerLogs(containerID: string, options?: { 
 
   const payload = (await response.json()) as DockerContainerLogsPayload;
   return payload.output;
+}
+
+export async function fetchDockerContainerDetails(containerID: string): Promise<DockerContainerDetails> {
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/details`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw await parseDockerError(response);
+  }
+
+  const payload = (await response.json()) as DockerContainerDetailsPayload;
+  return payload.details;
 }
 
 export async function fetchDockerImages(): Promise<DockerImage[]> {
