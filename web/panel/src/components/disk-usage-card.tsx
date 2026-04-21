@@ -1,12 +1,8 @@
 import type { SystemStatus } from "@/api/system";
-import { HardDrive } from "@/components/icons/tabler-icons";
 import { formatBytes } from "@/lib/format";
 
 type DiskTone = {
   bar: string;
-  label: string;
-  surface: string;
-  title: string;
 };
 
 function clampPercent(value: number | null) {
@@ -54,35 +50,23 @@ function getDiskTone(percent: number | null): DiskTone {
   if (percent === null) {
     return {
       bar: "var(--app-border-strong)",
-      label: "Metrics unavailable",
-      surface: "var(--app-surface)",
-      title: "Disk capacity",
     };
   }
 
   if (percent < 70) {
     return {
       bar: "var(--app-ok)",
-      label: "Healthy headroom",
-      surface: "var(--app-ok-soft)",
-      title: "Disk capacity",
     };
   }
 
   if (percent < 85) {
     return {
       bar: "var(--app-warning)",
-      label: "Usage climbing",
-      surface: "var(--app-warning-soft)",
-      title: "Disk capacity",
     };
   }
 
   return {
     bar: "var(--app-danger)",
-    label: percent >= 92 ? "Space is critical" : "Low free space",
-    surface: "var(--app-danger-soft)",
-    title: "Disk capacity",
   };
 }
 
@@ -99,20 +83,7 @@ export function DiskUsageCard({ status }: { status: SystemStatus }) {
         <h2 className="text-[14px] font-semibold tracking-tight text-[var(--app-text)]">Disk status</h2>
 
         <div className="space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <div
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] border border-[var(--app-border)] text-[var(--app-text-muted)]"
-                style={{ backgroundColor: diskTone.surface }}
-              >
-                <HardDrive className="h-[15px] w-[15px]" />
-              </div>
-              <div className="min-w-0 space-y-0.5">
-                <div className="text-[13px] font-medium leading-5 text-[var(--app-text)]">{diskTone.title}</div>
-                <div className="text-[11px] leading-4 text-[var(--app-text-muted)]">{diskTone.label}</div>
-              </div>
-            </div>
-
+          <div className="flex items-start justify-end gap-3">
             <div className="shrink-0 text-right">
               <div className="text-[24px] font-semibold leading-none tracking-tight text-[var(--app-text)]">
                 {formatPercent(diskPercent)}
@@ -131,21 +102,29 @@ export function DiskUsageCard({ status }: { status: SystemStatus }) {
                 {diskUsed} of {diskCapacity}
               </span>
             </div>
-            <div
-              aria-label="Disk usage"
-              aria-valuemax={100}
-              aria-valuemin={0}
-              aria-valuenow={diskPercent == null ? undefined : Math.round(diskPercent)}
-              className="h-2.5 overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-surface)]"
-              role="progressbar"
-            >
-              <div
-                className="h-full rounded-[3px] transition-[width,background-color] duration-200"
-                style={{
-                  width: `${diskPercent ?? 0}%`,
-                  backgroundColor: diskTone.bar,
-                }}
+            <div className="flex items-center gap-2">
+              <img
+                alt=""
+                aria-hidden="true"
+                className="h-5 w-5 shrink-0 object-contain opacity-80"
+                src="/application-icons/hdd.png"
               />
+              <div
+                aria-label="Disk usage"
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={diskPercent == null ? undefined : Math.round(diskPercent)}
+                className="h-2.5 flex-1 overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-surface)]"
+                role="progressbar"
+              >
+                <div
+                  className="h-full rounded-[3px] transition-[width,background-color] duration-200"
+                  style={{
+                    width: `${diskPercent ?? 0}%`,
+                    backgroundColor: diskTone.bar,
+                  }}
+                />
+              </div>
             </div>
           </div>
         </div>
