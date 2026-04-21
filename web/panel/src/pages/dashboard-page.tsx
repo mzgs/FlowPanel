@@ -34,7 +34,7 @@ function OverviewCard({
   siteCount: number | null;
 }) {
   return (
-    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
+    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-2 shadow-[var(--app-shadow)]">
       <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Overview</div>
       <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-border)] sm:grid-cols-2">
         <OverviewStat icon={<Globe className="h-4 w-4" />} label="Total sites" value={formatTotalCount(siteCount)} />
@@ -58,7 +58,7 @@ function OverviewStat({
   value: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 bg-[var(--app-surface-muted)] px-4 py-4">
+    <div className="flex items-center justify-between gap-3 bg-[var(--app-surface-muted)] px-4 py-1.5">
       <div className="flex items-center gap-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)]">
           {icon}
@@ -195,7 +195,7 @@ function SystemInfoCard({ status }: { status: SystemStatus | null }) {
   ];
 
   return (
-      <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3.5">
+      <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-2">
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-8">
           {details.map((detail) => (
             <DetailItem
@@ -261,11 +261,11 @@ export function DashboardPage() {
 
   return (
     <>
-      <div className="px-4 py-6 sm:px-6 lg:px-8">
+      <div className="px-4 pb-3 pt-4 sm:px-6 lg:px-8">
         <SystemInfoCard status={systemStatus} />
       </div>
 
-      <div className="px-4 py-6 sm:px-6 lg:px-8">
+      <div className="px-4 pb-6 pt-3 sm:px-6 lg:px-8">
         {loading ? (
           <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-8 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
             Inspecting local services...
@@ -273,16 +273,17 @@ export function DashboardPage() {
         ) : (
           <section className="space-y-5">
             {showOverview ? (
-              <div className="space-y-5">
-                {systemStatus ? (
-                  <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
-                    <SystemStatusCard status={systemStatus} />
+              systemStatus ? (
+                <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
+                  <SystemStatusCard status={systemStatus} />
+                  <div className="space-y-5">
                     <DiskUsageCard status={systemStatus} />
+                    {hasTotals ? <OverviewCard databaseCount={databaseCount} siteCount={siteCount} /> : null}
                   </div>
-                ) : null}
-
-                {hasTotals ? <OverviewCard databaseCount={databaseCount} siteCount={siteCount} /> : null}
-              </div>
+                </div>
+              ) : hasTotals ? (
+                <OverviewCard databaseCount={databaseCount} siteCount={siteCount} />
+              ) : null
             ) : null}
           </section>
         )}

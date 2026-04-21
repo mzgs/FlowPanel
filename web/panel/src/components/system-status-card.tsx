@@ -127,7 +127,7 @@ function GaugePanel({ caption, detail, percent, title, value }: GaugePanelProps)
       : gaugeCircumference - (normalized / 100) * gaugeCircumference;
 
   return (
-    <div className="flex flex-col items-center gap-4 px-2 py-1 text-center">
+    <div className="flex flex-col items-center gap-4 px-2 py-0.5 text-center">
       <div className="relative h-36 w-36">
         <svg
           aria-hidden="true"
@@ -179,7 +179,8 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
   const cpuPercent = clampPercent(status.cpu_usage_percent ?? null);
 
   return (
-    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-5 shadow-[var(--app-shadow)]">
+    <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-2 shadow-[var(--app-shadow)]">
+      <div className="mb-2 text-[15px] font-semibold tracking-tight text-[var(--app-text)]">System status</div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <GaugePanel
           caption="Load average"
