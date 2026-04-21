@@ -101,7 +101,7 @@ export function DiskUsageCard({ status }: { status: SystemStatus }) {
   const diskMetricsAvailable = status.disk_total_bytes != null && status.disk_used_bytes != null;
 
   return (
-    <section className="rounded-[20px] border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-2 shadow-[var(--app-shadow)]">
+    <section className="rounded-[20px] border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 pb-3 pt-2 shadow-[var(--app-shadow)]">
       <div className="space-y-3">
         <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Disk status</div>
         <div className="flex items-start justify-between gap-4">

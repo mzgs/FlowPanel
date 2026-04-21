@@ -3,7 +3,7 @@ import { fetchDomains } from "@/api/domains";
 import { fetchMariaDBDatabases } from "@/api/mariadb";
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { DiskUsageCard } from "@/components/disk-usage-card";
-import { Database, Globe } from "@/components/icons/tabler-icons";
+import { Database, World } from "@/components/icons/tabler-icons";
 import { SystemStatusCard } from "@/components/system-status-card";
 
 type OverviewData = {
@@ -36,8 +36,8 @@ function OverviewCard({
   return (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-2 shadow-[var(--app-shadow)]">
       <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">Overview</div>
-      <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-border)] sm:grid-cols-2">
-        <OverviewStat icon={<Globe className="h-4 w-4" />} label="Total sites" value={formatTotalCount(siteCount)} />
+      <div className="mt-4 grid divide-y divide-[var(--app-border)] sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+        <OverviewStat icon={<World className="h-4 w-4" />} label="Total sites" value={formatTotalCount(siteCount)} />
         <OverviewStat
           icon={<Database className="h-4 w-4" />}
           label="Total databases"
@@ -58,9 +58,9 @@ function OverviewStat({
   value: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 bg-[var(--app-surface-muted)] px-4 py-1.5">
+    <div className="flex items-center justify-between gap-3 px-0 py-2 first:pt-0 last:pb-0 sm:px-4 sm:py-2 sm:first:pt-2 sm:last:pb-2 sm:first:pl-0 sm:last:pr-0">
       <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)]">
+        <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]">
           {icon}
         </div>
         <div className="text-[14px] font-medium text-[var(--app-text)]">{label}</div>
