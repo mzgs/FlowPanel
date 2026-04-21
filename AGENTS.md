@@ -9,6 +9,7 @@
 - Keep control flow tight: fewer branches, fewer repeated side effects, fewer repeated return paths when behavior can be expressed clearly in one place.
 - Choose the implementation with the lowest unnecessary code volume that still makes the intent obvious.
 - Do not expand code for explicitness if the same clarity can be achieved with a smaller, well-structured form.
+- In frontend effects, avoid fetch loops: data-loading effects must depend only on deliberate inputs and must not re-trigger from the state they update.
 
 Default to compact product UI. 
 Use tight spacing, normal-height controls, modest headings, and dense layouts.

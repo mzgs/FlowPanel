@@ -20,37 +20,39 @@ import (
 	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
+	"flowpanel/internal/systemmonitor"
 
 	"github.com/alexedwards/scs/v2"
 	"go.uber.org/zap"
 )
 
 type App struct {
-	Config      config.Config
-	Logger      *zap.Logger
-	DB          *sql.DB
-	Domains     *domain.Service
-	Sessions    *scs.SessionManager
-	Cron        *cron.Scheduler
-	Caddy       *caddy.Runtime
-	Golang      golang.Manager
-	NodeJS      nodejs.Manager
-	PM2         pm2.Manager
-	MariaDB     mariadb.Manager
-	Docker      packageruntime.Manager
-	FFmpeg      packageruntime.Manager
-	Redis       packageruntime.Manager
-	MongoDB     packageruntime.Manager
-	PostgreSQL  packageruntime.Manager
-	PHP         phpenv.Manager
-	PHPMyAdmin  phpmyadmin.Manager
-	Files       *files.Service
-	FTP         *ftp.Runtime
-	FTPAccounts *ftp.Service
-	Events      *events.Service
-	Backups     backup.Manager
-	Settings    *settings.Service
-	GoogleDrive *googledrive.Service
+	Config        config.Config
+	Logger        *zap.Logger
+	DB            *sql.DB
+	Domains       *domain.Service
+	Sessions      *scs.SessionManager
+	Cron          *cron.Scheduler
+	Caddy         *caddy.Runtime
+	Golang        golang.Manager
+	NodeJS        nodejs.Manager
+	PM2           pm2.Manager
+	MariaDB       mariadb.Manager
+	Docker        packageruntime.Manager
+	FFmpeg        packageruntime.Manager
+	Redis         packageruntime.Manager
+	MongoDB       packageruntime.Manager
+	PostgreSQL    packageruntime.Manager
+	PHP           phpenv.Manager
+	PHPMyAdmin    phpmyadmin.Manager
+	Files         *files.Service
+	FTP           *ftp.Runtime
+	FTPAccounts   *ftp.Service
+	Events        *events.Service
+	Backups       backup.Manager
+	Settings      *settings.Service
+	GoogleDrive   *googledrive.Service
+	SystemMonitor *systemmonitor.Service
 }
 
 func New(
@@ -79,32 +81,34 @@ func New(
 	backupManager backup.Manager,
 	settingsService *settings.Service,
 	googleDriveService *googledrive.Service,
+	systemMonitorService *systemmonitor.Service,
 ) *App {
 	return &App{
-		Config:      cfg,
-		Logger:      logger,
-		DB:          db,
-		Domains:     domains,
-		Sessions:    sessions,
-		Cron:        scheduler,
-		Caddy:       caddyRuntime,
-		Golang:      golangManager,
-		NodeJS:      nodeJSManager,
-		PM2:         pm2Manager,
-		MariaDB:     mariadbManager,
-		Docker:      dockerManager,
-		FFmpeg:      ffmpegManager,
-		Redis:       redisManager,
-		MongoDB:     mongoDBManager,
-		PostgreSQL:  postgresqlManager,
-		PHP:         phpManager,
-		PHPMyAdmin:  phpMyAdminManager,
-		Files:       fileManager,
-		FTP:         ftpRuntime,
-		FTPAccounts: ftpAccounts,
-		Events:      eventService,
-		Backups:     backupManager,
-		Settings:    settingsService,
-		GoogleDrive: googleDriveService,
+		Config:        cfg,
+		Logger:        logger,
+		DB:            db,
+		Domains:       domains,
+		Sessions:      sessions,
+		Cron:          scheduler,
+		Caddy:         caddyRuntime,
+		Golang:        golangManager,
+		NodeJS:        nodeJSManager,
+		PM2:           pm2Manager,
+		MariaDB:       mariadbManager,
+		Docker:        dockerManager,
+		FFmpeg:        ffmpegManager,
+		Redis:         redisManager,
+		MongoDB:       mongoDBManager,
+		PostgreSQL:    postgresqlManager,
+		PHP:           phpManager,
+		PHPMyAdmin:    phpMyAdminManager,
+		Files:         fileManager,
+		FTP:           ftpRuntime,
+		FTPAccounts:   ftpAccounts,
+		Events:        eventService,
+		Backups:       backupManager,
+		Settings:      settingsService,
+		GoogleDrive:   googleDriveService,
+		SystemMonitor: systemMonitorService,
 	}
 }

@@ -687,8 +687,40 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				"system": systemstatus.Inspect(r.Context()),
 			})
 		})
+		systemHistoryHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if app.SystemMonitor == nil {
+				writeJSON(w, stdhttp.StatusOK, map[string]any{
+					"samples": []any{},
+				})
+				return
+			}
+
+			rangeKey := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("range")))
+			duration, ok := parseSystemHistoryRange(rangeKey)
+			if !ok {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
+					"error": "invalid system history range",
+				})
+				return
+			}
+
+			samples, err := app.SystemMonitor.ListRange(r.Context(), duration)
+			if err != nil {
+				app.Logger.Error("list system history failed", zap.String("range", rangeKey), zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+					"error": "failed to load system history",
+				})
+				return
+			}
+
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"samples": samples,
+			})
+		})
 		r.Method(stdhttp.MethodGet, "/system", systemStatusHandler)
 		r.Method(stdhttp.MethodHead, "/system", systemStatusHandler)
+		r.Method(stdhttp.MethodGet, "/system/history", systemHistoryHandler)
+		r.Method(stdhttp.MethodHead, "/system/history", systemHistoryHandler)
 
 		api.register(r)
 
@@ -707,6 +739,19 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	router.Method(stdhttp.MethodHead, "/*", panelHandler)
 
 	return router, nil
+}
+
+func parseSystemHistoryRange(value string) (time.Duration, bool) {
+	switch value {
+	case "1h":
+		return time.Hour, true
+	case "6h":
+		return 6 * time.Hour, true
+	case "1d":
+		return 24 * time.Hour, true
+	default:
+		return 0, false
+	}
 }
 
 func newPHPMyAdminRedirectHandler(app *app.App) stdhttp.Handler {

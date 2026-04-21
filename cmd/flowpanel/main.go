@@ -35,6 +35,7 @@ import (
 	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
+	"flowpanel/internal/systemmonitor"
 
 	"go.uber.org/zap"
 )
@@ -44,13 +45,14 @@ type storageEnsurer interface {
 }
 
 type panelStores struct {
-	Domain   *domain.Store
-	MariaDB  *mariadb.Store
-	PM2      *pm2.Store
-	Cron     *flowcron.Store
-	Events   *events.Store
-	Settings *settings.Store
-	FTP      *ftp.Store
+	Domain        *domain.Store
+	MariaDB       *mariadb.Store
+	PM2           *pm2.Store
+	Cron          *flowcron.Store
+	Events        *events.Store
+	Settings      *settings.Store
+	FTP           *ftp.Store
+	SystemMonitor *systemmonitor.Store
 }
 
 type namedStore struct {
@@ -83,13 +85,14 @@ func runCommand(args []string) error {
 
 func newPanelStores(dbConn *sql.DB) panelStores {
 	return panelStores{
-		Domain:   domain.NewStore(dbConn),
-		MariaDB:  mariadb.NewStore(dbConn),
-		PM2:      pm2.NewStore(dbConn),
-		Cron:     flowcron.NewStore(dbConn),
-		Events:   events.NewStore(dbConn),
-		Settings: settings.NewStore(dbConn),
-		FTP:      ftp.NewStore(dbConn),
+		Domain:        domain.NewStore(dbConn),
+		MariaDB:       mariadb.NewStore(dbConn),
+		PM2:           pm2.NewStore(dbConn),
+		Cron:          flowcron.NewStore(dbConn),
+		Events:        events.NewStore(dbConn),
+		Settings:      settings.NewStore(dbConn),
+		FTP:           ftp.NewStore(dbConn),
+		SystemMonitor: systemmonitor.NewStore(dbConn),
 	}
 }
 
@@ -250,6 +253,7 @@ func runServer() error {
 		namedStore{name: "event", store: stores.Events},
 		namedStore{name: "settings", store: stores.Settings},
 		namedStore{name: "ftp", store: stores.FTP},
+		namedStore{name: "system monitor", store: stores.SystemMonitor},
 	); err != nil {
 		return err
 	}
@@ -289,6 +293,7 @@ func runServer() error {
 	})
 	ftpService := ftp.NewService(stores.FTP, domainService)
 	ftpRuntime := ftp.NewRuntime(logger.Named("ftp"), ftpService)
+	systemMonitorService := systemmonitor.NewService(logger.Named("system-monitor"), stores.SystemMonitor)
 	googleDriveService := googledrive.NewService(cfg.GoogleDrive)
 	backupService := backup.NewService(
 		logger.Named("backup"),
@@ -345,6 +350,7 @@ func runServer() error {
 		backupService,
 		settingsService,
 		googleDriveService,
+		systemMonitorService,
 	)
 
 	router, err := httpx.NewRouter(appContainer)
@@ -371,6 +377,7 @@ func runServer() error {
 	}); err != nil {
 		return fmt.Errorf("start ftp runtime: %w", err)
 	}
+	systemMonitorService.Start()
 	scheduler.Start()
 
 	server := &stdhttp.Server{
@@ -415,6 +422,10 @@ func runServer() error {
 
 	if err := ftpRuntime.Stop(); err != nil {
 		logger.Error("ftp runtime shutdown failed", zap.Error(err))
+	}
+
+	if err := systemMonitorService.Stop(shutdownCtx); err != nil {
+		logger.Error("system monitor shutdown failed", zap.Error(err))
 	}
 
 	logger.Info("flowpanel stopped")

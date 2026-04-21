@@ -18,12 +18,15 @@ import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { DiskUsageCard } from "@/components/disk-usage-card";
 import { LoaderCircle, Trash2, Database, World } from "@/components/icons/tabler-icons";
 import { PM2ProcessList } from "@/components/pm2-process-list";
+import { SystemMetricsCard, type SystemStatusSample } from "@/components/system-metrics-card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SystemStatusCard } from "@/components/system-status-card";
 import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
+const systemStatusRefreshIntervalMs = 5_000;
+const systemStatusHistoryLimit = 60;
 const pm2ProcessesRefreshIntervalMs = 10_000;
 const pm2LogsRefreshIntervalMs = 2_000;
 const pm2LogsBottomThresholdPx = 24;
@@ -205,6 +208,18 @@ function formatPM2Meta(status: PM2Status | null, processes: PM2Process[]) {
   return { countLabel, toolchain };
 }
 
+function appendSystemStatusSample(history: SystemStatusSample[], status: SystemStatus, sampledAt = Date.now()) {
+  const nextSample = { sampledAt, status };
+  const lastSample = history[history.length - 1];
+
+  if (lastSample && lastSample.status.server_time === status.server_time) {
+    return [...history.slice(0, -1), nextSample];
+  }
+
+  const nextHistory = [...history, nextSample];
+  return nextHistory.length > systemStatusHistoryLimit ? nextHistory.slice(-systemStatusHistoryLimit) : nextHistory;
+}
+
 function SystemInfoCard({ status }: { status: SystemStatus | null }) {
   const details = [
     {
@@ -244,6 +259,7 @@ export function DashboardPage() {
   const [databaseCount, setDatabaseCount] = useState<number | null>(null);
   const [siteCount, setSiteCount] = useState<number | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [systemStatusHistory, setSystemStatusHistory] = useState<SystemStatusSample[]>([]);
   const [loading, setLoading] = useState(true);
   const [pm2Status, setPM2Status] = useState<PM2Status | null>(null);
   const [pm2Processes, setPM2Processes] = useState<PM2Process[]>([]);
@@ -264,10 +280,15 @@ export function DashboardPage() {
   const pm2LogsContainerRef = useRef<HTMLDivElement | null>(null);
   const pm2LogsAutoScrollRef = useRef(true);
 
+  function syncSystemStatus(status: SystemStatus, sampledAt = Date.now()) {
+    setSystemStatus(status);
+    setSystemStatusHistory((current) => appendSystemStatusSample(current, status, sampledAt));
+  }
+
   const refreshSystemStatus = useEffectEvent(async () => {
     try {
       const nextStatus = await fetchSystemStatus();
-      setSystemStatus(nextStatus);
+      syncSystemStatus(nextStatus);
     } catch {
       // Keep the last successful snapshot instead of surfacing transient polling errors.
     }
@@ -480,7 +501,9 @@ export function DashboardPage() {
 
       setDatabaseCount(nextOverview.databaseCount);
       setSiteCount(nextOverview.siteCount);
-      setSystemStatus(nextOverview.systemStatus);
+      if (nextOverview.systemStatus) {
+        syncSystemStatus(nextOverview.systemStatus);
+      }
       setLoading(false);
     }
 
@@ -503,7 +526,7 @@ export function DashboardPage() {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       void refreshSystemStatus();
-    }, 5_000);
+    }, systemStatusRefreshIntervalMs);
 
     return () => {
       window.clearInterval(intervalId);
@@ -558,6 +581,44 @@ export function DashboardPage() {
   const pm2DeleteDialogDescription = pm2DeleteCandidate
     ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`} from PM2? The process will be removed from the runtime list and must be created again to restore it.`
     : "Delete this PM2 process?";
+  const pm2ProcessesSection = (
+    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
+      <div className="min-w-0">
+        <div className="min-w-0">
+          <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">PM2 processes</div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--app-text-muted)]">
+            <span className="font-mono">{pm2Meta.toolchain}</span>
+            {pm2Status?.installed ? <span>{pm2Meta.countLabel}</span> : null}
+            {pm2Status && !pm2Status.installed && pm2Status.message ? <span>{pm2Status.message}</span> : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        {pm2Status && !pm2Status.installed && !pm2Error ? (
+          <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-6 text-sm text-[var(--app-text-muted)]">
+            PM2 is not installed on this node.
+          </div>
+        ) : (
+          <PM2ProcessList
+            mode="dashboard"
+            processes={pm2Processes}
+            error={pm2Error}
+            loading={pm2Loading}
+            busy={pm2ProcessActionKey !== null}
+            processActionKey={pm2ProcessActionKey}
+            onProcessAction={(action, process) => {
+              void handlePM2ProcessAction(action, process);
+            }}
+            onDelete={(process) => {
+              setPM2DeleteCandidate(process);
+            }}
+            onOpenLogs={openPM2Logs}
+          />
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <>
@@ -586,45 +647,14 @@ export function DashboardPage() {
               ) : null
             ) : null}
 
-            <div className={dashboardSplitGridClassName}>
-              <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
-                <div className="min-w-0">
-                  <div className="min-w-0">
-                    <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">PM2 processes</div>
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--app-text-muted)]">
-                      <span className="font-mono">{pm2Meta.toolchain}</span>
-                      {pm2Status?.installed ? <span>{pm2Meta.countLabel}</span> : null}
-                      {pm2Status && !pm2Status.installed && pm2Status.message ? <span>{pm2Status.message}</span> : null}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  {pm2Status && !pm2Status.installed && !pm2Error ? (
-                    <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-6 text-sm text-[var(--app-text-muted)]">
-                      PM2 is not installed on this node.
-                    </div>
-                  ) : (
-                    <PM2ProcessList
-                      mode="dashboard"
-                      processes={pm2Processes}
-                      error={pm2Error}
-                      loading={pm2Loading}
-                      busy={pm2ProcessActionKey !== null}
-                      processActionKey={pm2ProcessActionKey}
-                      onProcessAction={(action, process) => {
-                        void handlePM2ProcessAction(action, process);
-                      }}
-                      onDelete={(process) => {
-                        setPM2DeleteCandidate(process);
-                      }}
-                      onOpenLogs={openPM2Logs}
-                    />
-                  )}
-                </div>
-              </section>
-              <div className="hidden xl:block" />
-            </div>
+            {systemStatus ? (
+              <div className={dashboardSplitGridClassName}>
+                {pm2ProcessesSection}
+                <SystemMetricsCard history={systemStatusHistory} status={systemStatus} />
+              </div>
+            ) : (
+              pm2ProcessesSection
+            )}
           </section>
         )}
       </div>
