@@ -1,10 +1,33 @@
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { fetchDomains } from "@/api/domains";
 import { fetchMariaDBDatabases } from "@/api/mariadb";
+import {
+  clearPM2ProcessLogs,
+  deletePM2Process,
+  fetchPM2ProcessLogs,
+  fetchPM2Processes,
+  fetchPM2Status,
+  restartPM2Process,
+  startPM2Process,
+  stopPM2Process,
+  type PM2Process,
+  type PM2Status,
+} from "@/api/pm2";
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
+import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { DiskUsageCard } from "@/components/disk-usage-card";
-import { Database, World } from "@/components/icons/tabler-icons";
+import { LoaderCircle, Trash2, Database, World } from "@/components/icons/tabler-icons";
+import { PM2ProcessList } from "@/components/pm2-process-list";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SystemStatusCard } from "@/components/system-status-card";
+import { getErrorMessage } from "@/lib/utils";
+import { toast } from "sonner";
+
+const pm2ProcessesRefreshIntervalMs = 10_000;
+const pm2LogsRefreshIntervalMs = 2_000;
+const pm2LogsBottomThresholdPx = 24;
+const dashboardSplitGridClassName = "grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]";
 
 type OverviewData = {
   databaseCount: number | null;
@@ -175,6 +198,13 @@ function DetailItem({ label, value, valueClassName = "" }: { label: string; valu
   );
 }
 
+function formatPM2Meta(status: PM2Status | null, processes: PM2Process[]) {
+  const toolchain = status?.binary_path?.trim() || "pm2";
+  const countLabel = `${processes.length} ${processes.length === 1 ? "process" : "processes"}`;
+
+  return { countLabel, toolchain };
+}
+
 function SystemInfoCard({ status }: { status: SystemStatus | null }) {
   const details = [
     {
@@ -215,6 +245,24 @@ export function DashboardPage() {
   const [siteCount, setSiteCount] = useState<number | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pm2Status, setPM2Status] = useState<PM2Status | null>(null);
+  const [pm2Processes, setPM2Processes] = useState<PM2Process[]>([]);
+  const [pm2Loading, setPM2Loading] = useState(true);
+  const [pm2Refreshing, setPM2Refreshing] = useState(false);
+  const [pm2Error, setPM2Error] = useState<string | null>(null);
+  const [pm2ProcessActionKey, setPM2ProcessActionKey] = useState<string | null>(null);
+  const [pm2LogsOpen, setPM2LogsOpen] = useState(false);
+  const [pm2LogsTarget, setPM2LogsTarget] = useState<PM2Process | null>(null);
+  const [pm2LogsOutput, setPM2LogsOutput] = useState("");
+  const [pm2LogsLoading, setPM2LogsLoading] = useState(false);
+  const [pm2LogsClearing, setPM2LogsClearing] = useState(false);
+  const [pm2LogsError, setPM2LogsError] = useState<string | null>(null);
+  const [pm2DeleteCandidate, setPM2DeleteCandidate] = useState<Pick<PM2Process, "id" | "name"> | null>(null);
+
+  const pm2RequestIdRef = useRef(0);
+  const pm2LogsRequestIdRef = useRef(0);
+  const pm2LogsContainerRef = useRef<HTMLDivElement | null>(null);
+  const pm2LogsAutoScrollRef = useRef(true);
 
   const refreshSystemStatus = useEffectEvent(async () => {
     try {
@@ -224,6 +272,202 @@ export function DashboardPage() {
       // Keep the last successful snapshot instead of surfacing transient polling errors.
     }
   });
+
+  function resetPM2LogsState() {
+    pm2LogsRequestIdRef.current += 1;
+    pm2LogsAutoScrollRef.current = true;
+    setPM2LogsOutput("");
+    setPM2LogsLoading(false);
+    setPM2LogsClearing(false);
+    setPM2LogsError(null);
+  }
+
+  function isScrolledToBottom(element: HTMLDivElement) {
+    return element.scrollHeight - element.scrollTop - element.clientHeight <= pm2LogsBottomThresholdPx;
+  }
+
+  function syncPM2Processes(processes: PM2Process[]) {
+    setPM2Processes(processes);
+    setPM2DeleteCandidate((current) => (current && !processes.some((process) => process.id === current.id) ? null : current));
+
+    let closeLogs = false;
+    setPM2LogsTarget((current) => {
+      if (current === null) {
+        return current;
+      }
+
+      const nextTarget = processes.find((process) => process.id === current.id) ?? null;
+      if (nextTarget !== null) {
+        return nextTarget;
+      }
+
+      closeLogs = true;
+      return null;
+    });
+
+    if (closeLogs) {
+      setPM2LogsOpen(false);
+      resetPM2LogsState();
+    }
+  }
+
+  const loadPM2Overview = useEffectEvent(async (options?: { background?: boolean }) => {
+    const preserveContent = Boolean(options?.background && pm2Processes.length > 0);
+    const requestId = pm2RequestIdRef.current + 1;
+    pm2RequestIdRef.current = requestId;
+
+    if (preserveContent) {
+      setPM2Refreshing(true);
+    } else {
+      setPM2Loading(true);
+    }
+
+    setPM2Error(null);
+
+    try {
+      const nextStatus = await fetchPM2Status();
+      if (pm2RequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2Status(nextStatus);
+      if (!nextStatus.installed) {
+        syncPM2Processes([]);
+        return;
+      }
+
+      const nextProcesses = await fetchPM2Processes();
+      if (pm2RequestIdRef.current !== requestId) {
+        return;
+      }
+
+      syncPM2Processes(nextProcesses);
+    } catch (error) {
+      if (pm2RequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2Error(getErrorMessage(error, "Failed to load PM2 processes."));
+    } finally {
+      if (pm2RequestIdRef.current === requestId) {
+        setPM2Loading(false);
+        setPM2Refreshing(false);
+      }
+    }
+  });
+
+  async function loadPM2Logs(process: PM2Process) {
+    const requestId = pm2LogsRequestIdRef.current + 1;
+    pm2LogsRequestIdRef.current = requestId;
+    setPM2LogsLoading(true);
+    setPM2LogsError(null);
+
+    try {
+      const output = await fetchPM2ProcessLogs(process.id);
+      if (pm2LogsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2LogsOutput(output.trim());
+    } catch (error) {
+      if (pm2LogsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2LogsOutput("");
+      setPM2LogsError(getErrorMessage(error, `Failed to load logs for ${process.name}.`));
+    } finally {
+      if (pm2LogsRequestIdRef.current === requestId) {
+        setPM2LogsLoading(false);
+      }
+    }
+  }
+
+  function openPM2Logs(process: PM2Process) {
+    pm2LogsAutoScrollRef.current = true;
+    setPM2LogsTarget(process);
+    setPM2LogsOpen(true);
+    resetPM2LogsState();
+    void loadPM2Logs(process);
+  }
+
+  async function handlePM2ClearLogs(process: PM2Process) {
+    if (pm2LogsClearing) {
+      return;
+    }
+
+    const requestId = pm2LogsRequestIdRef.current + 1;
+    pm2LogsRequestIdRef.current = requestId;
+    setPM2LogsClearing(true);
+    setPM2LogsError(null);
+
+    try {
+      await clearPM2ProcessLogs(process.id);
+      if (pm2LogsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setPM2LogsOutput("");
+      toast.success("PM2 logs cleared.");
+    } catch (error) {
+      if (pm2LogsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const message = getErrorMessage(error, `Failed to clear logs for ${process.name}.`);
+      setPM2LogsError(message);
+      toast.error(message);
+    } finally {
+      if (pm2LogsRequestIdRef.current === requestId) {
+        setPM2LogsLoading(false);
+        setPM2LogsClearing(false);
+      }
+    }
+  }
+
+  async function handlePM2ProcessAction(action: "start" | "stop" | "restart" | "delete", process: Pick<PM2Process, "id" | "name">) {
+    const actionKey = `${action}:${process.id}`;
+    const processLabel = process.name || `Process ${process.id}`;
+    const successMessage =
+      action === "start"
+        ? `${processLabel} started.`
+        : action === "stop"
+          ? `${processLabel} stopped.`
+          : action === "restart"
+            ? `${processLabel} restarted.`
+            : `${processLabel} deleted.`;
+    const fallbackMessage =
+      action === "start"
+        ? `Failed to start ${processLabel}.`
+        : action === "stop"
+          ? `Failed to stop ${processLabel}.`
+          : action === "restart"
+            ? `Failed to restart ${processLabel}.`
+            : `Failed to delete ${processLabel}.`;
+
+    setPM2ProcessActionKey(actionKey);
+    setPM2Error(null);
+
+    try {
+      const nextProcesses =
+        action === "start"
+          ? await startPM2Process(process.id)
+          : action === "stop"
+            ? await stopPM2Process(process.id)
+            : action === "restart"
+              ? await restartPM2Process(process.id)
+              : await deletePM2Process(process.id);
+
+      syncPM2Processes(nextProcesses);
+      toast.success(successMessage);
+    } catch (error) {
+      const message = getErrorMessage(error, fallbackMessage);
+      setPM2Error(message);
+      toast.error(message);
+    } finally {
+      setPM2ProcessActionKey((current) => (current === actionKey ? null : current));
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -248,6 +492,15 @@ export function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    void loadPM2Overview();
+
+    return () => {
+      pm2RequestIdRef.current += 1;
+      pm2LogsRequestIdRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       void refreshSystemStatus();
     }, 5_000);
@@ -255,9 +508,56 @@ export function DashboardPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [refreshSystemStatus]);
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (pm2Loading || pm2Refreshing || pm2ProcessActionKey !== null) {
+        return;
+      }
+
+      void loadPM2Overview({ background: true });
+    }, pm2ProcessesRefreshIntervalMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [pm2Loading, pm2Refreshing, pm2ProcessActionKey]);
+
+  useEffect(() => {
+    if (!pm2LogsOpen || pm2LogsTarget === null) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (pm2LogsLoading || pm2LogsClearing || pm2ProcessActionKey !== null) {
+        return;
+      }
+
+      void loadPM2Logs(pm2LogsTarget);
+    }, pm2LogsRefreshIntervalMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [pm2LogsClearing, pm2LogsLoading, pm2LogsOpen, pm2LogsTarget, pm2ProcessActionKey]);
+
+  useEffect(() => {
+    if (!pm2LogsOpen || pm2LogsContainerRef.current === null || !pm2LogsAutoScrollRef.current) {
+      return;
+    }
+
+    const container = pm2LogsContainerRef.current;
+    container.scrollTop = container.scrollHeight;
+  }, [pm2LogsOpen, pm2LogsOutput]);
+
   const hasTotals = siteCount !== null || databaseCount !== null;
   const showOverview = Boolean(systemStatus || hasTotals);
+  const pm2Meta = formatPM2Meta(pm2Status, pm2Processes);
+  const pm2DeleteDialogTitle = pm2DeleteCandidate ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`}` : "Delete PM2 process";
+  const pm2DeleteDialogDescription = pm2DeleteCandidate
+    ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`} from PM2? The process will be removed from the runtime list and must be created again to restore it.`
+    : "Delete this PM2 process?";
 
   return (
     <>
@@ -274,7 +574,7 @@ export function DashboardPage() {
           <section className="space-y-5">
             {showOverview ? (
               systemStatus ? (
-                <div className="grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
+                <div className={dashboardSplitGridClassName}>
                   <SystemStatusCard status={systemStatus} />
                   <div className="space-y-5">
                     <DiskUsageCard status={systemStatus} />
@@ -285,9 +585,129 @@ export function DashboardPage() {
                 <OverviewCard databaseCount={databaseCount} siteCount={siteCount} />
               ) : null
             ) : null}
+
+            <div className={dashboardSplitGridClassName}>
+              <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
+                <div className="min-w-0">
+                  <div className="min-w-0">
+                    <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">PM2 processes</div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--app-text-muted)]">
+                      <span className="font-mono">{pm2Meta.toolchain}</span>
+                      {pm2Status?.installed ? <span>{pm2Meta.countLabel}</span> : null}
+                      {pm2Status && !pm2Status.installed && pm2Status.message ? <span>{pm2Status.message}</span> : null}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  {pm2Status && !pm2Status.installed && !pm2Error ? (
+                    <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-6 text-sm text-[var(--app-text-muted)]">
+                      PM2 is not installed on this node.
+                    </div>
+                  ) : (
+                    <PM2ProcessList
+                      mode="dashboard"
+                      processes={pm2Processes}
+                      error={pm2Error}
+                      loading={pm2Loading}
+                      busy={pm2ProcessActionKey !== null}
+                      processActionKey={pm2ProcessActionKey}
+                      onProcessAction={(action, process) => {
+                        void handlePM2ProcessAction(action, process);
+                      }}
+                      onDelete={(process) => {
+                        setPM2DeleteCandidate(process);
+                      }}
+                      onOpenLogs={openPM2Logs}
+                    />
+                  )}
+                </div>
+              </section>
+              <div className="hidden xl:block" />
+            </div>
           </section>
         )}
       </div>
+
+      <Dialog
+        open={pm2LogsOpen}
+        onOpenChange={(open) => {
+          setPM2LogsOpen(open);
+          if (!open) {
+            setPM2LogsTarget(null);
+            resetPM2LogsState();
+          }
+        }}
+      >
+        <DialogContent className="h-[min(80vh,calc(100vh-2rem))] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{pm2LogsTarget ? `${pm2LogsTarget.name} logs` : "PM2 process logs"}</DialogTitle>
+            <DialogDescription>
+              {pm2LogsTarget ? `Recent output for process ${pm2LogsTarget.id}.` : "Recent PM2 process output."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
+              onClick={() => {
+                if (pm2LogsTarget) {
+                  void handlePM2ClearLogs(pm2LogsTarget);
+                }
+              }}
+              disabled={pm2LogsClearing || pm2LogsTarget === null}
+            >
+              {pm2LogsClearing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Clear logs
+            </Button>
+          </div>
+
+          <div
+            ref={pm2LogsContainerRef}
+            className="min-h-0 overflow-auto rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]"
+            onScroll={(event) => {
+              pm2LogsAutoScrollRef.current = isScrolledToBottom(event.currentTarget);
+            }}
+          >
+            {pm2LogsError ? (
+              <div className="p-4 text-sm text-[var(--app-danger)]">{pm2LogsError}</div>
+            ) : pm2LogsLoading && !pm2LogsOutput ? (
+              <div className="flex h-full items-center justify-center gap-2 p-4 text-sm text-[var(--app-text-muted)]">
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                Loading logs...
+              </div>
+            ) : (
+              <pre className="whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-[var(--app-text)]">
+                {pm2LogsOutput || "No log output available."}
+              </pre>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ActionConfirmDialog
+        open={pm2DeleteCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPM2DeleteCandidate(null);
+          }
+        }}
+        title={pm2DeleteDialogTitle}
+        desc={pm2DeleteDialogDescription}
+        confirmText="Delete"
+        destructive
+        isLoading={pm2DeleteCandidate !== null && pm2ProcessActionKey === `delete:${pm2DeleteCandidate.id}`}
+        handleConfirm={() => {
+          if (pm2DeleteCandidate) {
+            const candidate = pm2DeleteCandidate;
+            setPM2DeleteCandidate(null);
+            void handlePM2ProcessAction("delete", candidate);
+          }
+        }}
+      />
     </>
   );
 }

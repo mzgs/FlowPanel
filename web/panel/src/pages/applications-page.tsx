@@ -97,6 +97,7 @@ import {
 } from "@/api/redis";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { MariaDBSettingsDialog } from "@/components/mariadb-settings-dialog";
+import { PM2ProcessList } from "@/components/pm2-process-list";
 import { PHPSettingsDialog } from "@/components/php-settings-dialog";
 import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialog";
 import {
@@ -111,7 +112,6 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
-  TerminalSquare,
   Trash2,
 } from "@/components/icons/tabler-icons";
 import { PageHeader } from "@/components/page-header";
@@ -121,7 +121,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
@@ -473,142 +472,6 @@ function formatPM2Value(status: PM2Status | null) {
 
 function getPM2Badge(status: PM2Status | null) {
   return getInstallRemoveRuntimeBadge(status);
-}
-
-function formatPM2ProcessStatus(status: string) {
-  const normalized = status.trim().toLowerCase();
-  if (!normalized) {
-    return "Unknown";
-  }
-
-  return normalized
-    .split(/[\s_-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function getPM2ProcessStatusBadge(status: string) {
-  const normalized = status.trim().toLowerCase();
-
-  if (normalized === "online") {
-    return {
-      label: "Online",
-      variant: "outline" as const,
-      className: "border-[var(--app-ok)]/30 bg-[var(--app-ok-soft)] text-[var(--app-ok)]",
-    };
-  }
-  if (normalized === "stopped") {
-    return {
-      label: "Stopped",
-      variant: "outline" as const,
-      className: "border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] text-[var(--app-danger)]",
-    };
-  }
-  if (normalized === "launching" || normalized === "waiting restart") {
-    return { label: formatPM2ProcessStatus(normalized), variant: "secondary" as const };
-  }
-  if (normalized === "errored") {
-    return { label: "Errored", variant: "destructive" as const };
-  }
-
-  return { label: formatPM2ProcessStatus(normalized), variant: "outline" as const };
-}
-
-function formatPM2ProcessCPU(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "0%";
-  }
-
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)}%`;
-}
-
-function formatPM2ProcessMemory(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIndex = 0;
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
-}
-
-function formatPM2ProcessUptime(process: PM2Process) {
-  const status = process.status.trim().toLowerCase();
-  if (status !== "online" && status !== "launching" && status !== "waiting restart") {
-    return "-";
-  }
-
-  if (!process.uptime_unix_milli || process.uptime_unix_milli <= 0) {
-    return "-";
-  }
-
-  const elapsed = Date.now() - process.uptime_unix_milli;
-  if (!Number.isFinite(elapsed) || elapsed <= 0) {
-    return "Just now";
-  }
-
-  const minute = 60_000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-
-  if (elapsed >= day) {
-    const days = Math.floor(elapsed / day);
-    const hours = Math.floor((elapsed % day) / hour);
-    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
-  }
-  if (elapsed >= hour) {
-    const hours = Math.floor(elapsed / hour);
-    const minutes = Math.floor((elapsed % hour) / minute);
-    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
-  }
-  if (elapsed >= minute) {
-    return `${Math.floor(elapsed / minute)}m`;
-  }
-
-  return `${Math.max(1, Math.floor(elapsed / 1000))}s`;
-}
-
-function canStartPM2Process(process: PM2Process) {
-  const status = process.status.trim().toLowerCase();
-  return status !== "online" && status !== "launching";
-}
-
-function canStopPM2Process(process: PM2Process) {
-  const status = process.status.trim().toLowerCase();
-  return status === "online" || status === "launching" || status === "waiting restart";
-}
-
-function canRestartPM2Process(process: PM2Process) {
-  const status = process.status.trim().toLowerCase();
-  return status === "online" || status === "launching" || status === "waiting restart";
-}
-
-function isSavedPM2Process(process: PM2Process) {
-  return process.id < 0;
-}
-
-function getPM2PrimaryProcessAction(process: PM2Process) {
-  if (canStopPM2Process(process)) {
-    return {
-      action: "stop" as const,
-      label: "Stop",
-      icon: PlayerStop,
-    };
-  }
-
-  return {
-    action: "start" as const,
-    label: "Start",
-    icon: PlayerPlayFilled,
-  };
 }
 
 function isSamePM2Process(current: PM2Process, next: PM2Process) {
@@ -2887,165 +2750,22 @@ export function ApplicationsPage() {
               </Button>
             </div>
 
-            <div className="flex min-h-0 flex-col rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-              {pm2ProcessesError && pm2Processes.length > 0 ? (
-                <div className="border-b border-[var(--app-danger)]/20 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)] sm:px-5">
-                  {pm2ProcessesError}
-                </div>
-              ) : null}
-
-              {pm2ProcessesError && pm2Processes.length === 0 ? (
-                <div className="flex h-full items-center justify-center p-5 sm:p-6">
-                  <div className="max-w-xl rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
-                    {pm2ProcessesError}
-                  </div>
-                </div>
-              ) : pm2ProcessesInitialLoading ? (
-                <div className="flex h-full items-center justify-center gap-2 px-5 text-sm text-[var(--app-text-muted)] sm:px-6">
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                  Loading PM2 processes...
-                </div>
-              ) : pm2Processes.length === 0 ? (
-                <div className="p-5 sm:p-6">
-                  <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-10 text-sm text-[var(--app-text-muted)]">
-                    No PM2 processes found.
-                  </div>
-                </div>
-              ) : (
-                <div className="min-h-0 overflow-auto rounded-lg bg-[var(--app-surface)]">
-                  <Table className="min-w-[1100px]">
-                    <TableHeader className="sticky top-0 z-10 bg-[var(--app-surface)] [&_tr]:border-[var(--app-border)]">
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="px-4">Name</TableHead>
-                        <TableHead>ID</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>CPU</TableHead>
-                        <TableHead>Memory</TableHead>
-                        <TableHead>Restarts</TableHead>
-                        <TableHead>Uptime</TableHead>
-                        <TableHead className="min-w-[280px]">Script</TableHead>
-                        <TableHead className="w-[300px] text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pm2Processes.map((process) => {
-                        const statusBadge = getPM2ProcessStatusBadge(process.status);
-                        const activeAction = pm2ProcessActionKey?.endsWith(`:${process.id}`) ? pm2ProcessActionKey.split(":")[0] : null;
-                        const actionsDisabled = pm2ProcessesBusy;
-                        const primaryAction = getPM2PrimaryProcessAction(process);
-                        const primaryActionDisabled = primaryAction.action === "start" ? !canStartPM2Process(process) : !canStopPM2Process(process);
-                        const PrimaryActionIcon = primaryAction.icon;
-
-                        return (
-                          <TableRow key={process.id} className="align-top">
-                            <TableCell className="px-4 py-3">
-                              <div className="font-medium text-[var(--app-text)]">{process.name}</div>
-                            </TableCell>
-                            <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
-                              {isSavedPM2Process(process) ? "Saved" : process.id}
-                            </TableCell>
-                            <TableCell className="py-3">
-                              <Badge variant={statusBadge.variant} className={statusBadge.className}>
-                                {statusBadge.label}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
-                              {formatPM2ProcessCPU(process.cpu)}
-                            </TableCell>
-                            <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
-                              {formatPM2ProcessMemory(process.memory_bytes)}
-                            </TableCell>
-                            <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
-                              {process.restarts}
-                            </TableCell>
-                            <TableCell className="py-3 text-[13px] text-[var(--app-text-muted)]">
-                              {formatPM2ProcessUptime(process)}
-                            </TableCell>
-                            <TableCell className="max-w-0 py-3">
-                              <div className="whitespace-normal break-all font-mono text-xs text-[var(--app-text-muted)]">
-                                {process.script_path?.trim() || "-"}
-                              </div>
-                            </TableCell>
-                            <TableCell className="py-3 text-right">
-                              <div className="flex flex-wrap justify-end gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-7 w-7 p-0"
-                                  onClick={() => {
-                                    void handlePM2ProcessAction(primaryAction.action, process);
-                                  }}
-                                  disabled={actionsDisabled || primaryActionDisabled}
-                                  aria-label={`${primaryAction.label} ${process.name}`}
-                                  title={`${primaryAction.label} ${process.name}`}
-                                >
-                                  {activeAction === primaryAction.action ? (
-                                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <PrimaryActionIcon className="h-4 w-4" />
-                                  )}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-7 w-7 p-0"
-                                  onClick={() => {
-                                    void handlePM2ProcessAction("restart", process);
-                                  }}
-                                  disabled={actionsDisabled || !canRestartPM2Process(process)}
-                                  aria-label={`Restart ${process.name}`}
-                                  title={`Restart ${process.name}`}
-                                >
-                                  {activeAction === "restart" ? (
-                                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <RotateCcw className="h-4 w-4" />
-                                  )}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-7 w-7 p-0 text-[var(--app-danger)] hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)]"
-                                  onClick={() => {
-                                    setPM2DeleteCandidate({ id: process.id, name: process.name });
-                                  }}
-                                  disabled={actionsDisabled}
-                                  aria-label={`Delete ${process.name}`}
-                                  title={`Delete ${process.name}`}
-                                >
-                                  {activeAction === "delete" ? (
-                                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-4 w-4" />
-                                  )}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className={compactActionButtonClassName}
-                                  onClick={() => {
-                                    openPM2Logs(process);
-                                  }}
-                                  disabled={actionsDisabled || isSavedPM2Process(process)}
-                                  title={isSavedPM2Process(process) ? "Start the process to view logs." : undefined}
-                                >
-                                  <TerminalSquare className="h-4 w-4" />
-                                  Logs
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </div>
+            <PM2ProcessList
+              mode="dialog"
+              className="flex-1"
+              processes={pm2Processes}
+              error={pm2ProcessesError}
+              loading={pm2ProcessesLoading}
+              busy={pm2ProcessesBusy}
+              processActionKey={pm2ProcessActionKey}
+              onProcessAction={(action, process) => {
+                void handlePM2ProcessAction(action, process);
+              }}
+              onDelete={(process) => {
+                setPM2DeleteCandidate(process);
+              }}
+              onOpenLogs={openPM2Logs}
+            />
           </div>
         </DialogContent>
       </Dialog>
