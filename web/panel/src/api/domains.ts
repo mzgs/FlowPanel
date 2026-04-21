@@ -468,6 +468,20 @@ export async function copyDomainWebsite(
   }
 }
 
+export async function clearDomainCache(hostname: string): Promise<void> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/cache/clear`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+
+  if (!response.ok) {
+    throw await readDomainApiError(response, "clear domain cache");
+  }
+}
+
 export async function installDomainTemplate(
   hostname: string,
   input: InstallDomainTemplateInput,

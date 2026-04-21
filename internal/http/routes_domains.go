@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"flowpanel/internal/caddy"
 	"flowpanel/internal/domain"
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/ftp"
@@ -221,6 +222,34 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		w.Header().Set("Cache-Control", "private, max-age=3600")
 		w.Header().Set("Content-Type", "image/png")
 		stdhttp.ServeFile(w, r, previewPath)
+	})
+
+	domainsCacheClearHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		record, ok := a.app.Domains.FindByHostname(hostname)
+		if !ok {
+			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			return
+		}
+		if a.app.Caddy == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "embedded caddy runtime is not configured"})
+			return
+		}
+
+		if err := a.app.Caddy.ClearDomainCache(r.Context(), record.Hostname); err != nil {
+			switch {
+			case errors.Is(err, caddy.ErrRuntimeNotStarted):
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "embedded caddy runtime is not running"})
+			default:
+				a.app.Logger.Error("clear domain cache failed", zap.String("hostname", record.Hostname), zap.Error(err))
+				a.mutationEvent(r.Context(), "domains", "clear_cache", "domain", record.ID, record.Hostname, "failed", "Failed to clear the domain cache.")
+				writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": "failed to clear domain cache"})
+			}
+			return
+		}
+
+		a.mutationEvent(r.Context(), "domains", "clear_cache", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Cleared the cache for %q.", record.Hostname))
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
 	})
 
 	domainsWebsiteCopyHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -1428,6 +1457,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodHead, "/domains/logs", domainsLogsHandler)
 	r.Method(stdhttp.MethodGet, "/domains/{hostname}/preview", domainsPreviewHandler)
 	r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
+	r.Method(stdhttp.MethodPost, "/domains/{hostname}/cache/clear", domainsCacheClearHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/copy", domainsWebsiteCopyHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/templates/install", domainsTemplateInstallHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/install", domainsComposerActionHandler("install"))

@@ -1,10 +1,12 @@
 package caddy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -90,6 +92,7 @@ const (
 )
 
 const defaultCacheTTL = 120 * time.Second
+const souinAdminAPIPath = "/souin-api/souin"
 
 var loggerNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
@@ -295,6 +298,72 @@ func (r *Runtime) Stop(ctx context.Context) error {
 	r.logger.Info("embedded caddy runtime stopped")
 
 	return nil
+}
+
+func (r *Runtime) ClearDomainCache(ctx context.Context, hostname string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r == nil {
+		return ErrRuntimeNotStarted
+	}
+
+	r.mu.Lock()
+	started := r.started
+	adminListenAddr := r.adminListenAddr
+	r.mu.Unlock()
+
+	if !started {
+		return ErrRuntimeNotStarted
+	}
+
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if hostname == "" {
+		return fmt.Errorf("hostname is required")
+	}
+
+	adminAddr, err := adminDialAddress(adminListenAddr)
+	if err != nil {
+		return err
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"type":      "origin",
+		"selectors": []string{hostname},
+		"purge":     true,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal cache clear request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://"+adminAddr+souinAdminAPIPath,
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return fmt.Errorf("create cache clear request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("clear domain cache: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == http.StatusOK || response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+	message := strings.TrimSpace(string(body))
+	if message != "" {
+		return fmt.Errorf("clear domain cache: admin API returned %d: %s", response.StatusCode, message)
+	}
+
+	return fmt.Errorf("clear domain cache: admin API returned %d", response.StatusCode)
 }
 
 func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Record) (*phpRouteConfig, error) {
@@ -997,6 +1066,13 @@ func cacheAppConfig() httpcache.SouinApp {
 		DefaultCache: httpcache.DefaultCache{
 			TTL:       configurationtypes.Duration{Duration: defaultCacheTTL},
 			CacheName: "FlowPanel",
+		},
+		API: configurationtypes.API{
+			BasePath: "/souin-api",
+			Souin: configurationtypes.APIEndpoint{
+				BasePath: "/souin",
+				Enable:   true,
+			},
 		},
 	}
 }

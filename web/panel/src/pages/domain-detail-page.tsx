@@ -17,6 +17,7 @@ import {
   type WordPressStatus,
 } from "@/api/domain-wordpress";
 import {
+  clearDomainCache,
   copyDomainWebsite,
   deployDomainGitHubIntegration,
   fetchDomainNodeJSStatus,
@@ -491,6 +492,10 @@ const devToolActions: DomainActionItem[] = [
     icon: Settings,
   },
   {
+    title: "Cache",
+    icon: RefreshCw,
+  },
+  {
     title: "PHP",
     icon: FileCode2,
   },
@@ -731,6 +736,7 @@ export function DomainDetailPage() {
   const [backupDataError, setBackupDataError] = useState<string | null>(null);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [composerDialogOpen, setComposerDialogOpen] = useState(false);
+  const [cacheDialogOpen, setCacheDialogOpen] = useState(false);
   const [environmentDialogOpen, setEnvironmentDialogOpen] = useState(false);
   const [ftpDialogOpen, setFTPDialogOpen] = useState(false);
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false);
@@ -779,6 +785,7 @@ export function DomainDetailPage() {
   >({});
   const [environmentSaving, setEnvironmentSaving] = useState(false);
   const [environmentError, setEnvironmentError] = useState<string | null>(null);
+  const [cacheClearing, setCacheClearing] = useState(false);
   const [cacheSaving, setCacheSaving] = useState(false);
   const [creatingBackupTarget, setCreatingBackupTarget] = useState<
     string | null
@@ -882,6 +889,7 @@ export function DomainDetailPage() {
     setBackupDataError(null);
     setBackupDialogOpen(false);
     setComposerDialogOpen(false);
+    setCacheDialogOpen(false);
     setEnvironmentDialogOpen(false);
     setFTPDialogOpen(false);
     setGitHubDialogOpen(false);
@@ -911,6 +919,7 @@ export function DomainDetailPage() {
     setEnvironmentFieldErrors({});
     setEnvironmentSaving(false);
     setEnvironmentError(null);
+    setCacheClearing(false);
     setCacheSaving(false);
     setCreatingBackupTarget(null);
     setCreatedBackupTarget(null);
@@ -2020,6 +2029,23 @@ export function DomainDetailPage() {
     }
   }
 
+  async function handleClearCache() {
+    if (!domain || cacheClearing) {
+      return;
+    }
+
+    setCacheClearing(true);
+
+    try {
+      await clearDomainCache(domain.hostname);
+      toast.success(`Cleared cached responses for ${domain.hostname}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to clear cached responses."));
+    } finally {
+      setCacheClearing(false);
+    }
+  }
+
   async function handleCopyWebsite() {
     if (!domain || websiteCopyPending) {
       return;
@@ -2383,6 +2409,64 @@ export function DomainDetailPage() {
           void handleComposerAction("update");
         }}
       />
+      <Dialog open={cacheDialogOpen && domain !== null} onOpenChange={setCacheDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cache</DialogTitle>
+            <DialogDescription>
+              Manage the Caddy cache for {domain?.hostname ?? hostname}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-[var(--app-border)] px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-[var(--app-text)]">
+                    Caddy cache
+                  </div>
+                  <div className="mt-1 text-[12px] text-[var(--app-text-muted)]">
+                    {domain?.cache_enabled
+                      ? "Enabled for eligible responses on this domain."
+                      : "Disabled for this domain."}
+                  </div>
+                </div>
+                <Badge variant={domain?.cache_enabled ? "default" : "secondary"}>
+                  {domain?.cache_enabled ? "Enabled" : "Disabled"}
+                </Badge>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  void handleClearCache();
+                }}
+                disabled={!domain || cacheClearing || cacheSaving}
+              >
+                {cacheClearing ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                Clear cache
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  void handleToggleCache();
+                }}
+                disabled={!domain || cacheSaving || cacheClearing}
+              >
+                {cacheSaving ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : null}
+                {domain?.cache_enabled ? "Disable cache" : "Enable cache"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
       {domain ? (
         <DomainTemplateInstallDialog
           open={templateInstallDialogOpen}
@@ -3062,6 +3146,11 @@ export function DomainDetailPage() {
                     title="Dev Tools"
                     items={activeDevToolActions}
                     onItemClick={(item) => {
+                      if (item.title === "Cache" && domain !== null) {
+                        setCacheDialogOpen(true);
+                        return;
+                      }
+
                       if (item.title === "Environment" && domain !== null) {
                         if (!supportsEnvironmentVariables(domain.kind)) {
                           toast.error(
@@ -3163,38 +3252,6 @@ export function DomainDetailPage() {
                     }}
                   />
                 </div>
-                <section className="space-y-2 pt-2">
-                  <h2 className="pl-2 text-base font-semibold text-[var(--app-text)]">
-                    Cache
-                  </h2>
-                  <div className="flex flex-col gap-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-[var(--app-text)]">
-                        Caddy cache
-                      </p>
-                      <p className="text-[12px] text-[var(--app-text-muted)]">
-                        {domain?.cache_enabled
-                          ? "Enabled for eligible responses on this domain."
-                          : "Disabled for this domain."}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="shrink-0"
-                      onClick={() => {
-                        void handleToggleCache();
-                      }}
-                      disabled={!domain || cacheSaving}
-                    >
-                      {cacheSaving ? (
-                        <LoaderCircle className="h-4 w-4 animate-spin" />
-                      ) : null}
-                      {domain?.cache_enabled ? "Disable cache" : "Enable cache"}
-                    </Button>
-                  </div>
-                </section>
                 {wordPressSummary?.installed ? (
                   <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
                     <div className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]">
