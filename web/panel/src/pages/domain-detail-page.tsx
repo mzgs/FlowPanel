@@ -27,6 +27,7 @@ import {
   installDomainPythonRequirements,
   startDomainNodeJS,
   stopDomainNodeJS,
+  updateDomain,
   type EnvironmentVariable,
   type DomainNodeJSStatus,
   type InstallDomainTemplateResult,
@@ -778,6 +779,7 @@ export function DomainDetailPage() {
   >({});
   const [environmentSaving, setEnvironmentSaving] = useState(false);
   const [environmentError, setEnvironmentError] = useState<string | null>(null);
+  const [cacheSaving, setCacheSaving] = useState(false);
   const [creatingBackupTarget, setCreatingBackupTarget] = useState<
     string | null
   >(null);
@@ -909,6 +911,7 @@ export function DomainDetailPage() {
     setEnvironmentFieldErrors({});
     setEnvironmentSaving(false);
     setEnvironmentError(null);
+    setCacheSaving(false);
     setCreatingBackupTarget(null);
     setCreatedBackupTarget(null);
     setRestoringBackupName(null);
@@ -1715,6 +1718,15 @@ export function DomainDetailPage() {
     }
   }
 
+  function syncDomainRecord(updatedDomain: DomainRecord) {
+    setDomain(updatedDomain);
+    setAllDomains((current) =>
+      current.map((record) =>
+        record.id === updatedDomain.id ? updatedDomain : record,
+      ),
+    );
+  }
+
   async function saveGitHubIntegration(nextForm = githubForm) {
     if (!domain) {
       return null;
@@ -1735,7 +1747,7 @@ export function DomainDetailPage() {
         },
       );
       const nextGitHubForm = toGitHubFormState(updatedDomain);
-      setDomain(updatedDomain);
+      syncDomainRecord(updatedDomain);
       setGitHubForm(nextGitHubForm);
       setSavedGitHubForm(nextGitHubForm);
       toast.success(
@@ -1901,7 +1913,7 @@ export function DomainDetailPage() {
         nextRuntime?.settings,
         updatedDomain.php_settings,
       );
-      setDomain(updatedDomain);
+      syncDomainRecord(updatedDomain);
       setPHPVersion(updatedDomain.php_version ?? "");
       setSavedPHPVersion(updatedDomain.php_version ?? "");
       setPHPForm(nextForm);
@@ -1943,7 +1955,7 @@ export function DomainDetailPage() {
         },
       );
       const nextEnvironmentForm = toEnvironmentFormState(updatedDomain);
-      setDomain(updatedDomain);
+      syncDomainRecord(updatedDomain);
       setEnvironmentForm(nextEnvironmentForm);
       setSavedEnvironmentForm(nextEnvironmentForm);
 
@@ -1977,6 +1989,34 @@ export function DomainDetailPage() {
       toast.error(message);
     } finally {
       setEnvironmentSaving(false);
+    }
+  }
+
+  async function handleToggleCache() {
+    if (!domain || cacheSaving) {
+      return;
+    }
+
+    setCacheSaving(true);
+
+    try {
+      const updatedDomain = await updateDomain(domain.id, {
+        hostname: domain.hostname,
+        kind: domain.kind,
+        target: domain.target,
+        nodejs_script_path: domain.nodejs_script_path,
+        cache_enabled: !domain.cache_enabled,
+      });
+      syncDomainRecord(updatedDomain);
+      toast.success(
+        updatedDomain.cache_enabled
+          ? `Caddy cache enabled for ${updatedDomain.hostname}.`
+          : `Caddy cache disabled for ${updatedDomain.hostname}.`,
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to update Caddy cache."));
+    } finally {
+      setCacheSaving(false);
     }
   }
 
@@ -3123,6 +3163,38 @@ export function DomainDetailPage() {
                     }}
                   />
                 </div>
+                <section className="space-y-2 pt-2">
+                  <h2 className="pl-2 text-base font-semibold text-[var(--app-text)]">
+                    Cache
+                  </h2>
+                  <div className="flex flex-col gap-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-[var(--app-text)]">
+                        Caddy cache
+                      </p>
+                      <p className="text-[12px] text-[var(--app-text-muted)]">
+                        {domain?.cache_enabled
+                          ? "Enabled for eligible responses on this domain."
+                          : "Disabled for this domain."}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => {
+                        void handleToggleCache();
+                      }}
+                      disabled={!domain || cacheSaving}
+                    >
+                      {cacheSaving ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : null}
+                      {domain?.cache_enabled ? "Disable cache" : "Enable cache"}
+                    </Button>
+                  </div>
+                </section>
                 {wordPressSummary?.installed ? (
                   <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow)]">
                     <div className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]">

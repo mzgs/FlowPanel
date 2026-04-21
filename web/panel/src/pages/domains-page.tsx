@@ -54,7 +54,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Switch } from "@/components/ui/switch";
 import { getSiteHostnameFromBackupRecord } from "@/lib/backup-records";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
 import { setPendingFilesPath } from "@/lib/files-navigation";
@@ -1203,7 +1202,7 @@ export function DomainsPage() {
             <DialogDescription>
               {isEditing
                 ? "Update the route target and domain type. Domains stay fixed after creation."
-                : "Define the domain and route target. Static, PHP, Node.js, and Python domains keep the default site directory automatically."}
+                : "Define the domain and route target."}
             </DialogDescription>
           </DialogHeader>
 
@@ -1427,39 +1426,7 @@ export function DomainsPage() {
               </div>
             ) : null}
 
-            <div className="space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
-              <div className="flex items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <label
-                    htmlFor="domain-cache-enabled"
-                    className="text-[13px] font-medium text-[var(--app-text)]"
-                  >
-                    Caddy cache
-                  </label>
-                  <p className="text-[12px] text-[var(--app-text-muted)]">
-                    Cache eligible responses for this domain with Caddy&apos;s
-                    cache module.
-                  </p>
-                </div>
-                <Switch
-                  id="domain-cache-enabled"
-                  checked={form.cacheEnabled}
-                  disabled={submitting}
-                  onCheckedChange={(checked) => {
-                    setForm((current) => ({
-                      ...current,
-                      cacheEnabled: checked,
-                    }));
-                  }}
-                />
-              </div>
-            </div>
-
             <DialogFooter className="border-t border-[var(--app-border)] pt-4">
-              <div className="text-[12px] text-[var(--app-text-muted)]">
-                Static, PHP, Node.js, and Python domains keep the default site
-                directory automatically.
-              </div>
               <div className="flex items-center justify-end gap-2">
                 <Button
                   type="button"
