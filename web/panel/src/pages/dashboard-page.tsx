@@ -30,7 +30,7 @@ const systemStatusHistoryLimit = 60;
 const pm2ProcessesRefreshIntervalMs = 10_000;
 const pm2LogsRefreshIntervalMs = 2_000;
 const pm2LogsBottomThresholdPx = 24;
-const dashboardSplitGridClassName = "grid gap-5 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]";
+const dashboardSplitGridClassName = "grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]";
 
 type OverviewData = {
   databaseCount: number | null;
