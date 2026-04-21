@@ -1,8 +1,9 @@
 import type { SystemStatus } from "@/api/system";
-import { formatBytes } from "@/lib/format";
+import { HardDrive } from "@/components/icons/tabler-icons";
 
 type DiskTone = {
-  bar: string;
+  barClassName: string;
+  iconClassName: string;
 };
 
 function clampPercent(value: number | null) {
@@ -26,47 +27,67 @@ function formatPercent(value: number | null) {
     return "--";
   }
 
-  return value >= 10 ? `${Math.round(value)}%` : `${value.toFixed(1)}%`;
-}
-
-function formatFreePercent(value: number | null) {
-  if (value === null) {
-    return "Free space unavailable";
-  }
-
-  const freePercent = clampPercent(100 - value);
-  return `${formatPercent(freePercent)} free`;
+  return `${Math.round(value)}%`;
 }
 
 function formatDiskValue(value?: number) {
-  if (value == null) {
+  if (value == null || value < 0) {
     return "Unavailable";
   }
 
-  return formatBytes(value);
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const exponent = Math.min(Math.floor(Math.log(Math.max(value, 1)) / Math.log(1024)), units.length - 1);
+  const size = value / 1024 ** exponent;
+  const digits = exponent >= 3 && size < 100 ? 1 : 0;
+
+  return `${size.toFixed(digits)} ${units[exponent]}`;
+}
+
+function formatDiskLabel(status: SystemStatus) {
+  const name = status.platform_name?.trim();
+  if (name) {
+    return name;
+  }
+
+  switch (status.platform) {
+    case "darwin":
+      return "macOS";
+    case "linux":
+      return "Linux";
+    case "windows":
+      return "Windows";
+    case "freebsd":
+      return "FreeBSD";
+    default:
+      return "Disk";
+  }
 }
 
 function getDiskTone(percent: number | null): DiskTone {
   if (percent === null) {
     return {
-      bar: "var(--app-border-strong)",
+      barClassName: "bg-[var(--app-border-strong)]",
+      iconClassName: "text-[var(--app-text-muted)]",
     };
   }
 
   if (percent < 70) {
     return {
-      bar: "var(--app-ok)",
+      barClassName: "bg-[var(--app-ok)]",
+      iconClassName: "text-[var(--app-ok)]",
     };
   }
 
   if (percent < 85) {
     return {
-      bar: "var(--app-warning)",
+      barClassName: "bg-[var(--app-warning)]",
+      iconClassName: "text-[var(--app-warning)]",
     };
   }
 
   return {
-    bar: "var(--app-danger)",
+    barClassName: "bg-[var(--app-danger)]",
+    iconClassName: "text-[var(--app-danger)]",
   };
 }
 
@@ -75,80 +96,56 @@ export function DiskUsageCard({ status }: { status: SystemStatus }) {
   const diskTone = getDiskTone(diskPercent);
   const diskUsed = formatDiskValue(status.disk_used_bytes);
   const diskFree = formatDiskValue(status.disk_free_bytes);
-  const diskCapacity = formatDiskValue(status.disk_total_bytes);
+  const diskTotal = formatDiskValue(status.disk_total_bytes);
+  const diskLabel = formatDiskLabel(status);
+  const diskMetricsAvailable = status.disk_total_bytes != null && status.disk_used_bytes != null;
 
   return (
-    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
+    <section className="rounded-[20px] border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
       <div className="space-y-3">
-        <h2 className="text-[14px] font-semibold tracking-tight text-[var(--app-text)]">Disk status</h2>
-
-        <div className="space-y-3">
-          <div className="flex items-start justify-end gap-3">
-            <div className="shrink-0 text-right">
-              <div className="text-[24px] font-semibold leading-none tracking-tight text-[var(--app-text)]">
-                {formatPercent(diskPercent)}
-              </div>
-              <div className="mt-0.5 text-[11px] text-[var(--app-text-muted)]">used</div>
-              <div className="mt-1 text-[11px] leading-4 text-[var(--app-text-muted)]">
-                {formatFreePercent(diskPercent)}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)]">
+              <HardDrive className={`h-[18px] w-[18px] ${diskTone.iconClassName}`} stroke={1.8} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <div className="truncate text-[15px] font-semibold tracking-tight text-[var(--app-text)]">{diskLabel}</div>
+                <div className="shrink-0 text-[12px] font-medium text-[var(--app-text-muted)]">Total {diskTotal}</div>
               </div>
             </div>
           </div>
-
-          <div className="border-t border-[var(--app-border)] pt-3">
-            <div className="mb-1.5 flex items-center justify-between gap-3 text-[11px] text-[var(--app-text-muted)]">
-              <span>Usage</span>
-              <span>
-                {diskUsed} of {diskCapacity}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <img
-                alt=""
-                aria-hidden="true"
-                className="h-5 w-5 shrink-0 object-contain opacity-80"
-                src="/application-icons/hdd.png"
-              />
-              <div
-                aria-label="Disk usage"
-                aria-valuemax={100}
-                aria-valuemin={0}
-                aria-valuenow={diskPercent == null ? undefined : Math.round(diskPercent)}
-                className="h-2.5 flex-1 overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-surface)]"
-                role="progressbar"
-              >
-                <div
-                  className="h-full rounded-[3px] transition-[width,background-color] duration-200"
-                  style={{
-                    width: `${diskPercent ?? 0}%`,
-                    backgroundColor: diskTone.bar,
-                  }}
-                />
-              </div>
-            </div>
+          <div className="shrink-0 text-[18px] font-semibold leading-none tracking-tight text-[var(--app-text)]">
+            {formatPercent(diskPercent)}
           </div>
         </div>
 
-        <div className="grid gap-px overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-border)] sm:grid-cols-3">
-          {[
-            { label: "Used", value: diskUsed },
-            { label: "Free", value: diskFree },
-            { label: "Capacity", value: diskCapacity },
-          ].map((metric) => (
-            <div key={metric.label} className="bg-[var(--app-surface-muted)] px-3 py-2.5">
-              <div className="text-[11px] text-[var(--app-text-muted)]">{metric.label}</div>
-              <div className="mt-0.5 text-[13px] font-semibold tracking-tight text-[var(--app-text)]">
-                {metric.value}
-              </div>
-            </div>
-          ))}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="min-w-0">
+            <div className="text-[12px] font-medium text-[var(--app-text-muted)]">Used {diskUsed}</div>
+          </div>
+          <div className="min-w-0 text-right">
+            <div className="text-[12px] font-medium text-[var(--app-text-muted)]">Free {diskFree}</div>
+          </div>
         </div>
 
-        {status.disk_total_bytes == null || status.disk_used_bytes == null ? (
-          <div className="border-t border-[var(--app-border)] pt-2.5 text-[12px] text-[var(--app-text-muted)]">
-            Disk metrics are not available for this host yet.
-          </div>
-        ) : null}
+        <div
+          aria-label="Disk usage"
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={diskPercent == null ? undefined : Math.round(diskPercent)}
+          className="h-3 overflow-hidden rounded-full bg-[var(--app-surface)]"
+          role="progressbar"
+        >
+          <div
+            className={`h-full rounded-full transition-[width] duration-200 ${diskTone.barClassName}`}
+            style={{ width: `${diskPercent ?? 0}%` }}
+          />
+        </div>
+
+        {diskMetricsAvailable ? null : (
+          <div className="text-[12px] text-[var(--app-text-muted)]">Disk metrics are not available for this host yet.</div>
+        )}
       </div>
     </section>
   );
