@@ -834,7 +834,7 @@ export function SystemMetricsCard({ history: realtimeHistory, status }: { histor
         </div>
       </div>
 
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div role="tablist" aria-label="System metric tabs">
           <div className="inline-flex rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-1">
             {metricsTabs.map((item) => {
@@ -866,33 +866,31 @@ export function SystemMetricsCard({ history: realtimeHistory, status }: { histor
           </div>
         </div>
 
-        <div role="tablist" aria-label="System monitor ranges">
-          <div className="inline-flex rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-1">
-            {monitorRanges.map((item) => {
-              const active = item.value === range;
+        <div role="tablist" aria-label="System monitor ranges" className="flex flex-wrap items-center justify-end gap-0.5">
+          {monitorRanges.map((item) => {
+            const active = item.value === range;
 
-              return (
-                <button
-                  key={item.value}
-                  role="tab"
-                  type="button"
-                  aria-selected={active}
-                  tabIndex={active ? 0 : -1}
-                  className={cn(
-                    "inline-flex h-8 items-center rounded-md px-3 text-[12px] font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-bg-2)]",
-                    active
-                      ? "bg-[var(--app-bg-2)] text-[var(--app-text)] shadow-sm"
-                      : "text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
-                  )}
-                  onClick={() => {
-                    setRange(item.value);
-                  }}
-                >
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
+            return (
+              <button
+                key={item.value}
+                role="tab"
+                type="button"
+                aria-selected={active}
+                tabIndex={active ? 0 : -1}
+                className={cn(
+                  "inline-flex h-7 items-center rounded-md px-2.5 text-[11px] font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-bg-2)]",
+                  active
+                    ? "bg-[var(--app-surface-muted)] text-[var(--app-text)]"
+                    : "text-[var(--app-text-muted)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)]",
+                )}
+                onClick={() => {
+                  setRange(item.value);
+                }}
+              >
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
