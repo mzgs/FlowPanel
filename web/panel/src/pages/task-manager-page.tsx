@@ -130,6 +130,23 @@ function EmptyState({ title, description }: { title: string; description: string
   );
 }
 
+function ActionButton({
+  pending,
+  icon,
+  children,
+  ...props
+}: React.ComponentProps<typeof Button> & {
+  pending?: boolean;
+  icon: ReactNode;
+}) {
+  return (
+    <Button {...props}>
+      {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : icon}
+      {children}
+    </Button>
+  );
+}
+
 function ProcessesTable({
   processes,
   pendingAction,
@@ -176,15 +193,16 @@ function ProcessesTable({
               <TableCell>{process.memory_bytes ? formatBytes(process.memory_bytes) : "Unavailable"}</TableCell>
               <TableCell>{formatDateTimeValue(process.started_at)}</TableCell>
               <TableCell className="text-right">
-                <Button
+                <ActionButton
                   variant="destructive"
                   size="sm"
                   disabled={pendingAction === actionKey}
+                  pending={pendingAction === actionKey}
+                  icon={<Trash2 className="h-4 w-4" />}
                   onClick={() => onTerminate(process)}
                 >
-                  {pendingAction === actionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   End
-                </Button>
+                </ActionButton>
               </TableCell>
             </TableRow>
           );
@@ -247,45 +265,36 @@ function ServicesTable({
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex justify-end gap-2">
-                  <Button
+                  <ActionButton
                     variant="outline"
                     size="sm"
                     disabled={pendingAction === `${prefix}:start` || service.running}
+                    pending={pendingAction === `${prefix}:start`}
+                    icon={<PlayerPlay className="h-4 w-4" />}
                     onClick={() => onAction(service, "start")}
                   >
-                    {pendingAction === `${prefix}:start` ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <PlayerPlay className="h-4 w-4" />
-                    )}
                     Start
-                  </Button>
-                  <Button
+                  </ActionButton>
+                  <ActionButton
                     variant="outline"
                     size="sm"
                     disabled={pendingAction === `${prefix}:stop` || !service.running}
+                    pending={pendingAction === `${prefix}:stop`}
+                    icon={<PlayerStop className="h-4 w-4" />}
                     onClick={() => onAction(service, "stop")}
                   >
-                    {pendingAction === `${prefix}:stop` ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <PlayerStop className="h-4 w-4" />
-                    )}
                     Stop
-                  </Button>
-                  <Button
+                  </ActionButton>
+                  <ActionButton
                     variant="outline"
                     size="sm"
                     disabled={pendingAction === `${prefix}:restart`}
+                    pending={pendingAction === `${prefix}:restart`}
+                    icon={<RotateCcw className="h-4 w-4" />}
                     onClick={() => onAction(service, "restart")}
                   >
-                    {pendingAction === `${prefix}:restart` ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RotateCcw className="h-4 w-4" />
-                    )}
                     Restart
-                  </Button>
+                  </ActionButton>
                 </div>
               </TableCell>
             </TableRow>
@@ -343,32 +352,26 @@ function StartupItemsTable({
               <TableCell className="max-w-[18rem] truncate text-xs text-muted-foreground">{formatValue(item.file)}</TableCell>
               <TableCell className="text-right">
                 <div className="flex justify-end gap-2">
-                  <Button
+                  <ActionButton
                     variant="outline"
                     size="sm"
                     disabled={pendingAction === `${prefix}:enable` || enabled || !item.available}
+                    pending={pendingAction === `${prefix}:enable`}
+                    icon={<PlayerPlay className="h-4 w-4" />}
                     onClick={() => onAction(item, "enable")}
                   >
-                    {pendingAction === `${prefix}:enable` ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <PlayerPlay className="h-4 w-4" />
-                    )}
                     Enable
-                  </Button>
-                  <Button
+                  </ActionButton>
+                  <ActionButton
                     variant="outline"
                     size="sm"
                     disabled={pendingAction === `${prefix}:disable` || !enabled || !item.available}
+                    pending={pendingAction === `${prefix}:disable`}
+                    icon={<PlayerStop className="h-4 w-4" />}
                     onClick={() => onAction(item, "disable")}
                   >
-                    {pendingAction === `${prefix}:disable` ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <PlayerStop className="h-4 w-4" />
-                    )}
                     Disable
-                  </Button>
+                  </ActionButton>
                 </div>
               </TableCell>
             </TableRow>
@@ -469,7 +472,6 @@ export function TaskManagerPage() {
   const [snapshot, setSnapshot] = useState<TaskManagerSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<TaskManagerSection>("processes");
@@ -514,7 +516,6 @@ export function TaskManagerPage() {
       if (!mountedRef.current || controller.signal.aborted) {
         return;
       }
-      setInitialLoadComplete(true);
       setLoading(false);
       setRefreshing(false);
     }
@@ -539,24 +540,12 @@ export function TaskManagerPage() {
     };
   }, []);
 
-  const filteredProcesses = useMemo(
-    () =>
-      (snapshot?.processes || []).filter((process) =>
-        matchesSearch(
-          deferredSearch,
-          process.name,
-          process.pid,
-          process.user,
-          process.state,
-          process.command,
-        ),
+  const filtered = useMemo(
+    () => ({
+      processes: (snapshot?.processes || []).filter((process) =>
+        matchesSearch(deferredSearch, process.name, process.pid, process.user, process.state, process.command),
       ),
-    [deferredSearch, snapshot?.processes],
-  );
-
-  const filteredServices = useMemo(
-    () =>
-      (snapshot?.services || []).filter((service) =>
+      services: (snapshot?.services || []).filter((service) =>
         matchesSearch(
           deferredSearch,
           service.name,
@@ -568,20 +557,10 @@ export function TaskManagerPage() {
           service.file,
         ),
       ),
-    [deferredSearch, snapshot?.services],
-  );
-
-  const filteredStartupItems = useMemo(
-    () =>
-      (snapshot?.startup_items || []).filter((item) =>
+      startup: (snapshot?.startup_items || []).filter((item) =>
         matchesSearch(deferredSearch, item.name, item.manager, item.state, item.user, item.file),
       ),
-    [deferredSearch, snapshot?.startup_items],
-  );
-
-  const filteredUsers = useMemo(
-    () =>
-      (snapshot?.users || []).filter((user) =>
+      users: (snapshot?.users || []).filter((user) =>
         matchesSearch(
           deferredSearch,
           user.username,
@@ -591,16 +570,20 @@ export function TaskManagerPage() {
           user.terminals?.join(" "),
         ),
       ),
-    [deferredSearch, snapshot?.users],
-  );
-
-  const filteredTasks = useMemo(
-    () =>
-      (snapshot?.scheduled_tasks || []).filter((task) =>
+      scheduled: (snapshot?.scheduled_tasks || []).filter((task) =>
         matchesSearch(deferredSearch, task.name, task.schedule, task.command, task.state, task.last_status),
       ),
-    [deferredSearch, snapshot?.scheduled_tasks],
+    }),
+    [deferredSearch, snapshot],
   );
+
+  const counts = {
+    processes: snapshot?.processes.length || 0,
+    services: snapshot?.services.length || 0,
+    startup: snapshot?.startup_items.length || 0,
+    users: snapshot?.users.length || 0,
+    scheduled: snapshot?.scheduled_tasks.length || 0,
+  };
 
   async function runSnapshotAction(
     actionKey: string,
@@ -655,22 +638,13 @@ export function TaskManagerPage() {
   }
 
   const currentSection = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
-  const showInitialLoading = !initialLoadComplete && snapshot === null;
-
-  let sectionContent: ReactNode = null;
-  if (activeSection === "processes") {
-    sectionContent = <ProcessesTable processes={filteredProcesses} pendingAction={pendingAction} onTerminate={handleTerminate} />;
-  } else if (activeSection === "services") {
-    sectionContent = <ServicesTable services={filteredServices} pendingAction={pendingAction} onAction={handleServiceAction} />;
-  } else if (activeSection === "startup") {
-    sectionContent = (
-      <StartupItemsTable items={filteredStartupItems} pendingAction={pendingAction} onAction={handleStartupAction} />
-    );
-  } else if (activeSection === "users") {
-    sectionContent = <UsersTable users={filteredUsers} />;
-  } else {
-    sectionContent = <ScheduledTasksTable tasks={filteredTasks} />;
-  }
+  const sectionContent: Record<TaskManagerSection, ReactNode> = {
+    processes: <ProcessesTable processes={filtered.processes} pendingAction={pendingAction} onTerminate={handleTerminate} />,
+    services: <ServicesTable services={filtered.services} pendingAction={pendingAction} onAction={handleServiceAction} />,
+    startup: <StartupItemsTable items={filtered.startup} pendingAction={pendingAction} onAction={handleStartupAction} />,
+    users: <UsersTable users={filtered.users} />,
+    scheduled: <ScheduledTasksTable tasks={filtered.scheduled} />,
+  };
 
   return (
     <div className="min-h-[calc(100vh-var(--app-navbar-height))]">
@@ -688,11 +662,15 @@ export function TaskManagerPage() {
       <div className="space-y-5 px-4 pb-8 sm:px-6 lg:px-8">
         {snapshot ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <StatCard icon={<Monitor className="h-4 w-4" />} label="Processes" value={snapshot.processes.length} />
-            <StatCard icon={<Server className="h-4 w-4" />} label="Services" value={snapshot.services.length} />
-            <StatCard icon={<PlayerPlay className="h-4 w-4" />} label="Startup Items" value={snapshot.startup_items.length} />
-            <StatCard icon={<UserCog className="h-4 w-4" />} label="Users" value={snapshot.users.length} />
-            <StatCard icon={<Clock className="h-4 w-4" />} label="Scheduled Tasks" value={snapshot.scheduled_tasks.length} />
+            {[
+              { key: "processes", label: "Processes", value: counts.processes, icon: <Monitor className="h-4 w-4" /> },
+              { key: "services", label: "Services", value: counts.services, icon: <Server className="h-4 w-4" /> },
+              { key: "startup", label: "Startup Items", value: counts.startup, icon: <PlayerPlay className="h-4 w-4" /> },
+              { key: "users", label: "Users", value: counts.users, icon: <UserCog className="h-4 w-4" /> },
+              { key: "scheduled", label: "Scheduled Tasks", value: counts.scheduled, icon: <Clock className="h-4 w-4" /> },
+            ].map((card) => (
+              <StatCard key={card.key} icon={card.icon} label={card.label} value={card.value} />
+            ))}
           </div>
         ) : null}
 
@@ -737,17 +715,6 @@ export function TaskManagerPage() {
           <div className="border-b border-[var(--app-border)] px-4 py-3">
             <div className="flex flex-wrap gap-2">
               {sectionMeta.map((section) => {
-                const count =
-                  section.id === "processes"
-                    ? snapshot?.processes.length || 0
-                    : section.id === "services"
-                      ? snapshot?.services.length || 0
-                      : section.id === "startup"
-                        ? snapshot?.startup_items.length || 0
-                        : section.id === "users"
-                          ? snapshot?.users.length || 0
-                          : snapshot?.scheduled_tasks.length || 0;
-
                 return (
                   <button
                     key={section.id}
@@ -761,7 +728,7 @@ export function TaskManagerPage() {
                     )}
                   >
                     <span>{section.label}</span>
-                    <span className="rounded bg-black/10 px-1.5 py-0.5 text-[11px]">{count}</span>
+                    <span className="rounded bg-black/10 px-1.5 py-0.5 text-[11px]">{counts[section.id]}</span>
                   </button>
                 );
               })}
@@ -769,7 +736,7 @@ export function TaskManagerPage() {
           </div>
 
           <div className="px-4 py-3">
-            {showInitialLoading || (loading && !snapshot) ? (
+            {loading && !snapshot ? (
               <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
                 <LoaderCircle className="h-4 w-4 animate-spin" />
                 Loading task manager data...
@@ -784,7 +751,7 @@ export function TaskManagerPage() {
                 </div>
               </div>
             ) : (
-              sectionContent
+              sectionContent[activeSection]
             )}
           </div>
         </section>

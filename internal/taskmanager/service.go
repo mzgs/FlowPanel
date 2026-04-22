@@ -135,21 +135,8 @@ func (s *Service) Snapshot(ctx context.Context) Snapshot {
 		snapshot.Notices = append(snapshot.Notices, err.Error())
 	}
 
-	if services, startupItems, notices := listRuntimeEntries(ctx); len(notices) > 0 {
-		snapshot.Notices = append(snapshot.Notices, notices...)
-		snapshot.Services = services
-		snapshot.StartupItems = startupItems
-	} else {
-		snapshot.Services = services
-		snapshot.StartupItems = startupItems
-	}
-
-	if users, notices := listUsers(ctx); len(notices) > 0 {
-		snapshot.Notices = append(snapshot.Notices, notices...)
-		snapshot.Users = users
-	} else {
-		snapshot.Users = users
-	}
+	snapshot.Services, snapshot.StartupItems, snapshot.Notices = loadRuntimeEntries(ctx, snapshot.Notices)
+	snapshot.Users, snapshot.Notices = loadUsers(ctx, snapshot.Notices)
 
 	snapshot.ScheduledTasks = listScheduledTasks(s.cron)
 	return snapshot
@@ -304,15 +291,7 @@ func listSystemdEntries(ctx context.Context) ([]ServiceRecord, []StartupItem, []
 
 			id := fields[0]
 			state := fields[1]
-			record := serviceMap[id]
-			if record == nil {
-				record = &ServiceRecord{
-					ID:      id,
-					Name:    strings.TrimSuffix(id, ".service"),
-					Manager: "systemd",
-				}
-				serviceMap[id] = record
-			}
+			record := ensureServiceRecord(serviceMap, id, "systemd")
 			record.StartupState = state
 
 			startupItems = append(startupItems, StartupItem{
@@ -331,22 +310,10 @@ func listSystemdEntries(ctx context.Context) ([]ServiceRecord, []StartupItem, []
 		services = append(services, *record)
 	}
 
-	sort.Slice(services, func(i, j int) bool {
-		return strings.ToLower(services[i].Name) < strings.ToLower(services[j].Name)
-	})
-	sort.Slice(startupItems, func(i, j int) bool {
-		return strings.ToLower(startupItems[i].Name) < strings.ToLower(startupItems[j].Name)
-	})
+	sortByName(services, func(item ServiceRecord) string { return item.Name })
+	sortByName(startupItems, func(item StartupItem) string { return item.Name })
 
-	notices := make([]string, 0, 2)
-	if serviceErr != nil {
-		notices = append(notices, serviceErr.Error())
-	}
-	if unitFilesErr != nil {
-		notices = append(notices, unitFilesErr.Error())
-	}
-
-	return services, startupItems, notices
+	return services, startupItems, collectErrors(serviceErr, unitFilesErr)
 }
 
 type homebrewServiceInfo struct {
@@ -409,12 +376,8 @@ func listHomebrewEntries(ctx context.Context) ([]ServiceRecord, []StartupItem, [
 		})
 	}
 
-	sort.Slice(services, func(i, j int) bool {
-		return strings.ToLower(services[i].Name) < strings.ToLower(services[j].Name)
-	})
-	sort.Slice(startupItems, func(i, j int) bool {
-		return strings.ToLower(startupItems[i].Name) < strings.ToLower(startupItems[j].Name)
-	})
+	sortByName(services, func(item ServiceRecord) string { return item.Name })
+	sortByName(startupItems, func(item StartupItem) string { return item.Name })
 
 	return services, startupItems, nil
 }
@@ -438,11 +401,7 @@ func listUsers(ctx context.Context) ([]UserRecord, []string) {
 				continue
 			}
 
-			record := userMap[username]
-			if record == nil {
-				record = &UserRecord{Username: username}
-				userMap[username] = record
-			}
+			record := ensureUserRecord(userMap, username)
 
 			record.LoggedIn = true
 			record.SessionCount++
@@ -474,22 +433,23 @@ func listUsers(ctx context.Context) ([]UserRecord, []string) {
 }
 
 func listLocalUsers(ctx context.Context, notices *[]string) []UserRecord {
+	var (
+		users []UserRecord
+		err   error
+	)
+
 	switch runtime.GOOS {
 	case "darwin":
-		if users, err := listMacUsers(ctx); err == nil {
-			return users
-		} else if notices != nil {
-			*notices = append(*notices, err.Error())
-		}
+		users, err = listMacUsers(ctx)
 	case "linux":
-		if users, err := listPasswdUsers("/etc/passwd", 1000); err == nil {
-			return users
-		} else if notices != nil {
-			*notices = append(*notices, err.Error())
-		}
-	default:
+		users, err = listPasswdUsers("/etc/passwd", 1000)
 	}
 
+	if err == nil {
+		return users
+	}
+
+	appendError(notices, err)
 	return []UserRecord{}
 }
 
@@ -612,47 +572,21 @@ func listScheduledTasks(scheduler *flowcron.Scheduler) []ScheduledTask {
 		tasks = append(tasks, task)
 	}
 
-	sort.Slice(tasks, func(i, j int) bool {
-		return strings.ToLower(tasks[i].Name) < strings.ToLower(tasks[j].Name)
-	})
+	sortByName(tasks, func(item ScheduledTask) string { return item.Name })
 
 	return tasks
 }
 
 func runServiceAction(ctx context.Context, action string, id string) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return fmt.Errorf("service id is required")
-	}
-
-	switch runtime.GOOS {
-	case "linux":
-		return runManagedCommand(ctx, "systemctl", action, id)
-	case "darwin":
-		return runManagedCommand(ctx, "brew", "services", action, id)
-	default:
-		return fmt.Errorf("service management is unavailable on %s", runtime.GOOS)
-	}
+	return runPlatformAction(ctx, strings.TrimSpace(id), "service id is required", "service management", []string{"systemctl", action}, []string{"brew", "services", action})
 }
 
 func runStartupAction(ctx context.Context, action string, id string) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return fmt.Errorf("startup item id is required")
+	darwinAction := "start"
+	if action == "disable" {
+		darwinAction = "stop"
 	}
-
-	switch runtime.GOOS {
-	case "linux":
-		return runManagedCommand(ctx, "systemctl", action, id)
-	case "darwin":
-		brewAction := "start"
-		if action == "disable" {
-			brewAction = "stop"
-		}
-		return runManagedCommand(ctx, "brew", "services", brewAction, id)
-	default:
-		return fmt.Errorf("startup item management is unavailable on %s", runtime.GOOS)
-	}
+	return runPlatformAction(ctx, strings.TrimSpace(id), "startup item id is required", "startup item management", []string{"systemctl", action}, []string{"brew", "services", darwinAction})
 }
 
 func runManagedCommand(ctx context.Context, name string, args ...string) error {
@@ -664,15 +598,8 @@ func runManagedCommand(ctx context.Context, name string, args ...string) error {
 	actionCtx, cancel := context.WithTimeout(ctx, actionTimeout)
 	defer cancel()
 
-	output, err := runCommand(actionCtx, commandPath, args...)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(output) != "" {
-		return nil
-	}
-
-	return nil
+	_, err = runCommand(actionCtx, commandPath, args...)
+	return err
 }
 
 func runCommand(ctx context.Context, name string, args ...string) (string, error) {
@@ -713,6 +640,77 @@ func nonEmptyLines(value string) []string {
 	}
 
 	return result
+}
+
+func loadRuntimeEntries(ctx context.Context, notices []string) ([]ServiceRecord, []StartupItem, []string) {
+	services, startupItems, runtimeNotices := listRuntimeEntries(ctx)
+	return services, startupItems, append(notices, runtimeNotices...)
+}
+
+func loadUsers(ctx context.Context, notices []string) ([]UserRecord, []string) {
+	users, userNotices := listUsers(ctx)
+	return users, append(notices, userNotices...)
+}
+
+func collectErrors(errs ...error) []string {
+	notices := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if err != nil {
+			notices = append(notices, err.Error())
+		}
+	}
+	return notices
+}
+
+func appendError(notices *[]string, err error) {
+	if notices != nil && err != nil {
+		*notices = append(*notices, err.Error())
+	}
+}
+
+func ensureServiceRecord(records map[string]*ServiceRecord, id, manager string) *ServiceRecord {
+	if record := records[id]; record != nil {
+		return record
+	}
+
+	record := &ServiceRecord{
+		ID:      id,
+		Name:    strings.TrimSuffix(id, ".service"),
+		Manager: manager,
+	}
+	records[id] = record
+	return record
+}
+
+func ensureUserRecord(records map[string]*UserRecord, username string) *UserRecord {
+	if record := records[username]; record != nil {
+		return record
+	}
+
+	record := &UserRecord{Username: username}
+	records[username] = record
+	return record
+}
+
+func sortByName[T any](items []T, getName func(T) string) {
+	sort.Slice(items, func(i, j int) bool {
+		return strings.ToLower(getName(items[i])) < strings.ToLower(getName(items[j]))
+	})
+}
+
+func runPlatformAction(ctx context.Context, id, emptyIDMessage, unsupportedAction string, linuxArgs, darwinArgs []string) error {
+	if id == "" {
+		return fmt.Errorf(emptyIDMessage)
+	}
+
+	switch runtime.GOOS {
+	case "linux":
+		return runManagedCommand(ctx, linuxArgs[0], append(linuxArgs[1:], id)...)
+	case "darwin":
+		return runManagedCommand(ctx, darwinArgs[0], append(darwinArgs[1:], id)...)
+	default:
+		return fmt.Errorf("%s is unavailable on %s", unsupportedAction, runtime.GOOS)
+	}
 }
 
 func containsString(values []string, target string) bool {
