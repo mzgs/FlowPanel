@@ -21,6 +21,7 @@ import (
 	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
 	"flowpanel/internal/systemmonitor"
+	"flowpanel/internal/taskmanager"
 
 	"github.com/alexedwards/scs/v2"
 	"go.uber.org/zap"
@@ -53,6 +54,7 @@ type App struct {
 	Settings      *settings.Service
 	GoogleDrive   *googledrive.Service
 	SystemMonitor *systemmonitor.Service
+	TaskManager   *taskmanager.Service
 }
 
 func New(
@@ -82,6 +84,7 @@ func New(
 	settingsService *settings.Service,
 	googleDriveService *googledrive.Service,
 	systemMonitorService *systemmonitor.Service,
+	taskManagerService *taskmanager.Service,
 ) *App {
 	return &App{
 		Config:        cfg,
@@ -110,5 +113,6 @@ func New(
 		Settings:      settingsService,
 		GoogleDrive:   googleDriveService,
 		SystemMonitor: systemMonitorService,
+		TaskManager:   taskManagerService,
 	}
 }

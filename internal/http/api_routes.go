@@ -42,6 +42,7 @@ func (a *apiRoutes) register(r chi.Router) {
 	a.registerApplicationRoutes(r)
 	a.registerDomainRoutes(r)
 	a.registerFileRoutes(r)
+	a.registerTaskManagerRoutes(r)
 }
 
 func (a *apiRoutes) syncDomainsWithCaddy(ctx context.Context) error {

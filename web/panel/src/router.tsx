@@ -17,6 +17,7 @@ import {
   HardDrive,
   LayoutDashboard,
   List,
+  Monitor,
   Package,
   Search,
   Server,
@@ -55,6 +56,7 @@ import { FilesPage } from "@/pages/files-page";
 import { FTPPage } from "@/pages/ftp-page";
 import { LogsPage } from "@/pages/logs-page";
 import { SettingsPage } from "@/pages/settings-page";
+import { TaskManagerPage } from "@/pages/task-manager-page";
 import { TerminalPage } from "@/pages/terminal-page";
 
 const navigationItems = [
@@ -66,6 +68,7 @@ const navigationItems = [
   { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/applications", label: "Applications", icon: Package },
   { to: "/cron", label: "Cron", icon: Clock },
+  { to: "/task-manager", label: "Task Manager", icon: Monitor },
 
   { to: "/terminal", label: "Terminal", icon: TerminalSquare },
   { to: "/activity", label: "Activity", icon: List },
@@ -368,6 +371,12 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const taskManagerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/task-manager",
+  component: TaskManagerPage,
+});
+
 const terminalRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/terminal",
@@ -389,6 +398,7 @@ const routeTree = rootRoute.addChildren([
   legacyFileManagerRoute,
   cronRoute,
   legacyJobsRoute,
+  taskManagerRoute,
   terminalRoute,
   settingsRoute,
 ]);

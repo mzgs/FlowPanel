@@ -36,6 +36,7 @@ import (
 	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
 	"flowpanel/internal/systemmonitor"
+	"flowpanel/internal/taskmanager"
 
 	"go.uber.org/zap"
 )
@@ -294,6 +295,7 @@ func runServer() error {
 	ftpService := ftp.NewService(stores.FTP, domainService)
 	ftpRuntime := ftp.NewRuntime(logger.Named("ftp"), ftpService)
 	systemMonitorService := systemmonitor.NewService(logger.Named("system-monitor"), stores.SystemMonitor)
+	taskManagerService := taskmanager.NewService(logger.Named("task-manager"), scheduler)
 	googleDriveService := googledrive.NewService(cfg.GoogleDrive)
 	backupService := backup.NewService(
 		logger.Named("backup"),
@@ -351,6 +353,7 @@ func runServer() error {
 		settingsService,
 		googleDriveService,
 		systemMonitorService,
+		taskManagerService,
 	)
 
 	router, err := httpx.NewRouter(appContainer)
