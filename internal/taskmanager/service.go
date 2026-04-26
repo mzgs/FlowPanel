@@ -700,7 +700,7 @@ func sortByName[T any](items []T, getName func(T) string) {
 
 func runPlatformAction(ctx context.Context, id, emptyIDMessage, unsupportedAction string, linuxArgs, darwinArgs []string) error {
 	if id == "" {
-		return fmt.Errorf(emptyIDMessage)
+		return fmt.Errorf("%s", emptyIDMessage)
 	}
 
 	switch runtime.GOOS {

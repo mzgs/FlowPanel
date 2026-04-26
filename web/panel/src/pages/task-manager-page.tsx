@@ -3,8 +3,14 @@ import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState,
 import {
   controlTaskManagerService,
   controlTaskManagerStartupItem,
+  fetchLinuxTools,
   fetchTaskManagerSnapshot,
+  resizeLinuxSwap,
   terminateTaskManagerProcess,
+  updateLinuxDNS,
+  updateLinuxHostname,
+  updateLinuxTimezone,
+  type LinuxToolsSnapshot,
   type TaskManagerProcess,
   type TaskManagerScheduledTask,
   type TaskManagerService,
@@ -25,11 +31,16 @@ import {
   Server,
   Trash2,
   UserCog,
+  Wrench,
 } from "@/components/icons/tabler-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -468,8 +479,328 @@ function ScheduledTasksTable({ tasks }: { tasks: TaskManagerScheduledTask[] }) {
   );
 }
 
+function parseDNSServerText(value: string) {
+  return value
+    .split(/\r?\n|,/)
+    .map((server) => server.trim())
+    .filter(Boolean);
+}
+
+function formatTimezoneOption(timezone: string) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "shortOffset",
+    }).formatToParts(new Date());
+    const offset = parts.find((part) => part.type === "timeZoneName")?.value.replace("GMT", "UTC");
+    return offset ? `${timezone} (${offset})` : timezone;
+  } catch {
+    return timezone;
+  }
+}
+
+function LinuxToolsDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [tools, setTools] = useState<LinuxToolsSnapshot | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [timezone, setTimezone] = useState("");
+  const [hostname, setHostname] = useState("");
+  const [dnsServers, setDNSServers] = useState("");
+  const [swapSizeMB, setSwapSizeMB] = useState("1024");
+
+  async function loadTools(background = false) {
+    if (background) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      const nextTools = await fetchLinuxTools();
+      setTools(nextTools);
+      setError(null);
+    } catch (nextError) {
+      setError(getErrorMessage(nextError, "Linux tools could not be loaded."));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (open) {
+      void loadTools(false);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!tools) {
+      return;
+    }
+    setTimezone(tools.timezone || "");
+    setHostname(tools.hostname || "");
+    setDNSServers((tools.dns_servers || []).join("\n"));
+    const currentSwap = tools.swap.devices.find((device) => device.type === "file") ?? tools.swap.devices[0];
+    setSwapSizeMB(currentSwap?.size_bytes ? String(Math.round(currentSwap.size_bytes / 1024 / 1024)) : "");
+  }, [tools]);
+
+  async function runLinuxAction(actionKey: string, action: () => Promise<LinuxToolsSnapshot>, successMessage: string) {
+    setPendingAction(actionKey);
+
+    try {
+      const nextTools = await action();
+      setTools(nextTools);
+      setError(null);
+      toast.success(successMessage);
+    } catch (nextError) {
+      toast.error(getErrorMessage(nextError, "Linux tool action failed."));
+    } finally {
+      setPendingAction((current) => (current === actionKey ? null : current));
+    }
+  }
+
+  const unsupported = tools && !tools.supported;
+  const actionDisabled = !tools?.supported || Boolean(pendingAction);
+  const swapSizeValue = Number.parseInt(swapSizeMB, 10);
+  const activeSwap = tools?.swap.devices.find((device) => device.type === "file") ?? tools?.swap.devices[0];
+  const canResizeSwap = actionDisabled ? false : activeSwap?.type === "file";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-4 sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Linux Tools</DialogTitle>
+          <DialogDescription>Manage hostname, timezone, DNS, and swap memory on this node.</DialogDescription>
+        </DialogHeader>
+
+        {loading && !tools ? (
+          <div className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+            Loading Linux tools...
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {error ? (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            ) : null}
+
+            {unsupported ? (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                Linux tools are unavailable on {tools.platform}.
+              </div>
+            ) : null}
+
+            {tools?.notices?.length ? (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                {tools.notices.map((notice) => (
+                  <div key={notice}>{notice}</div>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border border-[var(--app-border)] px-3 py-2">
+                <div className="text-xs text-muted-foreground">Timezone</div>
+                <div className="mt-1 truncate text-sm font-medium">{formatValue(tools?.timezone)}</div>
+              </div>
+              <div className="rounded-lg border border-[var(--app-border)] px-3 py-2">
+                <div className="text-xs text-muted-foreground">Hostname</div>
+                <div className="mt-1 truncate text-sm font-medium">{formatValue(tools?.hostname)}</div>
+              </div>
+              <div className="rounded-lg border border-[var(--app-border)] px-3 py-2">
+                <div className="text-xs text-muted-foreground">DNS Servers</div>
+                <div className="mt-1 truncate text-sm font-medium">{tools?.dns_servers?.length || 0}</div>
+              </div>
+              <div className="rounded-lg border border-[var(--app-border)] px-3 py-2">
+                <div className="text-xs text-muted-foreground">Swap</div>
+                <div className="mt-1 truncate text-sm font-medium">
+                  {formatBytes(tools?.swap.used_bytes || 0)} / {formatBytes(tools?.swap.total_bytes || 0)}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
+                <div>
+                  <div className="text-sm font-semibold">Timezone</div>
+                  <div className="text-xs text-muted-foreground">Use a zoneinfo name such as UTC or Europe/Istanbul.</div>
+                </div>
+                <div className="flex gap-2">
+                  <Select value={timezone} onValueChange={setTimezone} disabled={actionDisabled || !tools?.timezones?.length}>
+                    <SelectTrigger className="min-w-0 flex-1">
+                      <SelectValue placeholder="Select timezone" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-80">
+                      {(tools?.timezones || []).map((zone) => (
+                        <SelectItem key={zone} value={zone}>
+                          {formatTimezoneOption(zone)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <ActionButton
+                    size="sm"
+                    disabled={actionDisabled || !timezone.trim()}
+                    pending={pendingAction === "timezone"}
+                    icon={<Wrench className="h-4 w-4" />}
+                    onClick={() => void runLinuxAction("timezone", () => updateLinuxTimezone(timezone), "Timezone updated.")}
+                  >
+                    Save
+                  </ActionButton>
+                </div>
+              </div>
+
+              <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
+                <div>
+                  <div className="text-sm font-semibold">Hostname</div>
+                  <div className="text-xs text-muted-foreground">Set the system hostname used by the Linux node.</div>
+                </div>
+                <div className="flex gap-2">
+                  <Input value={hostname} onChange={(event) => setHostname(event.target.value)} disabled={actionDisabled} />
+                  <ActionButton
+                    size="sm"
+                    disabled={actionDisabled || !hostname.trim()}
+                    pending={pendingAction === "hostname"}
+                    icon={<Wrench className="h-4 w-4" />}
+                    onClick={() => void runLinuxAction("hostname", () => updateLinuxHostname(hostname), "Hostname updated.")}
+                  >
+                    Save
+                  </ActionButton>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">DNS</div>
+                  <div className="text-xs text-muted-foreground">
+                    Source: {formatValue(tools?.dns_source)}. Enter one server IP per line.
+                  </div>
+                </div>
+                <ActionButton
+                  size="sm"
+                  disabled={actionDisabled}
+                  pending={pendingAction === "dns"}
+                  icon={<Wrench className="h-4 w-4" />}
+                  onClick={() =>
+                    void runLinuxAction("dns", () => updateLinuxDNS(parseDNSServerText(dnsServers)), "DNS servers updated.")
+                  }
+                >
+                  Save DNS
+                </ActionButton>
+              </div>
+              <Textarea
+                value={dnsServers}
+                onChange={(event) => setDNSServers(event.target.value)}
+                disabled={actionDisabled}
+                className="min-h-20 font-mono text-sm"
+                placeholder={"1.1.1.1\n8.8.8.8"}
+              />
+            </div>
+
+            <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
+              <div>
+                <div className="text-sm font-semibold">Swap Memory</div>
+                <div className="text-xs text-muted-foreground">Current free swap: {formatBytes(tools?.swap.free_bytes || 0)}</div>
+              </div>
+
+              {tools?.swap.devices?.length ? (
+                <div className="overflow-x-auto rounded-lg border border-[var(--app-border)]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>File</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Size</TableHead>
+                        <TableHead>Used</TableHead>
+                        <TableHead>Priority</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {tools.swap.devices.map((device) => (
+                        <TableRow key={device.filename}>
+                          <TableCell className="max-w-[18rem] truncate font-mono text-xs">{device.filename}</TableCell>
+                          <TableCell>{device.type}</TableCell>
+                          <TableCell>{formatBytes(device.size_bytes)}</TableCell>
+                          <TableCell>{formatBytes(device.used_bytes)}</TableCell>
+                          <TableCell>{device.priority}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <EmptyState title="No active swap devices" description="Enable a swap file on the server to manage its size here." />
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-[1fr_8rem_auto]">
+                <div className="space-y-1.5">
+                  <Label>Current swap</Label>
+                  <div className="flex h-9 items-center rounded-md border border-input px-3 font-mono text-sm text-muted-foreground">
+                    <span className="truncate">{formatValue(activeSwap?.filename)}</span>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="linux-swap-size">Size MB</Label>
+                  <Input
+                    id="linux-swap-size"
+                    type="number"
+                    min={64}
+                    value={swapSizeMB}
+                    onChange={(event) => setSwapSizeMB(event.target.value)}
+                    disabled={actionDisabled}
+                  />
+                </div>
+                <div className="flex items-end">
+                  <ActionButton
+                    size="sm"
+                    disabled={!canResizeSwap || !Number.isFinite(swapSizeValue)}
+                    pending={pendingAction === "swap"}
+                    icon={<Wrench className="h-4 w-4" />}
+                    onClick={() =>
+                      void runLinuxAction(
+                        "swap",
+                        () => resizeLinuxSwap(swapSizeValue),
+                        "Swap size updated.",
+                      )
+                    }
+                  >
+                    Set Size
+                  </ActionButton>
+                </div>
+              </div>
+              {activeSwap && activeSwap.type !== "file" ? (
+                <div className="text-xs text-muted-foreground">This swap device is not a file, so FlowPanel cannot resize it.</div>
+              ) : null}
+            </div>
+
+            <div className="flex justify-end border-t border-[var(--app-border)] pt-4">
+              <Button variant="outline" size="sm" onClick={() => void loadTools(true)} disabled={refreshing || Boolean(pendingAction)}>
+                {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Refresh
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function TaskManagerPage() {
   const [snapshot, setSnapshot] = useState<TaskManagerSnapshot | null>(null);
+  const [linuxToolsOpen, setLinuxToolsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -652,12 +983,20 @@ export function TaskManagerPage() {
         title="Task Manager"
         meta="Manage live processes, services, startup registration, users, and scheduled tasks from a single node view."
         actions={
-          <Button variant="outline" size="sm" onClick={() => void loadSnapshot(false)} disabled={refreshing}>
-            {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setLinuxToolsOpen(true)}>
+              <Wrench className="h-4 w-4" />
+              Linux Tools
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void loadSnapshot(false)} disabled={refreshing}>
+              {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Refresh
+            </Button>
+          </div>
         }
       />
+
+      <LinuxToolsDialog open={linuxToolsOpen} onOpenChange={setLinuxToolsOpen} />
 
       <div className="space-y-5 px-4 pb-8 sm:px-6 lg:px-8">
         {snapshot ? (

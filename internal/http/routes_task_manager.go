@@ -15,6 +15,17 @@ func (a *apiRoutes) registerTaskManagerRoutes(r chi.Router) {
 		return
 	}
 
+	linuxToolsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app == nil || a.app.TaskManager == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+				"error": "task manager is unavailable",
+			})
+			return
+		}
+
+		writeLinuxToolsSnapshot(w, a, r.Context())
+	})
+
 	snapshotHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app == nil || a.app.TaskManager == nil {
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -30,6 +41,8 @@ func (a *apiRoutes) registerTaskManagerRoutes(r chi.Router) {
 
 	r.Method(stdhttp.MethodGet, "/task-manager", snapshotHandler)
 	r.Method(stdhttp.MethodHead, "/task-manager", snapshotHandler)
+	r.Method(stdhttp.MethodGet, "/task-manager/linux-tools", linuxToolsHandler)
+	r.Method(stdhttp.MethodHead, "/task-manager/linux-tools", linuxToolsHandler)
 
 	r.Method(stdhttp.MethodPost, "/task-manager/processes/{pid}/terminate", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app == nil || a.app.TaskManager == nil {
@@ -137,6 +150,94 @@ func (a *apiRoutes) registerTaskManagerRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/task-manager/startup-items/{startupID}/disable", registerStartupAction("disable", func(ctx context.Context, id string) error {
 		return a.app.TaskManager.DisableStartupItem(ctx, id)
 	}, "Disabled the startup item."))
+
+	r.Method(stdhttp.MethodPost, "/task-manager/linux-tools/timezone", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app == nil || a.app.TaskManager == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "task manager is unavailable"})
+			return
+		}
+		var input struct {
+			Timezone string `json:"timezone"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+		if err := a.app.TaskManager.SetTimezone(r.Context(), input.Timezone); err != nil {
+			a.app.Logger.Error("set timezone failed", zap.Error(err))
+			a.mutationEvent(r.Context(), "task_manager", "set_timezone", "linux_tools", "timezone", input.Timezone, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		a.mutationEvent(r.Context(), "task_manager", "set_timezone", "linux_tools", "timezone", input.Timezone, "succeeded", "Updated timezone.")
+		writeLinuxToolsSnapshot(w, a, r.Context())
+	}))
+
+	r.Method(stdhttp.MethodPost, "/task-manager/linux-tools/hostname", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app == nil || a.app.TaskManager == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "task manager is unavailable"})
+			return
+		}
+		var input struct {
+			Hostname string `json:"hostname"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+		if err := a.app.TaskManager.SetHostname(r.Context(), input.Hostname); err != nil {
+			a.app.Logger.Error("set hostname failed", zap.Error(err))
+			a.mutationEvent(r.Context(), "task_manager", "set_hostname", "linux_tools", "hostname", input.Hostname, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		a.mutationEvent(r.Context(), "task_manager", "set_hostname", "linux_tools", "hostname", input.Hostname, "succeeded", "Updated hostname.")
+		writeLinuxToolsSnapshot(w, a, r.Context())
+	}))
+
+	r.Method(stdhttp.MethodPost, "/task-manager/linux-tools/dns", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app == nil || a.app.TaskManager == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "task manager is unavailable"})
+			return
+		}
+		var input struct {
+			Servers []string `json:"servers"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+		if err := a.app.TaskManager.SetDNS(r.Context(), input.Servers); err != nil {
+			a.app.Logger.Error("set dns failed", zap.Error(err))
+			a.mutationEvent(r.Context(), "task_manager", "set_dns", "linux_tools", "dns", "DNS", "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		a.mutationEvent(r.Context(), "task_manager", "set_dns", "linux_tools", "dns", "DNS", "succeeded", "Updated DNS servers.")
+		writeLinuxToolsSnapshot(w, a, r.Context())
+	}))
+
+	r.Method(stdhttp.MethodPost, "/task-manager/linux-tools/swap", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app == nil || a.app.TaskManager == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "task manager is unavailable"})
+			return
+		}
+		var input struct {
+			SizeMB int `json:"size_mb"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+		if err := a.app.TaskManager.ResizeSwap(r.Context(), input.SizeMB); err != nil {
+			a.app.Logger.Error("resize swap failed", zap.Int("size_mb", input.SizeMB), zap.Error(err))
+			a.mutationEvent(r.Context(), "task_manager", "resize_swap", "linux_tools", "swap", "Swap", "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		a.mutationEvent(r.Context(), "task_manager", "resize_swap", "linux_tools", "swap", "Swap", "succeeded", "Updated swap size.")
+		writeLinuxToolsSnapshot(w, a, r.Context())
+	}))
 }
 
 func writeTaskManagerSnapshot(w stdhttp.ResponseWriter, a *apiRoutes, ctx context.Context) {
@@ -149,5 +250,18 @@ func writeTaskManagerSnapshot(w stdhttp.ResponseWriter, a *apiRoutes, ctx contex
 
 	writeJSON(w, stdhttp.StatusOK, map[string]any{
 		"snapshot": a.app.TaskManager.Snapshot(ctx),
+	})
+}
+
+func writeLinuxToolsSnapshot(w stdhttp.ResponseWriter, a *apiRoutes, ctx context.Context) {
+	if a == nil || a.app == nil || a.app.TaskManager == nil {
+		writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
+			"error": "task manager is unavailable",
+		})
+		return
+	}
+
+	writeJSON(w, stdhttp.StatusOK, map[string]any{
+		"linux_tools": a.app.TaskManager.LinuxTools(ctx),
 	})
 }
