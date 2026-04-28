@@ -1,5 +1,10 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
 import {
   createBackup,
   deleteBackup,
@@ -21,6 +26,7 @@ import {
   copyDomainWebsite,
   deployDomainGitHubIntegration,
   fetchDomainNodeJSStatus,
+  fetchDomainFTPStatus,
   fetchDomainPreview,
   fetchDomains,
   getDomainSiteUrl,
@@ -30,6 +36,7 @@ import {
   stopDomainNodeJS,
   updateDomain,
   type EnvironmentVariable,
+  type DomainFTPStatus,
   type DomainNodeJSStatus,
   type InstallDomainTemplateResult,
   updateDomainPHPSettings,
@@ -732,6 +739,13 @@ export function DomainDetailPage() {
   const [backupDataLoading, setBackupDataLoading] = useState(true);
   const [backupDataError, setBackupDataError] = useState<string | null>(null);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
+  const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
+  const [connectionFTPStatus, setConnectionFTPStatus] =
+    useState<DomainFTPStatus | null>(null);
+  const [connectionFTPLoading, setConnectionFTPLoading] = useState(false);
+  const [connectionFTPError, setConnectionFTPError] = useState<string | null>(
+    null,
+  );
   const [composerDialogOpen, setComposerDialogOpen] = useState(false);
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false);
   const [environmentDialogOpen, setEnvironmentDialogOpen] = useState(false);
@@ -888,6 +902,10 @@ export function DomainDetailPage() {
     setBackupDataLoading(true);
     setBackupDataError(null);
     setBackupDialogOpen(false);
+    setConnectionDialogOpen(false);
+    setConnectionFTPStatus(null);
+    setConnectionFTPLoading(false);
+    setConnectionFTPError(null);
     setComposerDialogOpen(false);
     setCacheDialogOpen(false);
     setEnvironmentDialogOpen(false);
@@ -1041,6 +1059,49 @@ export function DomainDetailPage() {
       active = false;
     };
   }, [hostname]);
+
+  useEffect(() => {
+    if (!connectionDialogOpen || !domain) {
+      setConnectionFTPStatus(null);
+      setConnectionFTPLoading(false);
+      setConnectionFTPError(null);
+      return;
+    }
+
+    let active = true;
+    setConnectionFTPStatus(null);
+    setConnectionFTPLoading(true);
+    setConnectionFTPError(null);
+
+    async function loadConnectionFTPStatus() {
+      try {
+        const status = await fetchDomainFTPStatus(domain.id);
+        if (!active) {
+          return;
+        }
+
+        setConnectionFTPStatus(status);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setConnectionFTPError(
+          getErrorMessage(error, "Failed to load FTP connection details."),
+        );
+      } finally {
+        if (active) {
+          setConnectionFTPLoading(false);
+        }
+      }
+    }
+
+    void loadConnectionFTPStatus();
+
+    return () => {
+      active = false;
+    };
+  }, [connectionDialogOpen, domain?.id]);
 
   useEffect(() => {
     if (!previewUrl.startsWith("blob:")) {
@@ -2400,6 +2461,147 @@ export function DomainDetailPage() {
         }}
         deletingBackupName={deletingBackupName}
       />
+      <Dialog
+        open={connectionDialogOpen && domain !== null}
+        onOpenChange={setConnectionDialogOpen}
+      >
+        <DialogContent className="max-h-[min(86vh,760px)] overflow-hidden sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {domain ? `${domain.hostname} connection info` : "Connection info"}
+            </DialogTitle>
+            <DialogDescription>
+              Website, FTP, and database values for this domain.
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[calc(min(86vh,760px)-9rem)] pr-3">
+            <div className="space-y-3">
+              {[
+                {
+                  title: "Website",
+                  groups: [
+                    [
+                      ["URL", siteUrl],
+                      ["Hostname", domain?.hostname],
+                      ["Type", domain?.kind],
+                      [
+                        domain && isRuntimeDomainKind(domain.kind)
+                          ? "Upstream"
+                          : "Document root",
+                        domain && isRuntimeDomainKind(domain.kind)
+                          ? domain.target
+                          : documentRootDisplayPath,
+                      ],
+                      ...(domain && isRuntimeDomainKind(domain.kind)
+                        ? [["Script path", domain.nodejs_script_path]]
+                        : []),
+                    ],
+                  ],
+                },
+                {
+                  title: "FTP",
+                  loading: connectionFTPLoading ? "Loading FTP details..." : "",
+                  error: connectionFTPError,
+                  empty:
+                    connectionFTPStatus?.supported === false
+                      ? "FTP is not available for this domain target."
+                      : "FTP details are not loaded.",
+                  groups: connectionFTPStatus?.supported
+                    ? [
+                        [
+                          ["Server", connectionFTPStatus.host],
+                          ["Port", connectionFTPStatus.port],
+                          ["Username", connectionFTPStatus.username],
+                          ["Root path", connectionFTPStatus.root_path],
+                          ["Enabled", connectionFTPStatus.enabled ? "Yes" : "No"],
+                          [
+                            "Password",
+                            connectionFTPStatus.has_password
+                              ? "Password is set"
+                              : "Not set",
+                          ],
+                        ],
+                      ]
+                    : [],
+                },
+                {
+                  title: "Databases",
+                  empty: "No databases are linked to this domain.",
+                  groups: domainDatabases.map((database) => [
+                    ["Database", database.name],
+                    ["Username", database.username],
+                    ["Host", database.host || "localhost"],
+                    ["Password", database.password, true],
+                  ]),
+                },
+              ].map(({ title, groups, loading, error, empty }) => (
+                <section
+                  key={title}
+                  className="rounded-lg border border-[var(--app-border)] px-3 py-2.5"
+                >
+                  <h3 className="text-sm font-semibold text-[var(--app-text)]">
+                    {title}
+                  </h3>
+                  {loading ? (
+                    <div className="flex items-center gap-2 py-2 text-sm text-[var(--app-text-muted)]">
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                      {loading}
+                    </div>
+                  ) : error ? (
+                    <div className="mt-2 rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-2 text-[13px] text-[var(--app-danger)]">
+                      {error}
+                    </div>
+                  ) : groups.length > 0 ? (
+                    <dl className="mt-2 space-y-3">
+                      {groups.map((group, groupIndex) => (
+                        <div
+                          key={groupIndex}
+                          className="border-t border-[var(--app-border)] pt-2 first:border-t-0 first:pt-0"
+                        >
+                          {group.map(([label, value, secret]) => {
+                            const text =
+                              value === undefined || value === null || value === ""
+                                ? "-"
+                                : String(value);
+
+                            return (
+                              <div
+                                key={String(label)}
+                                className="grid gap-1 border-b border-[var(--app-border)] py-2 last:border-b-0 sm:grid-cols-[130px_minmax(0,1fr)]"
+                              >
+                                <dt className="text-[12px] font-medium text-[var(--app-text-muted)]">
+                                  {label}
+                                </dt>
+                                <dd
+                                  className={cn(
+                                    "min-w-0 break-all text-sm text-[var(--app-text)]",
+                                    secret ||
+                                      String(label).toLowerCase().includes("path") ||
+                                      label === "URL"
+                                      ? "font-mono text-[13px]"
+                                      : "",
+                                  )}
+                                >
+                                  {secret && text !== "-" ? "**********" : text}
+                                </dd>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </dl>
+                  ) : (
+                    <p className="py-2 text-sm text-[var(--app-text-muted)]">
+                      {empty}
+                    </p>
+                  )}
+                </section>
+              ))}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
       <DomainComposerDialog
         open={composerDialogOpen && domain?.kind === "Php site"}
         onOpenChange={setComposerDialogOpen}
@@ -3132,6 +3334,11 @@ export function DomainDetailPage() {
                   title="Files & Databases"
                   items={fileAndDatabaseActions}
                   onItemClick={(item) => {
+                    if (item.title === "Connection Info" && domain !== null) {
+                      setConnectionDialogOpen(true);
+                      return;
+                    }
+
                     if (item.title === "Databases" && domain !== null) {
                       void navigate({
                         to: "/database",
