@@ -55,10 +55,8 @@ import {
   Database,
   Download,
   ExternalLink,
-  File,
   FileCode2,
   FilePlus2,
-  Folder,
   FolderOpen,
   GitBranch,
   Globe,
@@ -112,6 +110,7 @@ import {
   samePHPSettings,
 } from "@/lib/php-settings";
 import { cn, getErrorMessage } from "@/lib/utils";
+import { DomainLogsPanel } from "@/pages/logs-page";
 import { toast } from "sonner";
 
 type GitHubFormState = {
@@ -291,7 +290,7 @@ type DomainActionItem = {
 };
 
 type WordPressSectionTab = "dashboard" | "plugins" | "themes" | "database";
-type DomainDetailTab = "general" | "files" | "terminal";
+type DomainDetailTab = "general" | "files" | "terminal" | "logs";
 type WordPressDetailsSection = Exclude<WordPressSectionTab, "dashboard">;
 type WordPressExtensionListType = "plugin" | "theme";
 type WordPressExtensionAction = "activate" | "deactivate" | "delete" | "update";
@@ -466,10 +465,6 @@ const fileAndDatabaseActions: DomainActionItem[] = [
     icon: Globe,
   },
   {
-    title: "Files",
-    icon: Folder,
-  },
-  {
     title: "Databases",
     icon: Database,
   },
@@ -503,14 +498,6 @@ const devToolActions: DomainActionItem[] = [
   {
     title: "Install PHP App",
     icon: FilePlus2,
-  },
-  {
-    title: "Logs",
-    icon: File,
-  },
-  {
-    title: "Terminal",
-    icon: TerminalSquare,
   },
   {
     title: "Monitoring",
@@ -560,6 +547,7 @@ function createMountedDomainDetailTabs(): Record<DomainDetailTab, boolean> {
     general: true,
     files: false,
     terminal: false,
+    logs: false,
   };
 }
 
@@ -752,7 +740,6 @@ export function DomainDetailPage() {
   const [phpDialogOpen, setPHPDialogOpen] = useState(false);
   const [templateInstallDialogOpen, setTemplateInstallDialogOpen] =
     useState(false);
-  const [terminalDialogOpen, setTerminalDialogOpen] = useState(false);
   const [websiteCopyDialogOpen, setWebsiteCopyDialogOpen] = useState(false);
   const [websiteCopyTargetHostname, setWebsiteCopyTargetHostname] =
     useState("");
@@ -908,7 +895,6 @@ export function DomainDetailPage() {
     setGitHubDialogOpen(false);
     setPHPDialogOpen(false);
     setTemplateInstallDialogOpen(false);
-    setTerminalDialogOpen(false);
     setWebsiteCopyDialogOpen(false);
     setWebsiteCopyTargetHostname("");
     setWebsiteCopyReplaceTargetFiles(true);
@@ -2708,21 +2694,6 @@ export function DomainDetailPage() {
           }}
         />
       ) : null}
-      <Dialog open={terminalDialogOpen} onOpenChange={setTerminalDialogOpen}>
-        <DialogContent className="max-w-6xl gap-0 overflow-hidden p-0 sm:max-w-6xl">
-          <DialogHeader className="sr-only">
-            <DialogTitle>Terminal</DialogTitle>
-            <DialogDescription>{terminalPathLabel}</DialogDescription>
-          </DialogHeader>
-          <TerminalWindow
-            cwd={filesPath || ""}
-            cwdLabel={terminalPathLabel}
-            title={domain ? `${domain.hostname} terminal` : "Terminal"}
-            className="rounded-none border-0 shadow-none"
-            heightClassName="h-[24rem] sm:h-[32rem]"
-          />
-        </DialogContent>
-      </Dialog>
       <Dialog open={nodeJSLogsOpen} onOpenChange={handleNodeJSLogsOpenChange}>
         <DialogContent className="h-[min(80vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
           <DialogHeader className="gap-3">
@@ -3041,6 +3012,7 @@ export function DomainDetailPage() {
                       { value: "general", label: "General" },
                       { value: "files", label: "Files" },
                       { value: "terminal", label: "Terminal" },
+                      { value: "logs", label: "Logs" },
                     ].map((tab) => {
                       const active = detailTab === tab.value;
 
@@ -3160,13 +3132,6 @@ export function DomainDetailPage() {
                   title="Files & Databases"
                   items={fileAndDatabaseActions}
                   onItemClick={(item) => {
-                    if (item.title === "Files") {
-                      void navigate({
-                        to: "/files",
-                      });
-                      return;
-                    }
-
                     if (item.title === "Databases" && domain !== null) {
                       void navigate({
                         to: "/database",
@@ -3255,26 +3220,6 @@ export function DomainDetailPage() {
                         }
 
                         setComposerDialogOpen(true);
-                        return;
-                      }
-
-                      if (item.title === "Logs" && domain !== null) {
-                        void navigate({
-                          to: "/domains/$hostname/logs",
-                          params: { hostname: domain.hostname },
-                        });
-                        return;
-                      }
-
-                      if (item.title === "Terminal" && domain !== null) {
-                        if (filesPath === null) {
-                          toast.error(
-                            "Terminal is unavailable for this domain.",
-                          );
-                          return;
-                        }
-
-                        setTerminalDialogOpen(true);
                         return;
                       }
 
@@ -3544,6 +3489,12 @@ export function DomainDetailPage() {
                         Terminal is unavailable for this domain target.
                       </section>
                     )}
+                  </div>
+                ) : null}
+
+                {mountedDetailTabs.logs ? (
+                  <div className={cn(detailTab !== "logs" && "hidden")}>
+                    <DomainLogsPanel hostname={domain?.hostname ?? hostname} embedded />
                   </div>
                 ) : null}
               </div>

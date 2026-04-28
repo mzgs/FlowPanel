@@ -348,8 +348,12 @@ function applyClientFilters(rows: ParsedLogRow[], filters: ClientFilterState) {
   });
 }
 
-export function LogsPage() {
-  const { hostname } = useParams({ from: "/domains/$hostname/logs" });
+type DomainLogsPanelProps = {
+  hostname: string;
+  embedded?: boolean;
+};
+
+export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelProps) {
   const [filters, setFilters] = useState<FilterState>(initialFilters);
   const [clientFilters, setClientFilters] = useState<ClientFilterState>(initialClientFilters);
   const [activeFilters, setActiveFilters] = useState<FetchDomainLogsInput>(() =>
@@ -424,71 +428,79 @@ export function LogsPage() {
   const visibleRows = applyClientFilters(allRows, clientFilters);
   const rawRows = allRows.filter((row) => row.parseMode === "raw").length;
   const unavailableLogs = logs.filter((log) => !log.available || Boolean(log.read_error));
+  const actions = (
+    <>
+      <Button
+        type="button"
+        variant={liveUpdates ? "default" : "outline"}
+        onClick={() => setLiveUpdates((current) => !current)}
+      >
+        <PlayerPlay className="h-4 w-4" />
+        {liveUpdates ? "Stop live updates" : "Start live updates"}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => void loadLogs(activeFilters, true)}
+        disabled={refreshing}
+      >
+        {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+        Refresh
+      </Button>
+      <Button type="button" variant="outline" onClick={handleResetFilters} disabled={refreshing}>
+        <TimerReset className="h-4 w-4" />
+        Reset
+      </Button>
+      <Select
+        value={filters.type}
+        onValueChange={(value) => setFilters((current) => ({ ...current, type: value as DomainLogType }))}
+      >
+        <SelectTrigger className="w-[150px] bg-card">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All logs</SelectItem>
+          <SelectItem value="access">Access only</SelectItem>
+          <SelectItem value="error">Error only</SelectItem>
+        </SelectContent>
+      </Select>
+      <Select
+        value={filters.limit}
+        onValueChange={(value) => setFilters((current) => ({ ...current, limit: value }))}
+      >
+        <SelectTrigger className="w-[126px] bg-card">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="50">50 rows</SelectItem>
+          <SelectItem value="100">100 rows</SelectItem>
+          <SelectItem value="200">200 rows</SelectItem>
+          <SelectItem value="500">500 rows</SelectItem>
+        </SelectContent>
+      </Select>
+    </>
+  );
 
   return (
     <>
-      <PageHeader
-        title={(
-          <span className="flex flex-wrap items-baseline gap-2">
-            <span>Logs of</span>
-            <span className="text-primary">{hostname}</span>
-          </span>
-        )}
-        actions={(
-          <>
-            <Button
-              type="button"
-              variant={liveUpdates ? "default" : "outline"}
-              onClick={() => setLiveUpdates((current) => !current)}
-            >
-              <PlayerPlay className="h-4 w-4" />
-              {liveUpdates ? "Stop live updates" : "Start live updates"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void loadLogs(activeFilters, true)}
-              disabled={refreshing}
-            >
-              {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Refresh
-            </Button>
-            <Button type="button" variant="outline" onClick={handleResetFilters} disabled={refreshing}>
-              <TimerReset className="h-4 w-4" />
-              Reset
-            </Button>
-            <Select
-              value={filters.type}
-              onValueChange={(value) => setFilters((current) => ({ ...current, type: value as DomainLogType }))}
-            >
-              <SelectTrigger className="w-[150px] bg-card">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All logs</SelectItem>
-                <SelectItem value="access">Access only</SelectItem>
-                <SelectItem value="error">Error only</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={filters.limit}
-              onValueChange={(value) => setFilters((current) => ({ ...current, limit: value }))}
-            >
-              <SelectTrigger className="w-[126px] bg-card">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="50">50 rows</SelectItem>
-                <SelectItem value="100">100 rows</SelectItem>
-                <SelectItem value="200">200 rows</SelectItem>
-                <SelectItem value="500">500 rows</SelectItem>
-              </SelectContent>
-            </Select>
-          </>
-        )}
-      />
+      {embedded ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card/80 px-3 py-2 shadow-sm">
+          <div className="text-sm font-medium text-foreground">Logs</div>
+          <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        </div>
+      ) : (
+        <PageHeader
+          title={(
+            <span className="flex flex-wrap items-baseline gap-2">
+              <span>Logs of</span>
+              <span className="text-primary">{hostname}</span>
+            </span>
+          )}
+          actions={actions}
+        />
+      )}
 
-      <div className="px-4 pb-6 sm:px-6 lg:px-8">
+      <div className={cn("pb-6", embedded ? "" : "px-4 sm:px-6 lg:px-8")}>
         <section className="overflow-hidden rounded-2xl border border-border bg-card/80 shadow-sm">
           <form
             className="border-b border-border bg-background/40 px-3 py-3 sm:px-4"
@@ -638,4 +650,10 @@ export function LogsPage() {
       </div>
     </>
   );
+}
+
+export function LogsPage() {
+  const { hostname } = useParams({ from: "/domains/$hostname/logs" });
+
+  return <DomainLogsPanel hostname={hostname} />;
 }
