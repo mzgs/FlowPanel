@@ -85,6 +85,7 @@ import { DomainPHPDialog } from "@/components/domain-php-dialog";
 import { DomainTemplateInstallDialog } from "@/components/domain-template-install-dialog";
 import { DomainWordPressExtensionInstallDialog } from "@/components/domain-wordpress-extension-install-dialog";
 import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
+import { FileManager } from "@/components/file-manager";
 import { PageHeader } from "@/components/page-header";
 import { TerminalWindow } from "@/components/terminal-window";
 import { Badge } from "@/components/ui/badge";
@@ -105,7 +106,6 @@ import {
   getDocumentRootDisplayPath,
   getFilesPathFromDomainTarget,
 } from "@/lib/domain-targets";
-import { setPendingFilesPath } from "@/lib/files-navigation";
 import {
   emptyPHPSettings,
   mergePHPSettingsForm,
@@ -291,6 +291,7 @@ type DomainActionItem = {
 };
 
 type WordPressSectionTab = "dashboard" | "plugins" | "themes" | "database";
+type DomainDetailTab = "general" | "files";
 type WordPressDetailsSection = Exclude<WordPressSectionTab, "dashboard">;
 type WordPressExtensionListType = "plugin" | "theme";
 type WordPressExtensionAction = "activate" | "deactivate" | "delete" | "update";
@@ -842,6 +843,7 @@ export function DomainDetailPage() {
   >(null);
   const [wordPressSummary, setWordPressSummary] =
     useState<WordPressSummary | null>(null);
+  const [detailTab, setDetailTab] = useState<DomainDetailTab>("general");
   const [wordPressSectionTab, setWordPressSectionTab] =
     useState<WordPressSectionTab>("dashboard");
   const [wordPressDetails, setWordPressDetails] =
@@ -953,6 +955,7 @@ export function DomainDetailPage() {
     setPHPError(null);
     setPHPRunningAction(null);
     setWordPressSummary(null);
+    setDetailTab("general");
     setWordPressSectionTab("dashboard");
     setWordPressDetails(null);
     setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
@@ -3009,6 +3012,57 @@ export function DomainDetailPage() {
                 </section>
               </aside>
               <div className="space-y-4">
+                <div className="border-b border-[var(--app-border)]">
+                  <div
+                    role="tablist"
+                    aria-label="Domain detail sections"
+                    className="flex gap-5 overflow-x-auto"
+                  >
+                    {[
+                      { value: "general", label: "General" },
+                      { value: "files", label: "Files" },
+                    ].map((tab) => {
+                      const active = detailTab === tab.value;
+
+                      return (
+                        <button
+                          key={tab.value}
+                          role="tab"
+                          type="button"
+                          aria-selected={active}
+                          tabIndex={active ? 0 : -1}
+                          className={cn(
+                            "inline-flex border-b-2 px-1 py-2 text-sm font-medium whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-bg)]",
+                            active
+                              ? "border-[var(--app-text)] text-[var(--app-text)]"
+                              : "border-transparent text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
+                          )}
+                          onClick={() => {
+                            setDetailTab(tab.value as DomainDetailTab);
+                          }}
+                        >
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {detailTab === "files" ? (
+                  filesPath !== null ? (
+                    <FileManager
+                      key={filesPath}
+                      initialPath={filesPath}
+                      persistLastPath={false}
+                      className="min-h-0 [&>div]:px-0 [&>div]:pb-0 [&>div]:pt-0"
+                    />
+                  ) : (
+                    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
+                      Files are unavailable for this domain target.
+                    </section>
+                  )
+                ) : (
+                  <>
                 {isRuntimeDomainKind(domain?.kind) ? (
                   <section className="overflow-x-auto rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow)]">
                     <div className="flex min-w-max items-center gap-4 text-xs">
@@ -3100,8 +3154,7 @@ export function DomainDetailPage() {
                   title="Files & Databases"
                   items={fileAndDatabaseActions}
                   onItemClick={(item) => {
-                    if (item.title === "Files" && filesPath !== null) {
-                      setPendingFilesPath(filesPath);
+                    if (item.title === "Files") {
                       void navigate({
                         to: "/files",
                       });
@@ -3452,6 +3505,8 @@ export function DomainDetailPage() {
                     </div>
                   </section>
                 ) : null}
+                  </>
+                )}
               </div>
             </section>
           ) : null}
