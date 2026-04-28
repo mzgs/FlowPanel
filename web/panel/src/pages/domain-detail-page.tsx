@@ -291,7 +291,7 @@ type DomainActionItem = {
 };
 
 type WordPressSectionTab = "dashboard" | "plugins" | "themes" | "database";
-type DomainDetailTab = "general" | "files";
+type DomainDetailTab = "general" | "files" | "terminal";
 type WordPressDetailsSection = Exclude<WordPressSectionTab, "dashboard">;
 type WordPressExtensionListType = "plugin" | "theme";
 type WordPressExtensionAction = "activate" | "deactivate" | "delete" | "update";
@@ -554,6 +554,14 @@ const wordPressSectionTabs: Array<{
   { value: "themes", label: "Themes" },
   { value: "database", label: "Database" },
 ];
+
+function createMountedDomainDetailTabs(): Record<DomainDetailTab, boolean> {
+  return {
+    general: true,
+    files: false,
+    terminal: false,
+  };
+}
 
 function createWordPressDetailsLoadedState(
   value = false,
@@ -844,6 +852,9 @@ export function DomainDetailPage() {
   const [wordPressSummary, setWordPressSummary] =
     useState<WordPressSummary | null>(null);
   const [detailTab, setDetailTab] = useState<DomainDetailTab>("general");
+  const [mountedDetailTabs, setMountedDetailTabs] = useState(
+    createMountedDomainDetailTabs,
+  );
   const [wordPressSectionTab, setWordPressSectionTab] =
     useState<WordPressSectionTab>("dashboard");
   const [wordPressDetails, setWordPressDetails] =
@@ -956,6 +967,7 @@ export function DomainDetailPage() {
     setPHPRunningAction(null);
     setWordPressSummary(null);
     setDetailTab("general");
+    setMountedDetailTabs(createMountedDomainDetailTabs());
     setWordPressSectionTab("dashboard");
     setWordPressDetails(null);
     setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
@@ -2335,6 +2347,13 @@ export function DomainDetailPage() {
     return wordPressDetails?.themes ?? [];
   }
 
+  function activateDetailTab(tab: DomainDetailTab) {
+    setDetailTab(tab);
+    setMountedDetailTabs((current) =>
+      current[tab] ? current : { ...current, [tab]: true },
+    );
+  }
+
   return (
     <>
       <DomainWordPressExtensionInstallDialog
@@ -3021,6 +3040,7 @@ export function DomainDetailPage() {
                     {[
                       { value: "general", label: "General" },
                       { value: "files", label: "Files" },
+                      { value: "terminal", label: "Terminal" },
                     ].map((tab) => {
                       const active = detailTab === tab.value;
 
@@ -3038,7 +3058,7 @@ export function DomainDetailPage() {
                               : "border-transparent text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
                           )}
                           onClick={() => {
-                            setDetailTab(tab.value as DomainDetailTab);
+                            activateDetailTab(tab.value as DomainDetailTab);
                           }}
                         >
                           {tab.label}
@@ -3048,21 +3068,7 @@ export function DomainDetailPage() {
                   </div>
                 </div>
 
-                {detailTab === "files" ? (
-                  filesPath !== null ? (
-                    <FileManager
-                      key={filesPath}
-                      initialPath={filesPath}
-                      persistLastPath={false}
-                      className="min-h-0 [&>div]:px-0 [&>div]:pb-0 [&>div]:pt-0"
-                    />
-                  ) : (
-                    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
-                      Files are unavailable for this domain target.
-                    </section>
-                  )
-                ) : (
-                  <>
+                <div className={cn("space-y-4", detailTab !== "general" && "hidden")}>
                 {isRuntimeDomainKind(domain?.kind) ? (
                   <section className="overflow-x-auto rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow)]">
                     <div className="flex min-w-max items-center gap-4 text-xs">
@@ -3505,8 +3511,41 @@ export function DomainDetailPage() {
                     </div>
                   </section>
                 ) : null}
-                  </>
-                )}
+                </div>
+
+                {mountedDetailTabs.files ? (
+                  <div className={cn(detailTab !== "files" && "hidden")}>
+                    {filesPath !== null ? (
+                      <FileManager
+                        key={filesPath}
+                        initialPath={filesPath}
+                        persistLastPath={false}
+                        className="min-h-0 [&>div]:px-0 [&>div]:pb-0 [&>div]:pt-0"
+                      />
+                    ) : (
+                      <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
+                        Files are unavailable for this domain target.
+                      </section>
+                    )}
+                  </div>
+                ) : null}
+
+                {mountedDetailTabs.terminal ? (
+                  <div className={cn(detailTab !== "terminal" && "hidden")}>
+                    {filesPath !== null ? (
+                      <TerminalWindow
+                        cwd={filesPath}
+                        cwdLabel={terminalPathLabel}
+                        title={domain ? `${domain.hostname} terminal` : "Terminal"}
+                        heightClassName="h-[28rem] sm:h-[34rem]"
+                      />
+                    ) : (
+                      <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
+                        Terminal is unavailable for this domain target.
+                      </section>
+                    )}
+                  </div>
+                ) : null}
               </div>
             </section>
           ) : null}
