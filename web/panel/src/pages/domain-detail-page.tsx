@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 import {
   useEffect,
   useRef,
@@ -92,6 +92,7 @@ import { DomainPHPDialog } from "@/components/domain-php-dialog";
 import { DomainTemplateInstallDialog } from "@/components/domain-template-install-dialog";
 import { DomainWordPressExtensionInstallDialog } from "@/components/domain-wordpress-extension-install-dialog";
 import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
+import { DatabasePanel } from "@/components/database-panel";
 import { FileManager } from "@/components/file-manager";
 import { PageHeader } from "@/components/page-header";
 import { TerminalWindow } from "@/components/terminal-window";
@@ -299,7 +300,7 @@ type DomainActionItem = {
 };
 
 type WordPressSectionTab = "dashboard" | "plugins" | "themes" | "database";
-type DomainDetailTab = "general" | "files" | "terminal" | "logs";
+type DomainDetailTab = "general" | "files" | "database" | "terminal" | "logs";
 type IconTab<T extends string> = {
   value: T;
   label: string;
@@ -549,6 +550,7 @@ const composerManifestName = "composer.json";
 const domainDetailTabs: IconTab<DomainDetailTab>[] = [
   { value: "general", label: "General", icon: LayoutDashboard },
   { value: "files", label: "Files", icon: FolderOpen },
+  { value: "database", label: "Database", icon: Database },
   { value: "terminal", label: "Terminal", icon: TerminalSquare },
   { value: "logs", label: "Logs", icon: List },
 ];
@@ -563,6 +565,7 @@ function createMountedDomainDetailTabs(): Record<DomainDetailTab, boolean> {
   return {
     general: true,
     files: false,
+    database: false,
     terminal: false,
     logs: false,
   };
@@ -752,7 +755,6 @@ function DomainActionSection({
 
 export function DomainDetailPage() {
   const { hostname } = useParams({ from: "/domains/$hostname" });
-  const navigate = useNavigate();
   const [domain, setDomain] = useState<DomainRecord | null>(null);
   const [allDomains, setAllDomains] = useState<DomainRecord[]>([]);
   const [sitesBasePath, setSitesBasePath] = useState("");
@@ -3361,10 +3363,7 @@ export function DomainDetailPage() {
                     }
 
                     if (item.title === "Databases" && domain !== null) {
-                      void navigate({
-                        to: "/database",
-                        search: { domain: domain.hostname },
-                      });
+                      activateDetailTab("database");
                       return;
                     }
 
@@ -3701,6 +3700,17 @@ export function DomainDetailPage() {
                         Files are unavailable for this domain target.
                       </section>
                     )}
+                  </div>
+                ) : null}
+
+                {mountedDetailTabs.database ? (
+                  <div className={cn(detailTab !== "database" && "hidden")}>
+                    <DatabasePanel
+                      key={domain?.hostname ?? hostname}
+                      domain={domain?.hostname ?? hostname}
+                      embedded
+                      showSearch={false}
+                    />
                   </div>
                 ) : null}
 
