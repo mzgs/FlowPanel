@@ -1050,11 +1050,11 @@ export function DomainsPage() {
                                   >
                                     {downloadingDomainId === domain.id ? (
                                       <LoaderCircle
-                                        className="size-6 animate-spin"
+                                        className="size-5 animate-spin"
                                       />
                                     ) : (
                                       <Download
-                                        className="size-6"
+                                        className="size-5"
                                       />
                                     )}
                                   </Button>
@@ -1073,7 +1073,7 @@ export function DomainsPage() {
                                     className={domainActionButtonClass}
                                   >
                                     <FolderOpen
-                                      className="size-6"
+                                      className="size-5"
                                     />
                                   </Button>
                                 ) : null}
@@ -1090,7 +1090,7 @@ export function DomainsPage() {
                                   className={domainActionButtonClass}
                                 >
                                   <UserCog
-                                    className="size-6"
+                                    className="size-5"
                                   />
                                 </Button>
                                 <Button
@@ -1104,7 +1104,7 @@ export function DomainsPage() {
                                   className={domainActionButtonClass}
                                 >
                                   <Pencil
-                                    className="size-6"
+                                    className="size-5"
                                   />
                                 </Button>
                                 <Button
@@ -1121,11 +1121,11 @@ export function DomainsPage() {
                                 >
                                   {deletingDomainId === domain.id ? (
                                     <LoaderCircle
-                                      className="size-6 animate-spin"
+                                      className="size-5 animate-spin"
                                     />
                                   ) : (
                                     <Trash2
-                                      className="size-6"
+                                      className="size-5"
                                     />
                                   )}
                                 </Button>

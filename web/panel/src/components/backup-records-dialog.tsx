@@ -141,7 +141,7 @@ export function BackupRecordsTable({
                       busy={restoringBackupName === backup.name}
                       done={restoredBackupName === backup.name}
                       icon={RotateCcw}
-                      className="size-6"
+                      className="size-5"
                     />
                   </Button>
                   <Button
@@ -153,7 +153,7 @@ export function BackupRecordsTable({
                     title={`Download ${backup.name}`}
                   >
                     <a href={getBackupDownloadUrl(backup.id, backup.location)}>
-                      <Download className="size-6" />
+                      <Download className="size-5" />
                     </a>
                   </Button>
                   <Button
@@ -172,10 +172,10 @@ export function BackupRecordsTable({
                   >
                     {deletingBackupName === backup.name ? (
                       <LoaderCircle
-                        className="size-6 animate-spin"
+                        className="size-5 animate-spin"
                       />
                     ) : (
-                      <Trash2 className="size-6" />
+                      <Trash2 className="size-5" />
                     )}
                   </Button>
                 </div>
