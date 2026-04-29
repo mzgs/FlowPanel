@@ -7,7 +7,12 @@ import {
   type WAFMode,
   type WAFPathExclusion,
 } from "@/api/domains";
-import { List, LoaderCircle, ShieldCheck } from "@/components/icons/tabler-icons";
+import {
+  ExternalLink,
+  List,
+  LoaderCircle,
+  ShieldCheck,
+} from "@/components/icons/tabler-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -257,6 +262,15 @@ export function DomainSecurityDialog({
                   placeholder={`SecRule REQUEST_URI "@beginsWith /private" "id:100001,phase:1,deny,status:403,msg:'Blocked private path'"`}
                   disabled={!wafEnabled}
                 />
+                <a
+                  href="https://www.coraza.io/docs/seclang/syntax/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1.5 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                >
+                  Coraza SecLang syntax documentation
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
               </Field>
             </div>
           ) : null}
