@@ -1000,11 +1000,11 @@ export function DatabasePanel({
                     <th className={databaseTableHeaderCellClass}>Database name</th>
                     <th className={databaseTableHeaderCellClass}>Username</th>
                     <th className={databaseTableHeaderCellClass}>Password</th>
-                    <th className={databaseTableHeaderCellClass}>Backup</th>
                     <th className={databaseTableHeaderCellClass}>Location</th>
                     {showDomainColumn ? (
                       <th className={databaseTableHeaderCellClass}>Domain</th>
                     ) : null}
+                    <th className={databaseTableHeaderCellClass}>Backup</th>
                     <th className={databaseTableActionHeaderCellClass}>Operate</th>
                   </tr>
                 </thead>
@@ -1065,6 +1065,10 @@ export function DatabasePanel({
                             </div>
                           ) : null}
                         </td>
+                        <td className={databaseTableBodyCellClass}>{database.host || "localhost"}</td>
+                        {showDomainColumn ? (
+                          <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
+                        ) : null}
                         <td className={databaseTableBodyCellClass}>
                           {backupsLoading ? (
                             <span className="text-[13px] text-[var(--app-text-muted)]">Loading...</span>
@@ -1096,10 +1100,6 @@ export function DatabasePanel({
                             </button>
                           )}
                         </td>
-                        <td className={databaseTableBodyCellClass}>{database.host || "localhost"}</td>
-                        {showDomainColumn ? (
-                          <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
-                        ) : null}
                         <td className={databaseTableActionBodyCellClass}>
                           <div className="flex items-center justify-end gap-0.5">
                             <button
