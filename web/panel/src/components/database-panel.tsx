@@ -232,6 +232,7 @@ type DatabasePanelProps = {
   initialSearch?: string;
   embedded?: boolean;
   showSearch?: boolean;
+  showDomainColumn?: boolean;
 };
 
 export function DatabasePanel({
@@ -239,6 +240,7 @@ export function DatabasePanel({
   initialSearch = "",
   embedded = false,
   showSearch = true,
+  showDomainColumn = true,
 }: DatabasePanelProps) {
   const scopedDomain = domain.trim();
   const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
@@ -410,6 +412,7 @@ export function DatabasePanel({
   const rootPasswordCandidate = rootPasswordDraft.trim();
   const rootPasswordTooShort = rootPasswordCandidate.length > 0 && rootPasswordCandidate.length < 8;
   const mariaDBNotInstalled = mariaDBStatus !== null && !mariaDBStatus.server_installed;
+  const tableColumnCount = showDomainColumn ? 7 : 6;
 
   function handleGenerateRootPassword() {
     setRootPasswordDraft(generateRootPassword());
@@ -991,7 +994,7 @@ export function DatabasePanel({
             </div>
 
             <div className="overflow-x-auto">
-              <table className="min-w-[1000px] w-full text-left">
+              <table className={cn(showDomainColumn ? "min-w-[1000px]" : "min-w-[880px]", "w-full text-left")}>
                 <thead className="border-b border-[var(--app-border)] bg-[var(--app-surface)]">
                   <tr className="text-[13px] text-[var(--app-text-muted)]">
                     <th className={databaseTableHeaderCellClass}>Database name</th>
@@ -999,20 +1002,22 @@ export function DatabasePanel({
                     <th className={databaseTableHeaderCellClass}>Password</th>
                     <th className={databaseTableHeaderCellClass}>Backup</th>
                     <th className={databaseTableHeaderCellClass}>Location</th>
-                    <th className={databaseTableHeaderCellClass}>Domain</th>
+                    {showDomainColumn ? (
+                      <th className={databaseTableHeaderCellClass}>Domain</th>
+                    ) : null}
                     <th className={databaseTableActionHeaderCellClass}>Operate</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={7} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={tableColumnCount} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
                         Loading databases...
                       </td>
                     </tr>
                   ) : filteredDatabases.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={tableColumnCount} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
                         No databases found.
                       </td>
                     </tr>
@@ -1092,7 +1097,9 @@ export function DatabasePanel({
                           )}
                         </td>
                         <td className={databaseTableBodyCellClass}>{database.host || "localhost"}</td>
-                        <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
+                        {showDomainColumn ? (
+                          <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
+                        ) : null}
                         <td className={databaseTableActionBodyCellClass}>
                           <div className="flex items-center justify-end gap-0.5">
                             <button

@@ -3710,6 +3710,7 @@ export function DomainDetailPage() {
                       domain={domain?.hostname ?? hostname}
                       embedded
                       showSearch={false}
+                      showDomainColumn={false}
                     />
                   </div>
                 ) : null}
