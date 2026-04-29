@@ -89,6 +89,11 @@ function validateIdentifier(value: string, label: string) {
   return undefined;
 }
 
+function getScopedDatabaseName(domain: string) {
+  const identifier = domain.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  return identifier ? `${identifier}_db` : "";
+}
+
 function generateRootPassword() {
   const randomBytes = new Uint8Array(24);
   window.crypto.getRandomValues(randomBytes);
@@ -525,7 +530,14 @@ export function DatabasePanel({
 
   function openCreateDialog() {
     resetForm();
-    setForm((current) => ({ ...current, domain: scopedDomain }));
+    const name = getScopedDatabaseName(scopedDomain);
+    setForm((current) => ({
+      ...current,
+      name,
+      username: name,
+      password: generateRootPassword(),
+      domain: scopedDomain,
+    }));
     setDialogMode("create");
   }
 
@@ -1222,9 +1234,19 @@ export function DatabasePanel({
                 value={form.name}
                 readOnly={dialogMode !== "create"}
                 onChange={(event) => {
-                  setForm((current) => ({ ...current, name: event.target.value }));
-                  if (errors.name) {
-                    setErrors((current) => ({ ...current, name: undefined }));
+                  const name = event.target.value;
+                  const syncUsername = dialogMode === "create" && (!form.username || form.username === form.name);
+                  setForm((current) => ({
+                    ...current,
+                    name,
+                    username: syncUsername ? name : current.username,
+                  }));
+                  if (errors.name || (syncUsername && errors.username)) {
+                    setErrors((current) => ({
+                      ...current,
+                      name: undefined,
+                      username: syncUsername ? undefined : current.username,
+                    }));
                   }
                 }}
                 placeholder="project_db"
