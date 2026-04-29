@@ -10,7 +10,7 @@ import {
   Trash2,
   UserCog,
   World,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import {
   createBackup,
   deleteBackup,
@@ -118,7 +118,6 @@ const domainActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
 const domainDangerActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
-const domainActionIconStroke = 1.5;
 
 const hostnamePattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/i;
@@ -805,7 +804,6 @@ export function DomainsPage() {
           void handleDeleteBackup(name);
         }}
         deletingBackupName={deletingBackupName}
-        actionIconStroke={domainActionIconStroke}
       />
       <ActionConfirmDialog
         open={deleteDomainCandidate !== null}
@@ -1053,12 +1051,10 @@ export function DomainsPage() {
                                     {downloadingDomainId === domain.id ? (
                                       <LoaderCircle
                                         className="size-6 animate-spin"
-                                        stroke={domainActionIconStroke}
                                       />
                                     ) : (
                                       <Download
                                         className="size-6"
-                                        stroke={domainActionIconStroke}
                                       />
                                     )}
                                   </Button>
@@ -1078,7 +1074,6 @@ export function DomainsPage() {
                                   >
                                     <FolderOpen
                                       className="size-6"
-                                      stroke={domainActionIconStroke}
                                     />
                                   </Button>
                                 ) : null}
@@ -1096,7 +1091,6 @@ export function DomainsPage() {
                                 >
                                   <UserCog
                                     className="size-6"
-                                    stroke={domainActionIconStroke}
                                   />
                                 </Button>
                                 <Button
@@ -1111,7 +1105,6 @@ export function DomainsPage() {
                                 >
                                   <Pencil
                                     className="size-6"
-                                    stroke={domainActionIconStroke}
                                   />
                                 </Button>
                                 <Button
@@ -1129,12 +1122,10 @@ export function DomainsPage() {
                                   {deletingDomainId === domain.id ? (
                                     <LoaderCircle
                                       className="size-6 animate-spin"
-                                      stroke={domainActionIconStroke}
                                     />
                                   ) : (
                                     <Trash2
                                       className="size-6"
-                                      stroke={domainActionIconStroke}
                                     />
                                   )}
                                 </Button>
@@ -1325,7 +1316,6 @@ export function DomainsPage() {
                               ? "text-[var(--app-accent)]"
                               : "text-[var(--app-text-muted)]",
                           )}
-                          stroke={1.7}
                         />
                       ) : null}
                       <span className="text-[12px] font-semibold leading-4">

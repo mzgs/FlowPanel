@@ -80,7 +80,7 @@ import {
   ShieldCheck,
   TerminalSquare,
   Trash2,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { DomainBackupRestoreDialog } from "@/components/domain-backup-restore-dialog";
 import {
   DomainComposerDialog,
@@ -747,7 +747,7 @@ function DomainActionSection({
                 iconColors[index % iconColors.length],
               )}
             >
-              <Icon className="h-5 w-5" stroke={1.75} />
+              <Icon className="h-5 w-5" />
             </span>
             <span className="min-w-0 text-sm font-medium leading-5 text-[var(--app-text)]">
               {itemTitle}
@@ -3293,7 +3293,7 @@ export function DomainDetailPage() {
                             activateDetailTab(tab.value);
                           }}
                         >
-                          <Icon className="mr-1.5 h-4 w-4" stroke={1.8} />
+                          <Icon className="mr-1.5 h-4 w-4" />
                           {tab.label}
                         </button>
                       );
@@ -3530,7 +3530,6 @@ export function DomainDetailPage() {
                       <div className="flex items-center gap-2 px-4 pt-4 pb-2">
                         <BrandWordpress
                           className="h-4 w-4 text-[var(--app-text-muted)]"
-                          stroke={1.8}
                         />
                         <div className="text-sm font-medium text-[var(--app-text)]">
                           WordPress
@@ -3558,7 +3557,7 @@ export function DomainDetailPage() {
                                   setWordPressSectionTab(value);
                                 }}
                               >
-                                <Icon className="mr-1.5 h-4 w-4" stroke={1.8} />
+                                <Icon className="mr-1.5 h-4 w-4" />
                                 <span>{label}</span>
                               </button>
                             );

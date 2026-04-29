@@ -1,7 +1,7 @@
 import { type DomainKind, type EnvironmentVariable } from "@/api/domains";
 import { FieldError } from "@/components/field-error";
 import { EnvironmentVariablesEditor } from "@/components/environment-variables-editor";
-import { LoaderCircle } from "@/components/icons/tabler-icons";
+import { LoaderCircle } from "@/components/icons/lucide-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

@@ -16,7 +16,7 @@ import {
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { DiskUsageCard } from "@/components/disk-usage-card";
-import { LoaderCircle, Trash2, Database, World } from "@/components/icons/tabler-icons";
+import { LoaderCircle, Trash2, Database, World } from "@/components/icons/lucide-icons";
 import { PM2ProcessList } from "@/components/pm2-process-list";
 import { SystemMetricsCard, type SystemStatusSample } from "@/components/system-metrics-card";
 import { Button } from "@/components/ui/button";

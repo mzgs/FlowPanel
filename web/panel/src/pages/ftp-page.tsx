@@ -18,7 +18,7 @@ import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { LongText } from "@/components/long-text";
 import { PasswordInput } from "@/components/password-input";
-import { Pencil, Plus, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { Pencil, Plus, Search, Trash2 } from "@/components/icons/lucide-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

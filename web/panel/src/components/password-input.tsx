@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Eye, EyeOff, RefreshCw } from '@/components/icons/tabler-icons'
+import { Eye, EyeOff, RefreshCw } from '@/components/icons/lucide-icons'
 import { cn } from '@/lib/utils'
 import { Button } from './ui/button'
 

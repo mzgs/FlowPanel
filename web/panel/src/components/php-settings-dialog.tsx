@@ -13,7 +13,7 @@ import {
   type PHPRuntimeStatus,
   type UpdatePHPSettingsInput,
 } from "@/api/php";
-import { CircleCheck, LoaderCircle } from "@/components/icons/tabler-icons";
+import { CircleCheck, LoaderCircle } from "@/components/icons/lucide-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/field-error";

@@ -25,7 +25,7 @@ import {
   RotateCcw,
   Trash2,
   Upload,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { FieldError } from "@/components/field-error";

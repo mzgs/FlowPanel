@@ -6,7 +6,7 @@ import {
   createRouter,
   useLocation,
 } from "@tanstack/react-router";
-import { Fragment } from "react";
+import { Fragment, Suspense, lazy, type ComponentType } from "react";
 import {
   Bell,
   Clock,
@@ -24,7 +24,7 @@ import {
   Settings,
   TerminalSquare,
   World,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -43,21 +43,72 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { CronPage } from "@/pages/cron-page";
-import { DomainDetailPage } from "@/pages/domain-detail-page";
-import { ActivityPage } from "@/pages/activity-page";
-import { ApplicationsPage } from "@/pages/applications-page";
-import { BackupsPage } from "@/pages/backups-page";
-import { DatabasePage } from "@/pages/database-page";
-import { DashboardPage } from "@/pages/dashboard-page";
-import { DockerPage } from "@/pages/docker-page";
-import { DomainsPage } from "@/pages/domains-page";
-import { FilesPage } from "@/pages/files-page";
-import { FTPPage } from "@/pages/ftp-page";
-import { LogsPage } from "@/pages/logs-page";
-import { SettingsPage } from "@/pages/settings-page";
-import { TaskManagerPage } from "@/pages/task-manager-page";
-import { TerminalPage } from "@/pages/terminal-page";
+
+function RoutePending() {
+  return (
+    <div className="px-4 py-4 text-sm text-muted-foreground sm:px-6 lg:px-8">
+      Loading...
+    </div>
+  );
+}
+
+function lazyRouteComponent(loader: () => Promise<{ default: ComponentType }>) {
+  const Page = lazy(loader);
+
+  return function LazyRouteComponent() {
+    return (
+      <Suspense fallback={<RoutePending />}>
+        <Page />
+      </Suspense>
+    );
+  };
+}
+
+const DashboardPage = lazyRouteComponent(() =>
+  import("@/pages/dashboard-page").then((module) => ({ default: module.DashboardPage })),
+);
+const DomainsPage = lazyRouteComponent(() =>
+  import("@/pages/domains-page").then((module) => ({ default: module.DomainsPage })),
+);
+const DomainDetailPage = lazyRouteComponent(() =>
+  import("@/pages/domain-detail-page").then((module) => ({ default: module.DomainDetailPage })),
+);
+const LogsPage = lazyRouteComponent(() =>
+  import("@/pages/logs-page").then((module) => ({ default: module.LogsPage })),
+);
+const DatabasePage = lazyRouteComponent(() =>
+  import("@/pages/database-page").then((module) => ({ default: module.DatabasePage })),
+);
+const DockerPage = lazyRouteComponent(() =>
+  import("@/pages/docker-page").then((module) => ({ default: module.DockerPage })),
+);
+const FTPPage = lazyRouteComponent(() =>
+  import("@/pages/ftp-page").then((module) => ({ default: module.FTPPage })),
+);
+const FilesPage = lazyRouteComponent(() =>
+  import("@/pages/files-page").then((module) => ({ default: module.FilesPage })),
+);
+const ApplicationsPage = lazyRouteComponent(() =>
+  import("@/pages/applications-page").then((module) => ({ default: module.ApplicationsPage })),
+);
+const CronPage = lazyRouteComponent(() =>
+  import("@/pages/cron-page").then((module) => ({ default: module.CronPage })),
+);
+const TaskManagerPage = lazyRouteComponent(() =>
+  import("@/pages/task-manager-page").then((module) => ({ default: module.TaskManagerPage })),
+);
+const TerminalPage = lazyRouteComponent(() =>
+  import("@/pages/terminal-page").then((module) => ({ default: module.TerminalPage })),
+);
+const ActivityPage = lazyRouteComponent(() =>
+  import("@/pages/activity-page").then((module) => ({ default: module.ActivityPage })),
+);
+const BackupsPage = lazyRouteComponent(() =>
+  import("@/pages/backups-page").then((module) => ({ default: module.BackupsPage })),
+);
+const SettingsPage = lazyRouteComponent(() =>
+  import("@/pages/settings-page").then((module) => ({ default: module.SettingsPage })),
+);
 
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },

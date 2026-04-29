@@ -12,7 +12,7 @@ import {
   List,
   LoaderCircle,
   ShieldCheck,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {

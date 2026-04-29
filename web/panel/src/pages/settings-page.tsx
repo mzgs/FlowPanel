@@ -20,7 +20,7 @@ import {
   RefreshCw,
   Upload,
   Wrench,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { FieldError } from "@/components/field-error";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchEvents, type ActivityEvent } from "@/api/events";
-import { Copy, LoaderCircle, RefreshCw } from "@/components/icons/tabler-icons";
+import { Copy, LoaderCircle, RefreshCw } from "@/components/icons/lucide-icons";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

@@ -1,6 +1,6 @@
 import { type DomainRecord } from "@/api/domains";
 import { FieldError } from "@/components/field-error";
-import { LoaderCircle } from "@/components/icons/tabler-icons";
+import { LoaderCircle } from "@/components/icons/lucide-icons";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {

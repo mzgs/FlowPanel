@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { downloadMariaDBAllDatabasesBackup, type MariaDBStatus } from "@/api/mariadb";
-import { Download, LoaderCircle } from "@/components/icons/tabler-icons";
+import { Download, LoaderCircle } from "@/components/icons/lucide-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {

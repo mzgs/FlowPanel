@@ -29,7 +29,7 @@ import {
 } from "@/api/backups";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
-import { Copy, Download, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/tabler-icons";
+import { Copy, Download, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/lucide-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { BackupRecordsDialog } from "@/components/backup-records-dialog";
@@ -122,7 +122,6 @@ const databaseActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
 const databaseDangerActionButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
-const databaseActionIconStroke = 1.5;
 
 type CopyWithFeedbackInput = {
   text: string;
@@ -834,7 +833,6 @@ export function DatabasePanel({
           void handleDeleteBackup(name);
         }}
         deletingBackupName={deletingBackupName}
-        actionIconStroke={databaseActionIconStroke}
       />
       <ActionConfirmDialog
         open={deleteDatabaseCandidate !== null}
@@ -1131,12 +1129,10 @@ export function DatabasePanel({
                               {downloadingName === database.name ? (
                                 <LoaderCircle
                                   className="size-6 animate-spin"
-                                  stroke={databaseActionIconStroke}
                                 />
                               ) : (
                                 <Download
                                   className="size-6"
-                                  stroke={databaseActionIconStroke}
                                 />
                               )}
                             </button>
@@ -1149,7 +1145,6 @@ export function DatabasePanel({
                             >
                               <Pencil
                                 className="size-6"
-                                stroke={databaseActionIconStroke}
                               />
                             </button>
                             <button
@@ -1165,12 +1160,10 @@ export function DatabasePanel({
                               {deletingName === database.name ? (
                                 <LoaderCircle
                                   className="size-6 animate-spin"
-                                  stroke={databaseActionIconStroke}
                                 />
                               ) : (
                                 <Trash2
                                   className="size-6"
-                                  stroke={databaseActionIconStroke}
                                 />
                               )}
                             </button>

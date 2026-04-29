@@ -1,5 +1,5 @@
 import { FieldError } from "@/components/field-error";
-import { LoaderCircle, RefreshCw, Trash2 } from "@/components/icons/tabler-icons";
+import { LoaderCircle, RefreshCw, Trash2 } from "@/components/icons/lucide-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {

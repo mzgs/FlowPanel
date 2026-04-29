@@ -12,7 +12,7 @@ import {
   LoaderCircle,
   Plus,
   Search,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -57,7 +57,6 @@ function WordPressExtensionSearchThumbnail({
       ) : (
         <BrandWordpress
           className="h-5 w-5 text-[var(--app-text-muted)]"
-          stroke={1.8}
         />
       )}
     </div>
@@ -204,7 +203,6 @@ export function DomainWordPressExtensionInstallDialog({
           <div className="relative">
             <Search
               className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-[var(--app-text-muted)]"
-              stroke={1.8}
             />
             <Input
               id={`wordpress-${type}-search`}
@@ -227,7 +225,7 @@ export function DomainWordPressExtensionInstallDialog({
 
         <section className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
           <div className="flex items-center gap-2 border-b border-[var(--app-border)] px-4 py-3 text-sm text-[var(--app-text-muted)]">
-            <BrandWordpress className="h-4 w-4" stroke={1.8} />
+            <BrandWordpress className="h-4 w-4" />
             <span>{typeLabel} directory</span>
           </div>
 
@@ -300,7 +298,7 @@ export function DomainWordPressExtensionInstallDialog({
                             "Installed"
                           ) : (
                             <>
-                              <Plus className="h-4 w-4" stroke={1.8} />
+                              <Plus className="h-4 w-4" />
                               Install
                             </>
                           )}

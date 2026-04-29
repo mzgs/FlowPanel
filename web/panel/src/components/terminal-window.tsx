@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { Trash2 } from "@/components/icons/tabler-icons";
+import { Trash2 } from "@/components/icons/lucide-icons";
 import { cn } from "@/lib/utils";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "error";

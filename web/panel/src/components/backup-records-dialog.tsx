@@ -5,7 +5,7 @@ import {
   LoaderCircle,
   RotateCcw,
   Trash2,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { getBackupDownloadUrl, type BackupRecord } from "@/api/backups";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import {
@@ -39,7 +39,6 @@ type BackupRecordsTableProps = {
   onRequestDelete: (name: string) => void;
   deletingBackupName: string | null;
   emptyMessage?: string;
-  actionIconStroke?: number;
 };
 
 type BackupRecordsDialogProps = {
@@ -59,7 +58,6 @@ type BackupRecordsDialogProps = {
   getRestoreConfirmDescription?: (name: string) => string;
   onDeleteBackup: (name: string) => void;
   deletingBackupName: string | null;
-  actionIconStroke?: number;
 };
 
 export function BackupCreateButton({
@@ -88,7 +86,6 @@ export function BackupRecordsTable({
   onRequestDelete,
   deletingBackupName,
   emptyMessage = "No backups found.",
-  actionIconStroke,
 }: BackupRecordsTableProps) {
   if (backups.length === 0) {
     return (
@@ -145,7 +142,6 @@ export function BackupRecordsTable({
                       done={restoredBackupName === backup.name}
                       icon={RotateCcw}
                       className="size-6"
-                      stroke={actionIconStroke}
                     />
                   </Button>
                   <Button
@@ -157,7 +153,7 @@ export function BackupRecordsTable({
                     title={`Download ${backup.name}`}
                   >
                     <a href={getBackupDownloadUrl(backup.id, backup.location)}>
-                      <Download className="size-6" stroke={actionIconStroke} />
+                      <Download className="size-6" />
                     </a>
                   </Button>
                   <Button
@@ -177,10 +173,9 @@ export function BackupRecordsTable({
                     {deletingBackupName === backup.name ? (
                       <LoaderCircle
                         className="size-6 animate-spin"
-                        stroke={actionIconStroke}
                       />
                     ) : (
-                      <Trash2 className="size-6" stroke={actionIconStroke} />
+                      <Trash2 className="size-6" />
                     )}
                   </Button>
                 </div>
@@ -210,7 +205,6 @@ export function BackupRecordsDialog({
   getRestoreConfirmDescription,
   onDeleteBackup,
   deletingBackupName,
-  actionIconStroke,
 }: BackupRecordsDialogProps) {
   const backupNames = useMemo(
     () => new Set(backups.map((backup) => backup.name)),
@@ -253,7 +247,6 @@ export function BackupRecordsDialog({
               setConfirmDeleteBackupName(name);
             }}
             deletingBackupName={deletingBackupName}
-            actionIconStroke={actionIconStroke}
           />
         </DialogContent>
       </Dialog>

@@ -54,7 +54,7 @@ import {
   Star,
   Trash2,
   XIcon,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";

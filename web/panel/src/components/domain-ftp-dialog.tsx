@@ -7,7 +7,7 @@ import {
   type DomainFTPStatus,
   type DomainRecord,
 } from "@/api/domains";
-import { LoaderCircle } from "@/components/icons/tabler-icons";
+import { LoaderCircle } from "@/components/icons/lucide-icons";
 import { PasswordInput } from "@/components/password-input";
 import { Button } from "@/components/ui/button";
 import {

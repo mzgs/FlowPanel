@@ -1,10 +1,9 @@
 import type { ComponentType } from "react";
-import { Check, LoaderCircle } from "@/components/icons/tabler-icons";
+import { Check, LoaderCircle } from "@/components/icons/lucide-icons";
 import { cn } from "@/lib/utils";
 
 type IconProps = {
   className?: string;
-  stroke?: number | string;
   size?: number | string;
 };
 
@@ -14,7 +13,6 @@ type ActionFeedbackIconProps = {
   icon: ComponentType<IconProps>;
   className?: string;
   doneClassName?: string;
-  stroke?: number | string;
   size?: number | string;
 };
 
@@ -24,16 +22,15 @@ export function ActionFeedbackIcon({
   icon: Icon,
   className,
   doneClassName = "text-emerald-500",
-  stroke,
   size,
 }: ActionFeedbackIconProps) {
   if (busy) {
-    return <LoaderCircle className={cn(className, "animate-spin")} stroke={stroke} size={size} />;
+    return <LoaderCircle className={cn(className, "animate-spin")} size={size} />;
   }
 
   if (done) {
-    return <Check className={cn(className, doneClassName)} stroke={stroke} size={size} />;
+    return <Check className={cn(className, doneClassName)} size={size} />;
   }
 
-  return <Icon className={className} stroke={stroke} size={size} />;
+  return <Icon className={className} size={size} />;
 }

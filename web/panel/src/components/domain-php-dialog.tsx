@@ -1,7 +1,7 @@
 import { type DomainRecord } from "@/api/domains";
 import { type PHPRuntimeStatus, type PHPSettings } from "@/api/php";
 import { FieldError } from "@/components/field-error";
-import { LoaderCircle } from "@/components/icons/tabler-icons";
+import { LoaderCircle } from "@/components/icons/lucide-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

@@ -31,7 +31,7 @@ import {
   TerminalSquare,
   Trash2,
   Upload,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import {
   createArchive,
   createDirectory,
@@ -144,8 +144,8 @@ const editableExtensions = new Set([
   "zsh",
 ]);
 
-const FileAceEditor = lazy(() =>
-  import("@/components/file-ace-editor").then((module) => ({ default: module.FileAceEditor })),
+const FileEditor = lazy(() =>
+  import("@/components/file-editor").then((module) => ({ default: module.FileEditor })),
 );
 
 function readStoredViewMode(): ViewMode {
@@ -1930,7 +1930,7 @@ export function FileManager({
                 </div>
               }
             >
-              <FileAceEditor
+              <FileEditor
                 path={editorPath || editorName}
                 value={editorContent}
                 onChange={setEditorContent}

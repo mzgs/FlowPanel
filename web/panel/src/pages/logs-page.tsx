@@ -12,7 +12,7 @@ import {
   RefreshCw,
   Search,
   TimerReset,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

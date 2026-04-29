@@ -19,7 +19,7 @@ import {
   RefreshCw,
   TerminalSquare,
   Trash2,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";

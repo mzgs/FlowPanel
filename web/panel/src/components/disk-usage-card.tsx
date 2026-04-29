@@ -1,5 +1,5 @@
 import type { SystemStatus } from "@/api/system";
-import { HardDrive } from "@/components/icons/tabler-icons";
+import { HardDrive } from "@/components/icons/lucide-icons";
 
 type DiskTone = {
   barClassName: string;
@@ -107,7 +107,7 @@ export function DiskUsageCard({ status }: { status: SystemStatus }) {
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)]">
-              <HardDrive className={`h-[18px] w-[18px] ${diskTone.iconClassName}`} stroke={1.8} />
+              <HardDrive className={`h-[18px] w-[18px] ${diskTone.iconClassName}`} />
             </div>
             <div className="min-w-0">
               <div className="flex min-w-0 items-baseline gap-2">

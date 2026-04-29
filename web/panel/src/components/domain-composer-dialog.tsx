@@ -1,4 +1,4 @@
-import { Package } from "@/components/icons/tabler-icons";
+import { Package } from "@/components/icons/lucide-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -107,7 +107,7 @@ export function DomainComposerDialog({
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--app-text)]">
-              <Package className="h-4 w-4 text-[var(--app-text-muted)]" stroke={1.8} />
+              <Package className="h-4 w-4 text-[var(--app-text-muted)]" />
               <span>Libraries</span>
             </h3>
             <span className="text-xs text-[var(--app-text-muted)]">

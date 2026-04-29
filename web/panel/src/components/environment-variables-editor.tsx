@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { type EnvironmentVariable } from "@/api/domains";
 import { FieldError } from "@/components/field-error";
-import { Plus, Trash2 } from "@/components/icons/tabler-icons";
+import { Plus, Trash2 } from "@/components/icons/lucide-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 

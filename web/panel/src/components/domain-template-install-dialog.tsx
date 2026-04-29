@@ -8,7 +8,7 @@ import {
 } from "@/api/domains";
 import {
   LoaderCircle,
-} from "@/components/icons/tabler-icons";
+} from "@/components/icons/lucide-icons";
 import { PasswordInput } from "@/components/password-input";
 import { Button } from "@/components/ui/button";
 import {

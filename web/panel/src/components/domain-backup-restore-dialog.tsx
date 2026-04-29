@@ -8,7 +8,7 @@ import {
   BackupConfirmDialogs,
   useBackupConfirmState,
 } from "@/components/backup-confirm-dialogs";
-import { Database, HardDrive } from "@/components/icons/tabler-icons";
+import { Database, HardDrive } from "@/components/icons/lucide-icons";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type DatabaseBackupSection = {
@@ -116,7 +116,7 @@ export function DomainBackupRestoreDialog({
             <section className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--app-text)]">
-                  <HardDrive className="h-4 w-4 text-[var(--app-text-muted)]" stroke={1.8} />
+                  <HardDrive className="h-4 w-4 text-[var(--app-text-muted)]" />
                   <span>Site backups</span>
                 </h3>
                 <BackupCreateButton
@@ -150,7 +150,7 @@ export function DomainBackupRestoreDialog({
 
           <section className="space-y-3">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--app-text)]">
-              <Database className="h-4 w-4 text-[var(--app-text-muted)]" stroke={1.8} />
+              <Database className="h-4 w-4 text-[var(--app-text-muted)]" />
               <span>Database backups</span>
             </h3>
             {loading ? (

@@ -6,7 +6,7 @@ import {
   type SystemHistorySample,
   type SystemStatus,
 } from "@/api/system";
-import { Download, HardDrive, Monitor, Server } from "@/components/icons/tabler-icons";
+import { Download, HardDrive, Monitor, Server } from "@/components/icons/lucide-icons";
 import { cn, getErrorMessage } from "@/lib/utils";
 
 type MetricsStatusSnapshot = Pick<
@@ -858,7 +858,7 @@ export function SystemMetricsCard({ history: realtimeHistory, status }: { histor
                     setTab(item.value);
                   }}
                 >
-                  <Icon className="h-3.5 w-3.5" stroke={1.8} />
+                  <Icon className="h-3.5 w-3.5" />
                   <span>{item.label}</span>
                 </button>
               );
