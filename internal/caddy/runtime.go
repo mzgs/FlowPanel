@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	httpcache "github.com/caddyserver/cache-handler"
 	caddyv2 "github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
+	"github.com/caddyserver/caddy/v2/modules/caddyevents"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/fileserver"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
@@ -32,7 +34,9 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	caddylogging "github.com/caddyserver/caddy/v2/modules/logging"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
+	_ "github.com/corazawaf/coraza-caddy/v2"
 	"github.com/darkweak/souin/configurationtypes"
+	_ "github.com/mholt/caddy-ratelimit"
 	"go.uber.org/zap"
 )
 
@@ -484,12 +488,15 @@ func buildConfig(
 			return nil, configSummary{}, fmt.Errorf("parse public HTTPS listener: %w", err)
 		}
 
-		routes := make(caddyhttp.RouteList, 0, len(records)+1)
+		routes := make(caddyhttp.RouteList, 0, len(records)*2+1)
 		if panelConfig != nil {
 			routes = append(routes, routeForPanel(*panelConfig))
 			summary.activeRoutes++
 		}
 		for _, record := range records {
+			if blockRoute := securityBlockRouteForRecord(record); blockRoute != nil {
+				routes = append(routes, *blockRoute)
+			}
 			route, placeholder, err := routeForRecord(record, phpConfig)
 			if err != nil {
 				return nil, configSummary{}, err
@@ -545,6 +552,9 @@ func buildConfig(
 	if hasCacheEnabledRecords(records) {
 		cfg.AppsRaw["cache"] = caddyconfig.JSON(cacheAppConfig(), nil)
 	}
+	if hasRateLimitEnabledRecords(records) {
+		cfg.AppsRaw["events"] = caddyconfig.JSON(caddyevents.App{}, nil)
+	}
 	if _, ok := httpApp.Servers["public"]; ok && mode == runtimeSyncModeHTTPSOnly {
 		cfg.AppsRaw["tls"] = caddyconfig.JSON(httpsOnlyTLSApp(httpApp.HTTPSPort), nil)
 	}
@@ -586,6 +596,36 @@ func routeForRecord(record domain.Record, phpConfig *phpRouteConfig) (caddyhttp.
 		HandlersRaw: handlers,
 		Terminal:    true,
 	}, placeholder, nil
+}
+
+func securityBlockRouteForRecord(record domain.Record) *caddyhttp.Route {
+	protection := domain.NormalizeProtectionConfig(record.Protection)
+	if len(protection.IPAccess.Blocked) == 0 {
+		return nil
+	}
+
+	matchers := caddyv2.ModuleMap{
+		"host":      caddyconfig.JSON(caddyhttp.MatchHost{record.Hostname}, nil),
+		"remote_ip": caddyconfig.JSON(caddyhttp.MatchRemoteIP{Ranges: protection.IPAccess.Blocked}, nil),
+	}
+	if len(protection.IPAccess.Allowed) > 0 {
+		matchers["not"] = caddyconfig.JSON(caddyhttp.MatchNot{
+			MatcherSetsRaw: []caddyv2.ModuleMap{{
+				"remote_ip": caddyconfig.JSON(caddyhttp.MatchRemoteIP{Ranges: protection.IPAccess.Allowed}, nil),
+			}},
+		}, nil)
+	}
+
+	return &caddyhttp.Route{
+		MatcherSetsRaw: []caddyv2.ModuleMap{matchers},
+		HandlersRaw: []json.RawMessage{
+			caddyconfig.JSONModuleObject(caddyhttp.StaticResponse{
+				StatusCode: caddyhttp.WeakString("403"),
+				Body:       "Forbidden",
+			}, "handler", "static_response", nil),
+		},
+		Terminal: true,
+	}
 }
 
 func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.RawMessage, bool, error) {
@@ -645,14 +685,97 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 	}
 
 	if !record.CacheEnabled {
-		return originHandlers, false, nil
+		return securityHandlersForRecord(record, originHandlers), false, nil
 	}
 
 	handlers := make([]json.RawMessage, 0, len(originHandlers)+1)
 	handlers = append(handlers, caddyconfig.JSONModuleObject(cacheHandlerConfig(), "handler", "cache", nil))
 	handlers = append(handlers, originHandlers...)
 
-	return handlers, false, nil
+	return securityHandlersForRecord(record, handlers), false, nil
+}
+
+func securityHandlersForRecord(record domain.Record, originHandlers []json.RawMessage) []json.RawMessage {
+	protection := domain.NormalizeProtectionConfig(record.Protection)
+	handlers := make([]json.RawMessage, 0, len(originHandlers)+2)
+	if protection.RateLimit.Enabled {
+		handlers = append(handlers, caddyconfig.JSONModuleObject(rateLimitHandlerConfig(record.Hostname, protection), "handler", "rate_limit", nil))
+	}
+	if protection.WAF.Mode != domain.WAFModeDisabled {
+		handlers = append(handlers, caddyconfig.JSONModuleObject(wafHandlerConfig(protection), "handler", "waf", nil))
+	}
+	handlers = append(handlers, originHandlers...)
+	return handlers
+}
+
+func rateLimitHandlerConfig(hostname string, protection domain.ProtectionConfig) map[string]any {
+	zone := map[string]any{
+		"key":        "{http.request.remote.host}",
+		"window":     "1m",
+		"max_events": protection.RateLimit.RequestsPerMinute,
+	}
+	if len(protection.IPAccess.Allowed) > 0 {
+		zone["match"] = []map[string]any{{
+			"not": []map[string]any{{
+				"remote_ip": map[string]any{"ranges": protection.IPAccess.Allowed},
+			}},
+		}}
+	}
+
+	return map[string]any{
+		"rate_limits": map[string]any{
+			"domain_" + sanitizeLoggerName(hostname): zone,
+		},
+	}
+}
+
+func wafHandlerConfig(protection domain.ProtectionConfig) map[string]any {
+	return map[string]any{
+		"load_owasp_crs": true,
+		"directives":     wafDirectives(protection),
+	}
+}
+
+func wafDirectives(protection domain.ProtectionConfig) string {
+	var builder strings.Builder
+	mode := "DetectionOnly"
+	if protection.WAF.Mode == domain.WAFModeBlocking {
+		mode = "On"
+	}
+
+	builder.WriteString("Include @coraza.conf-recommended\n")
+	builder.WriteString("Include @crs-setup.conf.example\n")
+	builder.WriteString("SecRuleEngine " + mode + "\n")
+	builder.WriteString(fmt.Sprintf("SecAction \"id:900001,phase:1,pass,nolog,setvar:tx.paranoia_level=%d\"\n", protection.WAF.ParanoiaLevel))
+
+	for index, exclusion := range protection.WAF.PathExclusions {
+		ctl := "ruleEngine=Off"
+		if !exclusion.DisableWAF {
+			ctl = "ruleRemoveById=" + joinRuleIDs(exclusion.ExcludedRuleIDs, ",")
+		}
+		if ctl == "ruleRemoveById=" {
+			continue
+		}
+		builder.WriteString(fmt.Sprintf(
+			"SecRule REQUEST_URI %s \"id:%d,phase:1,pass,nolog,ctl:%s\"\n",
+			strconv.Quote("@beginsWith "+exclusion.Path),
+			910000+index,
+			ctl,
+		))
+	}
+
+	builder.WriteString("Include @owasp_crs/*.conf\n")
+	for _, ruleID := range protection.WAF.ExcludedRuleIDs {
+		builder.WriteString(fmt.Sprintf("SecRuleRemoveById %d\n", ruleID))
+	}
+	if protection.WAF.CustomRules != "" {
+		builder.WriteString(protection.WAF.CustomRules)
+		if !strings.HasSuffix(protection.WAF.CustomRules, "\n") {
+			builder.WriteByte('\n')
+		}
+	}
+
+	return builder.String()
 }
 
 func routeForPHPMyAdmin(config phpMyAdminRouteConfig) caddyhttp.Route {
@@ -1059,6 +1182,33 @@ func hasCacheEnabledRecords(records []domain.Record) bool {
 	}
 
 	return false
+}
+
+func hasRateLimitEnabledRecords(records []domain.Record) bool {
+	for _, record := range records {
+		if domain.NormalizeProtectionConfig(record.Protection).RateLimit.Enabled {
+			return true
+		}
+	}
+
+	return false
+}
+
+func sanitizeLoggerName(name string) string {
+	name = loggerNameSanitizer.ReplaceAllString(strings.TrimSpace(name), "_")
+	name = strings.Trim(name, "_")
+	if name == "" {
+		return "domain"
+	}
+	return name
+}
+
+func joinRuleIDs(ids []int, separator string) string {
+	values := make([]string, 0, len(ids))
+	for _, id := range ids {
+		values = append(values, strconv.Itoa(id))
+	}
+	return strings.Join(values, separator)
 }
 
 func cacheAppConfig() httpcache.SouinApp {

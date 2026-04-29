@@ -77,6 +77,7 @@ import {
   PlayerStop,
   RefreshCw,
   Settings,
+  ShieldCheck,
   TerminalSquare,
   Trash2,
 } from "@/components/icons/tabler-icons";
@@ -89,6 +90,7 @@ import { DomainEnvironmentDialog } from "@/components/domain-environment-dialog"
 import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
 import { DomainGitHubDialog } from "@/components/domain-github-dialog";
 import { DomainPHPDialog } from "@/components/domain-php-dialog";
+import { DomainSecurityDialog } from "@/components/domain-security-dialog";
 import { DomainTemplateInstallDialog } from "@/components/domain-template-install-dialog";
 import { DomainWordPressExtensionInstallDialog } from "@/components/domain-wordpress-extension-install-dialog";
 import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
@@ -499,6 +501,10 @@ const fileAndDatabaseActions: DomainActionItem[] = [
 
 const devToolActions: DomainActionItem[] = [
   {
+    title: "Security",
+    icon: ShieldCheck,
+  },
+  {
     title: "Environment",
     icon: Settings,
   },
@@ -766,6 +772,7 @@ export function DomainDetailPage() {
   const [backupDataError, setBackupDataError] = useState<string | null>(null);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
+  const [securityDialogOpen, setSecurityDialogOpen] = useState(false);
   const [connectionFTPStatus, setConnectionFTPStatus] =
     useState<DomainFTPStatus | null>(null);
   const [connectionFTPLoading, setConnectionFTPLoading] = useState(false);
@@ -929,6 +936,7 @@ export function DomainDetailPage() {
     setBackupDataError(null);
     setBackupDialogOpen(false);
     setConnectionDialogOpen(false);
+    setSecurityDialogOpen(false);
     setConnectionFTPStatus(null);
     setConnectionFTPLoading(false);
     setConnectionFTPError(null);
@@ -2704,6 +2712,21 @@ export function DomainDetailPage() {
         </DialogContent>
       </Dialog>
       {domain ? (
+        <DomainSecurityDialog
+          open={securityDialogOpen}
+          onOpenChange={setSecurityDialogOpen}
+          domain={domain}
+          onSaved={(updatedDomain) => {
+            setDomain(updatedDomain);
+            setAllDomains((current) =>
+              current.map((item) =>
+                item.id === updatedDomain.id ? updatedDomain : item,
+              ),
+            );
+          }}
+        />
+      ) : null}
+      {domain ? (
         <DomainTemplateInstallDialog
           open={templateInstallDialogOpen}
           onOpenChange={setTemplateInstallDialogOpen}
@@ -3226,6 +3249,19 @@ export function DomainDetailPage() {
                           : "..."}
                       </dd>
                     </div>
+                    <div>
+                      <dt className="text-[var(--app-text-muted)]">Security</dt>
+                      <dd className="mt-1 font-medium text-[var(--app-text)]">
+                        {domain
+                          ? domain.protection_config?.waf?.mode === "blocking"
+                            ? "Blocking"
+                            : domain.protection_config?.waf?.mode ===
+                                "detection_only"
+                              ? "Detection"
+                              : "Disabled"
+                          : "..."}
+                      </dd>
+                    </div>
                   </dl>
                 </section>
               </aside>
@@ -3397,6 +3433,11 @@ export function DomainDetailPage() {
                     title="Dev Tools"
                     items={activeDevToolActions}
                     onItemClick={(item) => {
+                      if (item.title === "Security" && domain !== null) {
+                        setSecurityDialogOpen(true);
+                        return;
+                      }
+
                       if (item.title === "Cache" && domain !== null) {
                         setCacheDialogOpen(true);
                         return;

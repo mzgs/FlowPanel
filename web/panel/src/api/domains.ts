@@ -25,7 +25,51 @@ export type DomainRecord = {
   environment_variables: EnvironmentVariable[];
   github_integration?: DomainGitHubIntegration | null;
   cache_enabled: boolean;
+  protection_config: ProtectionConfig;
   created_at: string;
+};
+
+export type WAFMode = "disabled" | "detection_only" | "blocking";
+
+export type RateLimitPreset = "normal" | "strict" | "custom";
+
+export type ProtectionConfig = {
+  waf: WAFConfig;
+  rate_limit: RateLimitConfig;
+  ip_access: IPAccessConfig;
+  auto_ban: AutoBanConfig;
+};
+
+export type WAFConfig = {
+  mode: WAFMode;
+  paranoia_level: number;
+  excluded_rule_ids: number[];
+  path_exclusions: WAFPathExclusion[];
+  custom_rules: string;
+};
+
+export type WAFPathExclusion = {
+  path: string;
+  disable_waf: boolean;
+  excluded_rule_ids: number[];
+};
+
+export type RateLimitConfig = {
+  enabled: boolean;
+  preset: RateLimitPreset;
+  requests_per_minute: number;
+};
+
+export type IPAccessConfig = {
+  allowed: string[];
+  blocked: string[];
+};
+
+export type AutoBanConfig = {
+  enabled: boolean;
+  blocked_requests: number;
+  window_minutes: number;
+  ban_minutes: number;
 };
 
 export type DomainFTPStatus = {
@@ -102,6 +146,10 @@ export type UpdateDomainPHPSettingsInput = {
 
 export type UpdateDomainEnvironmentInput = {
   environment_variables: EnvironmentVariable[];
+};
+
+export type UpdateDomainProtectionInput = {
+  protection_config: ProtectionConfig;
 };
 
 export type CopyDomainWebsiteInput = {
@@ -424,6 +472,25 @@ export async function updateDomainEnvironmentVariables(
   );
 
   return readDomainMutationResponse(response, "save environment variables");
+}
+
+export async function updateDomainProtection(
+  hostname: string,
+  input: UpdateDomainProtectionInput,
+): Promise<DomainRecord> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/protection`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+
+  return readDomainMutationResponse(response, "save security settings");
 }
 
 export async function deployDomainGitHubIntegration(

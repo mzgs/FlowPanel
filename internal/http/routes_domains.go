@@ -252,6 +252,45 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
 	})
 
+	domainsProtectionUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		var input domain.UpdateProtectionInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+
+		hostname := chi.URLParam(r, "hostname")
+		record, previous, err := a.app.Domains.UpdateProtection(r.Context(), hostname, input)
+		if err != nil {
+			var validation domain.ValidationErrors
+			switch {
+			case errors.As(err, &validation):
+				writeValidationFailed(w, map[string]string(validation))
+			case errors.Is(err, domain.ErrNotFound):
+				writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			default:
+				a.app.Logger.Error("update domain protection failed", zap.String("hostname", hostname), zap.Error(err))
+				a.mutationEvent(r.Context(), "domains", "update_protection", "domain", hostname, hostname, "failed", "Failed to update domain security settings.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to update domain security settings"})
+			}
+			return
+		}
+
+		if err := a.syncDomainsWithCaddy(r.Context()); err != nil {
+			if rollbackErr := a.app.Domains.Restore(r.Context(), previous); rollbackErr != nil {
+				a.app.Logger.Error("rollback domain protection update failed", zap.String("domain_id", previous.ID), zap.Error(rollbackErr))
+			}
+			a.app.Logger.Error("publish domain protection update failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "update_protection", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Updated security settings but failed to publish them.", err))
+			status, message := syncDomainsErrorResponse(err, "failed to update security settings")
+			writeJSON(w, status, map[string]any{"error": message})
+			return
+		}
+
+		a.mutationEvent(r.Context(), "domains", "update_protection", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Updated security settings for %q.", record.Hostname))
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"domain": record})
+	})
+
 	domainsWebsiteCopyHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hostname := chi.URLParam(r, "hostname")
 		sourceRecord, ok := a.app.Domains.FindByHostname(hostname)
@@ -1458,6 +1497,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodGet, "/domains/{hostname}/preview", domainsPreviewHandler)
 	r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/cache/clear", domainsCacheClearHandler)
+	r.Method(stdhttp.MethodPut, "/domains/{hostname}/protection", domainsProtectionUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/copy", domainsWebsiteCopyHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/templates/install", domainsTemplateInstallHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/install", domainsComposerActionHandler("install"))

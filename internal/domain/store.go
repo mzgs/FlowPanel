@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS domains (
     php_settings TEXT NOT NULL DEFAULT '',
     environment_variables TEXT NOT NULL DEFAULT '',
     cache_enabled INTEGER NOT NULL DEFAULT 0,
+    protection_config TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL
 );
 `
@@ -74,7 +75,10 @@ CREATE TABLE IF NOT EXISTS domain_github_integrations (
 		return err
 	}
 
-	return ensureDomainStoreColumn(ctx, s.db, "domains", "environment_variables", "TEXT NOT NULL DEFAULT ''")
+	if err := ensureDomainStoreColumn(ctx, s.db, "domains", "environment_variables", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	return ensureDomainStoreColumn(ctx, s.db, "domains", "protection_config", "TEXT NOT NULL DEFAULT ''")
 }
 
 func (s *Store) List(ctx context.Context) ([]Record, error) {
@@ -83,7 +87,7 @@ func (s *Store) List(ctx context.Context) ([]Record, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, hostname, kind, target, nodejs_script_path, php_version, php_settings, environment_variables, cache_enabled, created_at
+SELECT id, hostname, kind, target, nodejs_script_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at
 FROM domains
 ORDER BY created_at DESC, id DESC
 `)
@@ -101,11 +105,12 @@ ORDER BY created_at DESC, id DESC
 			phpVersion      string
 			phpSettingsJSON string
 			environmentJSON string
+			protectionJSON  string
 			cacheEnabledInt int64
 			createdAtUnix   int64
 		)
 
-		if err := rows.Scan(&record.ID, &record.Hostname, &kind, &record.Target, &nodeJSScript, &phpVersion, &phpSettingsJSON, &environmentJSON, &cacheEnabledInt, &createdAtUnix); err != nil {
+		if err := rows.Scan(&record.ID, &record.Hostname, &kind, &record.Target, &nodeJSScript, &phpVersion, &phpSettingsJSON, &environmentJSON, &cacheEnabledInt, &protectionJSON, &createdAtUnix); err != nil {
 			return nil, fmt.Errorf("scan domain row: %w", err)
 		}
 
@@ -124,6 +129,9 @@ ORDER BY created_at DESC, id DESC
 		if err := decodeEnvironmentVariables(environmentJSON, &record); err != nil {
 			return nil, fmt.Errorf("decode environment variables for %q: %w", record.Hostname, err)
 		}
+		if err := decodeProtectionConfig(protectionJSON, &record); err != nil {
+			return nil, fmt.Errorf("decode protection config for %q: %w", record.Hostname, err)
+		}
 		records = append(records, record)
 	}
 
@@ -140,9 +148,9 @@ func (s *Store) Insert(ctx context.Context, record Record) error {
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO domains (id, hostname, kind, target, nodejs_script_path, php_version, php_settings, environment_variables, cache_enabled, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, record.ID, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano())
+INSERT INTO domains (id, hostname, kind, target, nodejs_script_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, record.ID, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano())
 	if err == nil {
 		return nil
 	}
@@ -213,9 +221,9 @@ func (s *Store) Update(ctx context.Context, record Record) error {
 
 	result, err := s.db.ExecContext(ctx, `
 UPDATE domains
-SET hostname = ?, kind = ?, target = ?, nodejs_script_path = ?, php_version = ?, php_settings = ?, environment_variables = ?, cache_enabled = ?, created_at = ?
+SET hostname = ?, kind = ?, target = ?, nodejs_script_path = ?, php_version = ?, php_settings = ?, environment_variables = ?, cache_enabled = ?, protection_config = ?, created_at = ?
 WHERE id = ?
-`, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), record.CreatedAt.UTC().UnixNano(), record.ID)
+`, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano(), record.ID)
 	if err == nil {
 		rowsAffected, rowsErr := result.RowsAffected()
 		if rowsErr != nil {
@@ -356,6 +364,30 @@ func decodeEnvironmentVariables(raw string, record *Record) error {
 	}
 
 	record.EnvironmentVariables = normalizeEnvironmentVariables(record.EnvironmentVariables)
+	return nil
+}
+
+func encodeProtectionConfig(record Record) string {
+	config := NormalizeProtectionConfig(record.Protection)
+	payload, err := json.Marshal(config)
+	if err != nil {
+		return ""
+	}
+
+	return string(payload)
+}
+
+func decodeProtectionConfig(raw string, record *Record) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		record.Protection = NormalizeProtectionConfig(ProtectionConfig{})
+		return nil
+	}
+	if err := json.Unmarshal([]byte(raw), &record.Protection); err != nil {
+		return err
+	}
+
+	record.Protection = NormalizeProtectionConfig(record.Protection)
 	return nil
 }
 

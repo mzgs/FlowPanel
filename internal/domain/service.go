@@ -62,6 +62,7 @@ type Record struct {
 	Logs                 LogPaths              `json:"logs"`
 	GitHub               *GitHubIntegration    `json:"github_integration,omitempty"`
 	CacheEnabled         bool                  `json:"cache_enabled"`
+	Protection           ProtectionConfig      `json:"protection_config"`
 	CreatedAt            time.Time             `json:"created_at"`
 }
 
@@ -381,6 +382,7 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 	updated.Target = resolvedTarget
 	updated.NodeJSScript = nodeJSScript
 	updated.CacheEnabled = input.CacheEnabled
+	updated.Protection = NormalizeProtectionConfig(updated.Protection)
 	updated = s.withTransientFields(updated)
 
 	if s.store != nil {
@@ -401,6 +403,7 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 	record.Kind, record.Target = normalizeKindAndTarget(record.Kind, record.Target)
 	record.NodeJSScript = normalizeNodeJSScriptForKind(record.Kind, record.NodeJSScript)
 	record.EnvironmentVariables = normalizeEnvironmentVariables(record.EnvironmentVariables)
+	record.Protection = NormalizeProtectionConfig(record.Protection)
 	record = s.withTransientFields(record)
 
 	index, _, exists := s.findRecordLocked(record.ID)
@@ -587,6 +590,7 @@ func (s *Service) insertRecordLocked(record Record) {
 }
 
 func (s *Service) withTransientFields(record Record) Record {
+	record.Protection = NormalizeProtectionConfig(record.Protection)
 	record = s.withLogPaths(record)
 	if integration, ok := s.githubByDomainID[record.ID]; ok {
 		copyIntegration := integration
@@ -752,6 +756,42 @@ func (s *Service) UpdateEnvironmentVariables(
 
 	s.records[index] = record
 	return record, nil
+}
+
+func (s *Service) UpdateProtection(
+	ctx context.Context,
+	hostname string,
+	input UpdateProtectionInput,
+) (Record, Record, error) {
+	if s == nil {
+		return Record{}, Record{}, ErrNotFound
+	}
+
+	protection := NormalizeProtectionConfig(input.Protection)
+	if validation := ValidateProtectionConfig(protection); len(validation) > 0 {
+		return Record{}, Record{}, validation
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, current, ok := s.findRecordByHostnameLocked(hostname)
+	if !ok {
+		return Record{}, Record{}, ErrNotFound
+	}
+
+	updated := current
+	updated.Protection = protection
+	updated = s.withTransientFields(updated)
+
+	if s.store != nil {
+		if err := s.store.Update(ctx, updated); err != nil {
+			return Record{}, Record{}, err
+		}
+	}
+
+	s.records[index] = updated
+	return updated, current, nil
 }
 
 func (s *Service) findRecordByHostnameLocked(hostname string) (int, Record, bool) {
