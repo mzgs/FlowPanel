@@ -68,6 +68,8 @@ import {
   GitBranch,
   Globe,
   HardDrive,
+  LayoutDashboard,
+  List,
   LoaderCircle,
   Monitor,
   Package,
@@ -298,6 +300,11 @@ type DomainActionItem = {
 
 type WordPressSectionTab = "dashboard" | "plugins" | "themes" | "database";
 type DomainDetailTab = "general" | "files" | "terminal" | "logs";
+type IconTab<T extends string> = {
+  value: T;
+  label: string;
+  icon: ActionIcon;
+};
 type WordPressDetailsSection = Exclude<WordPressSectionTab, "dashboard">;
 type WordPressExtensionListType = "plugin" | "theme";
 type WordPressExtensionAction = "activate" | "deactivate" | "delete" | "update";
@@ -539,14 +546,17 @@ const phpOnlyDevToolTitles = new Set([
 
 const siteBackupTargetKey = "__domain_site_backup__";
 const composerManifestName = "composer.json";
-const wordPressSectionTabs: Array<{
-  value: WordPressSectionTab;
-  label: string;
-}> = [
-  { value: "dashboard", label: "Dashboard" },
-  { value: "plugins", label: "Plugins" },
-  { value: "themes", label: "Themes" },
-  { value: "database", label: "Database" },
+const domainDetailTabs: IconTab<DomainDetailTab>[] = [
+  { value: "general", label: "General", icon: LayoutDashboard },
+  { value: "files", label: "Files", icon: FolderOpen },
+  { value: "terminal", label: "Terminal", icon: TerminalSquare },
+  { value: "logs", label: "Logs", icon: List },
+];
+const wordPressSectionTabs: IconTab<WordPressSectionTab>[] = [
+  { value: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { value: "plugins", label: "Plugins", icon: Package },
+  { value: "themes", label: "Themes", icon: FileCode2 },
+  { value: "database", label: "Database", icon: Database },
 ];
 
 function createMountedDomainDetailTabs(): Record<DomainDetailTab, boolean> {
@@ -3210,13 +3220,9 @@ export function DomainDetailPage() {
                     aria-label="Domain detail sections"
                     className="flex gap-5 overflow-x-auto"
                   >
-                    {[
-                      { value: "general", label: "General" },
-                      { value: "files", label: "Files" },
-                      { value: "terminal", label: "Terminal" },
-                      { value: "logs", label: "Logs" },
-                    ].map((tab) => {
+                    {domainDetailTabs.map((tab) => {
                       const active = detailTab === tab.value;
+                      const Icon = tab.icon;
 
                       return (
                         <button
@@ -3232,9 +3238,10 @@ export function DomainDetailPage() {
                               : "border-transparent text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
                           )}
                           onClick={() => {
-                            activateDetailTab(tab.value as DomainDetailTab);
+                            activateDetailTab(tab.value);
                           }}
                         >
+                          <Icon className="mr-1.5 h-4 w-4" stroke={1.8} />
                           {tab.label}
                         </button>
                       );
@@ -3477,7 +3484,7 @@ export function DomainDetailPage() {
                       </div>
                       <div role="tablist" aria-label="WordPress sections">
                         <div className="flex min-w-0 overflow-x-auto px-4">
-                          {wordPressSectionTabs.map(({ value, label }) => {
+                          {wordPressSectionTabs.map(({ value, label, icon: Icon }) => {
                             const active = wordPressSectionTab === value;
 
                             return (
@@ -3497,6 +3504,7 @@ export function DomainDetailPage() {
                                   setWordPressSectionTab(value);
                                 }}
                               >
+                                <Icon className="mr-1.5 h-4 w-4" stroke={1.8} />
                                 <span>{label}</span>
                               </button>
                             );
