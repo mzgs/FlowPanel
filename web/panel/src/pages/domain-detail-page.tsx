@@ -710,20 +710,34 @@ function DomainActionSection({
   items: DomainActionItem[];
   onItemClick?: (item: DomainActionItem) => void;
 }) {
+  const iconColors = [
+    "text-blue-600 dark:text-blue-300",
+    "text-emerald-600 dark:text-emerald-300",
+    "text-violet-600 dark:text-violet-300",
+    "text-amber-600 dark:text-amber-300",
+    "text-rose-600 dark:text-rose-300",
+    "text-cyan-600 dark:text-cyan-300",
+  ];
+
   return (
     <section className="space-y-2">
       <h2 className="pl-2 text-base font-semibold text-[var(--app-text)]">
         {title}
       </h2>
       <div className="grid gap-x-3 gap-y-1.5 md:grid-cols-2 xl:grid-cols-3">
-        {items.map(({ title: itemTitle, icon: Icon }) => (
+        {items.map(({ title: itemTitle, icon: Icon }, index) => (
           <button
             key={itemTitle}
             type="button"
             onClick={() => onItemClick?.({ title: itemTitle, icon: Icon })}
             className="group flex items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors duration-150 hover:bg-[var(--app-surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"
           >
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-muted)] transition-colors duration-150 group-hover:text-[var(--app-accent)]">
+            <span
+              className={cn(
+                "flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] transition-colors duration-150",
+                iconColors[index % iconColors.length],
+              )}
+            >
               <Icon className="h-5 w-5" stroke={1.75} />
             </span>
             <span className="min-w-0 text-sm font-medium leading-5 text-[var(--app-text)]">
