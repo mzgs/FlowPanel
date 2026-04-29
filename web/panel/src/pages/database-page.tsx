@@ -979,12 +979,9 @@ export function DatabasePage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="min-w-[1040px] w-full text-left">
+              <table className="min-w-[1000px] w-full text-left">
                 <thead className="border-b border-[var(--app-border)] bg-[var(--app-surface)]">
                   <tr className="text-[13px] text-[var(--app-text-muted)]">
-                    <th className={`w-[46px] ${databaseTableHeaderCellClass}`}>
-                      <input type="checkbox" aria-label="Select all" className="h-4 w-4 rounded border-[var(--app-border)]" />
-                    </th>
                     <th className={databaseTableHeaderCellClass}>Database name</th>
                     <th className={databaseTableHeaderCellClass}>Username</th>
                     <th className={databaseTableHeaderCellClass}>Password</th>
@@ -997,13 +994,13 @@ export function DatabasePage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={7} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
                         Loading databases...
                       </td>
                     </tr>
                   ) : filteredDatabases.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={7} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
                         No databases found.
                       </td>
                     </tr>
@@ -1013,9 +1010,6 @@ export function DatabasePage() {
                         key={database.name}
                         className="border-b border-[var(--app-border)] text-[14px] text-[var(--app-text)] last:border-b-0"
                       >
-                        <td className={databaseTableBodyCellClass}>
-                          <input type="checkbox" aria-label={`Select ${database.name}`} className="h-4 w-4 rounded border-[var(--app-border)]" />
-                        </td>
                         <td className={databaseTableBodyCellClass}>{database.name}</td>
                         <td className={databaseTableBodyCellClass}>{database.username || "Not set"}</td>
                         <td className={databaseTableBodyCellClass}>
@@ -1158,39 +1152,6 @@ export function DatabasePage() {
               </table>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--app-border)] px-3 py-3">
-              <div className="flex items-center gap-2">
-                <select className="h-10 min-w-[140px] rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 text-[13px] text-[var(--app-text-muted)]">
-                  <option>Please choose</option>
-                </select>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled
-                  className="h-10 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 text-[13px] text-[var(--app-text-muted)]"
-                >
-                  Execute
-                </Button>
-              </div>
-
-              <div className="flex items-center gap-2 text-[13px] text-[var(--app-text-muted)]">
-                <Button type="button" variant="ghost" disabled className="h-8 w-8 rounded-lg border border-[var(--app-border)] p-0">
-                  {"<"}
-                </Button>
-                <span className="inline-flex h-8 min-w-8 items-center justify-center rounded-lg border border-[var(--app-border)] px-2">
-                  1
-                </span>
-                <Button type="button" variant="ghost" disabled className="h-8 w-8 rounded-lg border border-[var(--app-border)] p-0">
-                  {">"}
-                </Button>
-                <select className="h-8 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2 text-[13px]">
-                  <option>20 / page</option>
-                </select>
-                <span>Goto</span>
-                <Input value="1" readOnly className="h-8 w-16 rounded-lg border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2 text-center text-[13px]" />
-                <span>Total {filteredDatabases.length}</span>
-              </div>
-            </div>
           </section>
         </section>
       </div>
