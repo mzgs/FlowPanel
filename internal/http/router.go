@@ -215,6 +215,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	router.Use(chimiddleware.RealIP)
 	router.Use(RequestLogger(app.Logger.Named("http")))
 	router.Use(Recoverer(app.Logger.Named("panic")))
+	router.Use(SameOriginProtection(app))
 	router.Use(app.Sessions.LoadAndSave)
 
 	healthHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

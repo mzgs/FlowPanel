@@ -13,6 +13,8 @@ import (
 )
 
 func registerPanelAuthRoutes(router chi.Router, app *app.App) {
+	loginRateLimiter := newAuthRateLimiter()
+
 	sessionHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if app.Auth == nil {
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{
@@ -101,9 +103,16 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 			return
 		}
 
+		rateLimitKeys := authRateLimitKeys(r, input)
+		if retryAfter, ok := loginRateLimiter.Allow(rateLimitKeys...); !ok {
+			writeAuthRateLimited(w, retryAfter)
+			return
+		}
+
 		user, err := app.Auth.Authenticate(r.Context(), input)
 		if err != nil {
 			if errors.Is(err, auth.ErrInvalidCredentials) {
+				loginRateLimiter.RecordFailure(rateLimitKeys...)
 				writeJSON(w, stdhttp.StatusUnauthorized, map[string]any{"error": "invalid username or password"})
 				return
 			}
@@ -119,6 +128,7 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 			return
 		}
 
+		loginRateLimiter.Clear(rateLimitKeys...)
 		writeAuthSession(w, true, false, user)
 	}))
 
