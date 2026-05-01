@@ -31,10 +31,6 @@ export async function fetchAuthSession(): Promise<AuthSession> {
   return (await response.json()) as AuthSession;
 }
 
-export async function setupAdmin(input: AuthCredentials): Promise<AuthSession> {
-  return submitAuthRequest("/api/auth/setup", input, "create admin user");
-}
-
 export async function login(input: AuthCredentials): Promise<AuthSession> {
   return submitAuthRequest("/api/auth/login", input, "sign in");
 }

@@ -8,7 +8,7 @@ The project is a Go service with an embedded React/Vite panel. The Go process se
 
 FlowPanel currently includes:
 
-- Admin authentication and first-user setup
+- Admin authentication with installer-provisioned credentials
 - Domain and application management
 - Embedded Caddy routing for public HTTP/HTTPS traffic
 - PHP/PHP-FPM management and per-domain PHP settings
@@ -71,6 +71,7 @@ FlowPanel is configured with environment variables.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `FLOWPANEL_ENV` | `development` | Use `production` for deployed instances. |
+| `FLOWPANEL_ENV_FILE` | empty | Path to the protected service environment file used by the installer. |
 | `FLOWPANEL_ADMIN_LISTEN_ADDR` | `:8080` | Admin panel/API listen address. |
 | `FLOWPANEL_PUBLIC_HTTP_ADDR` | `:80` | Embedded Caddy HTTP listen address. |
 | `FLOWPANEL_PUBLIC_HTTPS_ADDR` | `:443` | Embedded Caddy HTTPS listen address. |
@@ -79,6 +80,9 @@ FlowPanel is configured with environment variables.
 | `FLOWPANEL_SESSION_SECRET` | development secret | Must be explicitly set in production and at least 32 characters. |
 | `FLOWPANEL_SESSION_COOKIE_NAME` | `flowpanel_session` | Admin session cookie name. |
 | `FLOWPANEL_SESSION_LIFETIME` | `24h` | Go duration string. |
+| `FLOWPANEL_ADMIN_USERNAME` | empty | Initial admin username. Used only when no panel users exist. |
+| `FLOWPANEL_ADMIN_PASSWORD` | empty | Initial admin password. Used only when no panel users exist. |
+| `FLOWPANEL_MARIADB_PASSWORD` | empty | MariaDB root password. Installer deployments persist it in the protected service environment file. |
 | `FLOWPANEL_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
 | `FLOWPANEL_CRON_ENABLED` | `true` | Enables persisted cron jobs. |
 | `FLOWPANEL_GOOGLE_DRIVE_CLIENT_ID` | empty | Set with client secret for Google Drive backups. |
@@ -89,7 +93,10 @@ On production, set at least:
 
 ```bash
 FLOWPANEL_ENV=production
+FLOWPANEL_ENV_FILE=<path to service env file>
 FLOWPANEL_SESSION_SECRET=<random 32+ character secret>
+FLOWPANEL_ADMIN_USERNAME=<admin username>
+FLOWPANEL_ADMIN_PASSWORD=<admin password>
 FLOWPANEL_ADMIN_LISTEN_ADDR=127.0.0.1:8080
 ```
 
@@ -102,3 +109,5 @@ Bind the admin panel to localhost unless it is protected by a trusted reverse pr
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mzgs/FlowPanel/main/install.sh | sh
 ```
+
+The installer prints the admin panel URL, generated username, and generated password after the service starts.

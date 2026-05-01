@@ -35,8 +35,65 @@ download() {
   fi
 }
 
+random_hex() {
+  dd if=/dev/urandom bs="$1" count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
+}
+
 random_secret() {
-  dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  random_hex 32
+}
+
+random_admin_username() {
+  printf 'admin-%s\n' "$(random_hex 4)"
+}
+
+random_admin_password() {
+  random_hex 24
+}
+
+ensure_env_key() {
+  env_file="$1"
+  key="$2"
+  value="$3"
+  prefix="$4"
+
+  if ! grep -q "^$prefix$key=" "$env_file" 2>/dev/null; then
+    as_root sh -c "cat >> '$env_file'" <<EOF
+$prefix$key=$value
+EOF
+  fi
+}
+
+read_env_key() {
+  sed -n "s/^\(export \)\?$2=//p" "$1" 2>/dev/null | tail -n 1
+}
+
+admin_panel_url() {
+  addr="$(read_env_key "$1" FLOWPANEL_ADMIN_LISTEN_ADDR | sed "s/^['\"]//;s/['\"]$//")"
+  if [ -z "$addr" ]; then
+    addr=":8080"
+  fi
+
+  case "$addr" in
+    :*) printf 'http://localhost%s\n' "$addr" ;;
+    0.0.0.0:*) printf 'http://localhost:%s\n' "${addr#0.0.0.0:}" ;;
+    *) printf 'http://%s\n' "$addr" ;;
+  esac
+}
+
+print_success() {
+  service_command="$1"
+  env_file="$2"
+  admin_username="$3"
+  admin_password="$4"
+
+  echo
+  echo "FlowPanel installed and started successfully."
+  echo "Admin panel: $(admin_panel_url "$env_file")"
+  echo "Username:    $admin_username"
+  echo "Password:    $admin_password"
+  echo "Service:     $service_command"
+  echo "Config:      $env_file"
 }
 
 install_binary() {
@@ -78,13 +135,30 @@ install_linux_service() {
 
   if [ ! -f "$env_file" ]; then
     secret="$(random_secret)"
+    admin_username="$(random_admin_username)"
+    admin_password="$(random_admin_password)"
     as_root sh -c "cat > '$env_file'" <<EOF
 FLOWPANEL_ENV=production
+FLOWPANEL_ENV_FILE=$env_file
 FLOWPANEL_SESSION_SECRET=$secret
 FLOWPANEL_ADMIN_LISTEN_ADDR=:8080
 FLOWPANEL_DB_PATH=$data_dir/flowpanel.db
+FLOWPANEL_ADMIN_USERNAME=$admin_username
+FLOWPANEL_ADMIN_PASSWORD=$admin_password
 EOF
     as_root chmod 600 "$env_file"
+  else
+    ensure_env_key "$env_file" FLOWPANEL_ENV_FILE "$env_file" ""
+    admin_username="$(read_env_key "$env_file" FLOWPANEL_ADMIN_USERNAME)"
+    admin_password="$(read_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD)"
+    if [ -z "$admin_username" ]; then
+      ensure_env_key "$env_file" FLOWPANEL_ADMIN_USERNAME "$(random_admin_username)" ""
+      admin_username="$(read_env_key "$env_file" FLOWPANEL_ADMIN_USERNAME)"
+    fi
+    if [ -z "$admin_password" ]; then
+      ensure_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD "$(random_admin_password)" ""
+      admin_password="$(read_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD)"
+    fi
   fi
 
   as_root sh -c "cat > '$service_file'" <<EOF
@@ -110,9 +184,7 @@ EOF
   as_root systemctl enable "$APP"
   as_root systemctl restart "$APP"
 
-  echo "FlowPanel installed and started."
-  echo "Service: systemctl status $APP"
-  echo "Config:  $env_file"
+  print_success "systemctl status $APP" "$env_file" "$admin_username" "$admin_password"
 }
 
 install_macos_service() {
@@ -126,13 +198,30 @@ install_macos_service() {
 
   if [ ! -f "$env_file" ]; then
     secret="$(random_secret)"
+    admin_username="$(random_admin_username)"
+    admin_password="$(random_admin_password)"
     as_root sh -c "cat > '$env_file'" <<EOF
 export FLOWPANEL_ENV=production
+export FLOWPANEL_ENV_FILE='$env_file'
 export FLOWPANEL_SESSION_SECRET=$secret
 export FLOWPANEL_ADMIN_LISTEN_ADDR=:8080
 export FLOWPANEL_DB_PATH='$data_dir/flowpanel.db'
+export FLOWPANEL_ADMIN_USERNAME=$admin_username
+export FLOWPANEL_ADMIN_PASSWORD=$admin_password
 EOF
     as_root chmod 600 "$env_file"
+  else
+    ensure_env_key "$env_file" FLOWPANEL_ENV_FILE "'$env_file'" "export "
+    admin_username="$(read_env_key "$env_file" FLOWPANEL_ADMIN_USERNAME)"
+    admin_password="$(read_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD)"
+    if [ -z "$admin_username" ]; then
+      ensure_env_key "$env_file" FLOWPANEL_ADMIN_USERNAME "$(random_admin_username)" "export "
+      admin_username="$(read_env_key "$env_file" FLOWPANEL_ADMIN_USERNAME)"
+    fi
+    if [ -z "$admin_password" ]; then
+      ensure_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD "$(random_admin_password)" "export "
+      admin_password="$(read_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD)"
+    fi
   fi
 
   as_root sh -c "cat > '$plist_file'" <<EOF
@@ -170,9 +259,7 @@ EOF
   as_root launchctl enable system/com.mzgs.flowpanel
   as_root launchctl kickstart -k system/com.mzgs.flowpanel
 
-  echo "FlowPanel installed and started."
-  echo "Service: launchctl print system/com.mzgs.flowpanel"
-  echo "Config:  $env_file"
+  print_success "launchctl print system/com.mzgs.flowpanel" "$env_file" "$admin_username" "$admin_password"
 }
 
 arch="$(detect_arch)"

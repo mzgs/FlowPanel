@@ -54,43 +54,6 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 	router.Method(stdhttp.MethodGet, "/api/auth/session", sessionHandler)
 	router.Method(stdhttp.MethodHead, "/api/auth/session", sessionHandler)
 
-	router.Method(stdhttp.MethodPost, "/api/auth/setup", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		if app.Auth == nil {
-			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "panel auth is not configured"})
-			return
-		}
-
-		var input auth.CreateInitialAdminInput
-		if err := decodeJSON(r, &input); err != nil {
-			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid request body"})
-			return
-		}
-
-		user, err := app.Auth.CreateInitialAdmin(r.Context(), input)
-		if err != nil {
-			var validation auth.ValidationErrors
-			if errors.As(err, &validation) {
-				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
-					"error":        "validation failed",
-					"field_errors": map[string]string(validation),
-				})
-				return
-			}
-
-			app.Logger.Error("create initial panel admin failed", zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to create admin user"})
-			return
-		}
-
-		if err := renewPanelSession(app, r, user.ID); err != nil {
-			app.Logger.Error("create panel setup session failed", zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "admin user created but sign-in failed"})
-			return
-		}
-
-		writeAuthSession(w, true, false, user)
-	}))
-
 	router.Method(stdhttp.MethodPost, "/api/auth/login", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if app.Auth == nil {
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "panel auth is not configured"})

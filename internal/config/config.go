@@ -20,6 +20,7 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	Database        DatabaseConfig
 	Session         SessionConfig
+	InitialAdmin    InitialAdminConfig
 	Cron            CronConfig
 	GoogleDrive     GoogleDriveConfig
 }
@@ -32,6 +33,11 @@ type SessionConfig struct {
 	Secret     string
 	CookieName string
 	Lifetime   time.Duration
+}
+
+type InitialAdminConfig struct {
+	Username string
+	Password string
 }
 
 type CronConfig struct {
@@ -74,6 +80,10 @@ func Load() (Config, error) {
 			Secret:     getEnv("FLOWPANEL_SESSION_SECRET", defaultDevelopmentSessionSecret),
 			CookieName: getEnv("FLOWPANEL_SESSION_COOKIE_NAME", "flowpanel_session"),
 			Lifetime:   sessionLifetime,
+		},
+		InitialAdmin: InitialAdminConfig{
+			Username: getEnv("FLOWPANEL_ADMIN_USERNAME", ""),
+			Password: getEnv("FLOWPANEL_ADMIN_PASSWORD", ""),
 		},
 		Cron: CronConfig{
 			Enabled: cronEnabled,
@@ -134,6 +144,9 @@ func (c Config) validate() error {
 	}
 	if c.IsProduction() && c.Session.Secret == defaultDevelopmentSessionSecret {
 		problems = append(problems, "FLOWPANEL_SESSION_SECRET must be set explicitly in production")
+	}
+	if (strings.TrimSpace(c.InitialAdmin.Username) == "") != (strings.TrimSpace(c.InitialAdmin.Password) == "") {
+		problems = append(problems, "FLOWPANEL_ADMIN_USERNAME and FLOWPANEL_ADMIN_PASSWORD must be set together")
 	}
 	if (strings.TrimSpace(c.GoogleDrive.ClientID) == "") != (strings.TrimSpace(c.GoogleDrive.ClientSecret) == "") {
 		problems = append(problems, "FLOWPANEL_GOOGLE_DRIVE_CLIENT_ID and FLOWPANEL_GOOGLE_DRIVE_CLIENT_SECRET must be set together")

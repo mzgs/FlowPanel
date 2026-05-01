@@ -296,6 +296,9 @@ func (s *Service) Remove(ctx context.Context) error {
 			return fmt.Errorf("remove mariadb root password file: %w", err)
 		}
 	}
+	if err := removeEnvFileValue(resolveEnvFilePath(), "FLOWPANEL_MARIADB_PASSWORD"); err != nil {
+		return fmt.Errorf("remove mariadb root password from env file: %w", err)
+	}
 	_ = os.Unsetenv("FLOWPANEL_MARIADB_PASSWORD")
 
 	return nil
@@ -342,7 +345,15 @@ func (s *Service) RootPassword(context.Context) (string, bool, error) {
 		return password, true, nil
 	}
 
-	password, configured, err := readPasswordFile(s.rootPasswordPath)
+	password, configured, err := readEnvFileValue(resolveEnvFilePath(), "FLOWPANEL_MARIADB_PASSWORD")
+	if err != nil {
+		return "", false, fmt.Errorf("read mariadb root password from env file: %w", err)
+	}
+	if configured {
+		return password, true, nil
+	}
+
+	password, configured, err = readPasswordFile(s.rootPasswordPath)
 	if err != nil {
 		return "", false, fmt.Errorf("read mariadb root password file: %w", err)
 	}
@@ -370,8 +381,16 @@ func (s *Service) SetRootPassword(ctx context.Context, password string) error {
 		return fmt.Errorf("configure mariadb root user: %w", err)
 	}
 
-	if err := writePasswordFile(s.rootPasswordPath, password); err != nil {
-		return fmt.Errorf("write mariadb root password file: %w", err)
+	if configured, err := writeEnvFileValue(resolveEnvFilePath(), "FLOWPANEL_MARIADB_PASSWORD", password); err != nil {
+		return fmt.Errorf("write mariadb root password to env file: %w", err)
+	} else if !configured {
+		if err := writePasswordFile(s.rootPasswordPath, password); err != nil {
+			return fmt.Errorf("write mariadb root password file: %w", err)
+		}
+	} else if strings.TrimSpace(s.rootPasswordPath) != "" {
+		if err := os.Remove(s.rootPasswordPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove old mariadb root password file: %w", err)
+		}
 	}
 
 	_ = os.Setenv("FLOWPANEL_MARIADB_PASSWORD", password)
@@ -991,9 +1010,15 @@ func (s *Service) resolveSQLClientConfig() (sqlClientConfig, error) {
 	if password, ok := rootPasswordFromEnv(); ok {
 		config.password = password
 	} else {
-		password, configured, err := readPasswordFile(s.rootPasswordPath)
+		password, configured, err := readEnvFileValue(resolveEnvFilePath(), "FLOWPANEL_MARIADB_PASSWORD")
 		if err != nil {
-			return sqlClientConfig{}, fmt.Errorf("read mariadb root password file: %w", err)
+			return sqlClientConfig{}, fmt.Errorf("read mariadb root password from env file: %w", err)
+		}
+		if !configured {
+			password, configured, err = readPasswordFile(s.rootPasswordPath)
+			if err != nil {
+				return sqlClientConfig{}, fmt.Errorf("read mariadb root password file: %w", err)
+			}
 		}
 		if configured {
 			config.password = password
@@ -1053,6 +1078,25 @@ func resolvePasswordFilePath() string {
 	return filepath.Join(config.FlowPanelDataPath(), defaultPasswordFile)
 }
 
+func resolveEnvFilePath() string {
+	if value := strings.TrimSpace(os.Getenv("FLOWPANEL_ENV_FILE")); value != "" {
+		return value
+	}
+
+	path := ""
+	switch runtime.GOOS {
+	case "linux":
+		path = "/etc/flowpanel/flowpanel.env"
+	case "darwin":
+		path = "/usr/local/etc/flowpanel/flowpanel.env"
+	}
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+
+	return ""
+}
+
 func rootPasswordFromEnv() (string, bool) {
 	password, configured := os.LookupEnv("FLOWPANEL_MARIADB_PASSWORD")
 	if !configured {
@@ -1065,6 +1109,131 @@ func rootPasswordFromEnv() (string, bool) {
 	}
 
 	return password, true
+}
+
+func readEnvFileValue(envFilePath, key string) (string, bool, error) {
+	envFilePath = strings.TrimSpace(envFilePath)
+	key = strings.TrimSpace(key)
+	if envFilePath == "" || key == "" {
+		return "", false, nil
+	}
+
+	content, err := os.ReadFile(envFilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+
+	for _, line := range strings.Split(string(content), "\n") {
+		trimmed := strings.TrimSpace(line)
+		trimmed = strings.TrimPrefix(trimmed, "export ")
+		if !strings.HasPrefix(trimmed, key+"=") {
+			continue
+		}
+		value := parseEnvFileValue(strings.TrimPrefix(trimmed, key+"="))
+		if value == "" {
+			return "", false, nil
+		}
+		return value, true, nil
+	}
+
+	return "", false, nil
+}
+
+func writeEnvFileValue(envFilePath, key, value string) (bool, error) {
+	envFilePath = strings.TrimSpace(envFilePath)
+	key = strings.TrimSpace(key)
+	if envFilePath == "" || key == "" {
+		return false, nil
+	}
+
+	content, err := os.ReadFile(envFilePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return true, err
+	}
+
+	prefix := ""
+	lines := []string{}
+	if err == nil {
+		lines = strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+	}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "export ") {
+			prefix = "export "
+			break
+		}
+	}
+	if prefix == "" && runtime.GOOS == "darwin" {
+		prefix = "export "
+	}
+
+	nextLine := prefix + key + "=" + quoteEnvFileValue(value)
+	updated := false
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.TrimPrefix(trimmed, "export "), key+"=") {
+			if strings.HasPrefix(trimmed, "export ") {
+				nextLine = "export " + key + "=" + quoteEnvFileValue(value)
+			}
+			lines[index] = nextLine
+			updated = true
+		}
+	}
+	if !updated {
+		lines = append(lines, nextLine)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(envFilePath), 0o700); err != nil {
+		return true, err
+	}
+
+	return true, os.WriteFile(envFilePath, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
+func removeEnvFileValue(envFilePath, key string) error {
+	envFilePath = strings.TrimSpace(envFilePath)
+	key = strings.TrimSpace(key)
+	if envFilePath == "" || key == "" {
+		return nil
+	}
+
+	content, err := os.ReadFile(envFilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+	next := lines[:0]
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.TrimPrefix(trimmed, "export "), key+"=") {
+			continue
+		}
+		next = append(next, line)
+	}
+
+	return os.WriteFile(envFilePath, []byte(strings.Join(next, "\n")+"\n"), 0o600)
+}
+
+func parseEnvFileValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 && strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
+		return strings.ReplaceAll(value[1:len(value)-1], `'\''`, `'`)
+	}
+	if len(value) >= 2 && strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+		return strings.Trim(value, `"`)
+	}
+	return strings.TrimSpace(value)
+}
+
+func quoteEnvFileValue(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func readPasswordFile(path string) (string, bool, error) {

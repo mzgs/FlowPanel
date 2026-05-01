@@ -108,6 +108,31 @@ func (s *Service) CreateInitialAdmin(ctx context.Context, input CreateInitialAdm
 		return PublicUser{}, ValidationErrors{"username": "Panel setup is already complete."}
 	}
 
+	return s.createInitialAdmin(ctx, input)
+}
+
+func (s *Service) EnsureInitialAdmin(ctx context.Context, input CreateInitialAdminInput) (PublicUser, bool, error) {
+	if s == nil || s.store == nil {
+		return PublicUser{}, false, errors.New("panel auth is not configured")
+	}
+
+	hasUsers, err := s.HasUsers(ctx)
+	if err != nil {
+		return PublicUser{}, false, err
+	}
+	if hasUsers {
+		return PublicUser{}, false, nil
+	}
+
+	user, err := s.createInitialAdmin(ctx, input)
+	if err != nil {
+		return PublicUser{}, false, err
+	}
+
+	return user, true, nil
+}
+
+func (s *Service) createInitialAdmin(ctx context.Context, input CreateInitialAdminInput) (PublicUser, error) {
 	username, password, validation := validateCredentialsInput(input.Username, input.Password)
 	if len(validation) > 0 {
 		return PublicUser{}, validation

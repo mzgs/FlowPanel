@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { login, setupAdmin, type AuthApiError, type AuthCredentials, type AuthSession } from "@/api/auth";
+import { login, type AuthApiError, type AuthCredentials, type AuthSession } from "@/api/auth";
 import { PasswordInput } from "@/components/password-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
   const [form, setForm] = useState(emptyForm);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const mutation = useMutation<AuthSession, AuthApiError, AuthCredentials>({
-    mutationFn: setupRequired ? setupAdmin : login,
+    mutationFn: login,
     onSuccess: (session) => {
       queryClient.setQueryData(["auth", "session"], session);
     },
@@ -31,11 +31,6 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
       setFieldErrors(error.fieldErrors ?? {});
     },
   });
-
-  const title = setupRequired ? "Create admin user" : "Sign in";
-  const description = setupRequired
-    ? "Set the first FlowPanel administrator."
-    : "Use your FlowPanel admin credentials.";
 
   function updateField(field: keyof AuthCredentials, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -68,10 +63,19 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
             <ShieldCheck className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-[17px] font-semibold leading-6 text-foreground">{title}</h1>
-            <p className="text-[13px] leading-5 text-muted-foreground">{description}</p>
+            <h1 className="text-[17px] font-semibold leading-6 text-foreground">Sign in</h1>
+            <p className="text-[13px] leading-5 text-muted-foreground">Use your FlowPanel admin credentials.</p>
           </div>
         </div>
+
+        {setupRequired ? (
+          <Alert variant="destructive" className="mb-4 rounded-md px-3 py-2">
+            <AlertDescription>
+              Admin credentials are not configured. Set FLOWPANEL_ADMIN_USERNAME and FLOWPANEL_ADMIN_PASSWORD, then
+              restart FlowPanel.
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         {mutation.error && !mutation.error.fieldErrors ? (
           <Alert variant="destructive" className="mb-4 rounded-md px-3 py-2">
@@ -97,7 +101,7 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
             <Label htmlFor="panel-auth-password">Password</Label>
             <PasswordInput
               id="panel-auth-password"
-              autoComplete={setupRequired ? "new-password" : "current-password"}
+              autoComplete="current-password"
               value={form.password}
               onChange={(event) => updateField("password", event.target.value)}
               aria-invalid={fieldErrors.password ? true : undefined}
@@ -107,7 +111,7 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
         </div>
 
         <Button type="submit" className="mt-5 h-9 w-full" disabled={mutation.isPending}>
-          {mutation.isPending ? "Working..." : title}
+          {mutation.isPending ? "Working..." : "Sign in"}
         </Button>
       </form>
     </main>

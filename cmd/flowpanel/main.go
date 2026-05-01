@@ -270,6 +270,22 @@ func runServer() error {
 
 	sessionManager := auth.NewSessionManager(cfg)
 	authService := auth.NewService(stores.Auth)
+	if strings.TrimSpace(cfg.InitialAdmin.Username) != "" {
+		user, created, err := authService.EnsureInitialAdmin(startupCtx, auth.CreateInitialAdminInput{
+			Username: cfg.InitialAdmin.Username,
+			Password: cfg.InitialAdmin.Password,
+		})
+		if err != nil {
+			var validation auth.ValidationErrors
+			if errors.As(err, &validation) {
+				return fmt.Errorf("invalid initial admin credentials: %v", map[string]string(validation))
+			}
+			return fmt.Errorf("ensure initial admin user: %w", err)
+		}
+		if created {
+			logger.Info("created initial panel admin", zap.String("username", user.Username))
+		}
+	}
 	scheduler := flowcron.NewScheduler(logger.Named("cron"), cfg.Cron.Enabled, stores.Cron)
 	if err := scheduler.Load(startupCtx); err != nil {
 		return fmt.Errorf("load persisted cron jobs: %w", err)
