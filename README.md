@@ -97,4 +97,8 @@ Bind the admin panel to localhost unless it is protected by a trusted reverse pr
 
 ## Install Latest Release
 
-### Linux
+### Linux / macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mzgs/FlowPanel/main/install.sh | sh
+```
