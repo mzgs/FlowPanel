@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 
+	"flowpanel/internal/auth"
 	"flowpanel/internal/backup"
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/config"
@@ -32,6 +33,7 @@ type App struct {
 	Logger        *zap.Logger
 	DB            *sql.DB
 	Domains       *domain.Service
+	Auth          *auth.Service
 	Sessions      *scs.SessionManager
 	Cron          *cron.Scheduler
 	Caddy         *caddy.Runtime
@@ -62,6 +64,7 @@ func New(
 	logger *zap.Logger,
 	db *sql.DB,
 	domains *domain.Service,
+	authService *auth.Service,
 	sessions *scs.SessionManager,
 	scheduler *cron.Scheduler,
 	caddyRuntime *caddy.Runtime,
@@ -91,6 +94,7 @@ func New(
 		Logger:        logger,
 		DB:            db,
 		Domains:       domains,
+		Auth:          authService,
 		Sessions:      sessions,
 		Cron:          scheduler,
 		Caddy:         caddyRuntime,

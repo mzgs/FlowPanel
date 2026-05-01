@@ -6,7 +6,10 @@ import {
   createRouter,
   useLocation,
 } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, Suspense, lazy, type ComponentType } from "react";
+import { fetchAuthSession, logout } from "@/api/auth";
+import { AuthPage } from "@/pages/auth-page";
 import {
   Bell,
   Clock,
@@ -17,6 +20,7 @@ import {
   HardDrive,
   LayoutDashboard,
   List,
+  LogOut,
   Monitor,
   Package,
   Search,
@@ -189,12 +193,36 @@ function getBreadcrumbs(pathname: string) {
 
 function RootLayout() {
   const location = useLocation();
+  const queryClient = useQueryClient();
+  const authQuery = useQuery({
+    queryKey: ["auth", "session"],
+    queryFn: fetchAuthSession,
+    retry: false,
+  });
+  const logoutMutation = useMutation({
+    mutationFn: logout,
+    onSuccess: (session) => {
+      queryClient.setQueryData(["auth", "session"], session);
+    },
+  });
   const breadcrumbs = getBreadcrumbs(location.pathname);
   const isNavItemActive = (to: string) =>
     location.pathname === to ||
     (to === "/domains" && location.pathname.startsWith("/domains/")) ||
     (to === "/files" && location.pathname === "/file-manager") ||
     (to === "/cron" && location.pathname === "/jobs");
+
+  if (authQuery.isLoading) {
+    return <AuthLoading />;
+  }
+
+  if (authQuery.isError) {
+    return <AuthUnavailable onRetry={() => authQuery.refetch()} />;
+  }
+
+  if (!authQuery.data?.authenticated) {
+    return <AuthPage setupRequired={Boolean(authQuery.data?.setup_required)} />;
+  }
 
   return (
     <SidebarProvider defaultOpen>
@@ -239,8 +267,25 @@ function RootLayout() {
         </SidebarContent>
 
         <SidebarFooter>
-          <div className="rounded-md border bg-[var(--app-surface)] px-3 py-2 text-sm text-muted-foreground">
-            Local node
+          <div className="flex items-center gap-2 rounded-md border bg-[var(--app-surface)] px-2 py-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-xs font-medium text-foreground">
+                {authQuery.data.user?.username ?? "Admin"}
+              </div>
+              <div className="text-[11px] text-muted-foreground">Local node</div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              disabled={logoutMutation.isPending}
+              onClick={() => logoutMutation.mutate()}
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              <LogOut className="h-4 w-4" />
+            </Button>
           </div>
         </SidebarFooter>
         <SidebarRail />
@@ -311,6 +356,32 @@ function RootLayout() {
         </main>
       </SidebarInset>
     </SidebarProvider>
+  );
+}
+
+function AuthLoading() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] px-4">
+      <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3 text-sm text-muted-foreground">
+        Loading FlowPanel...
+      </div>
+    </main>
+  );
+}
+
+function AuthUnavailable({ onRetry }: { onRetry: () => void }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] px-4">
+      <div className="w-full max-w-[360px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] p-5 shadow-[var(--app-shadow)]">
+        <div className="text-[17px] font-semibold text-foreground">Auth unavailable</div>
+        <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+          FlowPanel could not load the current session.
+        </p>
+        <Button type="button" className="mt-4 h-9 w-full" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    </main>
   );
 }
 

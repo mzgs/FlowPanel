@@ -223,6 +223,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	})
 	router.Method(stdhttp.MethodGet, "/healthz", healthHandler)
 	router.Method(stdhttp.MethodHead, "/healthz", healthHandler)
+	registerPanelAuthRoutes(router, app)
 
 	router.Route("/api", func(r chi.Router) {
 		api := newAPIRoutes(app)
@@ -731,8 +732,9 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 	})
 
-	router.Handle("/phpmyadmin", newPHPMyAdminRedirectHandler(app))
-	router.Handle("/phpmyadmin/*", newPHPMyAdminRedirectHandler(app))
+	phpMyAdminHandler := RequirePanelAuth(app)(newPHPMyAdminRedirectHandler(app))
+	router.Handle("/phpmyadmin", phpMyAdminHandler)
+	router.Handle("/phpmyadmin/*", phpMyAdminHandler)
 	router.Method(stdhttp.MethodGet, "/", panelHandler)
 	router.Method(stdhttp.MethodHead, "/", panelHandler)
 	router.Method(stdhttp.MethodGet, "/*", panelHandler)

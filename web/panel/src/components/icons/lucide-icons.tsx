@@ -31,6 +31,7 @@ import {
   HardDrive as LucideHardDrive,
   LayoutDashboard as LucideLayoutDashboard,
   List as LucideList,
+  LogOut as LucideLogOut,
   LoaderCircle as LucideLoaderCircle,
   Monitor as LucideMonitor,
   Package as LucidePackage,
@@ -102,6 +103,7 @@ export const Grid2X2 = icon(LucideGrid2x2);
 export const HardDrive = icon(LucideHardDrive);
 export const LayoutDashboard = icon(LucideLayoutDashboard);
 export const List = icon(LucideList);
+export const LogOut = icon(LucideLogOut);
 export const LoaderCircle = icon(LucideLoaderCircle);
 export const Monitor = icon(LucideMonitor);
 export const Package = icon(LucidePackage);
