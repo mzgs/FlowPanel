@@ -90,6 +90,7 @@ const monitorRanges: Array<{
 ];
 
 const historicalRefreshIntervalMs = 60_000;
+const realtimeHistoryLimit = 60;
 
 type TrendChartPoint = {
   index: number;
@@ -487,7 +488,7 @@ function TrendChart({
   return (
     <div className="space-y-3">
       <div
-        className="relative h-48 overflow-hidden rounded-xl border border-[var(--app-border)]"
+        className="relative h-80 overflow-hidden rounded-xl border border-[var(--app-border)]"
         style={{
           background:
             "linear-gradient(180deg, color-mix(in oklab, var(--app-surface-elev) 92%, var(--app-accent) 3%) 0%, var(--app-bg-2) 100%)",
@@ -596,6 +597,18 @@ function MetricStatGrid({ items }: { items: MetricStat[] }) {
       ))}
     </div>
   );
+}
+
+export function appendSystemStatusSample(history: SystemStatusSample[], status: SystemStatus, sampledAt = Date.now()) {
+  const nextSample = { sampledAt, status };
+  const lastSample = history[history.length - 1];
+
+  if (lastSample && lastSample.status.server_time === status.server_time) {
+    return [...history.slice(0, -1), nextSample];
+  }
+
+  const nextHistory = [...history, nextSample];
+  return nextHistory.length > realtimeHistoryLimit ? nextHistory.slice(-realtimeHistoryLimit) : nextHistory;
 }
 
 export function SystemMetricsCard({ history: realtimeHistory, status }: { history: SystemStatusSample[]; status: SystemStatus }) {
@@ -823,18 +836,7 @@ export function SystemMetricsCard({ history: realtimeHistory, status }: { histor
 
   return (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">System monitor</div>
-          <div className="mt-1 text-[12px] text-[var(--app-text-muted)]">{activeTab.description}</div>
-        </div>
-        <div className="shrink-0 text-right">
-          <div className="text-[11px] font-medium text-[var(--app-text)]">{activeRange.label}</div>
-          <div className="mt-0.5 text-[11px] text-[var(--app-text-muted)]">{activeRange.detail}</div>
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div role="tablist" aria-label="System metric tabs">
           <div className="inline-flex rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-1">
             {metricsTabs.map((item) => {

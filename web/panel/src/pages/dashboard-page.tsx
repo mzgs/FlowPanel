@@ -20,7 +20,7 @@ import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { LoaderCircle, Trash2, Database, World } from "@/components/icons/lucide-icons";
 import { PM2ProcessList } from "@/components/pm2-process-list";
-import { SystemMetricsCard, type SystemStatusSample } from "@/components/system-metrics-card";
+import { appendSystemStatusSample, type SystemStatusSample } from "@/components/system-metrics-card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SystemStatusCard, type OperationalHealth } from "@/components/system-status-card";
@@ -28,7 +28,6 @@ import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 const systemStatusRefreshIntervalMs = 5_000;
-const systemStatusHistoryLimit = 60;
 const pm2ProcessesRefreshIntervalMs = 10_000;
 const pm2LogsRefreshIntervalMs = 2_000;
 const pm2LogsBottomThresholdPx = 24;
@@ -232,18 +231,6 @@ function formatPM2Meta(status: PM2Status | null, processes: PM2Process[]) {
   const countLabel = `${processes.length} ${processes.length === 1 ? "process" : "processes"}`;
 
   return { countLabel, toolchain };
-}
-
-function appendSystemStatusSample(history: SystemStatusSample[], status: SystemStatus, sampledAt = Date.now()) {
-  const nextSample = { sampledAt, status };
-  const lastSample = history[history.length - 1];
-
-  if (lastSample && lastSample.status.server_time === status.server_time) {
-    return [...history.slice(0, -1), nextSample];
-  }
-
-  const nextHistory = [...history, nextSample];
-  return nextHistory.length > systemStatusHistoryLimit ? nextHistory.slice(-systemStatusHistoryLimit) : nextHistory;
 }
 
 function SystemInfoCard({ status }: { status: SystemStatus | null }) {
@@ -664,7 +651,6 @@ export function DashboardPage() {
   const leftDashboardSection = systemStatus ? (
     <div className="space-y-5">
       {pm2ProcessesSection}
-      <SystemMetricsCard history={systemStatusHistory} status={systemStatus} />
     </div>
   ) : null;
 

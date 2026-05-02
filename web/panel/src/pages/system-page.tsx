@@ -18,6 +18,7 @@ import {
   type TaskManagerStartupItem,
   type TaskManagerUser,
 } from "@/api/task-manager";
+import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { PageHeader } from "@/components/page-header";
 import {
   Clock,
@@ -33,6 +34,11 @@ import {
   UserCog,
   Wrench,
 } from "@/components/icons/lucide-icons";
+import {
+  appendSystemStatusSample,
+  SystemMetricsCard,
+  type SystemStatusSample,
+} from "@/components/system-metrics-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -46,8 +52,9 @@ import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
 const refreshIntervalMs = 10_000;
+const systemStatusRefreshIntervalMs = 5_000;
 
-type TaskManagerSection = "processes" | "services" | "startup" | "users" | "scheduled";
+type TaskManagerSection = "processes" | "services" | "startup" | "users" | "scheduled" | "monitor";
 
 const sectionMeta: Array<{
   id: TaskManagerSection;
@@ -59,6 +66,7 @@ const sectionMeta: Array<{
   { id: "startup", label: "Startup Items", description: "Control what registers for login or boot." },
   { id: "users", label: "Users", description: "Review local accounts and active sessions." },
   { id: "scheduled", label: "Scheduled Tasks", description: "Track scheduled jobs and recent execution state." },
+  { id: "monitor", label: "Monitor", description: "Track live network, disk, CPU, and RAM activity." },
 ] as const;
 
 function formatPercent(value?: number) {
@@ -800,6 +808,8 @@ function LinuxToolsDialog({
 
 export function TaskManagerPage() {
   const [snapshot, setSnapshot] = useState<TaskManagerSnapshot | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [systemStatusHistory, setSystemStatusHistory] = useState<SystemStatusSample[]>([]);
   const [linuxToolsOpen, setLinuxToolsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -808,6 +818,7 @@ export function TaskManagerPage() {
   const [activeSection, setActiveSection] = useState<TaskManagerSection>("processes");
   const [search, setSearch] = useState("");
   const requestRef = useRef<AbortController | null>(null);
+  const systemStatusRequestRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(false);
 
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
@@ -852,9 +863,34 @@ export function TaskManagerPage() {
     }
   });
 
+  const loadSystemStatus = useEffectEvent(async () => {
+    if (systemStatusRequestRef.current) {
+      return;
+    }
+
+    const controller = new AbortController();
+    systemStatusRequestRef.current = controller;
+
+    try {
+      const nextStatus = await fetchSystemStatus();
+      if (!mountedRef.current || controller.signal.aborted) {
+        return;
+      }
+      setSystemStatus(nextStatus);
+      setSystemStatusHistory((current) => appendSystemStatusSample(current, nextStatus));
+    } catch {
+      // Keep the last successful snapshot instead of surfacing transient polling errors.
+    } finally {
+      if (systemStatusRequestRef.current === controller) {
+        systemStatusRequestRef.current = null;
+      }
+    }
+  });
+
   useEffect(() => {
     mountedRef.current = true;
     void loadSnapshot(false);
+    void loadSystemStatus();
 
     const timer = window.setInterval(() => {
       if (document.hidden) {
@@ -862,12 +898,21 @@ export function TaskManagerPage() {
       }
       void loadSnapshot(true);
     }, refreshIntervalMs);
+    const systemStatusTimer = window.setInterval(() => {
+      if (document.hidden) {
+        return;
+      }
+      void loadSystemStatus();
+    }, systemStatusRefreshIntervalMs);
 
     return () => {
       mountedRef.current = false;
       window.clearInterval(timer);
+      window.clearInterval(systemStatusTimer);
       requestRef.current?.abort();
       requestRef.current = null;
+      systemStatusRequestRef.current?.abort();
+      systemStatusRequestRef.current = null;
     };
   }, []);
 
@@ -914,6 +959,7 @@ export function TaskManagerPage() {
     startup: snapshot?.startup_items.length || 0,
     users: snapshot?.users.length || 0,
     scheduled: snapshot?.scheduled_tasks.length || 0,
+    monitor: 0,
   };
 
   async function runSnapshotAction(
@@ -969,18 +1015,19 @@ export function TaskManagerPage() {
   }
 
   const currentSection = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
-  const sectionContent: Record<TaskManagerSection, ReactNode> = {
+  const tableSectionContent: Record<Exclude<TaskManagerSection, "monitor">, ReactNode> = {
     processes: <ProcessesTable processes={filtered.processes} pendingAction={pendingAction} onTerminate={handleTerminate} />,
     services: <ServicesTable services={filtered.services} pendingAction={pendingAction} onAction={handleServiceAction} />,
     startup: <StartupItemsTable items={filtered.startup} pendingAction={pendingAction} onAction={handleStartupAction} />,
     users: <UsersTable users={filtered.users} />,
     scheduled: <ScheduledTasksTable tasks={filtered.scheduled} />,
   };
+  const monitorActive = activeSection === "monitor";
 
   return (
     <div className="min-h-[calc(100vh-var(--app-navbar-height))]">
       <PageHeader
-        title="Task Manager"
+        title="System"
         meta="Manage live processes, services, startup registration, users, and scheduled tasks from a single node view."
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -1033,22 +1080,24 @@ export function TaskManagerPage() {
               <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">{currentSection.label}</div>
               <div className="text-sm text-[var(--app-text-muted)]">{currentSection.description}</div>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <label className="relative min-w-0 sm:w-[20rem]">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={`Search ${currentSection.label.toLowerCase()}`}
-                  className="pl-9"
-                />
-              </label>
-              {activeSection === "scheduled" ? (
-                <Button asChild variant="outline" size="sm">
-                  <Link to="/cron">Open Cron</Link>
-                </Button>
-              ) : null}
-            </div>
+            {monitorActive ? null : (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <label className="relative min-w-0 sm:w-[20rem]">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder={`Search ${currentSection.label.toLowerCase()}`}
+                    className="pl-9"
+                  />
+                </label>
+                {activeSection === "scheduled" ? (
+                  <Button asChild variant="outline" size="sm">
+                    <Link to="/cron">Open Cron</Link>
+                  </Button>
+                ) : null}
+              </div>
+            )}
           </div>
 
           <div className="border-b border-[var(--app-border)] px-4 py-3">
@@ -1067,33 +1116,47 @@ export function TaskManagerPage() {
                     )}
                   >
                     <span>{section.label}</span>
-                    <span className="rounded bg-black/10 px-1.5 py-0.5 text-[11px]">{counts[section.id]}</span>
+                    {section.id === "monitor" ? null : (
+                      <span className="rounded bg-black/10 px-1.5 py-0.5 text-[11px]">{counts[section.id]}</span>
+                    )}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          <div className="px-4 py-3">
-            {loading && !snapshot ? (
-              <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-                Loading task manager data...
-              </div>
-            ) : error && !snapshot ? (
-              <div className="flex flex-col gap-3 py-6">
-                <div className="text-sm text-destructive">{error}</div>
-                <div>
-                  <Button variant="outline" size="sm" onClick={() => void loadSnapshot(false)}>
-                    Retry
-                  </Button>
+          {monitorActive ? null : (
+            <div className="px-4 py-3">
+              {loading && !snapshot ? (
+                <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Loading task manager data...
                 </div>
-              </div>
-            ) : (
-              sectionContent[activeSection]
-            )}
-          </div>
+              ) : error && !snapshot ? (
+                <div className="flex flex-col gap-3 py-6">
+                  <div className="text-sm text-destructive">{error}</div>
+                  <div>
+                    <Button variant="outline" size="sm" onClick={() => void loadSnapshot(false)}>
+                      Retry
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                tableSectionContent[activeSection]
+              )}
+            </div>
+          )}
         </section>
+
+        {monitorActive ? (
+          systemStatus ? (
+            <SystemMetricsCard history={systemStatusHistory} status={systemStatus} />
+          ) : (
+            <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-8 text-sm text-muted-foreground shadow-[var(--app-shadow)]">
+              Loading system monitor...
+            </section>
+          )
+        ) : null}
       </div>
     </div>
   );

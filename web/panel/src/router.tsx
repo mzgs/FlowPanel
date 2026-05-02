@@ -100,7 +100,7 @@ const CronPage = lazyRouteComponent(() =>
   import("@/pages/cron-page").then((module) => ({ default: module.CronPage })),
 );
 const TaskManagerPage = lazyRouteComponent(() =>
-  import("@/pages/task-manager-page").then((module) => ({ default: module.TaskManagerPage })),
+  import("@/pages/system-page").then((module) => ({ default: module.TaskManagerPage })),
 );
 const TerminalPage = lazyRouteComponent(() =>
   import("@/pages/terminal-page").then((module) => ({ default: module.TerminalPage })),
@@ -124,7 +124,7 @@ const navigationItems = [
   { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/applications", label: "Applications", icon: Package },
   { to: "/cron", label: "Cron", icon: Clock },
-  { to: "/task-manager", label: "Task Manager", icon: Monitor },
+  { to: "/task-manager", label: "System", icon: Monitor },
 
   { to: "/terminal", label: "Terminal", icon: TerminalSquare },
   { to: "/activity", label: "Activity", icon: List },
