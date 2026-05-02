@@ -29,7 +29,6 @@ const systemStatusHistoryLimit = 60;
 const pm2ProcessesRefreshIntervalMs = 10_000;
 const pm2LogsRefreshIntervalMs = 2_000;
 const pm2LogsBottomThresholdPx = 24;
-const dashboardSplitGridClassName = "grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]";
 
 type OverviewData = {
   databaseCount: number | null;
@@ -618,6 +617,12 @@ export function DashboardPage() {
       </div>
     </section>
   );
+  const leftDashboardSection = systemStatus ? (
+    <div className="grid gap-5 2xl:grid-cols-2">
+      {pm2ProcessesSection}
+      <SystemMetricsCard history={systemStatusHistory} status={systemStatus} />
+    </div>
+  ) : null;
 
   return (
     <>
@@ -634,23 +639,19 @@ export function DashboardPage() {
           <section className="space-y-5">
             {showOverview ? (
               systemStatus ? (
-                <>
-                  <SystemStatusCard history={systemStatusHistory} status={systemStatus} />
-                  {hasTotals ? <OverviewCard databaseCount={databaseCount} siteCount={siteCount} /> : null}
-                </>
+                <SystemStatusCard
+                  databaseCount={databaseCount}
+                  history={systemStatusHistory}
+                  leftContent={leftDashboardSection}
+                  siteCount={siteCount}
+                  status={systemStatus}
+                />
               ) : hasTotals ? (
                 <OverviewCard databaseCount={databaseCount} siteCount={siteCount} />
               ) : null
             ) : null}
 
-            {systemStatus ? (
-              <div className={dashboardSplitGridClassName}>
-                {pm2ProcessesSection}
-                <SystemMetricsCard history={systemStatusHistory} status={systemStatus} />
-              </div>
-            ) : (
-              pm2ProcessesSection
-            )}
+            {systemStatus ? null : pm2ProcessesSection}
           </section>
         )}
       </div>

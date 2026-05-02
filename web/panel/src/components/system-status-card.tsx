@@ -1,6 +1,16 @@
 import type { ReactNode } from "react";
 import type { SystemStatus } from "@/api/system";
-import { Cpu, Download, HardDrive, MemoryStick, Upload } from "@/components/icons/lucide-icons";
+import {
+  ChevronDownIcon,
+  Cpu,
+  Database,
+  Download,
+  HardDrive,
+  MemoryStick,
+  Upload,
+  World,
+} from "@/components/icons/lucide-icons";
+import { DiskUsageCard } from "@/components/disk-usage-card";
 import type { SystemStatusSample } from "@/components/system-metrics-card";
 
 type StatusTone = "cpu" | "memory" | "disk" | "network";
@@ -185,19 +195,111 @@ function StatusTile({ detail, icon, label, tone, value, values }: StatusTileProp
   const isNetwork = tone === "network";
 
   return (
-    <section className={`rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-3 shadow-[var(--app-shadow)] ${getToneClassName(tone)}`}>
+    <section className={`rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-3 py-2.5 shadow-[var(--app-shadow)] ${getToneClassName(tone)}`}>
       <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--app-text)]">
         <span className="text-[var(--tile-accent)]">{icon}</span>
         <span>{label}</span>
       </div>
-      <div className="mt-3 text-[26px] font-semibold leading-none tracking-tight text-[var(--app-text)]">{value}</div>
-      <div className="mt-3 min-h-9">{isNetwork ? <NetworkBars values={values} /> : <Sparkline values={values} />}</div>
+      <div className="mt-2.5 text-[24px] font-semibold leading-none tracking-tight text-[var(--app-text)]">{value}</div>
+      <div className="mt-2.5 min-h-9">{isNetwork ? <NetworkBars values={values} /> : <Sparkline values={values} />}</div>
       {detail ? <div className="mt-2 text-[12px] leading-4 text-[var(--app-text-muted)]">{detail}</div> : null}
     </section>
   );
 }
 
-export function SystemStatusCard({ history, status }: { history: SystemStatusSample[]; status: SystemStatus }) {
+function ResourceUsageCard({
+  cpuPercent,
+  diskPercent,
+  memoryPercent,
+}: {
+  cpuPercent: number | null;
+  diskPercent: number | null;
+  memoryPercent: number | null;
+}) {
+  const rows = [
+    { icon: <Cpu className="h-4 w-4" />, label: "CPU", percent: cpuPercent, tone: "cpu" as const },
+    { icon: <MemoryStick className="h-4 w-4" />, label: "Memory", percent: memoryPercent, tone: "memory" as const },
+    { icon: <HardDrive className="h-4 w-4" />, label: "Disk", percent: diskPercent, tone: "disk" as const },
+  ];
+
+  return (
+    <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-3 py-2.5 shadow-[var(--app-shadow)]">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[13px] font-semibold text-[var(--app-text)]">Resource Usage</div>
+        <button
+          type="button"
+          className="flex h-7 items-center gap-1 rounded-md bg-[var(--app-surface-muted)] px-2 text-[12px] font-semibold text-[var(--app-text)]"
+        >
+          24h
+          <ChevronDownIcon className="h-3.5 w-3.5 text-[var(--app-text-muted)]" />
+        </button>
+      </div>
+      <div className="mt-3 space-y-3.5">
+        {rows.map((row) => (
+          <div key={row.label} className={`${getToneClassName(row.tone)} grid grid-cols-[84px_minmax(0,1fr)_40px] items-center gap-3`}>
+            <div className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-[var(--app-text)]">
+              <span className="text-[var(--tile-accent)]">{row.icon}</span>
+              <span className="truncate">{row.label}</span>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-[var(--app-surface)]">
+              <div
+                className="h-full rounded-full bg-[var(--tile-accent)] transition-[width] duration-200"
+                style={{ width: `${row.percent ?? 0}%` }}
+              />
+            </div>
+            <div className="text-right text-[13px] font-semibold text-[var(--app-text)]">{formatPercent(row.percent)}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function formatTotal(value: number | null) {
+  return value === null ? "--" : String(value);
+}
+
+function TotalsCard({
+  databaseCount,
+  siteCount,
+}: {
+  databaseCount: number | null;
+  siteCount: number | null;
+}) {
+  const rows = [
+    { icon: <World className="h-4 w-4" />, label: "Total sites", value: formatTotal(siteCount) },
+    { icon: <Database className="h-4 w-4" />, label: "Total databases", value: formatTotal(databaseCount) },
+  ];
+
+  return (
+    <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-3 py-2.5 shadow-[var(--app-shadow)]">
+      <div className="text-[13px] font-semibold text-[var(--app-text)]">Totals</div>
+      <div className="mt-2 divide-y divide-[var(--app-border)] border-t border-[var(--app-border)]">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center gap-2 py-2 text-[12px] text-[var(--app-text)]">
+            <span className="text-[var(--app-text-muted)]">{row.icon}</span>
+            <span className="min-w-0 flex-1 truncate">{row.label}</span>
+            <span className="text-[18px] font-semibold leading-none tracking-tight text-[var(--app-text)]">{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function SystemStatusCard({
+  databaseCount,
+  history,
+  leftContent,
+  siteCount,
+  status,
+}: {
+  databaseCount: number | null;
+  history: SystemStatusSample[];
+  leftContent?: ReactNode;
+  siteCount: number | null;
+  status: SystemStatus;
+}) {
   const cpuPercent = clampPercent(status.cpu_usage_percent);
   const memoryPercent = getMemoryPercent(status);
   const diskPercent = getDiskPercent(status);
@@ -209,47 +311,57 @@ export function SystemStatusCard({ history, status }: { history: SystemStatusSam
       : (networkRates.receive ?? 0) + (networkRates.transmit ?? 0);
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <StatusTile
-        icon={<Cpu className="h-4 w-4" />}
-        label="CPU"
-        tone="cpu"
-        value={formatPercent(cpuPercent)}
-        values={buildPercentSeries(history, status, (sample) => clampPercent(sample.cpu_usage_percent))}
-      />
-      <StatusTile
-        icon={<MemoryStick className="h-4 w-4" />}
-        label="Memory"
-        tone="memory"
-        value={formatPercent(memoryPercent)}
-        values={buildPercentSeries(history, status, getMemoryPercent)}
-      />
-      <StatusTile
-        icon={<HardDrive className="h-4 w-4" />}
-        label="Disk"
-        tone="disk"
-        value={formatPercent(diskPercent)}
-        values={buildPercentSeries(history, status, getDiskPercent)}
-      />
-      <StatusTile
-        detail={
-          <div className="grid grid-cols-2 gap-2">
-            <span className="flex min-w-0 items-center gap-1">
-              <Download className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{formatRate(networkRates.receive)}</span>
-            </span>
-            <span className="flex min-w-0 items-center gap-1">
-              <Upload className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{formatRate(networkRates.transmit)}</span>
-            </span>
-          </div>
-        }
-        icon={<Upload className="h-4 w-4" />}
-        label="Network"
-        tone="network"
-        value={formatRate(networkTotalRate)}
-        values={networkSeries.length > 1 ? networkSeries : [null]}
-      />
+    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]">
+      <div className="min-w-0 space-y-5">
+        <div className="grid gap-2.5 sm:grid-cols-2 2xl:grid-cols-4">
+          <StatusTile
+            icon={<Cpu className="h-4 w-4" />}
+            label="CPU"
+            tone="cpu"
+            value={formatPercent(cpuPercent)}
+            values={buildPercentSeries(history, status, (sample) => clampPercent(sample.cpu_usage_percent))}
+          />
+          <StatusTile
+            icon={<MemoryStick className="h-4 w-4" />}
+            label="Memory"
+            tone="memory"
+            value={formatPercent(memoryPercent)}
+            values={buildPercentSeries(history, status, getMemoryPercent)}
+          />
+          <StatusTile
+            icon={<HardDrive className="h-4 w-4" />}
+            label="Disk"
+            tone="disk"
+            value={formatPercent(diskPercent)}
+            values={buildPercentSeries(history, status, getDiskPercent)}
+          />
+          <StatusTile
+            detail={
+              <div className="grid grid-cols-2 gap-2">
+                <span className="flex min-w-0 items-center gap-1">
+                  <Download className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{formatRate(networkRates.receive)}</span>
+                </span>
+                <span className="flex min-w-0 items-center gap-1">
+                  <Upload className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{formatRate(networkRates.transmit)}</span>
+                </span>
+              </div>
+            }
+            icon={<Upload className="h-4 w-4" />}
+            label="Network"
+            tone="network"
+            value={formatRate(networkTotalRate)}
+            values={networkSeries.length > 1 ? networkSeries : [null]}
+          />
+        </div>
+        {leftContent}
+      </div>
+      <div className="space-y-2.5">
+        <ResourceUsageCard cpuPercent={cpuPercent} diskPercent={diskPercent} memoryPercent={memoryPercent} />
+        <DiskUsageCard status={status} />
+        <TotalsCard databaseCount={databaseCount} siteCount={siteCount} />
+      </div>
     </div>
   );
 }
