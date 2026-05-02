@@ -10,6 +10,7 @@ import (
 	"net"
 	stdhttp "net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -217,18 +218,11 @@ func isTerminal(file *os.File) bool {
 
 func runMenu() error {
 	reader := bufio.NewReader(os.Stdin)
-	status, err := loadPanelStatus(context.Background())
-	if err != nil {
-		return err
-	}
-	if !status.Running && !status.Error {
-		printPanelStatus(os.Stdout, status)
-		_, _ = fmt.Fprintln(os.Stdout, "Starting FlowPanel...")
-		return runServer()
-	}
 
 	for {
-		status, err = loadPanelStatus(context.Background())
+		clearMenuScreen(os.Stdout)
+
+		status, err := loadPanelStatus(context.Background())
 		if err != nil {
 			return err
 		}
@@ -250,20 +244,28 @@ func runMenu() error {
 			return nil
 		}
 
-		switch strings.TrimSpace(choice) {
-		case "1":
-			if status.Running {
-				_, _ = fmt.Fprintf(os.Stdout, "Panel is already running at %s\n\n", status.WebURL)
+		selection := strings.TrimSpace(choice)
+		switch selection {
+		case "1", "3":
+			restart := selection == "3"
+			if !restart && status.Running {
 				continue
 			}
-			return runServer()
-		case "2":
-			if err := runStopCommand(context.Background(), os.Stdout); err != nil {
+			if !restart && status.Error {
+				continue
+			}
+			if restart && (status.Running || status.Error) {
+				if err := runStopCommand(context.Background(), io.Discard); err != nil {
+					return err
+				}
+			}
+			if err := startPanelDetached(context.Background(), io.Discard, status.WebURL); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintln(os.Stdout)
-		case "3":
-			return runRestartCommand(context.Background(), os.Stdout)
+		case "2":
+			if err := runStopCommand(context.Background(), io.Discard); err != nil {
+				return err
+			}
 		case "4":
 			if err := newRootCommand().Help(); err != nil {
 				return err
@@ -283,6 +285,10 @@ func runMenu() error {
 			return nil
 		}
 	}
+}
+
+func clearMenuScreen(w io.Writer) {
+	_, _ = fmt.Fprint(w, "\033[H\033[2J\033[3J")
 }
 
 func runStopCommand(ctx context.Context, w io.Writer) error {
@@ -331,6 +337,53 @@ func runRestartCommand(ctx context.Context, w io.Writer) error {
 
 	_, _ = fmt.Fprintln(w, "Starting FlowPanel...")
 	return runServer()
+}
+
+func startPanelDetached(ctx context.Context, w io.Writer, webURL string) error {
+	if err := config.EnsureFlowPanelDataPath(); err != nil {
+		return err
+	}
+
+	logPath := panelLogPath()
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open FlowPanel log file: %w", err)
+	}
+	defer func() {
+		_ = logFile.Close()
+	}()
+
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return fmt.Errorf("open null device: %w", err)
+	}
+	defer func() {
+		_ = devNull.Close()
+	}()
+
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve FlowPanel executable: %w", err)
+	}
+
+	cmd := exec.Command(executable, "serve")
+	cmd.Env = os.Environ()
+	cmd.Stdin = devNull
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start FlowPanel: %w", err)
+	}
+	if err := cmd.Process.Release(); err != nil {
+		return fmt.Errorf("release FlowPanel process: %w", err)
+	}
+
+	if err := waitForPanelStart(ctx, webURL, 15*time.Second); err != nil {
+		return fmt.Errorf("%w; check logs at %s", err, logPath)
+	}
+
+	_, _ = fmt.Fprintf(w, "FlowPanel started at %s\n", webURL)
+	return nil
 }
 
 func loadPanelStatus(ctx context.Context) (panelStatus, error) {
@@ -389,6 +442,10 @@ func panelPIDPath() string {
 	return filepath.Join(config.FlowPanelDataPath(), "flowpanel.pid")
 }
 
+func panelLogPath() string {
+	return filepath.Join(config.FlowPanelDataPath(), "flowpanel.log")
+}
+
 func writePanelPID() error {
 	return os.WriteFile(panelPIDPath(), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644)
 }
@@ -429,6 +486,26 @@ func waitForPanelStop(ctx context.Context, webURL string, timeout time.Duration)
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timed out waiting for FlowPanel to stop")
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForPanelStart(ctx context.Context, webURL string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if panelHealthOK(ctx, webURL) {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for FlowPanel to start")
 		case <-ticker.C:
 		}
 	}
