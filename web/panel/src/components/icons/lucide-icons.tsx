@@ -12,6 +12,7 @@ import {
   Cloud as LucideCloud,
   Container as LucideContainer,
   Copy as LucideCopy,
+  Cpu as LucideCpu,
   Database as LucideDatabase,
   Download as LucideDownload,
   EllipsisVertical as LucideEllipsisVertical,
@@ -33,6 +34,7 @@ import {
   List as LucideList,
   LogOut as LucideLogOut,
   LoaderCircle as LucideLoaderCircle,
+  MemoryStick as LucideMemoryStick,
   Monitor as LucideMonitor,
   Package as LucidePackage,
   PanelLeftClose as LucidePanelLeftClose,
@@ -82,6 +84,7 @@ export const CircleIcon = icon(LucideCircle);
 export const Clipboard = icon(LucideClipboard);
 export const Clock = icon(LucideClock);
 export const Copy = icon(LucideCopy);
+export const Cpu = icon(LucideCpu);
 export const Database = icon(LucideDatabase);
 export const Docker = icon(LucideContainer);
 export const DotsVertical = icon(LucideEllipsisVertical);
@@ -105,6 +108,7 @@ export const LayoutDashboard = icon(LucideLayoutDashboard);
 export const List = icon(LucideList);
 export const LogOut = icon(LucideLogOut);
 export const LoaderCircle = icon(LucideLoaderCircle);
+export const MemoryStick = icon(LucideMemoryStick);
 export const Monitor = icon(LucideMonitor);
 export const Package = icon(LucidePackage);
 export const PanelLeftIcon = icon(LucidePanelLeftClose);
