@@ -297,10 +297,6 @@ function PM2ProcessDashboardRows({
                 <span>Restarts {process.restarts}</span>
                 <span>Uptime {formatPM2ProcessUptime(process)}</span>
               </div>
-
-              <div className="mt-1.5 truncate font-mono text-[11px] text-[var(--app-text-muted)]">
-                {process.script_path?.trim() || "-"}
-              </div>
             </div>
 
             <PM2ProcessActionButtons
