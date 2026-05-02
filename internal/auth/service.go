@@ -95,6 +95,22 @@ func (s *Service) GetUser(ctx context.Context, id string) (PublicUser, bool, err
 	return PublicUserFromRecord(user), true, nil
 }
 
+func (s *Service) CurrentAdmin(ctx context.Context) (PublicUser, bool, error) {
+	if s == nil || s.store == nil {
+		return PublicUser{}, false, nil
+	}
+
+	user, err := s.store.First(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return PublicUser{}, false, nil
+		}
+		return PublicUser{}, false, err
+	}
+
+	return PublicUserFromRecord(user), true, nil
+}
+
 func (s *Service) CreateInitialAdmin(ctx context.Context, input CreateInitialAdminInput) (PublicUser, error) {
 	if s == nil || s.store == nil {
 		return PublicUser{}, errors.New("panel auth is not configured")
@@ -162,6 +178,56 @@ func (s *Service) createInitialAdmin(ctx context.Context, input CreateInitialAdm
 	return PublicUserFromRecord(user), nil
 }
 
+func (s *Service) UpdateFirstAdminCredentials(ctx context.Context, usernameValue string, passwordValue string) (PublicUser, error) {
+	if s == nil || s.store == nil {
+		return PublicUser{}, errors.New("panel auth is not configured")
+	}
+
+	usernameValue = strings.TrimSpace(usernameValue)
+	passwordValue = strings.TrimSpace(passwordValue)
+	if usernameValue == "" && passwordValue == "" {
+		return PublicUser{}, ValidationErrors{"credentials": "Username or password is required."}
+	}
+
+	user, err := s.store.First(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return PublicUser{}, ValidationErrors{"username": "Panel admin user does not exist."}
+		}
+		return PublicUser{}, err
+	}
+
+	if usernameValue != "" {
+		username, validation := validateUsernameInput(usernameValue)
+		if len(validation) > 0 {
+			return PublicUser{}, validation
+		}
+		user.Username = username
+	}
+
+	if passwordValue != "" {
+		password, validation := validatePasswordInput(passwordValue)
+		if len(validation) > 0 {
+			return PublicUser{}, validation
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return PublicUser{}, fmt.Errorf("hash panel password: %w", err)
+		}
+		user.PasswordHash = string(hash)
+	}
+
+	user.UpdatedAt = s.now().UTC()
+	if err := s.store.Update(ctx, user); err != nil {
+		if errors.Is(err, ErrUsernameTaken) {
+			return PublicUser{}, ValidationErrors{"username": "Panel username is already in use."}
+		}
+		return PublicUser{}, err
+	}
+
+	return PublicUserFromRecord(user), nil
+}
+
 func (s *Service) Authenticate(ctx context.Context, input LoginInput) (PublicUser, error) {
 	if s == nil || s.store == nil {
 		return PublicUser{}, errors.New("panel auth is not configured")
@@ -189,21 +255,35 @@ func (s *Service) Authenticate(ctx context.Context, input LoginInput) (PublicUse
 }
 
 func validateCredentialsInput(usernameValue string, passwordValue string) (string, string, ValidationErrors) {
-	username := NormalizeUsername(usernameValue)
-	password := strings.TrimSpace(passwordValue)
-	validation := ValidationErrors{}
+	username, validation := validateUsernameInput(usernameValue)
+	password, passwordValidation := validatePasswordInput(passwordValue)
+	for field, message := range passwordValidation {
+		validation[field] = message
+	}
 
+	return username, password, validation
+}
+
+func validateUsernameInput(usernameValue string) (string, ValidationErrors) {
+	username := NormalizeUsername(usernameValue)
+	validation := ValidationErrors{}
 	if username == "" {
 		validation["username"] = "Username is required."
 	} else if len(username) > maxUsernameLength || !usernamePattern.MatchString(username) {
 		validation["username"] = "Username must start with a letter or number and use lowercase letters, numbers, dots, underscores, or hyphens."
 	}
 
+	return username, validation
+}
+
+func validatePasswordInput(passwordValue string) (string, ValidationErrors) {
+	password := strings.TrimSpace(passwordValue)
+	validation := ValidationErrors{}
 	if password == "" {
 		validation["password"] = "Password is required."
 	} else if len(password) < minPasswordLength {
 		validation["password"] = "Password must be at least 8 characters."
 	}
 
-	return username, password, validation
+	return password, validation
 }

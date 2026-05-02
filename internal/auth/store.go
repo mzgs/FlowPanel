@@ -107,6 +107,27 @@ WHERE username = ?
 	return user, nil
 }
 
+func (s *Store) First(ctx context.Context) (User, error) {
+	if s == nil || s.db == nil {
+		return User{}, sql.ErrNoRows
+	}
+
+	user, err := scanUser(s.db.QueryRowContext(ctx, `
+SELECT id, username, password_hash, created_at, updated_at
+FROM panel_users
+ORDER BY created_at ASC
+LIMIT 1
+`).Scan)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, sql.ErrNoRows
+		}
+		return User{}, fmt.Errorf("get first panel user: %w", err)
+	}
+
+	return user, nil
+}
+
 func (s *Store) Insert(ctx context.Context, user User) error {
 	if s == nil || s.db == nil {
 		return nil
@@ -160,6 +181,39 @@ VALUES (?, ?, ?, ?, ?)
 			return ErrUsernameTaken
 		}
 		return fmt.Errorf("insert panel user %q: %w", user.ID, err)
+	}
+
+	return nil
+}
+
+func (s *Store) Update(ctx context.Context, user User) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+UPDATE panel_users
+SET username = ?, password_hash = ?, updated_at = ?
+WHERE id = ?
+`,
+		user.Username,
+		user.PasswordHash,
+		user.UpdatedAt.UTC().UnixNano(),
+		user.ID,
+	)
+	if err != nil {
+		if isDuplicateUsernameError(err) {
+			return ErrUsernameTaken
+		}
+		return fmt.Errorf("update panel user %q: %w", user.ID, err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect panel user update %q: %w", user.ID, err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
 	}
 
 	return nil

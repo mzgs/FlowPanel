@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -45,6 +46,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"golang.org/x/term"
 )
 
 type storageEnsurer interface {
@@ -121,7 +123,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newStatusCommand(), newBackupCommand())
+	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newStatusCommand(), newCredentialsCommand(), newBackupCommand())
 
 	return cmd
 }
@@ -186,6 +188,48 @@ func newBackupCommand() *cobra.Command {
 	return cmd
 }
 
+func newCredentialsCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "credentials",
+		Short: "Manage panel credentials",
+	}
+
+	cmd.AddCommand(newCredentialsUsernameCommand(), newCredentialsPasswordCommand())
+	return cmd
+}
+
+func newCredentialsUsernameCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "username <username>",
+		Short: "Change the panel username",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChangePanelUsername(cmd.Context(), cmd.OutOrStdout(), args[0])
+		},
+	}
+}
+
+func newCredentialsPasswordCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "password [password]",
+		Short: "Change the panel password",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			password := ""
+			if len(args) > 0 {
+				password = args[0]
+			} else {
+				var err error
+				password, err = promptConfirmedPassword(cmd.OutOrStdout())
+				if err != nil {
+					return err
+				}
+			}
+			return runChangePanelPassword(cmd.Context(), cmd.OutOrStdout(), password)
+		},
+	}
+}
+
 func newBackupCreateCommand() *cobra.Command {
 	input := backup.CreateInput{Location: backup.LocationLocal}
 	cmd := &cobra.Command{
@@ -232,7 +276,9 @@ func runMenu() error {
 		_, _ = fmt.Fprintln(os.Stdout, "(1) Start panel")
 		_, _ = fmt.Fprintln(os.Stdout, "(2) Stop panel")
 		_, _ = fmt.Fprintln(os.Stdout, "(3) Restart panel")
-		_, _ = fmt.Fprintln(os.Stdout, "(4) Show help")
+		_, _ = fmt.Fprintln(os.Stdout, "(4) Change panel username")
+		_, _ = fmt.Fprintln(os.Stdout, "(5) Change panel password")
+		_, _ = fmt.Fprintln(os.Stdout, "(6) Show help")
 		_, _ = fmt.Fprintln(os.Stdout, "(0) Exit")
 		_, _ = fmt.Fprint(os.Stdout, "Select: ")
 
@@ -267,10 +313,29 @@ func runMenu() error {
 				return err
 			}
 		case "4":
+			username, err := promptMenuLine(reader, os.Stdout, "New panel username: ")
+			if err != nil {
+				return err
+			}
+			if err := runChangePanelUsername(context.Background(), os.Stdout, username); err != nil {
+				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+			}
+			pauseMenu(reader, os.Stdout)
+		case "5":
+			password, err := promptConfirmedPassword(os.Stdout)
+			if err != nil {
+				return err
+			}
+			if err := runChangePanelPassword(context.Background(), os.Stdout, password); err != nil {
+				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+			}
+			pauseMenu(reader, os.Stdout)
+		case "6":
 			if err := newRootCommand().Help(); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintln(os.Stdout)
+			pauseMenu(reader, os.Stdout)
 		case "":
 			_, _ = fmt.Fprintln(os.Stdout)
 			continue
@@ -289,6 +354,52 @@ func runMenu() error {
 
 func clearMenuScreen(w io.Writer) {
 	_, _ = fmt.Fprint(w, "\033[H\033[2J\033[3J")
+}
+
+func promptMenuLine(reader *bufio.Reader, w io.Writer, label string) (string, error) {
+	_, _ = fmt.Fprint(w, label)
+	value, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+
+	return strings.TrimSpace(value), nil
+}
+
+func promptConfirmedPassword(w io.Writer) (string, error) {
+	if !isTerminal(os.Stdin) {
+		return "", errors.New("password argument is required when stdin is not a terminal")
+	}
+
+	password, err := promptHiddenPassword(w, "New panel password: ")
+	if err != nil {
+		return "", err
+	}
+	confirmation, err := promptHiddenPassword(w, "Confirm panel password: ")
+	if err != nil {
+		return "", err
+	}
+	if password != confirmation {
+		return "", errors.New("passwords do not match")
+	}
+
+	return password, nil
+}
+
+func promptHiddenPassword(w io.Writer, label string) (string, error) {
+	_, _ = fmt.Fprint(w, label)
+	password, err := term.ReadPassword(int(os.Stdin.Fd()))
+	_, _ = fmt.Fprintln(w)
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+
+	return strings.TrimSpace(string(password)), nil
+}
+
+func pauseMenu(reader *bufio.Reader, w io.Writer) {
+	_, _ = fmt.Fprint(w, "Press Enter to continue...")
+	_, _ = reader.ReadString('\n')
 }
 
 func runStopCommand(ctx context.Context, w io.Writer) error {
@@ -527,6 +638,293 @@ func panelHealthOK(ctx context.Context, webURL string) bool {
 	defer resp.Body.Close()
 
 	return resp.StatusCode == stdhttp.StatusOK
+}
+
+func runChangePanelUsername(ctx context.Context, w io.Writer, username string) error {
+	return withAuthService(ctx, func(ctx context.Context, authService *auth.Service) error {
+		user, created, err := updateOrCreatePanelCredentials(ctx, authService, username, "")
+		if err != nil {
+			return credentialCommandError(err)
+		}
+		if err := syncPanelCredentialsEnvFile(user.Username, ""); err != nil {
+			return fmt.Errorf("panel username changed in database but env file update failed: %w", err)
+		}
+
+		action := "changed"
+		if created {
+			action = "created"
+		}
+		_, _ = fmt.Fprintf(w, "Panel username %s to %s\n", action, user.Username)
+		return nil
+	})
+}
+
+func runChangePanelPassword(ctx context.Context, w io.Writer, password string) error {
+	return withAuthService(ctx, func(ctx context.Context, authService *auth.Service) error {
+		_, created, err := updateOrCreatePanelCredentials(ctx, authService, "", password)
+		if err != nil {
+			return credentialCommandError(err)
+		}
+		if err := syncPanelCredentialsEnvFile("", password); err != nil {
+			return fmt.Errorf("panel password changed in database but env file update failed: %w", err)
+		}
+
+		action := "changed"
+		if created {
+			action = "created"
+		}
+		_, _ = fmt.Fprintf(w, "Panel password %s\n", action)
+		return nil
+	})
+}
+
+func updateOrCreatePanelCredentials(ctx context.Context, authService *auth.Service, username string, password string) (auth.PublicUser, bool, error) {
+	if _, ok, err := authService.CurrentAdmin(ctx); err != nil {
+		return auth.PublicUser{}, false, err
+	} else if ok {
+		user, err := authService.UpdateFirstAdminCredentials(ctx, username, password)
+		return user, false, err
+	}
+
+	initialUsername := strings.TrimSpace(username)
+	if initialUsername == "" {
+		initialUsername = strings.TrimSpace(os.Getenv("FLOWPANEL_ADMIN_USERNAME"))
+	}
+	initialPassword := strings.TrimSpace(password)
+	if initialPassword == "" {
+		initialPassword = strings.TrimSpace(os.Getenv("FLOWPANEL_ADMIN_PASSWORD"))
+	}
+
+	user, err := authService.CreateInitialAdmin(ctx, auth.CreateInitialAdminInput{
+		Username: initialUsername,
+		Password: initialPassword,
+	})
+	if err != nil {
+		return auth.PublicUser{}, false, err
+	}
+
+	return user, true, nil
+}
+
+func withAuthService(ctx context.Context, fn func(context.Context, *auth.Service) error) error {
+	if _, err := loadInstallerEnvFile(); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	dbConn, err := db.Open(ctx, cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() {
+		_ = dbConn.Close()
+	}()
+
+	store := auth.NewStore(dbConn)
+	if err := store.Ensure(ctx); err != nil {
+		return fmt.Errorf("ensure auth storage: %w", err)
+	}
+
+	return fn(ctx, auth.NewService(store))
+}
+
+func loadInstallerEnvFile() (string, error) {
+	envFile := installerEnvFilePath()
+	if envFile == "" {
+		return "", nil
+	}
+	if _, err := os.Stat(envFile); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("inspect FlowPanel env file: %w", err)
+	}
+
+	values, err := readEnvFile(envFile)
+	if err != nil {
+		return "", err
+	}
+	for key, value := range values {
+		if strings.TrimSpace(os.Getenv(key)) == "" {
+			_ = os.Setenv(key, value)
+		}
+	}
+	if strings.TrimSpace(os.Getenv("FLOWPANEL_ENV_FILE")) == "" {
+		_ = os.Setenv("FLOWPANEL_ENV_FILE", envFile)
+	}
+
+	return envFile, nil
+}
+
+func syncPanelCredentialsEnvFile(username string, password string) error {
+	envFile := installerEnvFilePath()
+	if envFile == "" {
+		return nil
+	}
+	if _, err := os.Stat(envFile); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect FlowPanel env file: %w", err)
+	}
+
+	values := map[string]string{}
+	if strings.TrimSpace(username) != "" {
+		values["FLOWPANEL_ADMIN_USERNAME"] = strings.TrimSpace(username)
+	}
+	if strings.TrimSpace(password) != "" {
+		values["FLOWPANEL_ADMIN_PASSWORD"] = strings.TrimSpace(password)
+	}
+
+	if err := updateEnvFile(envFile, values); err != nil {
+		return err
+	}
+	for key, value := range values {
+		_ = os.Setenv(key, value)
+	}
+
+	return nil
+}
+
+func installerEnvFilePath() string {
+	if envFile := strings.TrimSpace(os.Getenv("FLOWPANEL_ENV_FILE")); envFile != "" {
+		return trimEnvQuotes(envFile)
+	}
+
+	switch runtime.GOOS {
+	case "linux":
+		return "/etc/flowpanel/flowpanel.env"
+	case "darwin":
+		return "/usr/local/etc/flowpanel/flowpanel.env"
+	default:
+		return ""
+	}
+}
+
+func readEnvFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read FlowPanel env file: %w", err)
+	}
+
+	values := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := parseEnvLine(line)
+		if ok {
+			values[key] = value
+		}
+	}
+
+	return values, nil
+}
+
+func updateEnvFile(path string, values map[string]string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read FlowPanel env file: %w", err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	seen := map[string]bool{}
+	for i, line := range lines {
+		key, _, ok := parseEnvLine(line)
+		value, update := values[key]
+		if !ok || !update {
+			continue
+		}
+
+		lines[i] = envAssignmentLine(line, key, value)
+		seen[key] = true
+	}
+	for key, value := range values {
+		if !seen[key] {
+			lines = append(lines, key+"="+quoteEnvValue(value))
+		}
+	}
+
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		return fmt.Errorf("write FlowPanel env file: %w", err)
+	}
+
+	return nil
+}
+
+func parseEnvLine(line string) (string, string, bool) {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimPrefix(trimmed, "export ")
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return "", "", false
+	}
+
+	key, value, ok := strings.Cut(trimmed, "=")
+	key = strings.TrimSpace(key)
+	if !ok || key == "" {
+		return "", "", false
+	}
+
+	return key, unquoteEnvValue(strings.TrimSpace(value)), true
+}
+
+func envAssignmentLine(existing string, key string, value string) string {
+	prefix := ""
+	if strings.HasPrefix(strings.TrimSpace(existing), "export ") {
+		prefix = "export "
+	}
+
+	return prefix + key + "=" + quoteEnvValue(value)
+}
+
+func quoteEnvValue(value string) string {
+	if value != "" && strings.IndexFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') &&
+			!(r >= 'A' && r <= 'Z') &&
+			!(r >= '0' && r <= '9') &&
+			!strings.ContainsRune("._/@:%+=,-", r)
+	}) == -1 {
+		return value
+	}
+
+	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`")
+	return `"` + replacer.Replace(value) + `"`
+}
+
+func unquoteEnvValue(value string) string {
+	value = trimEnvQuotes(value)
+	replacer := strings.NewReplacer(`\$`, "$", "\\`", "`", `\"`, `"`, `\\`, `\`)
+	return replacer.Replace(value)
+}
+
+func trimEnvQuotes(value string) string {
+	if len(value) >= 2 {
+		quote := value[0]
+		if (quote == '\'' || quote == '"') && value[len(value)-1] == quote {
+			return value[1 : len(value)-1]
+		}
+	}
+
+	return value
+}
+
+func credentialCommandError(err error) error {
+	var validation auth.ValidationErrors
+	if !errors.As(err, &validation) {
+		return err
+	}
+
+	for _, field := range []string{"username", "password", "credentials"} {
+		if message := strings.TrimSpace(validation[field]); message != "" {
+			return errors.New(message)
+		}
+	}
+
+	return errors.New("panel credentials are invalid")
 }
 
 func runBackupCreateCommand(input backup.CreateInput) error {
