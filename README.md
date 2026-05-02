@@ -4,22 +4,36 @@ FlowPanel is a self-hosted server control panel for managing websites, runtimes,
 
 The project is a Go service with an embedded React/Vite panel. The Go process serves the admin panel, stores state in SQLite, runs an embedded Caddy runtime for managed domains, and exposes APIs for operational tasks.
 
-## Current Scope
+## Features
 
 FlowPanel currently includes:
 
 - Admin authentication with installer-provisioned credentials
-- Domain and application management
-- Embedded Caddy routing for public HTTP/HTTPS traffic
-- PHP/PHP-FPM management and per-domain PHP settings
-- Node.js, Go, PM2, Docker, Redis, MongoDB, PostgreSQL, FFmpeg, and MariaDB runtime controls
-- Database user/database management for MariaDB
+- Dashboard with server details, resource charts, disk usage, site/database counts, and PM2 process status
+- Domain management for static, PHP, Node.js, Python, and reverse-proxy sites
+- Embedded Caddy routing for public HTTP/HTTPS traffic, panel proxying, caching, WAF, rate limits, IP rules, and auto-ban controls
+- PHP/PHP-FPM management, per-domain PHP settings, Composer access, and PHP app templates for WordPress, Symfony, Laravel, October CMS, CakePHP, CodeIgniter, and Slim
+- WordPress toolkit for status, core updates, plugins, themes, database details, and extension search/install actions
+- GitHub deployment settings with optional push webhooks and post-fetch scripts
+- Node.js, Go, PM2, Docker, Redis, MongoDB, PostgreSQL, FFmpeg, MariaDB, and phpMyAdmin runtime controls
+- Docker container, image, volume, network, log, exec, and Docker Hub search tools
+- MariaDB database/user management and database dump downloads
 - File manager with upload, download, edit, archive, extract, permissions, and transfer actions
-- Browser terminal access to the local shell
+- Browser terminal access to the local shell, including domain-scoped terminal access
 - Cron jobs and scheduled backup jobs
-- Local and Google Drive backup support
-- FTP runtime and FTP account management
-- Activity log, domain logs, system monitor, and task-manager tools
+- Local and Google Drive backup support with import, restore, download, and per-domain backup actions
+- FTP runtime, global FTP accounts, and domain FTP account management
+- Activity log, domain logs, system monitor, and Linux task-manager tools
+
+## Install Latest Release
+
+### Linux / macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mzgs/FlowPanel/main/install.sh | sh
+```
+
+The installer prints the admin panel URL, generated username, and generated password after the service starts.
 
 ## Requirements
 
@@ -101,13 +115,3 @@ FLOWPANEL_ADMIN_LISTEN_ADDR=127.0.0.1:8080
 ```
 
 Bind the admin panel to localhost unless it is protected by a trusted reverse proxy, VPN, or firewall.
-
-## Install Latest Release
-
-### Linux / macOS
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mzgs/FlowPanel/main/install.sh | sh
-```
-
-The installer prints the admin panel URL, generated username, and generated password after the service starts.
