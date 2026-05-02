@@ -63,7 +63,7 @@ import { appendSystemStatusSample, type SystemStatusSample } from "@/components/
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SystemStatusCard, type OperationalHealth } from "@/components/system-status-card";
-import { getRuntimeActionLabel } from "@/lib/runtime-status";
+import { formatMariaDBVersion, getRuntimeActionLabel } from "@/lib/runtime-status";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -194,7 +194,7 @@ async function fetchInstalledAppsData(): Promise<InstalledAppsData> {
 
 function normalizeVersion(version?: string) {
   const value = version?.trim();
-  if (!value) {
+  if (!value || value.includes("/") || value.includes("\\")) {
     return "";
   }
 
@@ -484,7 +484,7 @@ function RuntimeCard({
             const busy = actionKey !== null || runtimeStateBusy(row.state);
 
             return (
-              <div key={row.key} className="grid grid-cols-[minmax(0,1fr)_5rem_6rem_4.75rem] items-center gap-3 px-4 py-2.5">
+              <div key={row.key} className="grid grid-cols-[minmax(0,1fr)_5rem_4.75rem] items-center gap-3 px-4 py-2.5">
                 <div className="flex min-w-0 items-center gap-3">
                   <img src={row.icon} alt={row.iconAlt} className="h-8 w-8 shrink-0 object-contain" />
                   <span
@@ -503,15 +503,6 @@ function RuntimeCard({
 
                 <div className="truncate text-sm text-[var(--app-text)]" title={row.version}>
                   {row.version || "\u00a0"}
-                </div>
-                <div
-                  className={cn(
-                    "truncate text-sm font-medium",
-                    row.running ? "text-emerald-400" : "text-[var(--app-text-muted)]"
-                  )}
-                  title={row.status}
-                >
-                  {row.status || null}
                 </div>
                 <div className="flex items-center justify-end gap-2">
                   {row.actions.map((action) => {
@@ -1031,7 +1022,7 @@ export function DashboardPage() {
     status: installedApps?.mariadb,
     installed: Boolean(installedApps?.mariadb?.server_installed || installedApps?.mariadb?.client_installed),
     running: Boolean(installedApps?.mariadb?.service_running),
-    version: installedApps?.mariadb?.version,
+    version: installedApps?.mariadb?.version ? formatMariaDBVersion(installedApps.mariadb.version) : undefined,
     start: startMariaDB,
     stop: stopMariaDB,
     restart: restartMariaDB,
