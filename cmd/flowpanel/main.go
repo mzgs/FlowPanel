@@ -11,6 +11,8 @@ import (
 	stdhttp "net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -118,7 +120,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newServeCommand(), newStatusCommand(), newBackupCommand())
+	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newStatusCommand(), newBackupCommand())
 
 	return cmd
 }
@@ -146,6 +148,28 @@ func newStatusCommand() *cobra.Command {
 			}
 			printPanelStatus(cmd.OutOrStdout(), status)
 			return nil
+		},
+	}
+}
+
+func newStopCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the FlowPanel server",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runStopCommand(cmd.Context(), cmd.OutOrStdout())
+		},
+	}
+}
+
+func newRestartCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "restart",
+		Short: "Restart the FlowPanel server",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRestartCommand(cmd.Context(), cmd.OutOrStdout())
 		},
 	}
 }
@@ -193,19 +217,29 @@ func isTerminal(file *os.File) bool {
 
 func runMenu() error {
 	reader := bufio.NewReader(os.Stdin)
+	status, err := loadPanelStatus(context.Background())
+	if err != nil {
+		return err
+	}
+	if !status.Running && !status.Error {
+		printPanelStatus(os.Stdout, status)
+		_, _ = fmt.Fprintln(os.Stdout, "Starting FlowPanel...")
+		return runServer()
+	}
 
 	for {
-		status, err := loadPanelStatus(context.Background())
+		status, err = loadPanelStatus(context.Background())
 		if err != nil {
 			return err
 		}
 
 		printPanelStatus(os.Stdout, status)
 		_, _ = fmt.Fprintln(os.Stdout)
-		_, _ = fmt.Fprintln(os.Stdout, "1. Start panel")
-		_, _ = fmt.Fprintln(os.Stdout, "2. Refresh status")
-		_, _ = fmt.Fprintln(os.Stdout, "3. Show help")
-		_, _ = fmt.Fprintln(os.Stdout, "0. Exit")
+		_, _ = fmt.Fprintln(os.Stdout, "(1) Start panel")
+		_, _ = fmt.Fprintln(os.Stdout, "(2) Stop panel")
+		_, _ = fmt.Fprintln(os.Stdout, "(3) Restart panel")
+		_, _ = fmt.Fprintln(os.Stdout, "(4) Show help")
+		_, _ = fmt.Fprintln(os.Stdout, "(0) Exit")
 		_, _ = fmt.Fprint(os.Stdout, "Select: ")
 
 		choice, err := reader.ReadString('\n')
@@ -223,14 +257,21 @@ func runMenu() error {
 				continue
 			}
 			return runServer()
-		case "2", "":
+		case "2":
+			if err := runStopCommand(context.Background(), os.Stdout); err != nil {
+				return err
+			}
 			_, _ = fmt.Fprintln(os.Stdout)
-			continue
 		case "3":
+			return runRestartCommand(context.Background(), os.Stdout)
+		case "4":
 			if err := newRootCommand().Help(); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintln(os.Stdout)
+		case "":
+			_, _ = fmt.Fprintln(os.Stdout)
+			continue
 		case "0", "q", "quit", "exit":
 			return nil
 		default:
@@ -242,6 +283,54 @@ func runMenu() error {
 			return nil
 		}
 	}
+}
+
+func runStopCommand(ctx context.Context, w io.Writer) error {
+	status, err := loadPanelStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if !status.Running && !status.Error {
+		_, _ = fmt.Fprintln(w, "FlowPanel is not running")
+		return nil
+	}
+
+	pid, err := readPanelPID()
+	if err != nil {
+		return fmt.Errorf("read FlowPanel pid: %w", err)
+	}
+	if pid == os.Getpid() {
+		return errors.New("refusing to stop the current CLI process")
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("find FlowPanel process %d: %w", pid, err)
+	}
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("stop FlowPanel process %d: %w", pid, err)
+	}
+	if err := waitForPanelStop(ctx, status.WebURL, 15*time.Second); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(w, "FlowPanel stopped")
+	return nil
+}
+
+func runRestartCommand(ctx context.Context, w io.Writer) error {
+	status, err := loadPanelStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if status.Running || status.Error {
+		if err := runStopCommand(ctx, w); err != nil {
+			return err
+		}
+	}
+
+	_, _ = fmt.Fprintln(w, "Starting FlowPanel...")
+	return runServer()
 }
 
 func loadPanelStatus(ctx context.Context) (panelStatus, error) {
@@ -294,6 +383,73 @@ func adminWebURL(listenAddr string) string {
 	}
 
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+func panelPIDPath() string {
+	return filepath.Join(config.FlowPanelDataPath(), "flowpanel.pid")
+}
+
+func writePanelPID() error {
+	return os.WriteFile(panelPIDPath(), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644)
+}
+
+func readPanelPID() (int, error) {
+	data, err := os.ReadFile(panelPIDPath())
+	if err != nil {
+		return 0, err
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("invalid pid file %q", panelPIDPath())
+	}
+
+	return pid, nil
+}
+
+func removePanelPID(pid int) {
+	currentPID, err := readPanelPID()
+	if err == nil && currentPID == pid {
+		_ = os.Remove(panelPIDPath())
+	}
+}
+
+func waitForPanelStop(ctx context.Context, webURL string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if !panelHealthOK(ctx, webURL) {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for FlowPanel to stop")
+		case <-ticker.C:
+		}
+	}
+}
+
+func panelHealthOK(ctx context.Context, webURL string) bool {
+	checkCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+	defer cancel()
+
+	req, err := stdhttp.NewRequestWithContext(checkCtx, stdhttp.MethodGet, webURL+"/healthz", nil)
+	if err != nil {
+		return false
+	}
+
+	resp, err := stdhttp.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == stdhttp.StatusOK
 }
 
 func runBackupCreateCommand(input backup.CreateInput) error {
@@ -393,6 +549,12 @@ func runServer() error {
 	defer func() {
 		_ = logger.Sync()
 	}()
+
+	pid := os.Getpid()
+	if err := writePanelPID(); err != nil {
+		return fmt.Errorf("write pid file: %w", err)
+	}
+	defer removePanelPID(pid)
 
 	logger.Info("flowpanel starting",
 		zap.String("env", cfg.Env),
