@@ -1,6 +1,9 @@
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { fetchScheduledBackups } from "@/api/backups";
+import { fetchCaddyStatus } from "@/api/caddy";
 import { fetchDomains } from "@/api/domains";
-import { fetchMariaDBDatabases } from "@/api/mariadb";
+import { fetchMariaDBDatabases, fetchMariaDBStatus } from "@/api/mariadb";
+import { fetchPHPStatus } from "@/api/php";
 import {
   clearPM2ProcessLogs,
   deletePM2Process,
@@ -20,7 +23,7 @@ import { PM2ProcessList } from "@/components/pm2-process-list";
 import { SystemMetricsCard, type SystemStatusSample } from "@/components/system-metrics-card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { SystemStatusCard } from "@/components/system-status-card";
+import { SystemStatusCard, type OperationalHealth } from "@/components/system-status-card";
 import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -32,19 +35,44 @@ const pm2LogsBottomThresholdPx = 24;
 
 type OverviewData = {
   databaseCount: number | null;
+  health: OperationalHealth;
   siteCount: number | null;
   systemStatus: SystemStatus | null;
 };
 
+async function fetchOperationalHealth(): Promise<OperationalHealth> {
+  const [caddyResult, mariadbResult, phpResult, scheduledBackupsResult] = await Promise.allSettled([
+    fetchCaddyStatus(),
+    fetchMariaDBStatus(),
+    fetchPHPStatus(),
+    fetchScheduledBackups(),
+  ]);
+
+  return {
+    backup:
+      scheduledBackupsResult.status === "fulfilled"
+        ? scheduledBackupsResult.value.enabled && scheduledBackupsResult.value.started
+        : null,
+    database: mariadbResult.status === "fulfilled" ? mariadbResult.value.ready : null,
+    runtime: phpResult.status === "fulfilled" ? phpResult.value.ready : null,
+    webServer: caddyResult.status === "fulfilled" ? caddyResult.value.started && caddyResult.value.config_loaded : null,
+  };
+}
+
 async function fetchOverviewData(): Promise<OverviewData> {
-  const [databaseResult, domainsResult, systemResult] = await Promise.allSettled([
+  const [databaseResult, domainsResult, systemResult, healthResult] = await Promise.allSettled([
     fetchMariaDBDatabases(),
     fetchDomains(),
     fetchSystemStatus(),
+    fetchOperationalHealth(),
   ]);
 
   return {
     databaseCount: databaseResult.status === "fulfilled" ? databaseResult.value.databases.length : null,
+    health:
+      healthResult.status === "fulfilled"
+        ? healthResult.value
+        : { backup: null, database: null, runtime: null, webServer: null },
     siteCount: domainsResult.status === "fulfilled" ? domainsResult.value.domains.length : null,
     systemStatus: systemResult.status === "fulfilled" ? systemResult.value : null,
   };
@@ -255,6 +283,12 @@ function SystemInfoCard({ status }: { status: SystemStatus | null }) {
 
 export function DashboardPage() {
   const [databaseCount, setDatabaseCount] = useState<number | null>(null);
+  const [health, setHealth] = useState<OperationalHealth>({
+    backup: null,
+    database: null,
+    runtime: null,
+    webServer: null,
+  });
   const [siteCount, setSiteCount] = useState<number | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [systemStatusHistory, setSystemStatusHistory] = useState<SystemStatusSample[]>([]);
@@ -289,6 +323,14 @@ export function DashboardPage() {
       syncSystemStatus(nextStatus);
     } catch {
       // Keep the last successful snapshot instead of surfacing transient polling errors.
+    }
+  });
+
+  const refreshOperationalHealth = useEffectEvent(async () => {
+    try {
+      setHealth(await fetchOperationalHealth());
+    } catch {
+      setHealth({ backup: null, database: null, runtime: null, webServer: null });
     }
   });
 
@@ -498,6 +540,7 @@ export function DashboardPage() {
       }
 
       setDatabaseCount(nextOverview.databaseCount);
+      setHealth(nextOverview.health);
       setSiteCount(nextOverview.siteCount);
       if (nextOverview.systemStatus) {
         syncSystemStatus(nextOverview.systemStatus);
@@ -524,6 +567,7 @@ export function DashboardPage() {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       void refreshSystemStatus();
+      void refreshOperationalHealth();
     }, systemStatusRefreshIntervalMs);
 
     return () => {
@@ -641,6 +685,7 @@ export function DashboardPage() {
               systemStatus ? (
                 <SystemStatusCard
                   databaseCount={databaseCount}
+                  health={health}
                   history={systemStatusHistory}
                   leftContent={leftDashboardSection}
                   siteCount={siteCount}

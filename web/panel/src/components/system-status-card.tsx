@@ -2,18 +2,29 @@ import type { ReactNode } from "react";
 import type { SystemStatus } from "@/api/system";
 import {
   ChevronDownIcon,
+  Check,
   Cpu,
   Database,
   Download,
   HardDrive,
   MemoryStick,
   Upload,
+  Monitor,
+  Server,
+  TimerReset,
   World,
 } from "@/components/icons/lucide-icons";
 import { DiskUsageCard } from "@/components/disk-usage-card";
 import type { SystemStatusSample } from "@/components/system-metrics-card";
 
 type StatusTone = "cpu" | "memory" | "disk" | "network";
+
+export type OperationalHealth = {
+  backup: boolean | null;
+  database: boolean | null;
+  runtime: boolean | null;
+  webServer: boolean | null;
+};
 
 type StatusTileProps = {
   detail?: ReactNode;
@@ -255,6 +266,65 @@ function ResourceUsageCard({
   );
 }
 
+function SystemOperationalCard({
+  health,
+  history,
+  status,
+}: {
+  health: OperationalHealth;
+  history: SystemStatusSample[];
+  status: SystemStatus;
+}) {
+  const items = [
+    { icon: <Server className="h-4 w-4" />, label: "Web Server", ready: health.webServer },
+    { icon: <Database className="h-4 w-4" />, label: "Database", ready: health.database },
+    { icon: <Cpu className="h-4 w-4" />, label: "Runtime", ready: health.runtime },
+    { icon: <TimerReset className="h-4 w-4" />, label: "Backup", ready: health.backup },
+    { icon: <Monitor className="h-4 w-4" />, label: "Monitoring", ready: history.length > 0 },
+  ];
+  const known = items.filter((item) => item.ready !== null);
+  const allReady = known.length === items.length && known.every((item) => item.ready);
+  const hasIssue = known.some((item) => item.ready === false);
+  const headline = allReady
+    ? "All systems operational"
+    : hasIssue
+      ? "Action needed"
+      : "Status partially unavailable";
+  const series = buildPercentSeries(history, status, (sample) => clampPercent(sample.cpu_usage_percent));
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-3 py-2.5 shadow-[var(--app-shadow)]">
+      <div className="text-[13px] font-semibold text-[var(--app-text)]">System Status</div>
+      <div className="mt-2 flex items-center gap-2 text-[12px] font-medium text-[var(--app-text)]">
+        <span className={`flex h-5 w-5 items-center justify-center rounded-full ${allReady ? "bg-green-500 text-white" : hasIssue ? "bg-[var(--app-danger)] text-white" : "bg-[var(--app-surface-muted)] text-[var(--app-text-muted)]"}`}>
+          <Check className="h-3.5 w-3.5" />
+        </span>
+        <span>{headline}</span>
+      </div>
+      <div className="mt-3 divide-y divide-[var(--app-border)] border-t border-[var(--app-border)]">
+        {items.map((item) => (
+          <div key={item.label} className="flex items-center gap-2 py-2 text-[12px] font-semibold text-[var(--app-text)]">
+            <span className="text-[var(--app-text-muted)]">{item.icon}</span>
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${
+                item.ready === null
+                  ? "bg-[var(--app-text-muted)] opacity-60"
+                  : item.ready
+                    ? "bg-green-400 shadow-[0_0_10px_rgba(74,222,128,0.55)]"
+                    : "bg-[var(--app-danger)]"
+              }`}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 [--tile-accent:#4ade80]">
+        <Sparkline values={series} />
+      </div>
+    </section>
+  );
+}
+
 function formatTotal(value: number | null) {
   return value === null ? "--" : String(value);
 }
@@ -289,12 +359,14 @@ function TotalsCard({
 
 export function SystemStatusCard({
   databaseCount,
+  health,
   history,
   leftContent,
   siteCount,
   status,
 }: {
   databaseCount: number | null;
+  health: OperationalHealth;
   history: SystemStatusSample[];
   leftContent?: ReactNode;
   siteCount: number | null;
@@ -358,6 +430,7 @@ export function SystemStatusCard({
         {leftContent}
       </div>
       <div className="space-y-2.5">
+        <SystemOperationalCard health={health} history={history} status={status} />
         <ResourceUsageCard cpuPercent={cpuPercent} diskPercent={diskPercent} memoryPercent={memoryPercent} />
         <DiskUsageCard status={status} />
         <TotalsCard databaseCount={databaseCount} siteCount={siteCount} />
