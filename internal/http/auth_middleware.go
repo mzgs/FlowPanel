@@ -19,7 +19,7 @@ func RequirePanelAuth(app *app.App) func(stdhttp.Handler) stdhttp.Handler {
 				return
 			}
 
-			userID := strings.TrimSpace(app.Sessions.GetString(r.Context(), panelUserIDSessionKey))
+			userID := panelAuthUserID(app, r)
 			if userID == "" {
 				writeAuthRequired(w, r)
 				return

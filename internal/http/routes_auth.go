@@ -3,7 +3,6 @@ package httpx
 import (
 	"errors"
 	stdhttp "net/http"
-	"strings"
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/auth"
@@ -31,7 +30,7 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 			return
 		}
 
-		userID := strings.TrimSpace(app.Sessions.GetString(r.Context(), panelUserIDSessionKey))
+		userID := panelAuthUserID(app, r)
 		if userID == "" {
 			writeAuthSession(w, false, !hasUsers, auth.PublicUser{})
 			return
@@ -85,7 +84,7 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 			return
 		}
 
-		if err := renewPanelSession(app, r, user.ID); err != nil {
+		if err := renewPanelSession(app, r, w, user.ID); err != nil {
 			app.Logger.Error("create panel login session failed", zap.Error(err))
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to sign in"})
 			return
@@ -102,17 +101,9 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 			return
 		}
 
+		clearPanelAuthCookie(app, w)
 		writeAuthSession(w, false, false, auth.PublicUser{})
 	}))
-}
-
-func renewPanelSession(app *app.App, r *stdhttp.Request, userID string) error {
-	if err := app.Sessions.RenewToken(r.Context()); err != nil {
-		return err
-	}
-
-	app.Sessions.Put(r.Context(), panelUserIDSessionKey, userID)
-	return nil
 }
 
 func writeAuthSession(w stdhttp.ResponseWriter, authenticated bool, setupRequired bool, user auth.PublicUser) {
