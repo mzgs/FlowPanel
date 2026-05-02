@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"errors"
-	"flag"
 	"fmt"
+	"io"
+	"net"
 	stdhttp "net/http"
 	"os"
 	"os/signal"
@@ -38,6 +40,7 @@ import (
 	"flowpanel/internal/systemmonitor"
 	"flowpanel/internal/taskmanager"
 
+	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
@@ -70,19 +73,13 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) > 0 {
-		return runCommand(args)
+	if len(args) == 0 && isTerminal(os.Stdin) {
+		return runMenu()
 	}
 
-	return runServer()
-}
-
-func runCommand(args []string) error {
-	if len(args) >= 2 && args[0] == "backup" && args[1] == "create" {
-		return runBackupCreateCommand(args[2:])
-	}
-
-	return fmt.Errorf("unknown command: %s", strings.Join(args, " "))
+	cmd := newRootCommand()
+	cmd.SetArgs(args)
+	return cmd.Execute()
 }
 
 func newPanelStores(dbConn *sql.DB) panelStores {
@@ -109,27 +106,197 @@ func ensureStores(ctx context.Context, stores ...namedStore) error {
 	return nil
 }
 
-func runBackupCreateCommand(args []string) error {
-	flagSet := flag.NewFlagSet("backup create", flag.ContinueOnError)
-	flagSet.SetOutput(os.Stderr)
-
-	includePanelData := flagSet.Bool("panel-data", false, "include FlowPanel data files and SQLite database")
-	includeSites := flagSet.Bool("sites", false, "include managed site files")
-	includeDatabases := flagSet.Bool("databases", false, "include MariaDB dumps")
-	location := flagSet.String("location", backup.LocationLocal, "backup destination: local or google_drive")
-	if err := flagSet.Parse(args); err != nil {
-		return err
-	}
-	if flagSet.NArg() > 0 {
-		return fmt.Errorf("unexpected arguments: %s", strings.Join(flagSet.Args(), " "))
+func newRootCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "flowpanel",
+		Short:         "FlowPanel server control panel",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServer()
+		},
 	}
 
-	input := backup.CreateInput{
-		IncludePanelData: *includePanelData,
-		IncludeSites:     *includeSites,
-		IncludeDatabases: *includeDatabases,
-		Location:         *location,
+	cmd.AddCommand(newServeCommand(), newStatusCommand(), newBackupCommand())
+
+	return cmd
+}
+
+func newServeCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "serve",
+		Short: "Start the FlowPanel server",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServer()
+		},
 	}
+}
+
+func newStatusCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show FlowPanel status",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			status, err := loadPanelStatus(cmd.Context())
+			if err != nil {
+				return err
+			}
+			printPanelStatus(cmd.OutOrStdout(), status)
+			return nil
+		},
+	}
+}
+
+func newBackupCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "backup",
+		Short: "Manage backups",
+	}
+
+	cmd.AddCommand(newBackupCreateCommand())
+
+	return cmd
+}
+
+func newBackupCreateCommand() *cobra.Command {
+	input := backup.CreateInput{Location: backup.LocationLocal}
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a backup",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runBackupCreateCommand(input)
+		},
+	}
+
+	cmd.Flags().BoolVar(&input.IncludePanelData, "panel-data", false, "include FlowPanel data files and SQLite database")
+	cmd.Flags().BoolVar(&input.IncludeSites, "sites", false, "include managed site files")
+	cmd.Flags().BoolVar(&input.IncludeDatabases, "databases", false, "include MariaDB dumps")
+	cmd.Flags().StringVar(&input.Location, "location", backup.LocationLocal, "backup destination: local or google_drive")
+
+	return cmd
+}
+
+type panelStatus struct {
+	Running bool
+	Error   bool
+	WebURL  string
+}
+
+func isTerminal(file *os.File) bool {
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func runMenu() error {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		status, err := loadPanelStatus(context.Background())
+		if err != nil {
+			return err
+		}
+
+		printPanelStatus(os.Stdout, status)
+		_, _ = fmt.Fprintln(os.Stdout)
+		_, _ = fmt.Fprintln(os.Stdout, "1. Start panel")
+		_, _ = fmt.Fprintln(os.Stdout, "2. Refresh status")
+		_, _ = fmt.Fprintln(os.Stdout, "3. Show help")
+		_, _ = fmt.Fprintln(os.Stdout, "0. Exit")
+		_, _ = fmt.Fprint(os.Stdout, "Select: ")
+
+		choice, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		if errors.Is(err, io.EOF) && strings.TrimSpace(choice) == "" {
+			return nil
+		}
+
+		switch strings.TrimSpace(choice) {
+		case "1":
+			if status.Running {
+				_, _ = fmt.Fprintf(os.Stdout, "Panel is already running at %s\n\n", status.WebURL)
+				continue
+			}
+			return runServer()
+		case "2", "":
+			_, _ = fmt.Fprintln(os.Stdout)
+			continue
+		case "3":
+			if err := newRootCommand().Help(); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(os.Stdout)
+		case "0", "q", "quit", "exit":
+			return nil
+		default:
+			_, _ = fmt.Fprintln(os.Stdout, "Unknown selection")
+			_, _ = fmt.Fprintln(os.Stdout)
+		}
+
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+	}
+}
+
+func loadPanelStatus(ctx context.Context) (panelStatus, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return panelStatus{}, err
+	}
+
+	status := panelStatus{WebURL: adminWebURL(cfg.AdminListenAddr)}
+	checkCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+	defer cancel()
+
+	req, err := stdhttp.NewRequestWithContext(checkCtx, stdhttp.MethodGet, status.WebURL+"/healthz", nil)
+	if err != nil {
+		return panelStatus{}, err
+	}
+
+	resp, err := stdhttp.DefaultClient.Do(req)
+	if err == nil {
+		defer resp.Body.Close()
+		status.Running = resp.StatusCode == stdhttp.StatusOK
+		status.Error = resp.StatusCode >= stdhttp.StatusInternalServerError
+	}
+
+	return status, nil
+}
+
+func printPanelStatus(w io.Writer, status panelStatus) {
+	icon := "\033[31m●\033[0m"
+	state := "stopped"
+	switch {
+	case status.Running:
+		icon = "\033[32m●\033[0m"
+		state = "running"
+	case status.Error:
+		icon = "\033[33m●\033[0m"
+		state = "error"
+	}
+	_, _ = fmt.Fprintf(w, "%s FlowPanel: %s\n", icon, state)
+	_, _ = fmt.Fprintf(w, "Web UI: %s\n", status.WebURL)
+}
+
+func adminWebURL(listenAddr string) string {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return "http://" + listenAddr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+func runBackupCreateCommand(input backup.CreateInput) error {
 	if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
 		return fmt.Errorf("select at least one backup scope")
 	}
