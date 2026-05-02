@@ -662,7 +662,7 @@ export function DashboardPage() {
     </section>
   );
   const leftDashboardSection = systemStatus ? (
-    <div className="grid gap-5 2xl:grid-cols-2">
+    <div className="space-y-5">
       {pm2ProcessesSection}
       <SystemMetricsCard history={systemStatusHistory} status={systemStatus} />
     </div>
