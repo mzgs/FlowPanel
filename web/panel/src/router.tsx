@@ -29,6 +29,7 @@ import {
   TerminalSquare,
   World,
 } from "@/components/icons/lucide-icons";
+import { FlowPanelMark } from "@/components/flowpanel-mark";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -230,9 +231,7 @@ function RootLayout() {
         <SidebarHeader>
           <div className="px-2 py-1">
             <Link to="/" className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <LayoutDashboard className="h-4 w-4" />
-              </div>
+              <FlowPanelMark />
               <div className="min-w-0">
                 <div className="text-sm font-semibold tracking-tight">FlowPanel</div>
                 <div className="text-xs text-muted-foreground">Admin panel</div>

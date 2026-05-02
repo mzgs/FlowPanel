@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FieldError } from "@/components/field-error";
-import { ShieldCheck } from "@/components/icons/lucide-icons";
+import { FlowPanelMark } from "@/components/flowpanel-mark";
 
 type AuthPageProps = {
   setupRequired: boolean;
@@ -59,9 +59,7 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
         className="w-full max-w-[360px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] p-5 shadow-[var(--app-shadow)]"
       >
         <div className="mb-5 flex items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <ShieldCheck className="h-4 w-4" />
-          </div>
+          <FlowPanelMark className="h-9 w-9 shrink-0" />
           <div className="min-w-0">
             <h1 className="text-[17px] font-semibold leading-6 text-foreground">Sign in</h1>
             <p className="text-[13px] leading-5 text-muted-foreground">Use your FlowPanel admin credentials.</p>
