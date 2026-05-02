@@ -326,22 +326,16 @@ function RootLayout() {
               </div>
             </div>
 
-            <div className="hidden flex-1 px-4 lg:flex lg:max-w-xl">
-              <label className="relative block w-full">
+            <div className="flex items-center gap-2">
+              <label className="relative hidden w-64 lg:block">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input
                   readOnly
                   value=""
-                  placeholder="Search panel actions, files, and services"
-                  className="h-9 w-full rounded-md border border-input bg-transparent pl-10 pr-4 text-sm text-foreground outline-none placeholder:text-muted-foreground dark:bg-input/30"
+                  placeholder="Search panel"
+                  className="h-9 w-full rounded-md border border-input bg-transparent pl-10 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground dark:bg-input/30"
                 />
               </label>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="hidden rounded-md border bg-[var(--app-surface)] px-3 py-1.5 text-xs text-muted-foreground md:block">
-                Local workspace
-              </div>
               <Button variant="ghost" size="icon">
                 <Bell className="h-4 w-4" />
                 <span className="sr-only">Notifications</span>
