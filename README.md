@@ -27,7 +27,7 @@ FlowPanel currently includes:
 - FTP runtime, global FTP accounts, and domain FTP account management
 - Activity log, domain logs, system monitor, and Linux task-manager tools
 
-## Install Latest Release
+## Install / Update Latest Release
 
 ### Linux / macOS
 

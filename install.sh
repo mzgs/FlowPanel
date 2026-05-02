@@ -82,13 +82,19 @@ admin_panel_url() {
 }
 
 print_success() {
-  service_command="$1"
-  env_file="$2"
-  admin_username="$3"
-  admin_password="$4"
+  action="$1"
+  service_command="$2"
+  env_file="$3"
+  admin_username="$4"
+  admin_password="$5"
 
-  echo
-  echo "FlowPanel installed and started successfully."
+  if [ "$action" = "update" ]; then
+    echo
+    echo "FlowPanel updated and restarted successfully."
+  else
+    echo
+    echo "FlowPanel installed and started successfully."
+  fi
   echo "Admin panel: $(admin_panel_url "$env_file")"
   echo "Username:    $admin_username"
   echo "Password:    $admin_password"
@@ -96,20 +102,56 @@ print_success() {
   echo "Config:      $env_file"
 }
 
+installed_action() {
+  if "$@"; then
+    echo "update"
+  else
+    echo "install"
+  fi
+}
+
+linux_installed() {
+  [ -x "$BIN_DIR/$APP" ] || [ -f "/etc/systemd/system/$APP.service" ] || [ -f "/etc/flowpanel/flowpanel.env" ]
+}
+
+macos_installed() {
+  [ -x "$BIN_DIR/$APP" ] || [ -f "/Library/LaunchDaemons/com.mzgs.flowpanel.plist" ] || [ -f "/usr/local/etc/flowpanel/flowpanel.env" ]
+}
+
 install_binary() {
   goos="$1"
   arch="$2"
+  action="$3"
   tmp_file="$(mktemp)"
   url="https://github.com/$REPO/releases/latest/download/$APP-$goos-$arch"
 
   trap 'rm -f "$tmp_file"' EXIT INT TERM
-  echo "Downloading FlowPanel latest release for $goos/$arch..."
+  if [ "$action" = "update" ]; then
+    echo "FlowPanel is already installed. Downloading latest release for $goos/$arch..."
+  else
+    echo "Downloading FlowPanel latest release for $goos/$arch..."
+  fi
   download "$url" "$tmp_file"
 
   as_root mkdir -p "$BIN_DIR"
   as_root install -m 0755 "$tmp_file" "$BIN_DIR/$APP"
   rm -f "$tmp_file"
   trap - EXIT INT TERM
+}
+
+stop_linux_service() {
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$APP"; then
+    echo "Stopping running FlowPanel service..."
+    as_root systemctl stop "$APP"
+  fi
+}
+
+stop_macos_service() {
+  plist_file="/Library/LaunchDaemons/com.mzgs.flowpanel.plist"
+  if [ -f "$plist_file" ] && as_root launchctl print system/com.mzgs.flowpanel >/dev/null 2>&1; then
+    echo "Stopping running FlowPanel service..."
+    as_root launchctl bootout system "$plist_file" >/dev/null 2>&1 || true
+  fi
 }
 
 detect_arch() {
@@ -124,6 +166,8 @@ detect_arch() {
 }
 
 install_linux_service() {
+  action="$1"
+
   need_cmd systemctl
 
   env_dir="/etc/flowpanel"
@@ -184,10 +228,12 @@ EOF
   as_root systemctl enable "$APP"
   as_root systemctl restart "$APP"
 
-  print_success "systemctl status $APP" "$env_file" "$admin_username" "$admin_password"
+  print_success "$action" "systemctl status $APP" "$env_file" "$admin_username" "$admin_password"
 }
 
 install_macos_service() {
+  action="$1"
+
   env_dir="/usr/local/etc/flowpanel"
   env_file="$env_dir/flowpanel.env"
   data_dir="/Library/Application Support/FlowPanel"
@@ -259,19 +305,23 @@ EOF
   as_root launchctl enable system/com.mzgs.flowpanel
   as_root launchctl kickstart -k system/com.mzgs.flowpanel
 
-  print_success "launchctl print system/com.mzgs.flowpanel" "$env_file" "$admin_username" "$admin_password"
+  print_success "$action" "launchctl print system/com.mzgs.flowpanel" "$env_file" "$admin_username" "$admin_password"
 }
 
 arch="$(detect_arch)"
 
 case "$(uname -s)" in
   Linux)
-    install_binary linux "$arch"
-    install_linux_service
+    action="$(installed_action linux_installed)"
+    stop_linux_service
+    install_binary linux "$arch" "$action"
+    install_linux_service "$action"
     ;;
   Darwin)
-    install_binary darwin "$arch"
-    install_macos_service
+    action="$(installed_action macos_installed)"
+    stop_macos_service
+    install_binary darwin "$arch" "$action"
+    install_macos_service "$action"
     ;;
   *)
     echo "Unsupported operating system: $(uname -s)" >&2
