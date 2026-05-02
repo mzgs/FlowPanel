@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -123,7 +125,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newStatusCommand(), newCredentialsCommand(), newBackupCommand())
+	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newRepairCommand(), newStatusCommand(), newCredentialsCommand(), newBackupCommand())
 
 	return cmd
 }
@@ -173,6 +175,17 @@ func newRestartCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRestartCommand(cmd.Context(), cmd.OutOrStdout())
+		},
+	}
+}
+
+func newRepairCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "repair",
+		Short: "Repair panel storage and restart FlowPanel",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRepairPanelCommand(cmd.Context(), cmd.OutOrStdout())
 		},
 	}
 }
@@ -276,9 +289,10 @@ func runMenu() error {
 		_, _ = fmt.Fprintln(os.Stdout, "(1) Start panel")
 		_, _ = fmt.Fprintln(os.Stdout, "(2) Stop panel")
 		_, _ = fmt.Fprintln(os.Stdout, "(3) Restart panel")
-		_, _ = fmt.Fprintln(os.Stdout, "(4) Change panel username")
-		_, _ = fmt.Fprintln(os.Stdout, "(5) Change panel password")
-		_, _ = fmt.Fprintln(os.Stdout, "(6) Show help")
+		_, _ = fmt.Fprintln(os.Stdout, "(4) Repair panel")
+		_, _ = fmt.Fprintln(os.Stdout, "(5) Change panel username")
+		_, _ = fmt.Fprintln(os.Stdout, "(6) Change panel password")
+		_, _ = fmt.Fprintln(os.Stdout, "(7) Show help")
 		_, _ = fmt.Fprintln(os.Stdout, "(0) Exit")
 		_, _ = fmt.Fprint(os.Stdout, "Select: ")
 
@@ -313,6 +327,11 @@ func runMenu() error {
 				return err
 			}
 		case "4":
+			if err := runRepairPanelCommand(context.Background(), os.Stdout); err != nil {
+				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+			}
+			pauseMenu(reader, os.Stdout)
+		case "5":
 			username, err := promptMenuLine(reader, os.Stdout, "New panel username: ")
 			if err != nil {
 				return err
@@ -321,7 +340,7 @@ func runMenu() error {
 				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
 			}
 			pauseMenu(reader, os.Stdout)
-		case "5":
+		case "6":
 			password, err := promptConfirmedPassword(os.Stdout)
 			if err != nil {
 				return err
@@ -330,7 +349,7 @@ func runMenu() error {
 				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
 			}
 			pauseMenu(reader, os.Stdout)
-		case "6":
+		case "7":
 			if err := newRootCommand().Help(); err != nil {
 				return err
 			}
@@ -448,6 +467,126 @@ func runRestartCommand(ctx context.Context, w io.Writer) error {
 
 	_, _ = fmt.Fprintln(w, "Starting FlowPanel...")
 	return runServer()
+}
+
+func runRepairPanelCommand(ctx context.Context, w io.Writer) error {
+	if _, err := loadInstallerEnvFile(); err != nil {
+		return err
+	}
+	if err := repairPanelStorage(ctx, w); err != nil {
+		return err
+	}
+
+	status, err := loadPanelStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if status.Running || status.Error {
+		if err := runStopCommand(ctx, w); err != nil {
+			return err
+		}
+	}
+
+	_, _ = fmt.Fprintln(w, "Starting FlowPanel...")
+	return startPanelDetached(ctx, w, status.WebURL)
+}
+
+func repairPanelStorage(ctx context.Context, w io.Writer) error {
+	if err := config.EnsureFlowPanelDataPath(); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	dbConn, err := db.Open(ctx, cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() {
+		_ = dbConn.Close()
+	}()
+
+	stores := newPanelStores(dbConn)
+	if err := ensureStores(
+		ctx,
+		namedStore{name: "domain", store: stores.Domain},
+		namedStore{name: "auth", store: stores.Auth},
+		namedStore{name: "mariadb", store: stores.MariaDB},
+		namedStore{name: "pm2", store: stores.PM2},
+		namedStore{name: "cron", store: stores.Cron},
+		namedStore{name: "event", store: stores.Events},
+		namedStore{name: "settings", store: stores.Settings},
+		namedStore{name: "ftp", store: stores.FTP},
+		namedStore{name: "system monitor", store: stores.SystemMonitor},
+	); err != nil {
+		return err
+	}
+
+	authService := auth.NewService(stores.Auth)
+	if _, ok, err := authService.CurrentAdmin(ctx); err != nil {
+		return fmt.Errorf("load panel admin user: %w", err)
+	} else if ok {
+		_, _ = fmt.Fprintln(w, "Panel storage repaired")
+		return nil
+	}
+
+	username, password, generated, err := repairPanelCredentials(cfg)
+	if err != nil {
+		return err
+	}
+	if _, err := authService.CreateInitialAdmin(ctx, auth.CreateInitialAdminInput{
+		Username: username,
+		Password: password,
+	}); err != nil {
+		var validation auth.ValidationErrors
+		if errors.As(err, &validation) {
+			return fmt.Errorf("invalid initial admin credentials: %v", map[string]string(validation))
+		}
+		return fmt.Errorf("ensure initial admin user: %w", err)
+	}
+	if err := syncPanelCredentialsEnvFile(username, password); err != nil {
+		return fmt.Errorf("panel admin created in database but env file update failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(w, "Panel admin created: %s\n", username)
+	if generated {
+		_, _ = fmt.Fprintf(w, "Generated panel password: %s\n", password)
+	}
+	return nil
+}
+
+func repairPanelCredentials(cfg config.Config) (string, string, bool, error) {
+	username := strings.TrimSpace(cfg.InitialAdmin.Username)
+	password := strings.TrimSpace(cfg.InitialAdmin.Password)
+	if username != "" && password != "" {
+		return username, password, false, nil
+	}
+
+	usernameSuffix, err := randomHex(4)
+	if err != nil {
+		return "", "", false, err
+	}
+	generatedPassword, err := randomHex(18)
+	if err != nil {
+		return "", "", false, err
+	}
+
+	return "admin-" + usernameSuffix, "fp-" + generatedPassword, true, nil
+}
+
+func randomHex(byteCount int) (string, error) {
+	data := make([]byte, byteCount)
+	if _, err := rand.Read(data); err != nil {
+		return "", fmt.Errorf("generate random credentials: %w", err)
+	}
+
+	return hex.EncodeToString(data), nil
 }
 
 func startPanelDetached(ctx context.Context, w io.Writer, webURL string) error {
