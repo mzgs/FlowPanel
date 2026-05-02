@@ -4,6 +4,8 @@ FlowPanel is a self-hosted server control panel for managing websites, runtimes,
 
 The project is a Go service with an embedded React/Vite panel. The Go process serves the admin panel, stores state in SQLite, runs an embedded Caddy runtime for managed domains, and exposes APIs for operational tasks.
 
+![FlowPanel dashboard featured image](docs/images/flowpanel-featured.png)
+
 ## Features
 
 FlowPanel currently includes:
