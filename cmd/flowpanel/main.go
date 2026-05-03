@@ -292,7 +292,8 @@ func runMenu() error {
 		_, _ = fmt.Fprintln(os.Stdout, "(4) Repair panel")
 		_, _ = fmt.Fprintln(os.Stdout, "(5) Change panel username")
 		_, _ = fmt.Fprintln(os.Stdout, "(6) Change panel password")
-		_, _ = fmt.Fprintln(os.Stdout, "(7) Show help")
+		_, _ = fmt.Fprintln(os.Stdout, "(7) Create backup")
+		_, _ = fmt.Fprintln(os.Stdout, "(8) Show help")
 		_, _ = fmt.Fprintln(os.Stdout, "(0) Exit")
 		_, _ = fmt.Fprint(os.Stdout, "Select: ")
 
@@ -350,6 +351,15 @@ func runMenu() error {
 			}
 			pauseMenu(reader, os.Stdout)
 		case "7":
+			input, err := promptBackupCreateInput(reader, os.Stdout)
+			if err != nil {
+				return err
+			}
+			if err := runBackupCreateCommand(input); err != nil {
+				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+			}
+			pauseMenu(reader, os.Stdout)
+		case "8":
 			if err := newRootCommand().Help(); err != nil {
 				return err
 			}
@@ -383,6 +393,69 @@ func promptMenuLine(reader *bufio.Reader, w io.Writer, label string) (string, er
 	}
 
 	return strings.TrimSpace(value), nil
+}
+
+func promptBackupCreateInput(reader *bufio.Reader, w io.Writer) (backup.CreateInput, error) {
+	location, err := promptBackupLocation(reader, w)
+	if err != nil {
+		return backup.CreateInput{}, err
+	}
+
+	input := backup.CreateInput{Location: location}
+	prompts := []struct {
+		label string
+		set   *bool
+	}{
+		{label: "Include FlowPanel data? [Y/n]: ", set: &input.IncludePanelData},
+		{label: "Include site files? [Y/n]: ", set: &input.IncludeSites},
+		{label: "Include database dumps? [Y/n]: ", set: &input.IncludeDatabases},
+	}
+	for _, prompt := range prompts {
+		enabled, err := promptMenuBool(reader, w, prompt.label, true)
+		if err != nil {
+			return backup.CreateInput{}, err
+		}
+		*prompt.set = enabled
+	}
+
+	return input, nil
+}
+
+func promptBackupLocation(reader *bufio.Reader, w io.Writer) (string, error) {
+	for {
+		value, err := promptMenuLine(reader, w, "Backup location local/google_drive [local]: ")
+		if err != nil {
+			return "", err
+		}
+
+		switch strings.ReplaceAll(strings.ToLower(value), " ", "_") {
+		case "", "local", "l", "1":
+			return backup.LocationLocal, nil
+		case "google_drive", "googledrive", "drive", "g", "2":
+			return backup.LocationGoogleDrive, nil
+		default:
+			_, _ = fmt.Fprintln(w, "Enter local or google_drive.")
+		}
+	}
+}
+
+func promptMenuBool(reader *bufio.Reader, w io.Writer, label string, defaultValue bool) (bool, error) {
+	for {
+		value, err := promptMenuLine(reader, w, label)
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(value) {
+		case "":
+			return defaultValue, nil
+		case "y", "yes", "1", "true":
+			return true, nil
+		case "n", "no", "0", "false":
+			return false, nil
+		default:
+			_, _ = fmt.Fprintln(w, "Enter yes or no.")
+		}
+	}
 }
 
 func promptConfirmedPassword(w io.Writer) (string, error) {
