@@ -30,6 +30,7 @@ import {
   Globe as LucideGlobe,
   Grid2x2 as LucideGrid2x2,
   HardDrive as LucideHardDrive,
+  Info as LucideInfo,
   LayoutDashboard as LucideLayoutDashboard,
   List as LucideList,
   LogOut as LucideLogOut,
@@ -104,6 +105,7 @@ export const Globe = icon(LucideGlobe);
 export const GoogleDrive = icon(LucideCloud);
 export const Grid2X2 = icon(LucideGrid2x2);
 export const HardDrive = icon(LucideHardDrive);
+export const Info = icon(LucideInfo);
 export const LayoutDashboard = icon(LucideLayoutDashboard);
 export const List = icon(LucideList);
 export const LogOut = icon(LucideLogOut);

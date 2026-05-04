@@ -7,6 +7,7 @@ import {
   Database,
   Download,
   HardDrive,
+  Info,
   MemoryStick,
   Upload,
   Monitor,
@@ -16,6 +17,7 @@ import {
 } from "@/components/icons/lucide-icons";
 import { DiskUsageCard } from "@/components/disk-usage-card";
 import type { SystemStatusSample } from "@/components/system-metrics-card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type StatusTone = "cpu" | "memory" | "disk" | "network";
 
@@ -276,15 +278,46 @@ function SystemOperationalCard({
   status: SystemStatus;
 }) {
   const items = [
-    { icon: <Server className="h-4 w-4" />, label: "Web Server", ready: health.webServer },
-    { icon: <Database className="h-4 w-4" />, label: "Database", ready: health.database },
-    { icon: <Cpu className="h-4 w-4" />, label: "Runtime", ready: health.runtime },
-    { icon: <TimerReset className="h-4 w-4" />, label: "Backup", ready: health.backup },
-    { icon: <Monitor className="h-4 w-4" />, label: "Monitoring", ready: history.length > 0 },
+    {
+      fix: "Open Applications > Caddy, review the config state, then start or restart Caddy.",
+      icon: <Server className="h-4 w-4" />,
+      label: "Web Server",
+      problem: "Caddy is stopped or its configuration is not loaded.",
+      ready: health.webServer,
+    },
+    {
+      fix: "Open Applications > MariaDB and start or restart the database service.",
+      icon: <Database className="h-4 w-4" />,
+      label: "Database",
+      problem: "MariaDB is not ready.",
+      ready: health.database,
+    },
+    {
+      fix: "Open Applications > PHP and install, start, or restart PHP-FPM.",
+      icon: <Cpu className="h-4 w-4" />,
+      label: "Runtime",
+      problem: "The PHP runtime is not ready.",
+      ready: health.runtime,
+    },
+    {
+      fix: "Open Backups and enable scheduled backups, then start the backup scheduler.",
+      icon: <TimerReset className="h-4 w-4" />,
+      label: "Backup",
+      problem: "Scheduled backups are disabled or the scheduler is stopped.",
+      ready: health.backup,
+    },
+    {
+      fix: "Wait for the next system sample. If it stays empty, check that FlowPanel is running normally.",
+      icon: <Monitor className="h-4 w-4" />,
+      label: "Monitoring",
+      problem: "No system monitoring samples have been recorded yet.",
+      ready: history.length > 0,
+    },
   ];
   const known = items.filter((item) => item.ready !== null);
+  const issueItems = known.filter((item) => item.ready === false);
   const allReady = known.length === items.length && known.every((item) => item.ready);
-  const hasIssue = known.some((item) => item.ready === false);
+  const hasIssue = issueItems.length > 0;
   const headline = allReady
     ? "All systems operational"
     : hasIssue
@@ -300,6 +333,30 @@ function SystemOperationalCard({
           <Check className="h-3.5 w-3.5" />
         </span>
         <span>{headline}</span>
+        {hasIssue ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Show system status problems and fixes"
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-ring)]"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={6} className="max-w-80 text-left">
+              <div className="space-y-2">
+                {issueItems.map((item) => (
+                  <div key={item.label}>
+                    <div className="font-semibold">{item.label}</div>
+                    <div className="mt-0.5 opacity-90">{item.problem}</div>
+                    <div className="mt-0.5 opacity-80">Fix: {item.fix}</div>
+                  </div>
+                ))}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
       </div>
       <div className="mt-3 divide-y divide-[var(--app-border)] border-t border-[var(--app-border)]">
         {items.map((item) => (
