@@ -11,7 +11,7 @@ If tag is omitted, the next vMAJOR.MINOR.PATCH tag is selected automatically.
 If the requested tag already exists, the patch version is increased until an
 available tag is found.
 
-Requirements: git, curl, GITHUB_TOKEN with repo release permissions, go, npm.
+Requirements: git, curl, go, npm, and an HTTPS GitHub token in .git/config.
 
 Options:
   --title <title>        Release title. Defaults to the tag.
@@ -64,7 +64,7 @@ cd "$repo_root"
 
 github_repo() {
   local url repo
-  url="$(git config --get remote.origin.url)"
+  url="$(origin_url)"
   case "$url" in
     https://github.com/* | https://*@github.com/*)
       repo="${url#*github.com/}"
@@ -73,12 +73,33 @@ github_repo() {
       repo="${url#git@github.com:}"
       ;;
     *)
-      echo "cannot derive GitHub repo from origin URL: $url" >&2
+      echo "cannot derive GitHub repo from origin URL in .git/config" >&2
       exit 1
       ;;
   esac
   repo="${repo%.git}"
   printf '%s\n' "$repo"
+}
+
+origin_url() {
+  git config --file "$repo_root/.git/config" --get remote.origin.url
+}
+
+github_token() {
+  local auth url
+  url="$(origin_url)"
+  case "$url" in
+    https://*:*@github.com/*)
+      auth="${url#https://}"
+      auth="${auth%@github.com/*}"
+      printf '%s\n' "${auth#*:}"
+      ;;
+    *)
+      echo "origin URL in .git/config must include an HTTPS GitHub token" >&2
+      echo "expected: https://USER:TOKEN@github.com/OWNER/REPO.git" >&2
+      exit 1
+      ;;
+  esac
 }
 
 json_payload() {
@@ -108,7 +129,7 @@ api_request() {
   out="$(mktemp)"
   if [[ -n "$data" ]]; then
     status="$(curl -sS -w '%{http_code}' -o "$out" -X "$method" \
-      -H "Authorization: Bearer $GITHUB_TOKEN" \
+      -H "Authorization: Bearer $token" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       -H "Content-Type: application/json" \
@@ -116,7 +137,7 @@ api_request() {
       "$url" || true)"
   else
     status="$(curl -sS -w '%{http_code}' -o "$out" -X "$method" \
-      -H "Authorization: Bearer $GITHUB_TOKEN" \
+      -H "Authorization: Bearer $token" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       "$url" || true)"
@@ -196,6 +217,7 @@ for cmd in git curl node go npm; do
 done
 
 repo="$(github_repo)"
+token="$(github_token)"
 
 if [[ -n "$tag" ]] && ! is_semver_tag "$tag"; then
   echo "tag must use vMAJOR.MINOR.PATCH format, for example v0.1.0" >&2
@@ -235,18 +257,13 @@ if [[ "$dry_run" == "1" ]]; then
   exit 0
 fi
 
-if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  echo "GITHUB_TOKEN is required to publish the release" >&2
-  exit 1
-fi
-
 echo "Publishing $tag"
 release_json="$(api_request POST "https://api.github.com/repos/$repo/releases" "$(json_payload)")"
 upload_url="$(printf '%s' "$release_json" | json_field upload_url)"
 upload_url="${upload_url%\{*}?name=$(basename "$asset")"
 
 curl -fsS -X POST \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Authorization: Bearer $token" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   -H "Content-Type: application/octet-stream" \
