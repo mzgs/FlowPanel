@@ -68,6 +68,50 @@ read_env_key() {
   sed -n "s/^\(export \)\?$2=//p" "$1" 2>/dev/null | tail -n 1
 }
 
+public_ip() {
+  ip_addr=""
+  for url in https://api.ipify.org https://ipv4.icanhazip.com https://v4.ident.me; do
+    if command -v curl >/dev/null 2>&1; then
+      ip_addr="$(curl -fsSL --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+    elif command -v wget >/dev/null 2>&1; then
+      ip_addr="$(wget -qO- -T 5 -t 1 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+    else
+      break
+    fi
+    case "$ip_addr" in
+      *[!0-9.]* | "" | *.*.*.*.*) ip_addr="" ;;
+      *.*.*.*) printf '%s\n' "$ip_addr"; return 0 ;;
+    esac
+  done
+  return 0
+}
+
+primary_ip() {
+  ip_addr=""
+  if command -v ip >/dev/null 2>&1; then
+    ip_addr="$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([^ ]*\).*/\1/p' | head -n 1 || true)"
+  fi
+  if [ -z "$ip_addr" ] && command -v hostname >/dev/null 2>&1; then
+    ip_addr="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  if [ -z "$ip_addr" ] && command -v ipconfig >/dev/null 2>&1; then
+    for iface in en0 en1; do
+      ip_addr="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+      [ -n "$ip_addr" ] && break
+    done
+  fi
+  if [ -z "$ip_addr" ] && command -v ifconfig >/dev/null 2>&1; then
+    ip_addr="$(ifconfig 2>/dev/null | awk '/inet / && $2 != "127.0.0.1" { sub(/^addr:/, "", $2); print $2; exit }' || true)"
+  fi
+  printf '%s\n' "$ip_addr"
+}
+
+admin_panel_host() {
+  ip_addr="$(public_ip)"
+  [ -n "$ip_addr" ] || ip_addr="$(primary_ip)"
+  printf '%s\n' "${ip_addr:-localhost}"
+}
+
 admin_panel_url() {
   addr="$(read_env_key "$1" FLOWPANEL_ADMIN_LISTEN_ADDR | sed "s/^['\"]//;s/['\"]$//")"
   if [ -z "$addr" ]; then
@@ -75,8 +119,9 @@ admin_panel_url() {
   fi
 
   case "$addr" in
-    :*) printf 'http://localhost%s\n' "$addr" ;;
-    0.0.0.0:*) printf 'http://localhost:%s\n' "${addr#0.0.0.0:}" ;;
+    :*) printf 'http://%s%s\n' "$(admin_panel_host)" "$addr" ;;
+    0.0.0.0:*) printf 'http://%s:%s\n' "$(admin_panel_host)" "${addr#0.0.0.0:}" ;;
+    "[::]:"*) printf 'http://%s:%s\n' "$(admin_panel_host)" "${addr##*:}" ;;
     *) printf 'http://%s\n' "$addr" ;;
   esac
 }
@@ -215,7 +260,7 @@ After=network-online.target
 Type=simple
 EnvironmentFile=$env_file
 WorkingDirectory=$data_dir
-ExecStart=$BIN_DIR/$APP
+ExecStart=$BIN_DIR/$APP serve
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1048576
@@ -281,7 +326,7 @@ EOF
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>. "$env_file"; exec "$BIN_DIR/$APP"</string>
+    <string>. "$env_file"; exec "$BIN_DIR/$APP" serve</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$data_dir</string>
