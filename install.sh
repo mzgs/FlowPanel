@@ -139,6 +139,13 @@ print_success() {
     echo "FlowPanel updated and restarted successfully."
   else
     echo
+    cat <<'EOF'
+  _____ _                 ____                  _
+ |  ___| | _____      __ |  _ \ __ _ _ __   ___| |
+ | |_  | |/ _ \ \ /\ / / | |_) / _` | '_ \ / _ \ |
+ |  _| | | (_) \ V  V /  |  __/ (_| | | | |  __/ |
+ |_|   |_|\___/ \_/\_/   |_|   \__,_|_| |_|\___|_|
+EOF
     echo "FlowPanel installed and started successfully."
   fi
   if [ -n "$installed_version" ]; then
