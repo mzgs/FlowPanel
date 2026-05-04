@@ -72,6 +72,11 @@ type namedStore struct {
 	store storageEnsurer
 }
 
+const (
+	installedBinaryPath = "/usr/local/bin/flowpanel"
+	macosLaunchdLabel   = "com.mzgs.flowpanel"
+)
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "flowpanel: %v\n", err)
@@ -293,7 +298,8 @@ func runMenu() error {
 		_, _ = fmt.Fprintln(os.Stdout, "(5) Change panel username")
 		_, _ = fmt.Fprintln(os.Stdout, "(6) Change panel password")
 		_, _ = fmt.Fprintln(os.Stdout, "(7) Create backup")
-		_, _ = fmt.Fprintln(os.Stdout, "(8) Show help")
+		_, _ = fmt.Fprintln(os.Stdout, "(8) Uninstall FlowPanel")
+		_, _ = fmt.Fprintln(os.Stdout, "(9) Show help")
 		_, _ = fmt.Fprintln(os.Stdout, "(0) Exit")
 		_, _ = fmt.Fprint(os.Stdout, "Select: ")
 
@@ -360,6 +366,11 @@ func runMenu() error {
 			}
 			pauseMenu(reader, os.Stdout)
 		case "8":
+			if err := promptUninstall(reader, os.Stdout); err != nil {
+				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+			}
+			pauseMenu(reader, os.Stdout)
+		case "9":
 			if err := newRootCommand().Help(); err != nil {
 				return err
 			}
@@ -492,6 +503,146 @@ func promptHiddenPassword(w io.Writer, label string) (string, error) {
 func pauseMenu(reader *bufio.Reader, w io.Writer) {
 	_, _ = fmt.Fprint(w, "Press Enter to continue...")
 	_, _ = reader.ReadString('\n')
+}
+
+func promptUninstall(reader *bufio.Reader, w io.Writer) error {
+	removeData, err := promptMenuBool(reader, w, "Remove FlowPanel config and data too? [y/N]: ", false)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(w, "This will stop FlowPanel and remove its service files and installed binary.")
+	if removeData {
+		_, _ = fmt.Fprintln(w, "FlowPanel config and data directories will also be removed.")
+	} else {
+		_, _ = fmt.Fprintln(w, "FlowPanel config and data directories will be preserved.")
+	}
+	confirmation, err := promptMenuLine(reader, w, `Type "uninstall" to continue: `)
+	if err != nil {
+		return err
+	}
+	if strings.ToLower(confirmation) != "uninstall" {
+		_, _ = fmt.Fprintln(w, "Uninstall canceled")
+		return nil
+	}
+
+	return runUninstallCommand(context.Background(), w, removeData)
+}
+
+func runUninstallCommand(ctx context.Context, w io.Writer, removeData bool) error {
+	_, _ = loadInstallerEnvFile()
+
+	if err := stopInstalledService(ctx, w); err != nil {
+		return err
+	}
+	status, statusErr := loadPanelStatus(ctx)
+	if statusErr == nil && (status.Running || status.Error) {
+		if err := runStopCommand(ctx, w); err != nil {
+			_, _ = fmt.Fprintf(w, "Warning: %v\n", err)
+		}
+	}
+	if err := removeInstalledFiles(ctx, w, removeData); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(w, "FlowPanel uninstalled")
+	if !removeData {
+		_, _ = fmt.Fprintln(w, "Config and data were preserved.")
+	}
+	return nil
+}
+
+func stopInstalledService(ctx context.Context, w io.Writer) error {
+	switch runtime.GOOS {
+	case "linux":
+		if !pathExists("/etc/systemd/system/flowpanel.service") {
+			return nil
+		}
+		if err := runRootCommand(ctx, w, true, "systemctl", "stop", "flowpanel"); err != nil {
+			return err
+		}
+		return runRootCommand(ctx, w, true, "systemctl", "disable", "flowpanel")
+	case "darwin":
+		plist := "/Library/LaunchDaemons/" + macosLaunchdLabel + ".plist"
+		if !pathExists(plist) {
+			return nil
+		}
+		if err := runRootCommand(ctx, w, true, "launchctl", "bootout", "system", plist); err != nil {
+			return err
+		}
+		return runRootCommand(ctx, w, true, "launchctl", "disable", "system/"+macosLaunchdLabel)
+	default:
+		return fmt.Errorf("uninstall is not supported on %s", runtime.GOOS)
+	}
+}
+
+func removeInstalledFiles(ctx context.Context, w io.Writer, removeData bool) error {
+	for _, path := range uninstallFilePaths() {
+		if err := runRootCommand(ctx, w, false, "rm", "-f", path); err != nil {
+			return err
+		}
+	}
+	if runtime.GOOS == "linux" {
+		if err := runRootCommand(ctx, w, true, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	if !removeData {
+		return nil
+	}
+
+	for _, path := range uninstallDataPaths() {
+		if err := runRootCommand(ctx, w, false, "rm", "-rf", path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func uninstallFilePaths() []string {
+	paths := []string{installedBinaryPath}
+	switch runtime.GOOS {
+	case "linux":
+		paths = append(paths, "/etc/systemd/system/flowpanel.service")
+	case "darwin":
+		paths = append(paths, "/Library/LaunchDaemons/"+macosLaunchdLabel+".plist")
+	}
+	return paths
+}
+
+func uninstallDataPaths() []string {
+	switch runtime.GOOS {
+	case "linux":
+		return []string{"/etc/flowpanel", "/var/lib/flowpanel", config.FLOWPANEL_PATH}
+	case "darwin":
+		return []string{"/usr/local/etc/flowpanel", "/Library/Application Support/FlowPanel", "/Library/Logs/FlowPanel", config.FLOWPANEL_PATH}
+	default:
+		return nil
+	}
+}
+
+func runRootCommand(ctx context.Context, w io.Writer, optional bool, name string, args ...string) error {
+	commandName, commandArgs := rootCommand(name, args...)
+	cmd := exec.CommandContext(ctx, commandName, commandArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = w
+	cmd.Stderr = w
+	if err := cmd.Run(); err != nil && !optional {
+		return fmt.Errorf("%s failed: %w", strings.Join(append([]string{commandName}, commandArgs...), " "), err)
+	}
+	return nil
+}
+
+func rootCommand(name string, args ...string) (string, []string) {
+	if os.Geteuid() == 0 {
+		return name, args
+	}
+	return "sudo", append([]string{name}, args...)
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func runStopCommand(ctx context.Context, w io.Writer) error {
