@@ -132,6 +132,7 @@ print_success() {
   env_file="$3"
   admin_username="$4"
   admin_password="$5"
+  installed_version="$6"
 
   if [ "$action" = "update" ]; then
     echo
@@ -139,6 +140,9 @@ print_success() {
   else
     echo
     echo "FlowPanel installed and started successfully."
+  fi
+  if [ -n "$installed_version" ]; then
+    echo "Version:     $installed_version"
   fi
   echo "Admin panel: $(admin_panel_url "$env_file")"
   echo "Username:    $admin_username"
@@ -182,6 +186,12 @@ install_binary() {
   as_root install -m 0755 "$tmp_file" "$BIN_DIR/$APP"
   rm -f "$tmp_file"
   trap - EXIT INT TERM
+}
+
+installed_version() {
+  if [ -x "$BIN_DIR/$APP" ]; then
+    "$BIN_DIR/$APP" version 2>/dev/null || true
+  fi
 }
 
 stop_linux_service() {
@@ -273,7 +283,7 @@ EOF
   as_root systemctl enable "$APP"
   as_root systemctl restart "$APP"
 
-  print_success "$action" "systemctl status $APP" "$env_file" "$admin_username" "$admin_password"
+  print_success "$action" "systemctl status $APP" "$env_file" "$admin_username" "$admin_password" "$(installed_version)"
 }
 
 install_macos_service() {
@@ -350,7 +360,7 @@ EOF
   as_root launchctl enable system/com.mzgs.flowpanel
   as_root launchctl kickstart -k system/com.mzgs.flowpanel
 
-  print_success "$action" "launchctl print system/com.mzgs.flowpanel" "$env_file" "$admin_username" "$admin_password"
+  print_success "$action" "launchctl print system/com.mzgs.flowpanel" "$env_file" "$admin_username" "$admin_password" "$(installed_version)"
 }
 
 arch="$(detect_arch)"

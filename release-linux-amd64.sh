@@ -245,7 +245,7 @@ if [[ "${ALLOW_DIRTY:-0}" != "1" && -n "$(git status --porcelain)" ]]; then
 fi
 
 echo "Building $asset"
-./build.sh linux amd64
+FLOWPANEL_VERSION="$tag" ./build.sh linux amd64
 
 if [[ ! -x "$asset" ]]; then
   echo "expected executable asset was not created: $asset" >&2

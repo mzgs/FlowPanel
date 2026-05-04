@@ -77,6 +77,8 @@ const (
 	macosLaunchdLabel   = "com.mzgs.flowpanel"
 )
 
+var version = "0.0.0"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "flowpanel: %v\n", err)
@@ -122,6 +124,7 @@ func newRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "flowpanel",
 		Short:         "FlowPanel server control panel",
+		Version:       panelVersion(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -130,7 +133,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newRepairCommand(), newStatusCommand(), newCredentialsCommand(), newBackupCommand())
+	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newRepairCommand(), newStatusCommand(), newVersionCommand(), newCredentialsCommand(), newBackupCommand())
 
 	return cmd
 }
@@ -157,6 +160,18 @@ func newStatusCommand() *cobra.Command {
 				return err
 			}
 			printPanelStatus(cmd.OutOrStdout(), status)
+			return nil
+		},
+	}
+}
+
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Show FlowPanel version",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), panelVersion())
 			return nil
 		},
 	}
@@ -896,8 +911,16 @@ func printPanelStatus(w io.Writer, status panelStatus) {
 		icon = "\033[33m●\033[0m"
 		state = "error"
 	}
-	_, _ = fmt.Fprintf(w, "%s FlowPanel: %s\n", icon, state)
+	_, _ = fmt.Fprintf(w, "%s FlowPanel %s: %s\n", icon, panelVersion(), state)
 	_, _ = fmt.Fprintf(w, "Web UI: %s\n", status.WebURL)
+}
+
+func panelVersion() string {
+	value := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if value == "" {
+		return "0.0.0"
+	}
+	return value
 }
 
 func adminWebURL(listenAddr string) string {

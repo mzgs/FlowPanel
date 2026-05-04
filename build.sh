@@ -15,6 +15,7 @@ Examples:
 Environment overrides:
   GOARCH
   CGO_ENABLED
+  FLOWPANEL_VERSION
 
 Defaults:
   no args -> frontend bundle only
@@ -86,17 +87,19 @@ fi
 
 out_dir="dist"
 out_file="$out_dir/flowpanel-${goos}-${goarch}${ext}"
+version="${FLOWPANEL_VERSION:-0.0.0}"
+version="${version#v}"
 
 mkdir -p "$out_dir"
 
-echo "Building $out_file"
+echo "Building $out_file ($version)"
 
 CGO_ENABLED="${CGO_ENABLED:-0}" \
 GOOS="$goos" \
 GOARCH="$goarch" \
 go build \
   -trimpath \
-  -ldflags="-s -w" \
+  -ldflags="-s -w -X main.version=$version" \
   -o "$out_file" \
   ./cmd/flowpanel
 
