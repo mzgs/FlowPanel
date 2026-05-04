@@ -95,6 +95,7 @@ FlowPanel is configured with environment variables.
 | `FLOWPANEL_DB_PATH` | platform default | SQLite database path. |
 | `FLOWPANEL_SESSION_SECRET` | development secret | Must be explicitly set in production and at least 32 characters. |
 | `FLOWPANEL_SESSION_COOKIE_NAME` | `flowpanel_session` | Admin session cookie name. |
+| `FLOWPANEL_SESSION_COOKIE_SECURE` | `false` | Set to `true` only when the admin panel is served exclusively over HTTPS. |
 | `FLOWPANEL_SESSION_LIFETIME` | `24h` | Go duration string. |
 | `FLOWPANEL_ADMIN_USERNAME` | empty | Initial admin username. Used only when no panel users exist. |
 | `FLOWPANEL_ADMIN_PASSWORD` | empty | Initial admin password. Used only when no panel users exist. |

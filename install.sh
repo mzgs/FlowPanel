@@ -247,6 +247,7 @@ install_linux_service() {
 FLOWPANEL_ENV=production
 FLOWPANEL_ENV_FILE=$env_file
 FLOWPANEL_SESSION_SECRET=$secret
+FLOWPANEL_SESSION_COOKIE_SECURE=false
 FLOWPANEL_ADMIN_LISTEN_ADDR=:8080
 FLOWPANEL_DB_PATH=$data_dir/flowpanel.db
 FLOWPANEL_ADMIN_USERNAME=$admin_username
@@ -312,6 +313,7 @@ install_macos_service() {
 export FLOWPANEL_ENV=production
 export FLOWPANEL_ENV_FILE='$env_file'
 export FLOWPANEL_SESSION_SECRET=$secret
+export FLOWPANEL_SESSION_COOKIE_SECURE=false
 export FLOWPANEL_ADMIN_LISTEN_ADDR=:8080
 export FLOWPANEL_DB_PATH='$data_dir/flowpanel.db'
 export FLOWPANEL_ADMIN_USERNAME=$admin_username

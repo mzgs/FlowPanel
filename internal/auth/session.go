@@ -16,7 +16,7 @@ func NewSessionManager(cfg config.Config) *scs.SessionManager {
 	sessionManager.Cookie.Path = "/"
 	sessionManager.Cookie.Persist = true
 	sessionManager.Cookie.SameSite = http.SameSiteLaxMode
-	sessionManager.Cookie.Secure = cfg.IsProduction()
+	sessionManager.Cookie.Secure = cfg.Session.CookieSecure
 	sessionManager.Lifetime = cfg.Session.Lifetime
 	sessionManager.IdleTimeout = 12 * time.Hour
 

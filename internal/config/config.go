@@ -30,9 +30,10 @@ type DatabaseConfig struct {
 }
 
 type SessionConfig struct {
-	Secret     string
-	CookieName string
-	Lifetime   time.Duration
+	Secret       string
+	CookieName   string
+	CookieSecure bool
+	Lifetime     time.Duration
 }
 
 type InitialAdminConfig struct {
@@ -65,6 +66,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	sessionCookieSecure, err := getBool("FLOWPANEL_SESSION_COOKIE_SECURE", false)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		Env:             getEnv("FLOWPANEL_ENV", "development"),
@@ -77,9 +82,10 @@ func Load() (Config, error) {
 			Path: getEnv("FLOWPANEL_DB_PATH", DefaultDatabasePath()),
 		},
 		Session: SessionConfig{
-			Secret:     getEnv("FLOWPANEL_SESSION_SECRET", defaultDevelopmentSessionSecret),
-			CookieName: getEnv("FLOWPANEL_SESSION_COOKIE_NAME", "flowpanel_session"),
-			Lifetime:   sessionLifetime,
+			Secret:       getEnv("FLOWPANEL_SESSION_SECRET", defaultDevelopmentSessionSecret),
+			CookieName:   getEnv("FLOWPANEL_SESSION_COOKIE_NAME", "flowpanel_session"),
+			CookieSecure: sessionCookieSecure,
+			Lifetime:     sessionLifetime,
 		},
 		InitialAdmin: InitialAdminConfig{
 			Username: getEnv("FLOWPANEL_ADMIN_USERNAME", ""),

@@ -58,7 +58,7 @@ func panelCookie(app *app.App, value string, expires time.Time, maxAge int) *std
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: stdhttp.SameSiteLaxMode,
-		Secure:   app.Config.IsProduction(),
+		Secure:   app.Config.Session.CookieSecure,
 	}
 }
 
