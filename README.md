@@ -32,7 +32,7 @@ FlowPanel currently includes:
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mzgs/FlowPanel/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/mzgs/FlowPanel/refs/heads/main/install.sh | sh
 ```
 
 The installer prints the admin panel URL, generated username, and generated password after the service starts.
