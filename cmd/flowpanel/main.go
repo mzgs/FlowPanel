@@ -283,9 +283,10 @@ func newBackupCreateCommand() *cobra.Command {
 }
 
 type panelStatus struct {
-	Running bool
-	Error   bool
-	WebURL  string
+	Running       bool
+	Error         bool
+	WebURL        string
+	WebUIUsername string
 }
 
 func isTerminal(file *os.File) bool {
@@ -876,12 +877,21 @@ func startPanelDetached(ctx context.Context, w io.Writer, webURL string) error {
 }
 
 func loadPanelStatus(ctx context.Context) (panelStatus, error) {
+	_, _ = loadInstallerEnvFile()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return panelStatus{}, err
 	}
 
-	status := panelStatus{WebURL: adminWebURL(cfg.AdminListenAddr)}
+	status := panelStatus{
+		WebURL:        adminWebURL(cfg.AdminListenAddr),
+		WebUIUsername: strings.TrimSpace(cfg.InitialAdmin.Username),
+	}
+	if username := loadPanelStatusUsername(ctx, cfg.Database.Path); username != "" {
+		status.WebUIUsername = username
+	}
+
 	checkCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
 	defer cancel()
 
@@ -900,6 +910,30 @@ func loadPanelStatus(ctx context.Context) (panelStatus, error) {
 	return status, nil
 }
 
+func loadPanelStatusUsername(ctx context.Context, dbPath string) string {
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" || (dbPath != ":memory:" && !pathExists(dbPath)) {
+		return ""
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+	defer cancel()
+
+	dbConn, err := db.Open(lookupCtx, dbPath)
+	if err != nil {
+		return ""
+	}
+	defer func() {
+		_ = dbConn.Close()
+	}()
+
+	user, ok, err := auth.NewService(auth.NewStore(dbConn)).CurrentAdmin(lookupCtx)
+	if err != nil || !ok {
+		return ""
+	}
+	return user.Username
+}
+
 func printPanelStatus(w io.Writer, status panelStatus) {
 	icon := "\033[31m●\033[0m"
 	state := "stopped"
@@ -913,6 +947,9 @@ func printPanelStatus(w io.Writer, status panelStatus) {
 	}
 	_, _ = fmt.Fprintf(w, "%s FlowPanel %s: %s\n", icon, panelVersion(), state)
 	_, _ = fmt.Fprintf(w, "Web UI: %s\n", status.WebURL)
+	if status.WebUIUsername != "" {
+		_, _ = fmt.Fprintf(w, "Web UI username: %s\n", status.WebUIUsername)
+	}
 }
 
 func panelVersion() string {
