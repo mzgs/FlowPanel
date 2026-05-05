@@ -79,6 +79,11 @@ const (
 
 var version = "0.0.0"
 
+var (
+	publicHostIPCache      string
+	publicHostIPCacheUntil time.Time
+)
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "flowpanel: %v\n", err)
@@ -966,10 +971,43 @@ func adminWebURL(listenAddr string) string {
 		return "http://" + listenAddr
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
-		host = primaryHostIP()
+		host = publicHostIP()
+		if host == "" {
+			host = primaryHostIP()
+		}
 	}
 
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+func publicHostIP() string {
+	now := time.Now()
+	if now.Before(publicHostIPCacheUntil) {
+		return publicHostIPCache
+	}
+
+	publicHostIPCache = lookupPublicHostIP()
+	publicHostIPCacheUntil = now.Add(5 * time.Minute)
+	return publicHostIPCache
+}
+
+func lookupPublicHostIP() string {
+	client := stdhttp.Client{Timeout: 1200 * time.Millisecond}
+	for _, url := range []string{"https://api.ipify.org", "https://ipv4.icanhazip.com", "https://v4.ident.me"} {
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64))
+		_ = resp.Body.Close()
+		if readErr != nil || resp.StatusCode != stdhttp.StatusOK {
+			continue
+		}
+		if host := usablePublicIPv4(strings.TrimSpace(string(body))); host != "" {
+			return host
+		}
+	}
+	return ""
 }
 
 func primaryHostIP() string {
@@ -1037,6 +1075,14 @@ func usableHostIP(ip net.IP) string {
 		return ip4.String()
 	}
 	return ip.String()
+}
+
+func usablePublicIPv4(value string) string {
+	ip := net.ParseIP(value)
+	if ip4 := ip.To4(); ip4 != nil && ip4.IsGlobalUnicast() && !ip4.IsPrivate() && !ip4.IsLoopback() {
+		return ip4.String()
+	}
+	return ""
 }
 
 func panelPIDPath() string {
