@@ -966,10 +966,77 @@ func adminWebURL(listenAddr string) string {
 		return "http://" + listenAddr
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
-		host = "127.0.0.1"
+		host = primaryHostIP()
 	}
 
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+func primaryHostIP() string {
+	if conn, err := net.Dial("udp", "1.1.1.1:80"); err == nil {
+		defer func() {
+			_ = conn.Close()
+		}()
+		if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+			if host := usableHostIP(addr.IP); host != "" {
+				return host
+			}
+		}
+	}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "127.0.0.1"
+	}
+
+	ipv6Host := ""
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ip := addrIP(addr)
+			host := usableHostIP(ip)
+			if host == "" {
+				continue
+			}
+			if ip.To4() != nil {
+				return host
+			}
+			if ipv6Host == "" {
+				ipv6Host = host
+			}
+		}
+	}
+	if ipv6Host != "" {
+		return ipv6Host
+	}
+	return "127.0.0.1"
+}
+
+func addrIP(addr net.Addr) net.IP {
+	switch value := addr.(type) {
+	case *net.IPNet:
+		return value.IP
+	case *net.IPAddr:
+		return value.IP
+	default:
+		return nil
+	}
+}
+
+func usableHostIP(ip net.IP) string {
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return ""
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		return ip4.String()
+	}
+	return ip.String()
 }
 
 func panelPIDPath() string {
