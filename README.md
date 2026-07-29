@@ -35,13 +35,21 @@ FlowPanel currently includes:
 curl -fsSL https://raw.githubusercontent.com/mzgs/FlowPanel/main/install.sh | sh
 ```
 
-The installer prints the admin panel URL, generated username, and generated password after the service starts.
+The installer exposes the admin panel over HTTPS on port `8443` and prints the generated username and password:
+
+```text
+https://SERVER_IP:8443
+```
+
+FlowPanel generates an ECDSA certificate containing the server's public, private, and loopback IP addresses. The connection is encrypted immediately. Because the initial certificate is self-signed, browsers show a trust warning until you import `/etc/flowpanel/admin.crt` (Linux) or `/usr/local/etc/flowpanel/admin.crt` (macOS) into the client computer's trust store. You can replace the generated certificate and key with a CA-issued IP certificate at the configured paths.
+
+Allow inbound TCP port `8443` in the host or cloud firewall if it is filtered. Keep that port limited to trusted administrator IP addresses when practical.
 
 ## Requirements
 
 For local development:
 
-- Go 1.25 or newer
+- Go 1.26.5 or newer
 - Node.js and npm
 
 For a production Linux host, install the system tools you expect FlowPanel to manage. Typical deployments need:
@@ -89,6 +97,8 @@ FlowPanel is configured with environment variables.
 | `FLOWPANEL_ENV` | `development` | Use `production` for deployed instances. |
 | `FLOWPANEL_ENV_FILE` | empty | Path to the protected service environment file used by the installer. |
 | `FLOWPANEL_ADMIN_LISTEN_ADDR` | `:8080` | Admin panel/API listen address. |
+| `FLOWPANEL_ADMIN_TLS_CERT_FILE` | empty | Admin TLS certificate path. When both TLS paths are configured but absent, FlowPanel generates an IP-aware self-signed certificate. |
+| `FLOWPANEL_ADMIN_TLS_KEY_FILE` | empty | Admin TLS private-key path. Must be configured with the certificate path. |
 | `FLOWPANEL_PUBLIC_HTTP_ADDR` | `:80` | Embedded Caddy HTTP listen address. |
 | `FLOWPANEL_PUBLIC_HTTPS_ADDR` | `:443` | Embedded Caddy HTTPS listen address. |
 | `FLOWPANEL_PHPMYADMIN_ADDR` | `:32109` | Internal phpMyAdmin listen address. |
@@ -114,7 +124,10 @@ FLOWPANEL_ENV_FILE=<path to service env file>
 FLOWPANEL_SESSION_SECRET=<random 32+ character secret>
 FLOWPANEL_ADMIN_USERNAME=<admin username>
 FLOWPANEL_ADMIN_PASSWORD=<admin password>
-FLOWPANEL_ADMIN_LISTEN_ADDR=127.0.0.1:8080
+FLOWPANEL_ADMIN_LISTEN_ADDR=0.0.0.0:8443
+FLOWPANEL_ADMIN_TLS_CERT_FILE=/etc/flowpanel/admin.crt
+FLOWPANEL_ADMIN_TLS_KEY_FILE=/etc/flowpanel/admin.key
+FLOWPANEL_SESSION_COOKIE_SECURE=true
 ```
 
-Bind the admin panel to localhost unless it is protected by a trusted reverse proxy, VPN, or firewall.
+Never expose the admin panel over unencrypted HTTP. Use its native TLS listener, a trusted HTTPS reverse proxy, or keep it on loopback behind an SSH tunnel or VPN.

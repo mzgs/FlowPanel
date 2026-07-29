@@ -38,8 +38,9 @@ type LoginInput struct {
 }
 
 type PublicUser struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
+	ID             string `json:"id"`
+	Username       string `json:"username"`
+	SessionVersion string `json:"-"`
 }
 
 type Service struct {
@@ -60,8 +61,9 @@ func NormalizeUsername(value string) string {
 
 func PublicUserFromRecord(user User) PublicUser {
 	return PublicUser{
-		ID:       user.ID,
-		Username: user.Username,
+		ID:             user.ID,
+		Username:       user.Username,
+		SessionVersion: user.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 

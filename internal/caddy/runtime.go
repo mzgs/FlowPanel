@@ -21,6 +21,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
+	"flowpanel/internal/tlsutil"
 
 	httpcache "github.com/caddyserver/cache-handler"
 	caddyv2 "github.com/caddyserver/caddy/v2"
@@ -41,13 +42,14 @@ import (
 )
 
 type Runtime struct {
-	logger          *zap.Logger
-	adminListenAddr string
-	publicHTTPAddr  string
-	publicHTTPSAddr string
-	php             phpenv.Manager
-	phpMyAdmin      phpmyadmin.Manager
-	phpMyAdminAddr  string
+	logger           *zap.Logger
+	adminListenAddr  string
+	adminTLSCertFile string
+	publicHTTPAddr   string
+	publicHTTPSAddr  string
+	php              phpenv.Manager
+	phpMyAdmin       phpmyadmin.Manager
+	phpMyAdminAddr   string
 
 	mu      sync.Mutex
 	started bool
@@ -84,8 +86,10 @@ type phpMyAdminRouteConfig struct {
 }
 
 type panelRouteConfig struct {
-	hostname string
-	upstream string
+	hostname      string
+	upstream      string
+	tlsCertFile   string
+	tlsServerName string
 }
 
 type runtimeSyncMode int
@@ -105,6 +109,7 @@ var ErrRuntimeNotStarted = errors.New("embedded caddy runtime is not started")
 func NewRuntime(
 	logger *zap.Logger,
 	adminListenAddr,
+	adminTLSCertFile,
 	publicHTTPAddr,
 	publicHTTPSAddr string,
 	phpManager phpenv.Manager,
@@ -112,13 +117,14 @@ func NewRuntime(
 	phpMyAdminAddr string,
 ) *Runtime {
 	return &Runtime{
-		logger:          logger,
-		adminListenAddr: strings.TrimSpace(adminListenAddr),
-		publicHTTPAddr:  strings.TrimSpace(publicHTTPAddr),
-		publicHTTPSAddr: strings.TrimSpace(publicHTTPSAddr),
-		php:             phpManager,
-		phpMyAdmin:      phpMyAdminManager,
-		phpMyAdminAddr:  strings.TrimSpace(phpMyAdminAddr),
+		logger:           logger,
+		adminListenAddr:  strings.TrimSpace(adminListenAddr),
+		adminTLSCertFile: strings.TrimSpace(adminTLSCertFile),
+		publicHTTPAddr:   strings.TrimSpace(publicHTTPAddr),
+		publicHTTPSAddr:  strings.TrimSpace(publicHTTPSAddr),
+		php:              phpManager,
+		phpMyAdmin:       phpMyAdminManager,
+		phpMyAdminAddr:   strings.TrimSpace(phpMyAdminAddr),
 	}
 }
 
@@ -223,7 +229,7 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL st
 	if err != nil {
 		return err
 	}
-	panelConfig, err := buildPanelRouteConfig(r.adminListenAddr, panelURL)
+	panelConfig, err := buildPanelRouteConfig(r.adminListenAddr, r.adminTLSCertFile, panelURL)
 	if err != nil {
 		return err
 	}
@@ -790,18 +796,27 @@ func routeForPHPMyAdmin(config phpMyAdminRouteConfig) caddyhttp.Route {
 }
 
 func routeForPanel(config panelRouteConfig) caddyhttp.Route {
+	handler := reverseproxy.Handler{
+		Upstreams: reverseproxy.UpstreamPool{
+			&reverseproxy.Upstream{Dial: config.upstream},
+		},
+	}
+	if config.tlsCertFile != "" {
+		handler.TransportRaw = caddyconfig.JSONModuleObject(reverseproxy.HTTPTransport{
+			TLS: &reverseproxy.TLSConfig{
+				CARaw: caddyconfig.JSONModuleObject(caddytls.FileCAPool{
+					TrustedCACertPEMFiles: []string{config.tlsCertFile},
+				}, "provider", "file", nil),
+				ServerName: config.tlsServerName,
+			},
+		}, "protocol", "http", nil)
+	}
 	return caddyhttp.Route{
 		MatcherSetsRaw: []caddyv2.ModuleMap{{
 			"host": caddyconfig.JSON(caddyhttp.MatchHost{config.hostname}, nil),
 		}},
 		HandlersRaw: []json.RawMessage{
-			caddyconfig.JSONModuleObject(reverseproxy.Handler{
-				Upstreams: reverseproxy.UpstreamPool{
-					&reverseproxy.Upstream{
-						Dial: config.upstream,
-					},
-				},
-			}, "handler", "reverse_proxy", nil),
+			caddyconfig.JSONModuleObject(handler, "handler", "reverse_proxy", nil),
 		},
 		Terminal: true,
 	}
@@ -1030,7 +1045,7 @@ func upstreamDialAddress(targetURL *url.URL) string {
 	return net.JoinHostPort(host, port)
 }
 
-func buildPanelRouteConfig(adminListenAddr, panelURL string) (*panelRouteConfig, error) {
+func buildPanelRouteConfig(adminListenAddr, adminTLSCertFile, panelURL string) (*panelRouteConfig, error) {
 	panelURL = strings.TrimSpace(panelURL)
 	if panelURL == "" {
 		return nil, nil
@@ -1050,9 +1065,19 @@ func buildPanelRouteConfig(adminListenAddr, panelURL string) (*panelRouteConfig,
 	}
 
 	return &panelRouteConfig{
-		hostname: strings.ToLower(parsed.Hostname()),
-		upstream: upstream,
+		hostname:      strings.ToLower(parsed.Hostname()),
+		upstream:      upstream,
+		tlsCertFile:   strings.TrimSpace(adminTLSCertFile),
+		tlsServerName: certificateServerName(adminTLSCertFile),
 	}, nil
+}
+
+func certificateServerName(certFile string) string {
+	certPEM, err := os.ReadFile(strings.TrimSpace(certFile))
+	if err != nil {
+		return ""
+	}
+	return tlsutil.VerificationName(certPEM)
 }
 
 func adminDialAddress(listenAddr string) (string, error) {

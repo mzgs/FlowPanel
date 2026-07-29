@@ -2,14 +2,27 @@ package httpx
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	stdhttp "net/http"
 	"strings"
 )
 
+const maxJSONBodyBytes = 1 << 20
+
+var errInvalidJSONBody = errors.New("invalid JSON body")
+
 func decodeJSON(r *stdhttp.Request, payload any) error {
+	r.Body = stdhttp.MaxBytesReader(nil, r.Body, maxJSONBodyBytes)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(payload)
+	if err := decoder.Decode(payload); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errInvalidJSONBody
+	}
+	return nil
 }
 
 func trimmedQuery(r *stdhttp.Request, key string) string {

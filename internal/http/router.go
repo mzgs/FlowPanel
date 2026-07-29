@@ -212,9 +212,9 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 	router := chi.NewRouter()
 	router.Use(chimiddleware.RequestID)
-	router.Use(chimiddleware.RealIP)
 	router.Use(RequestLogger(app.Logger.Named("http")))
 	router.Use(Recoverer(app.Logger.Named("panic")))
+	router.Use(SecurityHeaders)
 	router.Use(SameOriginProtection(app))
 	router.Use(app.Sessions.LoadAndSave)
 
@@ -226,8 +226,9 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	router.Method(stdhttp.MethodHead, "/healthz", healthHandler)
 	registerPanelAuthRoutes(router, app)
 
+	api := newAPIRoutes(app)
+	router.Method(stdhttp.MethodPost, "/api/domains/{hostname}/github/webhook", api.githubWebhookHandler())
 	router.Route("/api", func(r chi.Router) {
-		api := newAPIRoutes(app)
 		r.Use(RequirePanelAuth(app))
 
 		r.Method(stdhttp.MethodGet, "/terminal/ws", newTerminalWebSocketHandler(app))
@@ -948,7 +949,7 @@ func newPanelHandler() (*panelHandler, error) {
 func newPanelHandlerWithFS(distFS fs.FS) (*panelHandler, error) {
 	index, err := fs.ReadFile(distFS, "index.html")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: read index.html: %v", errInvalidPanelAssets, err)
 	}
 
 	if err := validatePanelAssets(distFS, index); err != nil {
@@ -967,6 +968,7 @@ func (h *panelHandler) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		stdhttp.Error(w, "method not allowed", stdhttp.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; form-action 'self'; frame-ancestors 'self'; frame-src 'self'; img-src 'self' data: blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'")
 
 	cleanPath := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 	if cleanPath == "." || cleanPath == "" {

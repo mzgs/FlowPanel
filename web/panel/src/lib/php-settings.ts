@@ -1,4 +1,4 @@
-import type { PHPSettings } from "@/api/php";
+import type { PHPSettings, UpdatePHPSettingsInput } from "@/api/php";
 
 export const defaultPHPErrorReporting = "E_ALL & ~E_NOTICE & ~E_DEPRECATED";
 export const defaultDisabledFunctions =
@@ -14,7 +14,7 @@ export const phpErrorReportingOptions = [
   },
 ] as const;
 
-const phpErrorReportingValues = new Set(
+const phpErrorReportingValues = new Set<string>(
   phpErrorReportingOptions.map((option) => option.value),
 );
 
@@ -41,7 +41,7 @@ export function normalizePHPErrorReporting(value?: string | null) {
   return normalized;
 }
 
-export function toPHPSettingsForm(settings?: PHPSettings | null): PHPSettings {
+export function toPHPSettingsForm(settings?: PHPSettings | null): UpdatePHPSettingsInput {
   return {
     max_execution_time: settings?.max_execution_time ?? "",
     max_input_time: settings?.max_input_time ?? "",

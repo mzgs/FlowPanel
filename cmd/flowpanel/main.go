@@ -291,6 +291,7 @@ type panelStatus struct {
 	Running       bool
 	Error         bool
 	WebURL        string
+	HealthURL     string
 	WebUIUsername string
 }
 
@@ -347,7 +348,7 @@ func runMenu() error {
 					return err
 				}
 			}
-			if err := startPanelDetached(context.Background(), io.Discard, status.WebURL); err != nil {
+			if err := startPanelDetached(context.Background(), io.Discard, status.WebURL, status.HealthURL); err != nil {
 				return err
 			}
 		case "2":
@@ -691,7 +692,7 @@ func runStopCommand(ctx context.Context, w io.Writer) error {
 	if err := process.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("stop FlowPanel process %d: %w", pid, err)
 	}
-	if err := waitForPanelStop(ctx, status.WebURL, 15*time.Second); err != nil {
+	if err := waitForPanelStop(ctx, status.HealthURL, 15*time.Second); err != nil {
 		return err
 	}
 
@@ -733,7 +734,7 @@ func runRepairPanelCommand(ctx context.Context, w io.Writer) error {
 	}
 
 	_, _ = fmt.Fprintln(w, "Starting FlowPanel...")
-	return startPanelDetached(ctx, w, status.WebURL)
+	return startPanelDetached(ctx, w, status.WebURL, status.HealthURL)
 }
 
 func repairPanelStorage(ctx context.Context, w io.Writer) error {
@@ -834,7 +835,7 @@ func randomHex(byteCount int) (string, error) {
 	return hex.EncodeToString(data), nil
 }
 
-func startPanelDetached(ctx context.Context, w io.Writer, webURL string) error {
+func startPanelDetached(ctx context.Context, w io.Writer, webURL, healthURL string) error {
 	if err := config.EnsureFlowPanelDataPath(); err != nil {
 		return err
 	}
@@ -873,7 +874,7 @@ func startPanelDetached(ctx context.Context, w io.Writer, webURL string) error {
 		return fmt.Errorf("release FlowPanel process: %w", err)
 	}
 
-	if err := waitForPanelStart(ctx, webURL, 15*time.Second); err != nil {
+	if err := waitForPanelStart(ctx, healthURL, 15*time.Second); err != nil {
 		return fmt.Errorf("%w; check logs at %s", err, logPath)
 	}
 
@@ -890,7 +891,8 @@ func loadPanelStatus(ctx context.Context) (panelStatus, error) {
 	}
 
 	status := panelStatus{
-		WebURL:        adminWebURL(cfg.AdminListenAddr),
+		WebURL:        adminWebURL(cfg.AdminListenAddr, adminTLSEnabled(cfg)),
+		HealthURL:     adminHealthURL(cfg.AdminListenAddr, adminTLSEnabled(cfg)),
 		WebUIUsername: strings.TrimSpace(cfg.InitialAdmin.Username),
 	}
 	if username := loadPanelStatusUsername(ctx, cfg.Database.Path); username != "" {
@@ -900,12 +902,12 @@ func loadPanelStatus(ctx context.Context) (panelStatus, error) {
 	checkCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
 	defer cancel()
 
-	req, err := stdhttp.NewRequestWithContext(checkCtx, stdhttp.MethodGet, status.WebURL+"/healthz", nil)
+	req, err := stdhttp.NewRequestWithContext(checkCtx, stdhttp.MethodGet, status.HealthURL+"/healthz", nil)
 	if err != nil {
 		return panelStatus{}, err
 	}
 
-	resp, err := stdhttp.DefaultClient.Do(req)
+	resp, err := adminHTTPClient().Do(req)
 	if err == nil {
 		defer resp.Body.Close()
 		status.Running = resp.StatusCode == stdhttp.StatusOK
@@ -965,10 +967,11 @@ func panelVersion() string {
 	return value
 }
 
-func adminWebURL(listenAddr string) string {
+func adminWebURL(listenAddr string, tlsEnabled bool) string {
+	scheme := adminURLScheme(tlsEnabled)
 	host, port, err := net.SplitHostPort(listenAddr)
 	if err != nil {
-		return "http://" + listenAddr
+		return scheme + "://" + listenAddr
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
 		host = publicHostIP()
@@ -977,7 +980,26 @@ func adminWebURL(listenAddr string) string {
 		}
 	}
 
-	return "http://" + net.JoinHostPort(host, port)
+	return scheme + "://" + net.JoinHostPort(host, port)
+}
+
+func adminHealthURL(listenAddr string, tlsEnabled bool) string {
+	scheme := adminURLScheme(tlsEnabled)
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return scheme + "://" + listenAddr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	return scheme + "://" + net.JoinHostPort(host, port)
+}
+
+func adminURLScheme(tlsEnabled bool) string {
+	if tlsEnabled {
+		return "https"
+	}
+	return "http"
 }
 
 func publicHostIP() string {
@@ -1167,7 +1189,7 @@ func panelHealthOK(ctx context.Context, webURL string) bool {
 		return false
 	}
 
-	resp, err := stdhttp.DefaultClient.Do(req)
+	resp, err := adminHTTPClient().Do(req)
 	if err != nil {
 		return false
 	}
@@ -1552,6 +1574,9 @@ func runServer() error {
 	if err != nil {
 		return err
 	}
+	if err := ensureAdminTLSCertificate(cfg); err != nil {
+		return err
+	}
 
 	logger, err := logging.New(cfg.Env)
 	if err != nil {
@@ -1676,6 +1701,7 @@ func runServer() error {
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
 		cfg.AdminListenAddr,
+		cfg.AdminTLSCertFile,
 		cfg.PublicHTTPAddr,
 		cfg.PublicHTTPSAddr,
 		phpManager,
@@ -1748,13 +1774,22 @@ func runServer() error {
 	server := &stdhttp.Server{
 		Addr:              cfg.AdminListenAddr,
 		Handler:           router,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    16 << 10,
+		ReadTimeout:       5 * time.Minute,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	serverErrCh := make(chan error, 1)
 	go func() {
-		logger.Info("admin server listening", zap.String("addr", cfg.AdminListenAddr))
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+		logger.Info("admin server listening", zap.String("addr", cfg.AdminListenAddr), zap.Bool("tls", adminTLSEnabled(cfg)))
+		serve := server.ListenAndServe
+		if adminTLSEnabled(cfg) {
+			serve = func() error {
+				return server.ListenAndServeTLS(cfg.AdminTLSCertFile, cfg.AdminTLSKeyFile)
+			}
+		}
+		if err := serve(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
 			serverErrCh <- err
 		}
 	}()

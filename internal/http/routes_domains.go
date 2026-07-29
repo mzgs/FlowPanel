@@ -831,76 +831,6 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true, "action": result.Action})
 	})
 
-	domainsGitHubWebhookHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		hostname := chi.URLParam(r, "hostname")
-		record, ok := a.app.Domains.FindByHostname(hostname)
-		if !ok || record.GitHub == nil || !record.GitHub.AutoDeployOnPush || strings.TrimSpace(record.GitHub.WebhookSecret) == "" {
-			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "github webhook not configured"})
-			return
-		}
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "failed to read webhook payload"})
-			return
-		}
-
-		if !verifyGitHubWebhookSignature(record.GitHub.WebhookSecret, body, r.Header.Get("X-Hub-Signature-256")) {
-			writeJSON(w, stdhttp.StatusUnauthorized, map[string]any{"error": errGitHubInvalidWebhookSignature.Error()})
-			return
-		}
-
-		eventName := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
-		switch eventName {
-		case "ping":
-			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
-			return
-		case "push":
-		default:
-			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
-			return
-		}
-
-		var payload gitHubWebhookPushPayload
-		if err := json.Unmarshal(body, &payload); err != nil {
-			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid webhook payload"})
-			return
-		}
-
-		if payload.Repository.CloneURL != "" && !sameGitHubRepository(payload.Repository.CloneURL, record.GitHub.RepositoryURL) {
-			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "webhook repository does not match this domain integration"})
-			return
-		}
-
-		defaultBranch := strings.TrimSpace(record.GitHub.DefaultBranch)
-		if defaultBranch == "" {
-			defaultBranch = strings.TrimSpace(payload.Repository.DefaultBranch)
-		}
-		if defaultBranch != "" && payload.Ref != "refs/heads/"+defaultBranch {
-			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
-			return
-		}
-
-		token, err := getGitHubToken(r.Context(), a.app.Settings)
-		if err != nil {
-			a.app.Logger.Error("github webhook deploy blocked by missing token", zap.String("hostname", hostname), zap.Error(err))
-			a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", "GitHub webhook was received but no GitHub token is configured.")
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-
-		result, err := runDomainGitHubDeploy(r.Context(), a.app.Domains.BasePath(), record, *record.GitHub, token)
-		if err != nil {
-			a.app.Logger.Error("github webhook deploy failed", zap.String("hostname", hostname), zap.Error(err))
-			a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Push webhook deployment failed for %q.", record.Hostname))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-
-		a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Push webhook deployed %q.", record.Hostname))
-		writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true, "action": result.Action})
-	})
-
 	domainsPHPSettingsUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hostname := chi.URLParam(r, "hostname")
 
@@ -1522,7 +1452,6 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/environment", domainsEnvironmentUpdateHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/github", domainsGitHubUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/deploy", domainsGitHubDeployHandler)
-	r.Method(stdhttp.MethodPost, "/domains/{hostname}/github/webhook", domainsGitHubWebhookHandler)
 	r.Method(stdhttp.MethodPost, "/domains", domainsCreateHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{domainID}", domainsUpdateHandler)
 	r.Method(stdhttp.MethodDelete, "/domains/{domainID}", domainsDeleteHandler)
@@ -1533,6 +1462,92 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/ftp/accounts", ftpAccountsCreateHandler)
 	r.Method(stdhttp.MethodPut, "/ftp/accounts/{accountID}", ftpAccountsUpdateHandler)
 	r.Method(stdhttp.MethodDelete, "/ftp/accounts/{accountID}", ftpAccountsDeleteHandler)
+}
+
+func (a *apiRoutes) githubWebhookHandler() stdhttp.Handler {
+	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		record, ok := a.app.Domains.FindByHostname(hostname)
+		if !ok || record.GitHub == nil || !record.GitHub.AutoDeployOnPush || strings.TrimSpace(record.GitHub.WebhookSecret) == "" {
+			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "github webhook not configured"})
+			return
+		}
+
+		r.Body = stdhttp.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			var tooLarge *stdhttp.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				writeJSON(w, stdhttp.StatusRequestEntityTooLarge, map[string]any{"error": "webhook payload is too large"})
+			} else {
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "failed to read webhook payload"})
+			}
+			return
+		}
+
+		if !verifyGitHubWebhookSignature(record.GitHub.WebhookSecret, body, r.Header.Get("X-Hub-Signature-256")) {
+			writeJSON(w, stdhttp.StatusUnauthorized, map[string]any{"error": errGitHubInvalidWebhookSignature.Error()})
+			return
+		}
+
+		deliveryID := strings.TrimSpace(r.Header.Get("X-GitHub-Delivery"))
+		if deliveryID == "" || len(deliveryID) > 128 {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid github delivery id"})
+			return
+		}
+		if !a.acceptGitHubWebhookDelivery(deliveryID) {
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true, "duplicate": true})
+			return
+		}
+
+		switch strings.TrimSpace(r.Header.Get("X-GitHub-Event")) {
+		case "ping":
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
+			return
+		case "push":
+		default:
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
+			return
+		}
+
+		var payload gitHubWebhookPushPayload
+		if err := json.Unmarshal(body, &payload); err != nil {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid webhook payload"})
+			return
+		}
+		if payload.Repository.CloneURL != "" && !sameGitHubRepository(payload.Repository.CloneURL, record.GitHub.RepositoryURL) {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "webhook repository does not match this domain integration"})
+			return
+		}
+
+		defaultBranch := strings.TrimSpace(record.GitHub.DefaultBranch)
+		if defaultBranch == "" {
+			defaultBranch = strings.TrimSpace(payload.Repository.DefaultBranch)
+		}
+		if defaultBranch != "" && payload.Ref != "refs/heads/"+defaultBranch {
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
+			return
+		}
+
+		token, err := getGitHubToken(r.Context(), a.app.Settings)
+		if err != nil {
+			a.app.Logger.Error("github webhook deploy blocked by missing token", zap.String("hostname", hostname), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", "GitHub webhook was received but no GitHub token is configured.")
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+
+		result, err := runDomainGitHubDeploy(r.Context(), a.app.Domains.BasePath(), record, *record.GitHub, token)
+		if err != nil {
+			a.app.Logger.Error("github webhook deploy failed", zap.String("hostname", hostname), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Push webhook deployment failed for %q.", record.Hostname))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+
+		a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Push webhook deployed %q.", record.Hostname))
+		writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true, "action": result.Action})
+	})
 }
 
 type domainLogResponse struct {

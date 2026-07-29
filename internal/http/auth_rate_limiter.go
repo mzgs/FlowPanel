@@ -15,6 +15,7 @@ const (
 	authRateLimitMaxAttempts = 10
 	authRateLimitWindow      = 15 * time.Minute
 	authRateLimitLockout     = 15 * time.Minute
+	authRateLimitMaxEntries  = 10_000
 )
 
 type authRateLimitEntry struct {
@@ -79,6 +80,7 @@ func (l *authRateLimiter) RecordFailure(keys ...string) {
 	now := l.now().UTC()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.prune(now)
 
 	for _, key := range keys {
 		entry := l.entries[key]
@@ -91,6 +93,28 @@ func (l *authRateLimiter) RecordFailure(keys ...string) {
 			entry.blockedUntil = now.Add(l.lockout)
 		}
 		l.entries[key] = entry
+	}
+}
+
+func (l *authRateLimiter) prune(now time.Time) {
+	for key, entry := range l.entries {
+		expires := entry.firstAttempt.Add(l.window)
+		if entry.blockedUntil.After(expires) {
+			expires = entry.blockedUntil
+		}
+		if !expires.After(now) {
+			delete(l.entries, key)
+		}
+	}
+	for len(l.entries) >= authRateLimitMaxEntries {
+		var oldestKey string
+		var oldest time.Time
+		for key, entry := range l.entries {
+			if oldestKey == "" || entry.firstAttempt.Before(oldest) {
+				oldestKey, oldest = key, entry.firstAttempt
+			}
+		}
+		delete(l.entries, oldestKey)
 	}
 }
 

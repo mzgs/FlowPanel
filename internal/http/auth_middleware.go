@@ -9,7 +9,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const panelUserIDSessionKey = "panel_user_id"
+const (
+	panelUserIDSessionKey  = "panel_user_id"
+	panelSessionVersionKey = "panel_session_version"
+)
 
 func RequirePanelAuth(app *app.App) func(stdhttp.Handler) stdhttp.Handler {
 	return func(next stdhttp.Handler) stdhttp.Handler {
@@ -25,12 +28,12 @@ func RequirePanelAuth(app *app.App) func(stdhttp.Handler) stdhttp.Handler {
 				return
 			}
 
-			if _, ok, err := app.Auth.GetUser(r.Context(), userID); err != nil {
+			if user, ok, err := app.Auth.GetUser(r.Context(), userID); err != nil {
 				app.Logger.Error("load authenticated panel user failed", zap.Error(err))
 				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to verify session"})
 				return
-			} else if !ok {
-				app.Sessions.Remove(r.Context(), panelUserIDSessionKey)
+			} else if !ok || !panelSessionMatches(app, r, user.SessionVersion) {
+				clearPanelAuthSession(app, r)
 				writeAuthRequired(w, r)
 				return
 			}
@@ -38,6 +41,20 @@ func RequirePanelAuth(app *app.App) func(stdhttp.Handler) stdhttp.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func panelSessionMatches(app *app.App, r *stdhttp.Request, version string) bool {
+	return app != nil && app.Sessions != nil &&
+		strings.TrimSpace(version) != "" &&
+		app.Sessions.GetString(r.Context(), panelSessionVersionKey) == version
+}
+
+func clearPanelAuthSession(app *app.App, r *stdhttp.Request) {
+	if app == nil || app.Sessions == nil || r == nil {
+		return
+	}
+	app.Sessions.Remove(r.Context(), panelUserIDSessionKey)
+	app.Sessions.Remove(r.Context(), panelSessionVersionKey)
 }
 
 func writeAuthRequired(w stdhttp.ResponseWriter, r *stdhttp.Request) {

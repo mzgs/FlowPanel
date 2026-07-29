@@ -9,7 +9,7 @@ import {
 import { Download, HardDrive, Monitor, Server } from "@/components/icons/lucide-icons";
 import { cn, getErrorMessage } from "@/lib/utils";
 
-type MetricsStatusSnapshot = Pick<
+type MetricsStatusSnapshot = Partial<Pick<
   SystemStatus,
   | "cpu_usage_percent"
   | "disk_free_bytes"
@@ -23,7 +23,8 @@ type MetricsStatusSnapshot = Pick<
   | "memory_used_bytes"
   | "network_receive_bytes"
   | "network_transmit_bytes"
->;
+  | "server_time"
+>>;
 
 export type SystemStatusSample = {
   sampledAt: number;
@@ -334,7 +335,7 @@ function formatUnavailableFallback(value: number | string | null | undefined, fo
 
 function normalizeHistoricalSamples(samples: SystemHistorySample[]): SystemStatusSample[] {
   return samples
-    .map((sample) => {
+    .map((sample): SystemStatusSample | null => {
       const sampledAt = Date.parse(sample.sampled_at);
       if (!Number.isFinite(sampledAt)) {
         return null;

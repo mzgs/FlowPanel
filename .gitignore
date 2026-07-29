@@ -35,3 +35,6 @@ data/*.db
 .DS_Store
 bin/flowpanel-linux-amd64
 dist/
+!web/dist/
+web/dist/*
+!web/dist/.gitkeep

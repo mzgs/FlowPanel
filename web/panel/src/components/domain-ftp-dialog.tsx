@@ -121,6 +121,7 @@ export function DomainFTPDialog({
       return;
     }
 
+    const selectedDomain = domain;
     let active = true;
     setFTPStatus(null);
     setDomainAccounts([]);
@@ -133,7 +134,7 @@ export function DomainFTPDialog({
 
     async function loadFTPStatus() {
       const [statusResult, accountsResult] = await Promise.allSettled([
-        fetchDomainFTPStatus(domain.id),
+        fetchDomainFTPStatus(selectedDomain.id),
         fetchFTPAccounts(),
       ]);
       if (!active) {
@@ -155,21 +156,21 @@ export function DomainFTPDialog({
         setFTPLoadError(
           getErrorMessage(
             statusResult.reason,
-            `Failed to load FTP settings for ${domain.hostname}.`,
+            `Failed to load FTP settings for ${selectedDomain.hostname}.`,
           ),
         );
       }
 
       if (accountsResult.status === "fulfilled") {
         setDomainAccounts(
-          getDomainAccounts(accountsResult.value.accounts, domain.id, nextStatus),
+          getDomainAccounts(accountsResult.value.accounts, selectedDomain.id, nextStatus),
         );
       } else {
         setDomainAccounts([]);
         setAccountsLoadError(
           getErrorMessage(
             accountsResult.reason,
-            `Failed to load FTP accounts for ${domain.hostname}.`,
+            `Failed to load FTP accounts for ${selectedDomain.hostname}.`,
           ),
         );
       }

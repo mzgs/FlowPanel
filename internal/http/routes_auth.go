@@ -42,8 +42,8 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to load auth session"})
 			return
 		}
-		if !ok {
-			app.Sessions.Remove(r.Context(), panelUserIDSessionKey)
+		if !ok || !panelSessionMatches(app, r, user.SessionVersion) {
+			clearPanelAuthSession(app, r)
 			writeAuthSession(w, false, !hasUsers, auth.PublicUser{})
 			return
 		}
@@ -84,7 +84,7 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 			return
 		}
 
-		if err := renewPanelSession(app, r, w, user.ID); err != nil {
+		if err := renewPanelSession(app, r, user); err != nil {
 			app.Logger.Error("create panel login session failed", zap.Error(err))
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to sign in"})
 			return
@@ -101,7 +101,6 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 			return
 		}
 
-		clearPanelAuthCookie(app, w)
 		writeAuthSession(w, false, false, auth.PublicUser{})
 	}))
 }

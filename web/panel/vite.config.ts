@@ -2,12 +2,15 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const panelDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(panelDir, "src"),
     },
   },
   server: {
@@ -20,7 +23,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: path.resolve(__dirname, "../dist"),
+    outDir: path.resolve(panelDir, "../dist"),
     emptyOutDir: true,
     rollupOptions: {
       output: {

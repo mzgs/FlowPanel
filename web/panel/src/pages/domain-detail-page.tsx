@@ -3,7 +3,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type ComponentType,
 } from "react";
 import {
   createBackup,
@@ -290,11 +289,7 @@ function getNodeJSPortFromTarget(target: string) {
   }
 }
 
-type ActionIcon = ComponentType<{
-  className?: string;
-  size?: number | string;
-  stroke?: number | string;
-}>;
+type ActionIcon = typeof Globe;
 
 type DomainActionItem = {
   title: string;
@@ -1102,6 +1097,7 @@ export function DomainDetailPage() {
       return;
     }
 
+    const domainID = domain.id;
     let active = true;
     setConnectionFTPStatus(null);
     setConnectionFTPLoading(true);
@@ -1109,7 +1105,7 @@ export function DomainDetailPage() {
 
     async function loadConnectionFTPStatus() {
       try {
-        const status = await fetchDomainFTPStatus(domain.id);
+        const status = await fetchDomainFTPStatus(domainID);
         if (!active) {
           return;
         }
@@ -1152,6 +1148,7 @@ export function DomainDetailPage() {
       return;
     }
 
+    const domainHostname = domain.hostname;
     let active = true;
     const controller = new AbortController();
     const refreshRequested = previewRefreshToken > 0;
@@ -1165,7 +1162,7 @@ export function DomainDetailPage() {
 
     async function loadPreview() {
       try {
-        const blob = await fetchDomainPreview(domain.hostname, {
+        const blob = await fetchDomainPreview(domainHostname, {
           refresh: refreshRequested,
           refreshToken: previewRefreshToken || undefined,
           signal: controller.signal,
@@ -1219,13 +1216,14 @@ export function DomainDetailPage() {
       return;
     }
 
+    const runtimeDomain = domain;
     let active = true;
     setNodeJSLoading(true);
     setNodeJSError(null);
 
     async function loadNodeJSStatus() {
       try {
-        const nextStatus = await fetchDomainNodeJSStatus(domain.hostname);
+        const nextStatus = await fetchDomainNodeJSStatus(runtimeDomain.hostname);
         if (!active) {
           return;
         }
@@ -1240,7 +1238,7 @@ export function DomainDetailPage() {
         setNodeJSError(
           getErrorMessage(
             error,
-            `Failed to load the ${getRuntimeDomainLabel(domain.kind)} runtime status.`,
+            `Failed to load the ${getRuntimeDomainLabel(runtimeDomain.kind)} runtime status.`,
           ),
         );
       } finally {
@@ -1339,11 +1337,12 @@ export function DomainDetailPage() {
       return;
     }
 
+    const domainHostname = domain.hostname;
     let active = true;
 
     async function loadWordPressStatus() {
       try {
-        const nextStatus = await fetchDomainWordPressSummary(domain.hostname);
+        const nextStatus = await fetchDomainWordPressSummary(domainHostname);
         if (!active) {
           return;
         }
@@ -1575,13 +1574,14 @@ export function DomainDetailPage() {
       return;
     }
 
+    const manifestPath = composerManifestPath;
     let active = true;
     setComposerLoading(true);
     setComposerError(null);
 
     async function loadComposer() {
       try {
-        const file = await fetchFileContent(composerManifestPath);
+        const file = await fetchFileContent(manifestPath);
         if (!active) {
           return;
         }

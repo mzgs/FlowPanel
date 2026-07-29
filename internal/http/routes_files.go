@@ -176,6 +176,7 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 			return
 		}
 
+		r.Body = stdhttp.MaxBytesReader(w, r.Body, 64<<20)
 		if err := r.ParseMultipartForm(64 << 20); err != nil {
 			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid upload payload"})
 			return

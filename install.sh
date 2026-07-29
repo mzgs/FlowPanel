@@ -64,6 +64,42 @@ EOF
   fi
 }
 
+set_env_key() {
+  env_file="$1"
+  key="$2"
+  value="$3"
+  prefix="$4"
+  temp_file="$(mktemp)"
+  as_root awk -v key="$key" -v value="$value" -v prefix="$prefix" '
+    index($0, prefix key "=") == 1 {
+      if (!done) print prefix key "=" value
+      done = 1
+      next
+    }
+    { print }
+    END { if (!done) print prefix key "=" value }
+  ' "$env_file" > "$temp_file"
+  as_root cp "$temp_file" "$env_file"
+  as_root chmod 600 "$env_file"
+  rm -f "$temp_file"
+}
+
+configure_admin_https() {
+  env_file="$1"
+  prefix="$2"
+  cert_file="$3"
+  key_file="$4"
+  listen_addr="$(read_env_key "$env_file" FLOWPANEL_ADMIN_LISTEN_ADDR | sed "s/^['\"]//;s/['\"]$//")"
+  case "$listen_addr" in
+    "" | ":8080" | "127.0.0.1:8080") set_env_key "$env_file" FLOWPANEL_ADMIN_LISTEN_ADDR "0.0.0.0:8443" "$prefix" ;;
+  esac
+  existing_cert_file="$(read_env_key "$env_file" FLOWPANEL_ADMIN_TLS_CERT_FILE | sed "s/^['\"]//;s/['\"]$//")"
+  existing_key_file="$(read_env_key "$env_file" FLOWPANEL_ADMIN_TLS_KEY_FILE | sed "s/^['\"]//;s/['\"]$//")"
+  [ -n "$existing_cert_file" ] || set_env_key "$env_file" FLOWPANEL_ADMIN_TLS_CERT_FILE "$cert_file" "$prefix"
+  [ -n "$existing_key_file" ] || set_env_key "$env_file" FLOWPANEL_ADMIN_TLS_KEY_FILE "$key_file" "$prefix"
+  set_env_key "$env_file" FLOWPANEL_SESSION_COOKIE_SECURE "true" "$prefix"
+}
+
 read_env_key() {
   sed -n "s/^\(export \)\?$2=//p" "$1" 2>/dev/null | tail -n 1
 }
@@ -114,15 +150,18 @@ admin_panel_host() {
 
 admin_panel_url() {
   addr="$(read_env_key "$1" FLOWPANEL_ADMIN_LISTEN_ADDR | sed "s/^['\"]//;s/['\"]$//")"
+  cert_file="$(read_env_key "$1" FLOWPANEL_ADMIN_TLS_CERT_FILE | sed "s/^['\"]//;s/['\"]$//")"
+  scheme="http"
+  [ -z "$cert_file" ] || scheme="https"
   if [ -z "$addr" ]; then
-    addr=":8080"
+    addr="0.0.0.0:8443"
   fi
 
   case "$addr" in
-    :*) printf 'http://%s%s\n' "$(admin_panel_host)" "$addr" ;;
-    0.0.0.0:*) printf 'http://%s:%s\n' "$(admin_panel_host)" "${addr#0.0.0.0:}" ;;
-    "[::]:"*) printf 'http://%s:%s\n' "$(admin_panel_host)" "${addr##*:}" ;;
-    *) printf 'http://%s\n' "$addr" ;;
+    :*) printf '%s://%s%s\n' "$scheme" "$(admin_panel_host)" "$addr" ;;
+    0.0.0.0:*) printf '%s://%s:%s\n' "$scheme" "$(admin_panel_host)" "${addr#0.0.0.0:}" ;;
+    "[::]:"*) printf '%s://%s:%s\n' "$scheme" "$(admin_panel_host)" "${addr##*:}" ;;
+    *) printf '%s://%s\n' "$scheme" "$addr" ;;
   esac
 }
 
@@ -156,6 +195,7 @@ EOF
   echo "Password:    $admin_password"
   echo "Service:     $service_command"
   echo "Config:      $env_file"
+  echo "Firewall:    allow the configured admin HTTPS port if the panel is not reachable"
 }
 
 installed_action() {
@@ -247,8 +287,10 @@ install_linux_service() {
 FLOWPANEL_ENV=production
 FLOWPANEL_ENV_FILE=$env_file
 FLOWPANEL_SESSION_SECRET=$secret
-FLOWPANEL_SESSION_COOKIE_SECURE=false
-FLOWPANEL_ADMIN_LISTEN_ADDR=:8080
+FLOWPANEL_SESSION_COOKIE_SECURE=true
+FLOWPANEL_ADMIN_LISTEN_ADDR=0.0.0.0:8443
+FLOWPANEL_ADMIN_TLS_CERT_FILE=$env_dir/admin.crt
+FLOWPANEL_ADMIN_TLS_KEY_FILE=$env_dir/admin.key
 FLOWPANEL_DB_PATH=$data_dir/flowpanel.db
 FLOWPANEL_ADMIN_USERNAME=$admin_username
 FLOWPANEL_ADMIN_PASSWORD=$admin_password
@@ -267,6 +309,7 @@ EOF
       admin_password="$(read_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD)"
     fi
   fi
+  configure_admin_https "$env_file" "" "$env_dir/admin.crt" "$env_dir/admin.key"
 
   as_root sh -c "cat > '$service_file'" <<EOF
 [Unit]
@@ -313,8 +356,10 @@ install_macos_service() {
 export FLOWPANEL_ENV=production
 export FLOWPANEL_ENV_FILE='$env_file'
 export FLOWPANEL_SESSION_SECRET=$secret
-export FLOWPANEL_SESSION_COOKIE_SECURE=false
-export FLOWPANEL_ADMIN_LISTEN_ADDR=:8080
+export FLOWPANEL_SESSION_COOKIE_SECURE=true
+export FLOWPANEL_ADMIN_LISTEN_ADDR=0.0.0.0:8443
+export FLOWPANEL_ADMIN_TLS_CERT_FILE=$env_dir/admin.crt
+export FLOWPANEL_ADMIN_TLS_KEY_FILE=$env_dir/admin.key
 export FLOWPANEL_DB_PATH='$data_dir/flowpanel.db'
 export FLOWPANEL_ADMIN_USERNAME=$admin_username
 export FLOWPANEL_ADMIN_PASSWORD=$admin_password
@@ -333,6 +378,7 @@ EOF
       admin_password="$(read_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD)"
     fi
   fi
+  configure_admin_https "$env_file" "export " "$env_dir/admin.crt" "$env_dir/admin.key"
 
   as_root sh -c "cat > '$plist_file'" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

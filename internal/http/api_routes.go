@@ -5,6 +5,8 @@ import (
 	"fmt"
 	stdhttp "net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/caddy"
@@ -22,15 +24,50 @@ import (
 )
 
 type apiRoutes struct {
-	app            *app.App
-	runtimeActions *runtimeActionTracker
+	app                     *app.App
+	runtimeActions          *runtimeActionTracker
+	githubWebhookMu         sync.Mutex
+	githubWebhookDeliveries map[string]time.Time
 }
 
 func newAPIRoutes(app *app.App) *apiRoutes {
 	return &apiRoutes{
-		app:            app,
-		runtimeActions: newRuntimeActionTracker(),
+		app:                     app,
+		runtimeActions:          newRuntimeActionTracker(),
+		githubWebhookDeliveries: make(map[string]time.Time),
 	}
+}
+
+func (a *apiRoutes) acceptGitHubWebhookDelivery(id string) bool {
+	const (
+		retention  = 24 * time.Hour
+		maxEntries = 10_000
+	)
+
+	now := time.Now().UTC()
+	a.githubWebhookMu.Lock()
+	defer a.githubWebhookMu.Unlock()
+
+	for deliveryID, seenAt := range a.githubWebhookDeliveries {
+		if now.Sub(seenAt) >= retention {
+			delete(a.githubWebhookDeliveries, deliveryID)
+		}
+	}
+	if _, exists := a.githubWebhookDeliveries[id]; exists {
+		return false
+	}
+	for len(a.githubWebhookDeliveries) >= maxEntries {
+		var oldestID string
+		var oldest time.Time
+		for deliveryID, seenAt := range a.githubWebhookDeliveries {
+			if oldestID == "" || seenAt.Before(oldest) {
+				oldestID, oldest = deliveryID, seenAt
+			}
+		}
+		delete(a.githubWebhookDeliveries, oldestID)
+	}
+	a.githubWebhookDeliveries[id] = now
+	return true
 }
 
 func (a *apiRoutes) register(r chi.Router) {

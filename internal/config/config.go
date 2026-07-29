@@ -12,17 +12,19 @@ import (
 const defaultDevelopmentSessionSecret = "development-session-secret-change-me-123456"
 
 type Config struct {
-	Env             string
-	AdminListenAddr string
-	PublicHTTPAddr  string
-	PublicHTTPSAddr string
-	PHPMyAdminAddr  string
-	ShutdownTimeout time.Duration
-	Database        DatabaseConfig
-	Session         SessionConfig
-	InitialAdmin    InitialAdminConfig
-	Cron            CronConfig
-	GoogleDrive     GoogleDriveConfig
+	Env              string
+	AdminListenAddr  string
+	AdminTLSCertFile string
+	AdminTLSKeyFile  string
+	PublicHTTPAddr   string
+	PublicHTTPSAddr  string
+	PHPMyAdminAddr   string
+	ShutdownTimeout  time.Duration
+	Database         DatabaseConfig
+	Session          SessionConfig
+	InitialAdmin     InitialAdminConfig
+	Cron             CronConfig
+	GoogleDrive      GoogleDriveConfig
 }
 
 type DatabaseConfig struct {
@@ -72,12 +74,14 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		Env:             getEnv("FLOWPANEL_ENV", "development"),
-		AdminListenAddr: getEnv("FLOWPANEL_ADMIN_LISTEN_ADDR", ":8080"),
-		PublicHTTPAddr:  getEnv("FLOWPANEL_PUBLIC_HTTP_ADDR", ":80"),
-		PublicHTTPSAddr: getEnv("FLOWPANEL_PUBLIC_HTTPS_ADDR", ":443"),
-		PHPMyAdminAddr:  getEnv("FLOWPANEL_PHPMYADMIN_ADDR", ":32109"),
-		ShutdownTimeout: shutdownTimeout,
+		Env:              getEnv("FLOWPANEL_ENV", "development"),
+		AdminListenAddr:  getEnv("FLOWPANEL_ADMIN_LISTEN_ADDR", ":8080"),
+		AdminTLSCertFile: getEnv("FLOWPANEL_ADMIN_TLS_CERT_FILE", ""),
+		AdminTLSKeyFile:  getEnv("FLOWPANEL_ADMIN_TLS_KEY_FILE", ""),
+		PublicHTTPAddr:   getEnv("FLOWPANEL_PUBLIC_HTTP_ADDR", ":80"),
+		PublicHTTPSAddr:  getEnv("FLOWPANEL_PUBLIC_HTTPS_ADDR", ":443"),
+		PHPMyAdminAddr:   getEnv("FLOWPANEL_PHPMYADMIN_ADDR", ":32109"),
+		ShutdownTimeout:  shutdownTimeout,
 		Database: DatabaseConfig{
 			Path: getEnv("FLOWPANEL_DB_PATH", DefaultDatabasePath()),
 		},
@@ -123,6 +127,12 @@ func (c Config) validate() error {
 
 	if strings.TrimSpace(c.AdminListenAddr) == "" {
 		problems = append(problems, "FLOWPANEL_ADMIN_LISTEN_ADDR must not be empty")
+	}
+	if (strings.TrimSpace(c.AdminTLSCertFile) == "") != (strings.TrimSpace(c.AdminTLSKeyFile) == "") {
+		problems = append(problems, "FLOWPANEL_ADMIN_TLS_CERT_FILE and FLOWPANEL_ADMIN_TLS_KEY_FILE must be set together")
+	}
+	if certFile, keyFile := strings.TrimSpace(c.AdminTLSCertFile), strings.TrimSpace(c.AdminTLSKeyFile); certFile != "" && certFile == keyFile {
+		problems = append(problems, "FLOWPANEL_ADMIN_TLS_CERT_FILE and FLOWPANEL_ADMIN_TLS_KEY_FILE must be different files")
 	}
 	if strings.TrimSpace(c.PublicHTTPAddr) == "" {
 		problems = append(problems, "FLOWPANEL_PUBLIC_HTTP_ADDR must not be empty")
