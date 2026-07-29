@@ -15,7 +15,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if path != ":memory:" {
 		dir := filepath.Dir(path)
 		if dir != "." && dir != "" {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return nil, fmt.Errorf("create database directory: %w", err)
 			}
 		}
@@ -38,6 +38,24 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping sqlite connection: %w", err)
 	}
+	if path != ":memory:" {
+		if err := secureFiles(path, path+"-journal", path+"-wal", path+"-shm"); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
 
 	return db, nil
+}
+
+func secureFiles(paths ...string) error {
+	for _, path := range paths {
+		if err := os.Chmod(path, 0o600); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("secure database file %q: %w", path, err)
+		}
+	}
+	return nil
 }

@@ -100,6 +100,43 @@ configure_admin_https() {
   set_env_key "$env_file" FLOWPANEL_SESSION_COOKIE_SECURE "true" "$prefix"
 }
 
+secure_install_permissions() {
+  env_dir="$1"
+  env_file="$2"
+  data_dir="$3"
+  state_dir="$4"
+  owner="$5"
+
+  as_root chown "$owner" "$env_dir" "$data_dir" "$env_file"
+  as_root chmod 700 "$env_dir" "$data_dir"
+  as_root chmod 600 "$env_file"
+
+  if [ -f "$env_dir/admin.key" ]; then
+    as_root chown "$owner" "$env_dir/admin.key"
+    as_root chmod 600 "$env_dir/admin.key"
+  fi
+  if [ -f "$env_dir/admin.crt" ]; then
+    as_root chown "$owner" "$env_dir/admin.crt"
+    as_root chmod 644 "$env_dir/admin.crt"
+  fi
+  for database_file in "$data_dir/flowpanel.db" "$data_dir/flowpanel.db-journal" "$data_dir/flowpanel.db-wal" "$data_dir/flowpanel.db-shm"; do
+    if [ -f "$database_file" ]; then
+      as_root chown "$owner" "$database_file"
+      as_root chmod 600 "$database_file"
+    fi
+  done
+  if [ -d "$state_dir/data" ]; then
+    as_root chown "$owner" "$state_dir/data"
+    as_root chmod 700 "$state_dir/data"
+  fi
+  if [ -d "$state_dir/backups" ]; then
+    as_root chown "$owner" "$state_dir/backups"
+    as_root chmod 700 "$state_dir/backups"
+    as_root find "$state_dir/backups" -type f -exec chown "$owner" {} \;
+    as_root find "$state_dir/backups" -type f -exec chmod 600 {} \;
+  fi
+}
+
 read_env_key() {
   sed -n "s/^\(export \)\?$2=//p" "$1" 2>/dev/null | tail -n 1
 }
@@ -311,6 +348,7 @@ EOF
     fi
   fi
   configure_admin_https "$env_file" "" "$env_dir/admin.crt" "$env_dir/admin.key"
+  secure_install_permissions "$env_dir" "$env_file" "$data_dir" "/var/flowpanel" "root:root"
 
   as_root sh -c "cat > '$service_file'" <<EOF
 [Unit]
@@ -380,6 +418,7 @@ EOF
     fi
   fi
   configure_admin_https "$env_file" "export " "$env_dir/admin.crt" "$env_dir/admin.key"
+  secure_install_permissions "$env_dir" "$env_file" "$data_dir" "/Users/Shared/FlowPanel" "root:wheel"
 
   as_root sh -c "cat > '$plist_file'" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

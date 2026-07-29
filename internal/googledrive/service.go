@@ -106,7 +106,7 @@ func (s *Service) SaveOAuthCredentialsJSON(file io.Reader) error {
 	}
 
 	dir := filepath.Dir(s.credentialsPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create google drive credentials directory: %w", err)
 	}
 

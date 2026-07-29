@@ -34,8 +34,11 @@ func CachePath() string {
 
 func EnsureFlowPanelDataPath() error {
 	path := FlowPanelDataPath()
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create flowpanel data path %q: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		return fmt.Errorf("secure flowpanel data path %q: %w", path, err)
 	}
 
 	return nil

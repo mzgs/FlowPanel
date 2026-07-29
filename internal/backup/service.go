@@ -315,7 +315,7 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		}
 	}
 
-	file, err := os.OpenFile(tempTargetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(tempTargetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return Record{}, fmt.Errorf("create backup archive: %w", err)
 	}
@@ -466,7 +466,7 @@ func (s *Service) Import(_ context.Context, name string, archive io.Reader) (Rec
 		return Record{}, err
 	}
 
-	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return Record{}, ErrAlreadyExists
@@ -685,7 +685,7 @@ func (s *Service) restoreGoogleDriveBackup(ctx context.Context, id string) (Rest
 	defer os.RemoveAll(stagingPath)
 
 	targetPath := filepath.Join(stagingPath, download.Name)
-	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("create google drive restore archive: %w", err)
 	}
@@ -804,8 +804,22 @@ func (s *Service) ensureBackupPath() error {
 	if strings.TrimSpace(s.backupPath) == "" {
 		return fmt.Errorf("backup path is not configured")
 	}
-	if err := os.MkdirAll(s.backupPath, 0o755); err != nil {
+	if err := os.MkdirAll(s.backupPath, 0o700); err != nil {
 		return fmt.Errorf("create backup directory %q: %w", s.backupPath, err)
+	}
+	if err := os.Chmod(s.backupPath, 0o700); err != nil {
+		return fmt.Errorf("secure backup directory %q: %w", s.backupPath, err)
+	}
+	entries, err := os.ReadDir(s.backupPath)
+	if err != nil {
+		return fmt.Errorf("read backup directory %q: %w", s.backupPath, err)
+	}
+	for _, entry := range entries {
+		if entry.Type().IsRegular() && strings.HasSuffix(strings.ToLower(entry.Name()), backupExtension) {
+			if err := os.Chmod(filepath.Join(s.backupPath, entry.Name()), 0o600); err != nil {
+				return fmt.Errorf("secure backup file %q: %w", entry.Name(), err)
+			}
+		}
 	}
 
 	return nil
@@ -1277,8 +1291,11 @@ func (s *Service) restorePanelFiles(stagingPath, snapshotRelPath string) error {
 	if strings.TrimSpace(s.dataPath) == "" {
 		return fmt.Errorf("data path is not configured")
 	}
-	if err := os.MkdirAll(s.dataPath, 0o755); err != nil {
+	if err := os.MkdirAll(s.dataPath, 0o700); err != nil {
 		return fmt.Errorf("create data path %q: %w", s.dataPath, err)
+	}
+	if err := os.Chmod(s.dataPath, 0o700); err != nil {
+		return fmt.Errorf("secure data path %q: %w", s.dataPath, err)
 	}
 
 	preservedPaths := map[string]struct{}{}
