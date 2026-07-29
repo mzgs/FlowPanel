@@ -11,6 +11,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
+	"flowpanel/internal/firewall"
 	"flowpanel/internal/ftp"
 	"flowpanel/internal/golang"
 	"flowpanel/internal/googledrive"
@@ -57,6 +58,7 @@ type App struct {
 	GoogleDrive   *googledrive.Service
 	SystemMonitor *systemmonitor.Service
 	TaskManager   *taskmanager.Service
+	Firewall      *firewall.Service
 }
 
 func New(
@@ -88,6 +90,7 @@ func New(
 	googleDriveService *googledrive.Service,
 	systemMonitorService *systemmonitor.Service,
 	taskManagerService *taskmanager.Service,
+	firewallService *firewall.Service,
 ) *App {
 	return &App{
 		Config:        cfg,
@@ -118,5 +121,6 @@ func New(
 		GoogleDrive:   googleDriveService,
 		SystemMonitor: systemMonitorService,
 		TaskManager:   taskManagerService,
+		Firewall:      firewallService,
 	}
 }

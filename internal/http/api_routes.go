@@ -79,6 +79,7 @@ func (a *apiRoutes) register(r chi.Router) {
 	a.registerApplicationRoutes(r)
 	a.registerDomainRoutes(r)
 	a.registerFileRoutes(r)
+	a.registerFirewallRoutes(r)
 	a.registerTaskManagerRoutes(r)
 }
 

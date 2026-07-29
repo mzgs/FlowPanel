@@ -26,6 +26,7 @@ import {
   Search,
   Server,
   Settings,
+  ShieldCheck,
   TerminalSquare,
   World,
 } from "@/components/icons/lucide-icons";
@@ -114,6 +115,9 @@ const BackupsPage = lazyRouteComponent(() =>
 const SettingsPage = lazyRouteComponent(() =>
   import("@/pages/settings-page").then((module) => ({ default: module.SettingsPage })),
 );
+const SecurityPage = lazyRouteComponent(() =>
+  import("@/pages/security-page").then((module) => ({ default: module.SecurityPage })),
+);
 
 const navigationItems = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
@@ -129,6 +133,7 @@ const navigationItems = [
   { to: "/terminal", label: "Terminal", icon: TerminalSquare },
   { to: "/activity", label: "Activity", icon: List },
   { to: "/backups", label: "Backups", icon: HardDrive },
+  { to: "/security", label: "Security", icon: ShieldCheck },
 
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
@@ -486,6 +491,12 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const securityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/security",
+  component: SecurityPage,
+});
+
 const taskManagerRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/task-manager",
@@ -515,6 +526,7 @@ const routeTree = rootRoute.addChildren([
   legacyJobsRoute,
   taskManagerRoute,
   terminalRoute,
+  securityRoute,
   settingsRoute,
 ]);
 

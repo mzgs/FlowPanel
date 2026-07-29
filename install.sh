@@ -294,6 +294,7 @@ FLOWPANEL_ADMIN_TLS_KEY_FILE=$env_dir/admin.key
 FLOWPANEL_DB_PATH=$data_dir/flowpanel.db
 FLOWPANEL_ADMIN_USERNAME=$admin_username
 FLOWPANEL_ADMIN_PASSWORD=$admin_password
+FLOWPANEL_FIREWALL_ENABLED=true
 EOF
     as_root chmod 600 "$env_file"
   else
@@ -315,7 +316,7 @@ EOF
 [Unit]
 Description=FlowPanel
 Wants=network-online.target
-After=network-online.target
+After=network-online.target docker.service
 
 [Service]
 Type=simple

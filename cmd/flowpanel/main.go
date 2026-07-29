@@ -31,6 +31,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/events"
 	"flowpanel/internal/files"
+	"flowpanel/internal/firewall"
 	"flowpanel/internal/ftp"
 	"flowpanel/internal/golang"
 	"flowpanel/internal/googledrive"
@@ -1682,6 +1683,11 @@ func runServer() error {
 	ftpRuntime := ftp.NewRuntime(logger.Named("ftp"), ftpService)
 	systemMonitorService := systemmonitor.NewService(logger.Named("system-monitor"), stores.SystemMonitor)
 	taskManagerService := taskmanager.NewService(logger.Named("task-manager"), scheduler)
+	firewallService := firewall.NewService(
+		logger.Named("firewall"),
+		filepath.Join(config.FlowPanelDataPath(), "firewall.json"),
+		cfg.Firewall.Enabled,
+	)
 	googleDriveService := googledrive.NewService(cfg.GoogleDrive)
 	backupService := backup.NewService(
 		logger.Named("backup"),
@@ -1742,6 +1748,7 @@ func runServer() error {
 		googleDriveService,
 		systemMonitorService,
 		taskManagerService,
+		firewallService,
 	)
 
 	router, err := httpx.NewRouter(appContainer)
@@ -1767,6 +1774,16 @@ func runServer() error {
 		PassivePorts: settingsRecord.FTPPassivePorts,
 	}); err != nil {
 		return fmt.Errorf("start ftp runtime: %w", err)
+	}
+	if err := firewallService.Reconcile(context.Background(), firewall.Config{
+		AdminAddr:       cfg.AdminListenAddr,
+		HTTPAddr:        cfg.PublicHTTPAddr,
+		HTTPSAddr:       cfg.PublicHTTPSAddr,
+		FTPEnabled:      settingsRecord.FTPEnabled,
+		FTPPort:         settingsRecord.FTPPort,
+		FTPPassivePorts: settingsRecord.FTPPassivePorts,
+	}); err != nil {
+		logger.Error("reconcile managed firewall at startup failed", zap.Error(err))
 	}
 	systemMonitorService.Start()
 	scheduler.Start()

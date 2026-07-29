@@ -112,6 +112,7 @@ FlowPanel is configured with environment variables.
 | `FLOWPANEL_MARIADB_PASSWORD` | empty | MariaDB root password. Installer deployments persist it in the protected service environment file. |
 | `FLOWPANEL_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
 | `FLOWPANEL_CRON_ENABLED` | `true` | Enables persisted cron jobs. |
+| `FLOWPANEL_FIREWALL_ENABLED` | `false` | Initial managed-firewall state. New Linux installations set this to `true`; the saved Security panel state takes precedence afterward. |
 | `FLOWPANEL_GOOGLE_DRIVE_CLIENT_ID` | empty | Set with client secret for Google Drive backups. |
 | `FLOWPANEL_GOOGLE_DRIVE_CLIENT_SECRET` | empty | Set with client ID for Google Drive backups. |
 | `FLOWPANEL_GOOGLE_DRIVE_CREDENTIALS_PATH` | platform default | OAuth token storage path. |

@@ -295,6 +295,9 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 					return
 				}
 			}
+			if err := api.reconcileFirewall(r.Context()); err != nil {
+				app.Logger.Error("reconcile firewall after settings update failed", zap.Error(err))
+			}
 
 			if previousPanelURL != record.PanelURL {
 				if err := syncDomainsWithPanelURL(r.Context(), app, record.PanelURL); err != nil {

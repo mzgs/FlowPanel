@@ -360,6 +360,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			"succeeded",
 			fmt.Sprintf("Created Docker container %q from %q.", label, input.Image),
 		)
+		_ = a.reconcileFirewall(actionCtx)
 		writeJSON(w, stdhttp.StatusCreated, map[string]any{"container": container})
 	})
 
@@ -447,6 +448,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 				"succeeded",
 				fmt.Sprintf("%s Docker container %q.", dockerContainerActionPastTense(action), label),
 			)
+			_ = a.reconcileFirewall(actionCtx)
 			writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
 		}
 	}
@@ -563,6 +565,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			"succeeded",
 			fmt.Sprintf("Deleted Docker container %q.", label),
 		)
+		_ = a.reconcileFirewall(actionCtx)
 		w.WriteHeader(stdhttp.StatusNoContent)
 	})
 
@@ -604,6 +607,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			"succeeded",
 			fmt.Sprintf("Recreated Docker container %q.", label),
 		)
+		_ = a.reconcileFirewall(actionCtx)
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
 	})
 
@@ -865,6 +869,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			"succeeded",
 			fmt.Sprintf("Updated Docker container %q settings.", label),
 		)
+		_ = a.reconcileFirewall(actionCtx)
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
 	})
 

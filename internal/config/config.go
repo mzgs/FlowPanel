@@ -25,6 +25,7 @@ type Config struct {
 	InitialAdmin     InitialAdminConfig
 	Cron             CronConfig
 	GoogleDrive      GoogleDriveConfig
+	Firewall         FirewallConfig
 }
 
 type DatabaseConfig struct {
@@ -53,6 +54,10 @@ type GoogleDriveConfig struct {
 	CredentialsPath string
 }
 
+type FirewallConfig struct {
+	Enabled bool
+}
+
 func Load() (Config, error) {
 	shutdownTimeout, err := getDuration("FLOWPANEL_SHUTDOWN_TIMEOUT", 10*time.Second)
 	if err != nil {
@@ -69,6 +74,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	sessionCookieSecure, err := getBool("FLOWPANEL_SESSION_COOKIE_SECURE", false)
+	if err != nil {
+		return Config{}, err
+	}
+	firewallEnabled, err := getBool("FLOWPANEL_FIREWALL_ENABLED", false)
 	if err != nil {
 		return Config{}, err
 	}
@@ -103,6 +112,7 @@ func Load() (Config, error) {
 			ClientSecret:    getEnv("FLOWPANEL_GOOGLE_DRIVE_CLIENT_SECRET", ""),
 			CredentialsPath: getEnv("FLOWPANEL_GOOGLE_DRIVE_CREDENTIALS_PATH", GoogleDriveOAuthCredentialsPath()),
 		},
+		Firewall: FirewallConfig{Enabled: firewallEnabled},
 	}
 
 	if err := cfg.validate(); err != nil {
