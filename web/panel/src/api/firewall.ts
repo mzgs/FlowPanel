@@ -55,3 +55,16 @@ export function setFirewallEnabled(enabled: boolean) {
 export function reconcileFirewall() {
   return requestFirewall("/api/firewall/reconcile", { method: "POST" });
 }
+
+export function updateFirewallPort(port: Omit<FirewallPort, "source">, open: boolean) {
+  return requestFirewall("/api/firewall/ports", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      port: port.port,
+      end_port: port.end_port,
+      protocol: port.protocol,
+      open,
+    }),
+  });
+}

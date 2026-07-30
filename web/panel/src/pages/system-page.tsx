@@ -19,6 +19,7 @@ import {
   type TaskManagerUser,
 } from "@/api/task-manager";
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
+import { FirewallPanel } from "@/components/firewall-panel";
 import { PageHeader } from "@/components/page-header";
 import {
   Clock,
@@ -54,7 +55,7 @@ import { toast } from "sonner";
 const refreshIntervalMs = 10_000;
 const systemStatusRefreshIntervalMs = 5_000;
 
-type TaskManagerSection = "processes" | "services" | "startup" | "users" | "scheduled" | "monitor";
+type TaskManagerSection = "processes" | "services" | "startup" | "users" | "scheduled" | "monitor" | "firewall";
 
 const sectionMeta: Array<{
   id: TaskManagerSection;
@@ -67,6 +68,7 @@ const sectionMeta: Array<{
   { id: "users", label: "Users", description: "Review local accounts and active sessions." },
   { id: "scheduled", label: "Scheduled Tasks", description: "Track scheduled jobs and recent execution state." },
   { id: "monitor", label: "Monitor", description: "Track live network, disk, CPU, and RAM activity." },
+  { id: "firewall", label: "Firewall", description: "Manage inbound protection and open or close custom ports." },
 ] as const;
 
 function formatPercent(value?: number) {
@@ -815,7 +817,9 @@ export function TaskManagerPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<TaskManagerSection>("processes");
+  const [activeSection, setActiveSection] = useState<TaskManagerSection>(
+    window.location.pathname === "/security" ? "firewall" : "processes",
+  );
   const [search, setSearch] = useState("");
   const requestRef = useRef<AbortController | null>(null);
   const systemStatusRequestRef = useRef<AbortController | null>(null);
@@ -960,6 +964,7 @@ export function TaskManagerPage() {
     users: snapshot?.users.length || 0,
     scheduled: snapshot?.scheduled_tasks.length || 0,
     monitor: 0,
+    firewall: 0,
   };
 
   async function runSnapshotAction(
@@ -1015,7 +1020,7 @@ export function TaskManagerPage() {
   }
 
   const currentSection = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
-  const tableSectionContent: Record<Exclude<TaskManagerSection, "monitor">, ReactNode> = {
+  const tableSectionContent: Record<Exclude<TaskManagerSection, "monitor" | "firewall">, ReactNode> = {
     processes: <ProcessesTable processes={filtered.processes} pendingAction={pendingAction} onTerminate={handleTerminate} />,
     services: <ServicesTable services={filtered.services} pendingAction={pendingAction} onAction={handleServiceAction} />,
     startup: <StartupItemsTable items={filtered.startup} pendingAction={pendingAction} onAction={handleStartupAction} />,
@@ -1023,12 +1028,13 @@ export function TaskManagerPage() {
     scheduled: <ScheduledTasksTable tasks={filtered.scheduled} />,
   };
   const monitorActive = activeSection === "monitor";
+  const firewallActive = activeSection === "firewall";
 
   return (
     <div className="min-h-[calc(100vh-var(--app-navbar-height))]">
       <PageHeader
         title="System"
-        meta="Manage live processes, services, startup registration, users, and scheduled tasks from a single node view."
+        meta="Manage processes, services, monitoring, firewall rules, and other node resources."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setLinuxToolsOpen(true)}>
@@ -1080,7 +1086,7 @@ export function TaskManagerPage() {
               <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">{currentSection.label}</div>
               <div className="text-sm text-[var(--app-text-muted)]">{currentSection.description}</div>
             </div>
-            {monitorActive ? null : (
+            {monitorActive || firewallActive ? null : (
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <label className="relative min-w-0 sm:w-[20rem]">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1116,7 +1122,7 @@ export function TaskManagerPage() {
                     )}
                   >
                     <span>{section.label}</span>
-                    {section.id === "monitor" ? null : (
+                    {section.id === "monitor" || section.id === "firewall" ? null : (
                       <span className="rounded bg-black/10 px-1.5 py-0.5 text-[11px]">{counts[section.id]}</span>
                     )}
                   </button>
@@ -1125,7 +1131,7 @@ export function TaskManagerPage() {
             </div>
           </div>
 
-          {monitorActive ? null : (
+          {monitorActive || firewallActive ? null : (
             <div className="px-4 py-3">
               {loading && !snapshot ? (
                 <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
@@ -1146,6 +1152,7 @@ export function TaskManagerPage() {
               )}
             </div>
           )}
+          {firewallActive ? <FirewallPanel /> : null}
         </section>
 
         {monitorActive ? (

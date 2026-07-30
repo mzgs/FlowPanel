@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	stdhttp "net/http"
+	"strconv"
+	"strings"
 
 	"flowpanel/internal/firewall"
 	"flowpanel/internal/settings"
@@ -14,6 +16,13 @@ import (
 
 type updateFirewallRequest struct {
 	Enabled bool `json:"enabled"`
+}
+
+type updateFirewallPortRequest struct {
+	Port     int    `json:"port"`
+	EndPort  int    `json:"end_port"`
+	Protocol string `json:"protocol"`
+	Open     bool   `json:"open"`
 }
 
 func (a *apiRoutes) registerFirewallRoutes(r chi.Router) {
@@ -55,7 +64,50 @@ func (a *apiRoutes) registerFirewallRoutes(r chi.Router) {
 		if input.Enabled {
 			state = "enabled"
 		}
-		a.mutationEvent(r.Context(), "security", "update", "firewall", "managed", "Managed firewall", "succeeded", "Managed firewall "+state+".")
+		a.mutationEvent(r.Context(), "system", "update", "firewall", "managed", "Managed firewall", "succeeded", "Managed firewall "+state+".")
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"firewall": status})
+	})
+
+	portHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Firewall == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "managed firewall is unavailable"})
+			return
+		}
+		var input updateFirewallPortRequest
+		if err := decodeJSON(r, &input); err != nil {
+			writeInvalidRequestBody(w)
+			return
+		}
+		input.Protocol = strings.ToLower(strings.TrimSpace(input.Protocol))
+		if input.Port < 1 || input.Port > 65535 ||
+			(input.EndPort != 0 && (input.EndPort < input.Port || input.EndPort > 65535)) ||
+			(input.Protocol != "tcp" && input.Protocol != "udp") {
+			writeJSON(w, stdhttp.StatusUnprocessableEntity, map[string]any{"error": "enter a valid TCP or UDP port between 1 and 65535"})
+			return
+		}
+		cfg, err := a.firewallConfig(r.Context())
+		if err != nil {
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to load firewall settings"})
+			return
+		}
+		port := firewall.Port{Port: input.Port, EndPort: input.EndPort, Protocol: input.Protocol, Source: "Custom"}
+		status, err := a.app.Firewall.UpdatePort(r.Context(), port, input.Open, cfg)
+		if err != nil {
+			a.app.Logger.Error("update managed firewall port failed", zap.Int("port", input.Port), zap.String("protocol", input.Protocol), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+		action := "close"
+		pastTense := "closed"
+		if input.Open {
+			action = "open"
+			pastTense = "opened"
+		}
+		label := input.Protocol + "/" + strconv.Itoa(input.Port)
+		if input.EndPort > input.Port {
+			label = input.Protocol + "/" + strconv.Itoa(input.Port) + "-" + strconv.Itoa(input.EndPort)
+		}
+		a.mutationEvent(r.Context(), "system", action, "firewall_port", label, "Firewall port "+label, "succeeded", "Firewall port "+label+" "+pastTense+".")
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"firewall": status})
 	})
 
@@ -71,6 +123,7 @@ func (a *apiRoutes) registerFirewallRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodGet, "/firewall", statusHandler)
 	r.Method(stdhttp.MethodHead, "/firewall", statusHandler)
 	r.Method(stdhttp.MethodPut, "/firewall", updateHandler)
+	r.Method(stdhttp.MethodPut, "/firewall/ports", portHandler)
 	r.Method(stdhttp.MethodPost, "/firewall/reconcile", reconcileHandler)
 }
 

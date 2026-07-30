@@ -48,7 +48,8 @@ type Status struct {
 }
 
 type state struct {
-	Enabled bool `json:"enabled"`
+	Enabled     bool   `json:"enabled"`
+	CustomPorts []Port `json:"custom_ports,omitempty"`
 }
 
 type Service struct {
@@ -83,12 +84,15 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool, cfg Config) (Sta
 			return s.status(ctx, cfg), errors.New("ip6tables is required because this host has IPv6 connectivity")
 		}
 	}
+	saved := s.load()
+	saved.Enabled = enabled
+	ports := desiredPorts(ctx, cfg, saved.CustomPorts)
 	if enabled {
-		if err := s.apply(ctx, "iptables", desiredPorts(ctx, cfg)); err != nil {
+		if err := s.apply(ctx, "iptables", ports); err != nil {
 			return s.status(ctx, cfg), err
 		}
 		if _, err := exec.LookPath("ip6tables"); err == nil {
-			if err := s.apply(ctx, "ip6tables", desiredPorts(ctx, cfg)); err != nil {
+			if err := s.apply(ctx, "ip6tables", ports); err != nil {
 				return s.status(ctx, cfg), err
 			}
 		}
@@ -100,7 +104,61 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool, cfg Config) (Sta
 			return s.status(ctx, cfg), err
 		}
 	}
-	if err := s.save(enabled); err != nil {
+	if err := s.save(saved); err != nil {
+		return s.status(ctx, cfg), err
+	}
+	return s.status(ctx, cfg), nil
+}
+
+func (s *Service) UpdatePort(ctx context.Context, port Port, open bool, cfg Config) (Status, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	port.Protocol = strings.ToLower(strings.TrimSpace(port.Protocol))
+	port.Source = "Custom"
+	if !validPort(port.Port) || (port.EndPort != 0 && (!validPort(port.EndPort) || port.EndPort < port.Port)) {
+		return s.status(ctx, cfg), errors.New("port must be between 1 and 65535 and the range end cannot be lower than its start")
+	}
+	if port.Protocol != "tcp" && port.Protocol != "udp" {
+		return s.status(ctx, cfg), errors.New("protocol must be tcp or udp")
+	}
+
+	saved := s.load()
+	key := portKey(port)
+	custom := make([]Port, 0, len(saved.CustomPorts)+1)
+	for _, existing := range saved.CustomPorts {
+		if portKey(existing) != key {
+			custom = append(custom, existing)
+		}
+	}
+	if open {
+		custom = append(custom, port)
+	}
+	saved.CustomPorts = uniquePorts(custom)
+
+	if saved.Enabled {
+		if runtime.GOOS != "linux" {
+			return s.status(ctx, cfg), errors.New("managed firewall is available on Linux hosts only")
+		}
+		if _, err := exec.LookPath("iptables"); err != nil {
+			return s.status(ctx, cfg), errors.New("iptables is required for managed firewall")
+		}
+		if hostHasPublicIPv6() {
+			if _, err := exec.LookPath("ip6tables"); err != nil {
+				return s.status(ctx, cfg), errors.New("ip6tables is required because this host has IPv6 connectivity")
+			}
+		}
+		ports := desiredPorts(ctx, cfg, saved.CustomPorts)
+		if err := s.apply(ctx, "iptables", ports); err != nil {
+			return s.status(ctx, cfg), err
+		}
+		if _, err := exec.LookPath("ip6tables"); err == nil {
+			if err := s.apply(ctx, "ip6tables", ports); err != nil {
+				return s.status(ctx, cfg), err
+			}
+		}
+	}
+	if err := s.save(saved); err != nil {
 		return s.status(ctx, cfg), err
 	}
 	return s.status(ctx, cfg), nil
@@ -110,7 +168,8 @@ func (s *Service) Reconcile(ctx context.Context, cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.enabled() || runtime.GOOS != "linux" {
+	saved := s.load()
+	if !saved.Enabled || runtime.GOOS != "linux" {
 		return nil
 	}
 	if _, err := exec.LookPath("iptables"); err != nil {
@@ -121,7 +180,7 @@ func (s *Service) Reconcile(ctx context.Context, cfg Config) error {
 			return errors.New("ip6tables is required because this host has IPv6 connectivity")
 		}
 	}
-	ports := desiredPorts(ctx, cfg)
+	ports := desiredPorts(ctx, cfg, saved.CustomPorts)
 	if err := s.apply(ctx, "iptables", ports); err != nil {
 		return err
 	}
@@ -155,7 +214,8 @@ func (s *Service) status(ctx context.Context, cfg Config) Status {
 			notice = "Install ip6tables to protect this host's IPv6 traffic."
 		}
 	}
-	enabled := s.enabled()
+	saved := s.load()
+	enabled := saved.Enabled
 	active := false
 	if supported {
 		active = commandOK(ctx, "iptables", "-C", "INPUT", "-j", chainName)
@@ -172,7 +232,7 @@ func (s *Service) status(ctx context.Context, cfg Config) Status {
 		Enabled:     enabled,
 		Active:      active,
 		Backend:     backend,
-		Allowed:     desiredPorts(ctx, cfg),
+		Allowed:     desiredPorts(ctx, cfg, saved.CustomPorts),
 		DockerPorts: dockerPublicPorts(ctx),
 		Notice:      notice,
 	}
@@ -198,20 +258,27 @@ func hostHasPublicIPv6() bool {
 	return false
 }
 
-func (s *Service) enabled() bool {
+func (s *Service) load() state {
 	raw, err := os.ReadFile(s.statePath)
 	if err != nil {
-		return s.defaultState
+		return state{Enabled: s.defaultState}
 	}
 	var saved state
-	return json.Unmarshal(raw, &saved) == nil && saved.Enabled
+	if json.Unmarshal(raw, &saved) != nil {
+		return state{Enabled: s.defaultState}
+	}
+	saved.CustomPorts = uniquePorts(saved.CustomPorts)
+	for index := range saved.CustomPorts {
+		saved.CustomPorts[index].Source = "Custom"
+	}
+	return saved
 }
 
-func (s *Service) save(enabled bool) error {
+func (s *Service) save(saved state) error {
 	if err := os.MkdirAll(filepath.Dir(s.statePath), 0o755); err != nil {
 		return fmt.Errorf("create firewall state directory: %w", err)
 	}
-	raw, err := json.Marshal(state{Enabled: enabled})
+	raw, err := json.Marshal(saved)
 	if err != nil {
 		return err
 	}
@@ -299,7 +366,7 @@ func (s *Service) remove(ctx context.Context, binary string) error {
 	return nil
 }
 
-func desiredPorts(ctx context.Context, cfg Config) []Port {
+func desiredPorts(ctx context.Context, cfg Config, custom []Port) []Port {
 	ports := []Port{
 		{Port: addressPort(cfg.AdminAddr, 8443), Protocol: "tcp", Source: "FlowPanel"},
 		{Port: addressPort(cfg.HTTPAddr, 80), Protocol: "tcp", Source: "HTTP"},
@@ -312,6 +379,7 @@ func desiredPorts(ctx context.Context, cfg Config) []Port {
 			ports = append(ports, Port{Port: start, EndPort: end, Protocol: "tcp", Source: "FTP passive"})
 		}
 	}
+	ports = append(ports, custom...)
 	ports = append(ports, dockerPublicPorts(ctx)...)
 	return uniquePorts(ports)
 }
@@ -427,7 +495,7 @@ func uniquePorts(ports []Port) []Port {
 		if port.EndPort != 0 && (!validPort(port.EndPort) || port.EndPort < port.Port) {
 			continue
 		}
-		key := fmt.Sprintf("%s:%d:%d", port.Protocol, port.Port, port.EndPort)
+		key := portKey(port)
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -441,6 +509,10 @@ func uniquePorts(ports []Port) []Port {
 		return result[i].Port < result[j].Port
 	})
 	return result
+}
+
+func portKey(port Port) string {
+	return fmt.Sprintf("%s:%d:%d", port.Protocol, port.Port, port.EndPort)
 }
 
 func validPort(port int) bool {
