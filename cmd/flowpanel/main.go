@@ -75,6 +75,7 @@ type namedStore struct {
 
 const (
 	installedBinaryPath = "/usr/local/bin/flowpanel"
+	installerURL        = "https://raw.githubusercontent.com/mzgs/FlowPanel/main/install.sh"
 	macosLaunchdLabel   = "com.mzgs.flowpanel"
 )
 
@@ -139,7 +140,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newRepairCommand(), newStatusCommand(), newVersionCommand(), newCredentialsCommand(), newBackupCommand())
+	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newRepairCommand(), newUpdateCommand(), newStatusCommand(), newVersionCommand(), newCredentialsCommand(), newBackupCommand())
 
 	return cmd
 }
@@ -212,6 +213,17 @@ func newRepairCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRepairPanelCommand(cmd.Context(), cmd.OutOrStdout())
+		},
+	}
+}
+
+func newUpdateCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Update FlowPanel to the latest release",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUpdateCommand(cmd.Context(), cmd.OutOrStdout())
 		},
 	}
 }
@@ -321,8 +333,9 @@ func runMenu() error {
 		_, _ = fmt.Fprintln(os.Stdout, "(5) Change panel username")
 		_, _ = fmt.Fprintln(os.Stdout, "(6) Change panel password")
 		_, _ = fmt.Fprintln(os.Stdout, "(7) Create backup")
-		_, _ = fmt.Fprintln(os.Stdout, "(8) Uninstall FlowPanel")
-		_, _ = fmt.Fprintln(os.Stdout, "(9) Show help")
+		_, _ = fmt.Fprintln(os.Stdout, "(8) Update FlowPanel")
+		_, _ = fmt.Fprintln(os.Stdout, "(9) Uninstall FlowPanel")
+		_, _ = fmt.Fprintln(os.Stdout, "(10) Show help")
 		_, _ = fmt.Fprintln(os.Stdout, "(0) Exit")
 		_, _ = fmt.Fprint(os.Stdout, "Select: ")
 
@@ -389,11 +402,16 @@ func runMenu() error {
 			}
 			pauseMenu(reader, os.Stdout)
 		case "8":
-			if err := promptUninstall(reader, os.Stdout); err != nil {
+			if err := runUpdateCommand(context.Background(), os.Stdout); err != nil {
 				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
 			}
 			pauseMenu(reader, os.Stdout)
 		case "9":
+			if err := promptUninstall(reader, os.Stdout); err != nil {
+				_, _ = fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+			}
+			pauseMenu(reader, os.Stdout)
+		case "10":
 			if err := newRootCommand().Help(); err != nil {
 				return err
 			}
@@ -550,6 +568,53 @@ func promptUninstall(reader *bufio.Reader, w io.Writer) error {
 	}
 
 	return runUninstallCommand(context.Background(), w, removeData)
+}
+
+func runUpdateCommand(ctx context.Context, w io.Writer) error {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		return fmt.Errorf("update is not supported on %s", runtime.GOOS)
+	}
+
+	request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, installerURL, nil)
+	if err != nil {
+		return fmt.Errorf("create installer request: %w", err)
+	}
+	response, err := stdhttp.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("download installer: %w", err)
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+	if response.StatusCode != stdhttp.StatusOK {
+		return fmt.Errorf("download installer: unexpected HTTP status %s", response.Status)
+	}
+
+	installer, err := os.CreateTemp("", "flowpanel-update-*.sh")
+	if err != nil {
+		return fmt.Errorf("create installer file: %w", err)
+	}
+	installerPath := installer.Name()
+	defer func() {
+		_ = os.Remove(installerPath)
+	}()
+	if _, err := io.Copy(installer, response.Body); err != nil {
+		_ = installer.Close()
+		return fmt.Errorf("save installer: %w", err)
+	}
+	if err := installer.Close(); err != nil {
+		return fmt.Errorf("close installer file: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(w, "Updating FlowPanel to the latest release...")
+	command := exec.CommandContext(ctx, "/bin/sh", installerPath)
+	command.Stdin = os.Stdin
+	command.Stdout = w
+	command.Stderr = w
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("run installer: %w", err)
+	}
+	return nil
 }
 
 func runUninstallCommand(ctx context.Context, w io.Writer, removeData bool) error {
