@@ -386,14 +386,14 @@ func parsePortRange(value string) (int, int, bool) {
 }
 
 func dockerPublicPorts(ctx context.Context) []Port {
+	ports := make([]Port, 0)
 	if _, err := exec.LookPath("docker"); err != nil {
-		return nil
+		return ports
 	}
 	output, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{.Ports}}").Output()
 	if err != nil {
-		return nil
+		return ports
 	}
-	var ports []Port
 	for _, line := range strings.Split(string(output), "\n") {
 		for _, mapping := range strings.Split(line, ",") {
 			host, container, published := strings.Cut(strings.TrimSpace(mapping), "->")
