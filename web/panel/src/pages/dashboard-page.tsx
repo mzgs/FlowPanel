@@ -10,6 +10,7 @@ import {
   type DockerStatus,
 } from "@/api/docker";
 import { fetchFFmpegStatus, type FFmpegStatus } from "@/api/ffmpeg";
+import { fetchYTDLPStatus, type YTDLPStatus } from "@/api/ytdlp";
 import { fetchGolangStatus, type GolangStatus } from "@/api/golang";
 import {
   fetchMariaDBDatabases,
@@ -83,6 +84,7 @@ type InstalledAppsData = {
   caddy: CaddyStatus | null;
   docker: DockerStatus | null;
   ffmpeg: FFmpegStatus | null;
+  ytdlp: YTDLPStatus | null;
   golang: GolangStatus | null;
   mariadb: MariaDBStatus | null;
   mongodb: MongoDBStatus | null;
@@ -157,6 +159,7 @@ async function fetchInstalledAppsData(): Promise<InstalledAppsData> {
     mariadbResult,
     dockerResult,
     ffmpegResult,
+    ytdlpResult,
     redisResult,
     mongoDBResult,
     postgresqlResult,
@@ -169,6 +172,7 @@ async function fetchInstalledAppsData(): Promise<InstalledAppsData> {
     fetchMariaDBStatus(),
     fetchDockerStatus(),
     fetchFFmpegStatus(),
+    fetchYTDLPStatus(),
     fetchRedisStatus(),
     fetchMongoDBStatus(),
     fetchPostgreSQLStatus(),
@@ -181,6 +185,7 @@ async function fetchInstalledAppsData(): Promise<InstalledAppsData> {
     caddy: caddyResult.status === "fulfilled" ? caddyResult.value : null,
     docker: dockerResult.status === "fulfilled" ? dockerResult.value : null,
     ffmpeg: ffmpegResult.status === "fulfilled" ? ffmpegResult.value : null,
+    ytdlp: ytdlpResult.status === "fulfilled" ? ytdlpResult.value : null,
     golang: golangResult.status === "fulfilled" ? golangResult.value : null,
     mariadb: mariadbResult.status === "fulfilled" ? mariadbResult.value : null,
     mongodb: mongoDBResult.status === "fulfilled" ? mongoDBResult.value : null,
@@ -1111,6 +1116,17 @@ export function DashboardPage() {
     status: runtimeStatusLabel(installedApps.ffmpeg.state, false, false),
     running: true,
     state: installedApps.ffmpeg.state,
+    actions: [],
+  });
+  addRuntimeRow(installedApps?.ytdlp?.installed && {
+    key: "ytdlp",
+    name: "yt-dlp",
+    icon: "/application-icons/ytdlp.svg",
+    iconAlt: "yt-dlp logo",
+    version: normalizeVersion(installedApps.ytdlp.version),
+    status: runtimeStatusLabel(installedApps.ytdlp.state, false, false),
+    running: true,
+    state: installedApps.ytdlp.state,
     actions: [],
   });
   addRuntimeRow(installedApps?.phpmyadmin?.installed && {

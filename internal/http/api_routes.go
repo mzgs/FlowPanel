@@ -413,6 +413,9 @@ func (a *apiRoutes) trackPackageRuntimeStatus(key, label string, status packager
 		}
 		status.State = "installing"
 		status.Message = fmt.Sprintf("%s installation is running in the background.", label)
+	case "update":
+		status.State = "updating"
+		status.Message = fmt.Sprintf("%s update is running.", label)
 	case "remove":
 		if !status.Installed {
 			a.runtimeActions.End(key, "remove")
@@ -446,6 +449,7 @@ func (a *apiRoutes) trackPackageRuntimeStatus(key, label string, status packager
 	}
 
 	status.InstallAvailable = false
+	status.UpdateAvailable = false
 	status.RemoveAvailable = false
 	status.StartAvailable = false
 	status.StopAvailable = false

@@ -33,6 +33,7 @@ func (a *apiRoutes) registerApplicationRoutes(r chi.Router) {
 	a.registerMariaDBRoutes(r)
 	a.registerDockerRoutes(r)
 	a.registerPackageRuntimeRoutes(r, "ffmpeg", "FFmpeg", a.app.FFmpeg)
+	a.registerPackageRuntimeRoutes(r, "ytdlp", "yt-dlp", a.app.YTDLP)
 	a.registerPackageRuntimeRoutes(r, "redis", "Redis", a.app.Redis)
 	a.registerPackageRuntimeRoutes(r, "mongodb", "MongoDB", a.app.MongoDB)
 	a.registerPackageRuntimeRoutes(r, "postgresql", "PostgreSQL", a.app.PostgreSQL)
@@ -1378,6 +1379,7 @@ func (a *apiRoutes) registerPackageRuntimeRoutes(r chi.Router, key, label string
 
 			pastTense := map[string]string{
 				"install": fmt.Sprintf("Installed %s.", label),
+				"update":  fmt.Sprintf("Updated %s.", label),
 				"remove":  fmt.Sprintf("Removed %s.", label),
 				"start":   fmt.Sprintf("Started %s.", label),
 				"stop":    fmt.Sprintf("Stopped %s.", label),
@@ -1393,6 +1395,11 @@ func (a *apiRoutes) registerPackageRuntimeRoutes(r chi.Router, key, label string
 	r.Method(stdhttp.MethodPost, "/"+key+"/install", registerRuntimeAction("install", func(ctx context.Context) error {
 		return manager.Install(ctx)
 	}))
+	if updater, ok := manager.(packageruntime.UpdateManager); ok {
+		r.Method(stdhttp.MethodPost, "/"+key+"/update", registerRuntimeAction("update", func(ctx context.Context) error {
+			return updater.Update(ctx)
+		}))
+	}
 	r.Method(stdhttp.MethodPost, "/"+key+"/remove", registerRuntimeAction("remove", func(ctx context.Context) error {
 		return manager.Remove(ctx)
 	}))

@@ -32,6 +32,10 @@ type Manager interface {
 	Restart(context.Context) error
 }
 
+type UpdateManager interface {
+	Update(context.Context) error
+}
+
 type Status struct {
 	Platform         string   `json:"platform"`
 	PackageManager   string   `json:"package_manager,omitempty"`
@@ -43,6 +47,8 @@ type Status struct {
 	Issues           []string `json:"issues,omitempty"`
 	InstallAvailable bool     `json:"install_available"`
 	InstallLabel     string   `json:"install_label,omitempty"`
+	UpdateAvailable  bool     `json:"update_available"`
+	UpdateLabel      string   `json:"update_label,omitempty"`
 	RemoveAvailable  bool     `json:"remove_available"`
 	RemoveLabel      string   `json:"remove_label,omitempty"`
 	ServiceRunning   bool     `json:"service_running"`
@@ -60,6 +66,7 @@ type Definition struct {
 	BinaryNames     []string
 	VersionArgs     []string
 	InstallLabel    string
+	UpdateLabel     string
 	RemoveLabel     string
 	StartLabel      string
 	StopLabel       string
@@ -88,6 +95,7 @@ type Service struct {
 type actionPlan struct {
 	packageManager  string
 	installCmds     [][]string
+	updateCmds      [][]string
 	postInstallCmds [][]string
 	removeCmds      [][]string
 	startCmds       [][]string
@@ -222,12 +230,31 @@ func NewFFmpegService(logger *zap.Logger) *Service {
 	})
 }
 
+func NewYTDLPService(logger *zap.Logger) *Service {
+	return NewService(logger, Definition{
+		Key:             "ytdlp",
+		DisplayName:     "yt-dlp",
+		BinaryNames:     []string{"yt-dlp"},
+		VersionArgs:     []string{"--version"},
+		InstallLabel:    "Install yt-dlp",
+		UpdateLabel:     "Update yt-dlp",
+		RemoveLabel:     "Remove yt-dlp",
+		HomebrewFormula: "yt-dlp",
+		APTPackages:     []string{"yt-dlp"},
+		DNFPackages:     []string{"yt-dlp"},
+		YUMPackages:     []string{"yt-dlp"},
+		PacmanPackages:  []string{"yt-dlp"},
+		InstallFallback: retryYTDLPInstall,
+	})
+}
+
 func (s *Service) Status(ctx context.Context) Status {
 	plan := detectActionPlan(s.definition)
 	status := Status{
 		Platform:       runtime.GOOS,
 		PackageManager: plan.packageManager,
 		InstallLabel:   s.definition.InstallLabel,
+		UpdateLabel:    s.definition.UpdateLabel,
 		RemoveLabel:    s.definition.RemoveLabel,
 		StartLabel:     s.definition.StartLabel,
 		StopLabel:      s.definition.StopLabel,
@@ -245,6 +272,7 @@ func (s *Service) Status(ctx context.Context) Status {
 	}
 
 	status.InstallAvailable = len(plan.installCmds) > 0 && !status.Installed
+	status.UpdateAvailable = len(plan.updateCmds) > 0 && status.Installed
 	status.RemoveAvailable = len(plan.removeCmds) > 0 && status.Installed
 	if plan.serviceStatus != nil && status.Installed {
 		running, err := plan.serviceStatus(ctx)
@@ -306,6 +334,23 @@ func (s *Service) Install(ctx context.Context) error {
 	}
 
 	return runCommands(ctx, plan.postInstallCmds...)
+}
+
+func (s *Service) Update(ctx context.Context) error {
+	if status := s.Status(ctx); !status.Installed {
+		return fmt.Errorf("%s is not installed", s.definition.DisplayName)
+	}
+
+	plan := detectActionPlan(s.definition)
+	if len(plan.updateCmds) == 0 {
+		return fmt.Errorf("automatic %s updates are not supported on %s", strings.ToLower(s.definition.DisplayName), runtime.GOOS)
+	}
+
+	s.logger.Info("updating package runtime",
+		zap.String("runtime", s.definition.Key),
+		zap.String("package_manager", plan.packageManager),
+	)
+	return runCommands(ctx, plan.updateCmds...)
 }
 
 func (s *Service) Remove(ctx context.Context) error {
@@ -394,6 +439,9 @@ func detectActionPlan(definition Definition) actionPlan {
 					installCmds:    installCmds,
 					removeCmds:     [][]string{{brewPath, "uninstall", definition.HomebrewFormula}},
 				}
+				if strings.TrimSpace(definition.UpdateLabel) != "" {
+					plan.updateCmds = [][]string{{brewPath, "upgrade", definition.HomebrewFormula}}
+				}
 				if serviceName := strings.TrimSpace(definition.HomebrewService); serviceName != "" {
 					plan.startCmds = [][]string{{brewPath, "services", "start", serviceName}}
 					plan.stopCmds = [][]string{{brewPath, "services", "stop", serviceName}}
@@ -417,6 +465,12 @@ func detectActionPlan(definition Definition) actionPlan {
 			if definition.Key != "mongodb" || supportsMongoDBAPTInstall() {
 				plan.installCmds = [][]string{{aptPath, "update"}, append([]string{aptPath, "install", "-y"}, definition.APTPackages...)}
 			}
+			if strings.TrimSpace(definition.UpdateLabel) != "" {
+				plan.updateCmds = [][]string{
+					{aptPath, "update"},
+					append([]string{aptPath, "install", "-y", "--only-upgrade"}, definition.APTPackages...),
+				}
+			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.APTService); serviceName != "" {
 					plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
@@ -435,6 +489,9 @@ func detectActionPlan(definition Definition) actionPlan {
 				packageManager: "dnf",
 				installCmds:    [][]string{append([]string{dnfPath, "install", "-y"}, definition.DNFPackages...)},
 				removeCmds:     packageRemoveCommands(definition, "dnf", dnfPath),
+			}
+			if strings.TrimSpace(definition.UpdateLabel) != "" {
+				plan.updateCmds = [][]string{append([]string{dnfPath, "upgrade", "-y"}, definition.DNFPackages...)}
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.DNFService); serviceName != "" {
@@ -455,6 +512,9 @@ func detectActionPlan(definition Definition) actionPlan {
 				installCmds:    [][]string{append([]string{yumPath, "install", "-y"}, definition.YUMPackages...)},
 				removeCmds:     packageRemoveCommands(definition, "yum", yumPath),
 			}
+			if strings.TrimSpace(definition.UpdateLabel) != "" {
+				plan.updateCmds = [][]string{append([]string{yumPath, "update", "-y"}, definition.YUMPackages...)}
+			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.YUMService); serviceName != "" {
 					plan.startCmds = [][]string{{systemctlPath, "start", serviceName}}
@@ -473,6 +533,9 @@ func detectActionPlan(definition Definition) actionPlan {
 				packageManager: "pacman",
 				installCmds:    [][]string{append([]string{pacmanPath, "-Sy", "--noconfirm"}, definition.PacmanPackages...)},
 				removeCmds:     packageRemoveCommands(definition, "pacman", pacmanPath),
+			}
+			if strings.TrimSpace(definition.UpdateLabel) != "" {
+				plan.updateCmds = [][]string{append([]string{pacmanPath, "-Syu", "--noconfirm"}, definition.PacmanPackages...)}
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.PacmanService); serviceName != "" {
@@ -682,6 +745,40 @@ type mongoDBAPTRepository struct {
 	keyringPath string
 	listPath    string
 	listEntry   string
+}
+
+func retryYTDLPInstall(ctx context.Context, plan actionPlan, err error) (bool, error) {
+	if err == nil || plan.packageManager != "apt" || !isMissingAPTPackageError(err) {
+		return false, nil
+	}
+	if !isUbuntuLikeLinux(parseOSReleaseFile("/etc/os-release")) {
+		return true, errors.New("automatic yt-dlp installation via apt requires an Ubuntu release with the yt-dlp PPA")
+	}
+
+	aptPath, ok := lookupCommand("apt-get")
+	if !ok {
+		return true, errors.New("apt-get is not available")
+	}
+	if err := runCommands(ctx, []string{aptPath, "install", "-y", "software-properties-common"}); err != nil {
+		return true, err
+	}
+
+	addRepositoryPath, ok := lookupCommand("add-apt-repository")
+	if !ok {
+		return true, errors.New("add-apt-repository is unavailable after installing software-properties-common")
+	}
+	if err := runCommands(
+		ctx,
+		[]string{addRepositoryPath, "-y", "ppa:tomtomtom/yt-dlp"},
+		[]string{aptPath, "update"},
+	); err != nil {
+		return true, err
+	}
+	if err := runCommands(ctx, plan.installCmds...); err != nil {
+		return true, err
+	}
+
+	return true, runCommands(ctx, plan.postInstallCmds...)
 }
 
 func retryMongoDBInstall(ctx context.Context, plan actionPlan, err error) (bool, error) {

@@ -2,6 +2,8 @@ export function getRuntimeActionLabel(state?: string | null) {
   switch (state) {
     case "installing":
       return "Installing...";
+    case "updating":
+      return "Updating...";
     case "removing":
       return "Removing...";
     case "starting":

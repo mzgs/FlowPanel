@@ -44,6 +44,7 @@ type App struct {
 	MariaDB       mariadb.Manager
 	Docker        packageruntime.Manager
 	FFmpeg        packageruntime.Manager
+	YTDLP         packageruntime.Manager
 	Redis         packageruntime.Manager
 	MongoDB       packageruntime.Manager
 	PostgreSQL    packageruntime.Manager
@@ -76,6 +77,7 @@ func New(
 	mariadbManager mariadb.Manager,
 	dockerManager packageruntime.Manager,
 	ffmpegManager packageruntime.Manager,
+	ytdlpManager packageruntime.Manager,
 	redisManager packageruntime.Manager,
 	mongoDBManager packageruntime.Manager,
 	postgresqlManager packageruntime.Manager,
@@ -107,6 +109,7 @@ func New(
 		MariaDB:       mariadbManager,
 		Docker:        dockerManager,
 		FFmpeg:        ffmpegManager,
+		YTDLP:         ytdlpManager,
 		Redis:         redisManager,
 		MongoDB:       mongoDBManager,
 		PostgreSQL:    postgresqlManager,

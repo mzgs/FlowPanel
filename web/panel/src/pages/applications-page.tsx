@@ -16,6 +16,13 @@ import {
   type FFmpegStatus,
 } from "@/api/ffmpeg";
 import {
+  fetchYTDLPStatus,
+  installYTDLP,
+  removeYTDLP,
+  updateYTDLP,
+  type YTDLPStatus,
+} from "@/api/ytdlp";
+import {
   fetchGolangStatus,
   installGolang,
   removeGolang,
@@ -152,6 +159,7 @@ const applicationLogos = {
   mariadb: { src: "/application-icons/mariadb.png", alt: "MariaDB logo", className: "h-8 w-full" },
   docker: { src: "/application-icons/docker.svg", alt: "Docker logo", className: "h-7 w-full" },
   ffmpeg: { src: "/application-icons/ffmpeg.svg", alt: "FFmpeg logo", className: "h-7 w-full" },
+  ytdlp: { src: "/application-icons/ytdlp.svg", alt: "yt-dlp logo", className: "h-7 w-full" },
   redis: { src: "/application-icons/redis.svg", alt: "Redis logo", className: "h-7 w-full" },
   mongodb: { src: "/application-icons/mongodb.svg", alt: "MongoDB logo", className: "h-7 w-full" },
   postgresql: {
@@ -175,6 +183,7 @@ type RemovableApplication =
   | { kind: "mariadb" }
   | { kind: "docker" }
   | { kind: "ffmpeg" }
+  | { kind: "ytdlp" }
   | { kind: "redis" }
   | { kind: "mongodb" }
   | { kind: "postgresql" }
@@ -192,6 +201,8 @@ type InstallRemoveRuntimeStatus = {
   package_manager?: string;
   install_available: boolean;
   install_label?: string;
+  update_available?: boolean;
+  update_label?: string;
   remove_available: boolean;
   remove_label?: string;
 };
@@ -205,10 +216,12 @@ type ServiceRuntimeStatus = InstallRemoveRuntimeStatus & {
   restart_label?: string;
 };
 
-function getApplicationActionLabel(action: "install" | "start" | "stop" | "restart" | "remove") {
+function getApplicationActionLabel(action: "install" | "update" | "start" | "stop" | "restart" | "remove") {
   switch (action) {
     case "install":
       return "Install";
+    case "update":
+      return "Update";
     case "start":
       return "Start";
     case "stop":
@@ -678,10 +691,12 @@ function InstallRemoveApplicationCard({
   status,
   runningAction,
   installActionKey,
+  updateActionKey,
   removeActionKey,
   meta,
   removeTitle,
   onInstall,
+  onUpdate,
   onRemove,
 }: {
   app: keyof typeof applicationLogos;
@@ -689,10 +704,12 @@ function InstallRemoveApplicationCard({
   status: InstallRemoveRuntimeStatus | null;
   runningAction: string | null;
   installActionKey: string;
+  updateActionKey?: string;
   removeActionKey: string;
   meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: StatusMetaTone; fullWidth?: boolean }>;
   removeTitle: string;
   onInstall: () => void;
+  onUpdate?: () => void;
   onRemove: () => void;
 }) {
   const busyLabel = getRuntimeActionLabel(status?.state);
@@ -728,6 +745,23 @@ function InstallRemoveApplicationCard({
                 <Package className="h-4 w-4" />
               )}
               {getApplicationActionLabel("install")}
+            </Button>
+          ) : null}
+          {status?.update_available && updateActionKey && onUpdate ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={compactActionButtonClassName}
+              onClick={onUpdate}
+              disabled={runningAction !== null}
+            >
+              {runningAction === updateActionKey ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {getApplicationActionLabel("update")}
             </Button>
           ) : null}
           <Button
@@ -1288,6 +1322,7 @@ export function ApplicationsPage() {
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [dockerStatus, setDockerStatus] = useState<DockerStatus | null>(null);
   const [ffmpegStatus, setFFmpegStatus] = useState<FFmpegStatus | null>(null);
+  const [ytdlpStatus, setYTDLPStatus] = useState<YTDLPStatus | null>(null);
   const [redisStatus, setRedisStatus] = useState<RedisStatus | null>(null);
   const [mongoDBStatus, setMongoDBStatus] = useState<MongoDBStatus | null>(null);
   const [postgresqlStatus, setPostgreSQLStatus] = useState<PostgreSQLStatus | null>(null);
@@ -1630,6 +1665,7 @@ export function ApplicationsPage() {
       mariadbResult,
       dockerResult,
       ffmpegResult,
+      ytdlpResult,
       redisResult,
       mongoDBResult,
       postgresqlResult,
@@ -1643,6 +1679,7 @@ export function ApplicationsPage() {
       fetchMariaDBStatus(),
       fetchDockerStatus(),
       fetchFFmpegStatus(),
+      fetchYTDLPStatus(),
       fetchRedisStatus(),
       fetchMongoDBStatus(),
       fetchPostgreSQLStatus(),
@@ -1688,6 +1725,13 @@ export function ApplicationsPage() {
     } else {
       setFFmpegStatus(null);
       nextErrors.push(getErrorMessage(ffmpegResult.reason, "Failed to inspect FFmpeg."));
+    }
+
+    if (ytdlpResult.status === "fulfilled") {
+      setYTDLPStatus(ytdlpResult.value);
+    } else {
+      setYTDLPStatus(null);
+      nextErrors.push(getErrorMessage(ytdlpResult.reason, "Failed to inspect yt-dlp."));
     }
 
     if (redisResult.status === "fulfilled") {
@@ -1784,6 +1828,7 @@ export function ApplicationsPage() {
       !isRuntimeActionState(mariadbStatus?.state) &&
       !isRuntimeActionState(dockerStatus?.state) &&
       !isRuntimeActionState(ffmpegStatus?.state) &&
+      !isRuntimeActionState(ytdlpStatus?.state) &&
       !isRuntimeActionState(redisStatus?.state) &&
       !isRuntimeActionState(mongoDBStatus?.state) &&
       !isRuntimeActionState(postgresqlStatus?.state) &&
@@ -1809,6 +1854,7 @@ export function ApplicationsPage() {
     mariadbStatus?.state,
     dockerStatus?.state,
     ffmpegStatus?.state,
+    ytdlpStatus?.state,
     redisStatus?.state,
     mongoDBStatus?.state,
     postgresqlStatus?.state,
@@ -1892,6 +1938,10 @@ export function ApplicationsPage() {
       setRunningAction(null);
       return;
     }
+    if (runningAction === "install-ytdlp" && ytdlpStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
     if (runningAction === "remove-docker" && dockerStatus && !dockerStatus.installed) {
       setRemoveCandidate((current) => (current?.kind === "docker" ? null : current));
       setRunningAction(null);
@@ -1899,6 +1949,11 @@ export function ApplicationsPage() {
     }
     if (runningAction === "remove-ffmpeg" && ffmpegStatus && !ffmpegStatus.installed) {
       setRemoveCandidate((current) => (current?.kind === "ffmpeg" ? null : current));
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-ytdlp" && ytdlpStatus && !ytdlpStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "ytdlp" ? null : current));
       setRunningAction(null);
       return;
     }
@@ -1978,6 +2033,7 @@ export function ApplicationsPage() {
     mariadbStatus,
     dockerStatus,
     ffmpegStatus,
+    ytdlpStatus,
     redisStatus,
     mongoDBStatus,
     postgresqlStatus,
@@ -2076,6 +2132,8 @@ export function ApplicationsPage() {
           ? "Remove Docker from this node? Container workloads and image builds will stop working until Docker is installed again."
         : removeCandidate?.kind === "ffmpeg"
           ? "Remove FFmpeg from this node? Video and audio processing commands that rely on FFmpeg will stop working until it is installed again."
+        : removeCandidate?.kind === "ytdlp"
+          ? "Remove yt-dlp from this node? Downloads and jobs that rely on yt-dlp will stop working until it is installed again."
         : removeCandidate?.kind === "redis"
           ? "Remove Redis from this node? Services and jobs that rely on Redis caching or queues will stop working until Redis is installed again."
           : removeCandidate?.kind === "mongodb"
@@ -2100,6 +2158,8 @@ export function ApplicationsPage() {
           ? "Remove Docker"
         : removeCandidate?.kind === "ffmpeg"
           ? "Remove FFmpeg"
+        : removeCandidate?.kind === "ytdlp"
+          ? "Remove yt-dlp"
         : removeCandidate?.kind === "redis"
           ? "Remove Redis"
           : removeCandidate?.kind === "mongodb"
@@ -2133,6 +2193,8 @@ export function ApplicationsPage() {
             ? "remove-docker"
           : target.kind === "ffmpeg"
             ? "remove-ffmpeg"
+          : target.kind === "ytdlp"
+            ? "remove-ytdlp"
           : target.kind === "redis"
             ? "remove-redis"
             : target.kind === "mongodb"
@@ -2174,6 +2236,10 @@ export function ApplicationsPage() {
         const nextStatus = await removeFFmpeg();
         setFFmpegStatus(nextStatus);
         toast.success(!nextStatus.installed ? "FFmpeg removed." : "FFmpeg removal started.");
+      } else if (target.kind === "ytdlp") {
+        const nextStatus = await removeYTDLP();
+        setYTDLPStatus(nextStatus);
+        toast.success(!nextStatus.installed ? "yt-dlp removed." : "yt-dlp removal started.");
       } else if (target.kind === "redis") {
         const nextStatus = await removeRedis();
         setRedisStatus(nextStatus);
@@ -2215,6 +2281,8 @@ export function ApplicationsPage() {
               ? "Failed to remove Docker."
             : target.kind === "ffmpeg"
               ? "Failed to remove FFmpeg."
+            : target.kind === "ytdlp"
+              ? "Failed to remove yt-dlp."
             : target.kind === "redis"
               ? "Failed to remove Redis."
               : target.kind === "mongodb"
@@ -2368,6 +2436,23 @@ export function ApplicationsPage() {
       toast.success("FFmpeg installed.");
     } catch (error) {
       const message = getErrorMessage(error, "Failed to install FFmpeg.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handleYTDLPAction(action: "install" | "update") {
+    setRunningAction(`${action}-ytdlp`);
+    setPageError(null);
+
+    try {
+      const nextStatus = await (action === "install" ? installYTDLP() : updateYTDLP());
+      setYTDLPStatus(nextStatus);
+      toast.success(`yt-dlp ${action === "install" ? "installed" : "updated"}.`);
+    } catch (error) {
+      const message = getErrorMessage(error, `Failed to ${action} yt-dlp.`);
       setPageError(message);
       toast.error(message);
     } finally {
@@ -3289,6 +3374,29 @@ export function ApplicationsPage() {
             }}
             onRemove={() => {
               setRemoveCandidate({ kind: "ffmpeg" });
+            }}
+          />
+
+          <InstallRemoveApplicationCard
+            app="ytdlp"
+            name="yt-dlp"
+            status={ytdlpStatus}
+            runningAction={runningAction}
+            installActionKey="install-ytdlp"
+            updateActionKey="update-ytdlp"
+            removeActionKey="remove-ytdlp"
+            removeTitle="Automatic yt-dlp removal is only available for installed runtimes supported by this environment."
+            meta={[
+              { label: "Binary", value: ytdlpStatus?.binary_path?.trim() || "yt-dlp", mono: true },
+            ]}
+            onInstall={() => {
+              void handleYTDLPAction("install");
+            }}
+            onUpdate={() => {
+              void handleYTDLPAction("update");
+            }}
+            onRemove={() => {
+              setRemoveCandidate({ kind: "ytdlp" });
             }}
           />
 
