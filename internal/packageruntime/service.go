@@ -415,7 +415,7 @@ func detectActionPlan(definition Definition) actionPlan {
 				removeCmds:     packageRemoveCommands(definition, "apt", aptPath),
 			}
 			if definition.Key != "mongodb" || supportsMongoDBAPTInstall() {
-				plan.installCmds = [][]string{append([]string{aptPath, "install", "-y"}, definition.APTPackages...)}
+				plan.installCmds = [][]string{{aptPath, "update"}, append([]string{aptPath, "install", "-y"}, definition.APTPackages...)}
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.APTService); serviceName != "" {
