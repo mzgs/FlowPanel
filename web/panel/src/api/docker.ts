@@ -11,6 +11,9 @@ export type DockerStatus = {
   issues?: string[];
   install_available: boolean;
   install_label?: string;
+  update_available: boolean;
+  update_label?: string;
+  latest_version?: string;
   remove_available: boolean;
   remove_label?: string;
   service_running: boolean;
@@ -224,6 +227,15 @@ export async function fetchDockerStatus(): Promise<DockerStatus> {
 
 export async function installDocker(): Promise<DockerStatus> {
   const response = await fetch("/api/docker/install", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parseDockerResponse(response);
+}
+
+export async function updateDocker(): Promise<DockerStatus> {
+  const response = await fetch("/api/docker/update", {
     method: "POST",
     credentials: "include",
   });

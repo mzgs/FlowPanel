@@ -11,6 +11,7 @@ export type YTDLPStatus = {
   install_label?: string;
   update_available: boolean;
   update_label?: string;
+  latest_version?: string;
   remove_available: boolean;
   remove_label?: string;
 };

@@ -9,6 +9,9 @@ export type PostgreSQLStatus = {
   issues?: string[];
   install_available: boolean;
   install_label?: string;
+  update_available: boolean;
+  update_label?: string;
+  latest_version?: string;
   remove_available: boolean;
   remove_label?: string;
   service_running: boolean;
@@ -55,6 +58,15 @@ export async function fetchPostgreSQLStatus(): Promise<PostgreSQLStatus> {
 
 export async function installPostgreSQL(): Promise<PostgreSQLStatus> {
   const response = await fetch("/api/postgresql/install", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parsePostgreSQLResponse(response);
+}
+
+export async function updatePostgreSQL(): Promise<PostgreSQLStatus> {
+  const response = await fetch("/api/postgresql/update", {
     method: "POST",
     credentials: "include",
   });

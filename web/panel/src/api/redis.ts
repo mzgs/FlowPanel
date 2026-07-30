@@ -9,6 +9,9 @@ export type RedisStatus = {
   issues?: string[];
   install_available: boolean;
   install_label?: string;
+  update_available: boolean;
+  update_label?: string;
+  latest_version?: string;
   remove_available: boolean;
   remove_label?: string;
   service_running: boolean;
@@ -55,6 +58,15 @@ export async function fetchRedisStatus(): Promise<RedisStatus> {
 
 export async function installRedis(): Promise<RedisStatus> {
   const response = await fetch("/api/redis/install", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parseRedisResponse(response);
+}
+
+export async function updateRedis(): Promise<RedisStatus> {
+  const response = await fetch("/api/redis/update", {
     method: "POST",
     credentials: "include",
   });

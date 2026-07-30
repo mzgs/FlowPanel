@@ -7,12 +7,14 @@ import {
   restartDocker,
   startDocker,
   stopDocker,
+  updateDocker,
   type DockerStatus,
 } from "@/api/docker";
 import {
   fetchFFmpegStatus,
   installFFmpeg,
   removeFFmpeg,
+  updateFFmpeg,
   type FFmpegStatus,
 } from "@/api/ffmpeg";
 import {
@@ -66,6 +68,7 @@ import {
   removeMongoDB,
   startMongoDB,
   stopMongoDB,
+  updateMongoDB,
   type MongoDBStatus,
 } from "@/api/mongodb";
 import {
@@ -91,6 +94,7 @@ import {
   removePostgreSQL,
   startPostgreSQL,
   stopPostgreSQL,
+  updatePostgreSQL,
   type PostgreSQLStatus,
 } from "@/api/postgresql";
 import {
@@ -100,6 +104,7 @@ import {
   removeRedis,
   startRedis,
   stopRedis,
+  updateRedis,
   type RedisStatus,
 } from "@/api/redis";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
@@ -203,6 +208,7 @@ type InstallRemoveRuntimeStatus = {
   install_label?: string;
   update_available?: boolean;
   update_label?: string;
+  latest_version?: string;
   remove_available: boolean;
   remove_label?: string;
 };
@@ -584,6 +590,7 @@ function ApplicationCard({
   meta,
   actions,
   configAction,
+  updateAction,
 }: {
   icon: ReactNode;
   name: string;
@@ -592,6 +599,7 @@ function ApplicationCard({
   meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: StatusMetaTone; fullWidth?: boolean }>;
   actions: ReactNode;
   configAction?: ReactNode;
+  updateAction?: { version: string; label: string; busy: boolean; disabled: boolean; onClick: () => void };
 }) {
   const hasConfigAction = configAction !== null;
 
@@ -608,8 +616,27 @@ function ApplicationCard({
               <Badge variant={badge.variant}>{badge.label}</Badge>
             </div>
             {summary ? (
-              <div className={cn("mt-1 text-sm font-medium text-[var(--app-text)]", hasConfigAction && "pr-10")}>
-                {summary}
+              <div className={cn("mt-1 flex flex-wrap items-center gap-2 text-sm font-medium text-[var(--app-text)]", hasConfigAction && "pr-10")}>
+                <span>{summary}</span>
+                {updateAction ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 gap-1 rounded-full border-emerald-300 bg-emerald-50 px-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                    onClick={updateAction.onClick}
+                    disabled={updateAction.disabled}
+                    aria-label={`${updateAction.label} to ${updateAction.version}`}
+                    title={`${updateAction.label} to ${updateAction.version}`}
+                  >
+                    {updateAction.busy ? (
+                      <LoaderCircle className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3 w-3" />
+                    )}
+                    {updateAction.version}
+                  </Button>
+                ) : null}
               </div>
             ) : null}
             {meta.length > 0 ? (
@@ -721,6 +748,17 @@ function InstallRemoveApplicationCard({
       name={name}
       summary={formatInstallRemoveRuntimeValue(status)}
       badge={getInstallRemoveRuntimeBadge(status)}
+      updateAction={
+        status?.update_available && status.latest_version && updateActionKey && onUpdate
+          ? {
+              version: status.latest_version,
+              label: status.update_label || `Update ${name}`,
+              busy: runningAction === updateActionKey,
+              disabled: runningAction !== null,
+              onClick: onUpdate,
+            }
+          : undefined
+      }
       meta={meta}
       configAction={null}
       actions={
@@ -745,23 +783,6 @@ function InstallRemoveApplicationCard({
                 <Package className="h-4 w-4" />
               )}
               {getApplicationActionLabel("install")}
-            </Button>
-          ) : null}
-          {status?.update_available && updateActionKey && onUpdate ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className={compactActionButtonClassName}
-              onClick={onUpdate}
-              disabled={runningAction !== null}
-            >
-              {runningAction === updateActionKey ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              {getApplicationActionLabel("update")}
             </Button>
           ) : null}
           <Button
@@ -795,6 +816,7 @@ function ServiceApplicationCard({
   meta,
   removeTitle,
   onInstall,
+  onUpdate,
   onStart,
   onStop,
   onRestart,
@@ -808,6 +830,7 @@ function ServiceApplicationCard({
   meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: StatusMetaTone; fullWidth?: boolean }>;
   removeTitle: string;
   onInstall: () => void;
+  onUpdate?: () => void;
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
@@ -823,6 +846,17 @@ function ServiceApplicationCard({
       name={name}
       summary={formatInstallRemoveRuntimeValue(status)}
       badge={getServiceRuntimeBadge(status)}
+      updateAction={
+        status?.update_available && status.latest_version && onUpdate
+          ? {
+              version: status.latest_version,
+              label: status.update_label || `Update ${name}`,
+              busy: runningAction === `update-${actionKeyPrefix}`,
+              disabled: runningAction !== null,
+              onClick: onUpdate,
+            }
+          : undefined
+      }
       meta={[
         {
           label: "Service",
@@ -2443,16 +2477,16 @@ export function ApplicationsPage() {
     }
   }
 
-  async function handleYTDLPAction(action: "install" | "update") {
-    setRunningAction(`${action}-ytdlp`);
+  async function handleYTDLPInstall() {
+    setRunningAction("install-ytdlp");
     setPageError(null);
 
     try {
-      const nextStatus = await (action === "install" ? installYTDLP() : updateYTDLP());
+      const nextStatus = await installYTDLP();
       setYTDLPStatus(nextStatus);
-      toast.success(`yt-dlp ${action === "install" ? "installed" : "updated"}.`);
+      toast.success("yt-dlp installed.");
     } catch (error) {
-      const message = getErrorMessage(error, `Failed to ${action} yt-dlp.`);
+      const message = getErrorMessage(error, "Failed to install yt-dlp.");
       setPageError(message);
       toast.error(message);
     } finally {
@@ -2521,6 +2555,21 @@ export function ApplicationsPage() {
     } finally {
       setRunningAction(null);
     }
+  }
+
+  async function handlePackageRuntimeUpdate<TStatus>(
+    key: string,
+    label: string,
+    run: () => Promise<TStatus>,
+    setStatus: (status: TStatus) => void,
+  ) {
+    await handleServiceRuntimeAction({
+      actionKey: `update-${key}`,
+      run,
+      setStatus,
+      successMessage: `${label} updated.`,
+      fallbackMessage: `Failed to update ${label}.`,
+    });
   }
 
   async function handleCaddyRestart() {
@@ -3344,6 +3393,9 @@ export function ApplicationsPage() {
             onInstall={() => {
               void handleDockerInstall();
             }}
+            onUpdate={() => {
+              void handlePackageRuntimeUpdate("docker", "Docker", updateDocker, setDockerStatus);
+            }}
             onStart={() => {
               void handleDockerStart();
             }}
@@ -3364,6 +3416,7 @@ export function ApplicationsPage() {
             status={ffmpegStatus}
             runningAction={runningAction}
             installActionKey="install-ffmpeg"
+            updateActionKey="update-ffmpeg"
             removeActionKey="remove-ffmpeg"
             removeTitle="Automatic FFmpeg removal is only available for installed runtimes supported by this environment."
             meta={[
@@ -3371,6 +3424,9 @@ export function ApplicationsPage() {
             ]}
             onInstall={() => {
               void handleFFmpegInstall();
+            }}
+            onUpdate={() => {
+              void handlePackageRuntimeUpdate("ffmpeg", "FFmpeg", updateFFmpeg, setFFmpegStatus);
             }}
             onRemove={() => {
               setRemoveCandidate({ kind: "ffmpeg" });
@@ -3390,10 +3446,10 @@ export function ApplicationsPage() {
               { label: "Binary", value: ytdlpStatus?.binary_path?.trim() || "yt-dlp", mono: true },
             ]}
             onInstall={() => {
-              void handleYTDLPAction("install");
+              void handleYTDLPInstall();
             }}
             onUpdate={() => {
-              void handleYTDLPAction("update");
+              void handlePackageRuntimeUpdate("ytdlp", "yt-dlp", updateYTDLP, setYTDLPStatus);
             }}
             onRemove={() => {
               setRemoveCandidate({ kind: "ytdlp" });
@@ -3412,6 +3468,9 @@ export function ApplicationsPage() {
             ]}
             onInstall={() => {
               void handleRedisInstall();
+            }}
+            onUpdate={() => {
+              void handlePackageRuntimeUpdate("redis", "Redis", updateRedis, setRedisStatus);
             }}
             onStart={() => {
               void handleRedisStart();
@@ -3440,6 +3499,9 @@ export function ApplicationsPage() {
             onInstall={() => {
               void handleMongoDBInstall();
             }}
+            onUpdate={() => {
+              void handlePackageRuntimeUpdate("mongodb", "MongoDB", updateMongoDB, setMongoDBStatus);
+            }}
             onStart={() => {
               void handleMongoDBStart();
             }}
@@ -3466,6 +3528,9 @@ export function ApplicationsPage() {
             ]}
             onInstall={() => {
               void handlePostgreSQLInstall();
+            }}
+            onUpdate={() => {
+              void handlePackageRuntimeUpdate("postgresql", "PostgreSQL", updatePostgreSQL, setPostgreSQLStatus);
             }}
             onStart={() => {
               void handlePostgreSQLStart();

@@ -9,6 +9,9 @@ export type FFmpegStatus = {
   issues?: string[];
   install_available: boolean;
   install_label?: string;
+  update_available: boolean;
+  update_label?: string;
+  latest_version?: string;
   remove_available: boolean;
   remove_label?: string;
 };
@@ -48,6 +51,15 @@ export async function fetchFFmpegStatus(): Promise<FFmpegStatus> {
 
 export async function installFFmpeg(): Promise<FFmpegStatus> {
   const response = await fetch("/api/ffmpeg/install", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parseFFmpegResponse(response);
+}
+
+export async function updateFFmpeg(): Promise<FFmpegStatus> {
+  const response = await fetch("/api/ffmpeg/update", {
     method: "POST",
     credentials: "include",
   });

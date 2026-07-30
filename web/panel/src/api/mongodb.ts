@@ -9,6 +9,9 @@ export type MongoDBStatus = {
   issues?: string[];
   install_available: boolean;
   install_label?: string;
+  update_available: boolean;
+  update_label?: string;
+  latest_version?: string;
   remove_available: boolean;
   remove_label?: string;
   service_running: boolean;
@@ -55,6 +58,15 @@ export async function fetchMongoDBStatus(): Promise<MongoDBStatus> {
 
 export async function installMongoDB(): Promise<MongoDBStatus> {
   const response = await fetch("/api/mongodb/install", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  return parseMongoDBResponse(response);
+}
+
+export async function updateMongoDB(): Promise<MongoDBStatus> {
+  const response = await fetch("/api/mongodb/update", {
     method: "POST",
     credentials: "include",
   });

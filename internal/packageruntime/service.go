@@ -2,6 +2,7 @@ package packageruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +50,7 @@ type Status struct {
 	InstallLabel     string   `json:"install_label,omitempty"`
 	UpdateAvailable  bool     `json:"update_available"`
 	UpdateLabel      string   `json:"update_label,omitempty"`
+	LatestVersion    string   `json:"latest_version,omitempty"`
 	RemoveAvailable  bool     `json:"remove_available"`
 	RemoveLabel      string   `json:"remove_label,omitempty"`
 	ServiceRunning   bool     `json:"service_running"`
@@ -102,6 +104,7 @@ type actionPlan struct {
 	stopCmds        [][]string
 	restartCmds     [][]string
 	serviceStatus   func(context.Context) (bool, error)
+	availableUpdate func(context.Context) (string, error)
 }
 
 func NewService(logger *zap.Logger, definition Definition) *Service {
@@ -122,6 +125,7 @@ func NewRedisService(logger *zap.Logger) *Service {
 		BinaryNames:     []string{"redis-server"},
 		VersionArgs:     []string{"--version"},
 		InstallLabel:    "Install Redis",
+		UpdateLabel:     "Update Redis",
 		RemoveLabel:     "Remove Redis",
 		StartLabel:      "Start Redis",
 		StopLabel:       "Stop Redis",
@@ -146,6 +150,7 @@ func NewMongoDBService(logger *zap.Logger) *Service {
 		BinaryNames:     []string{"mongod"},
 		VersionArgs:     []string{"--version"},
 		InstallLabel:    "Install MongoDB",
+		UpdateLabel:     "Update MongoDB",
 		RemoveLabel:     "Remove MongoDB",
 		StartLabel:      "Start MongoDB",
 		StopLabel:       "Stop MongoDB",
@@ -174,6 +179,7 @@ func NewPostgreSQLService(logger *zap.Logger) *Service {
 		BinaryNames:     []string{"postgres", "psql", "pg_config"},
 		VersionArgs:     []string{"--version"},
 		InstallLabel:    "Install PostgreSQL",
+		UpdateLabel:     "Update PostgreSQL",
 		RemoveLabel:     "Remove PostgreSQL",
 		StartLabel:      "Start PostgreSQL",
 		StopLabel:       "Stop PostgreSQL",
@@ -199,6 +205,7 @@ func NewDockerService(logger *zap.Logger) *Service {
 		BinaryNames:    []string{"docker"},
 		VersionArgs:    []string{"--version"},
 		InstallLabel:   "Install Docker",
+		UpdateLabel:    "Update Docker",
 		RemoveLabel:    "Remove Docker",
 		StartLabel:     "Start Docker",
 		StopLabel:      "Stop Docker",
@@ -221,6 +228,7 @@ func NewFFmpegService(logger *zap.Logger) *Service {
 		BinaryNames:     []string{"ffmpeg"},
 		VersionArgs:     []string{"-version"},
 		InstallLabel:    "Install FFmpeg",
+		UpdateLabel:     "Update FFmpeg",
 		RemoveLabel:     "Remove FFmpeg",
 		HomebrewFormula: "ffmpeg-full",
 		APTPackages:     []string{"ffmpeg"},
@@ -272,7 +280,12 @@ func (s *Service) Status(ctx context.Context) Status {
 	}
 
 	status.InstallAvailable = len(plan.installCmds) > 0 && !status.Installed
-	status.UpdateAvailable = len(plan.updateCmds) > 0 && status.Installed
+	if len(plan.updateCmds) > 0 && status.Installed && plan.availableUpdate != nil {
+		if latestVersion, err := plan.availableUpdate(ctx); err == nil {
+			status.LatestVersion = latestVersion
+			status.UpdateAvailable = latestVersion != ""
+		}
+	}
 	status.RemoveAvailable = len(plan.removeCmds) > 0 && status.Installed
 	if plan.serviceStatus != nil && status.Installed {
 		running, err := plan.serviceStatus(ctx)
@@ -441,6 +454,9 @@ func detectActionPlan(definition Definition) actionPlan {
 				}
 				if strings.TrimSpace(definition.UpdateLabel) != "" {
 					plan.updateCmds = [][]string{{brewPath, "upgrade", definition.HomebrewFormula}}
+					plan.availableUpdate = func(ctx context.Context) (string, error) {
+						return inspectHomebrewUpdate(ctx, brewPath, definition.HomebrewFormula)
+					}
 				}
 				if serviceName := strings.TrimSpace(definition.HomebrewService); serviceName != "" {
 					plan.startCmds = [][]string{{brewPath, "services", "start", serviceName}}
@@ -470,6 +486,11 @@ func detectActionPlan(definition Definition) actionPlan {
 					{aptPath, "update"},
 					append([]string{aptPath, "install", "-y", "--only-upgrade"}, definition.APTPackages...),
 				}
+				if aptCachePath, ok := lookupCommand("apt-cache"); ok {
+					plan.availableUpdate = func(ctx context.Context) (string, error) {
+						return inspectAPTUpdate(ctx, aptCachePath, definition.APTPackages[0])
+					}
+				}
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.APTService); serviceName != "" {
@@ -492,6 +513,9 @@ func detectActionPlan(definition Definition) actionPlan {
 			}
 			if strings.TrimSpace(definition.UpdateLabel) != "" {
 				plan.updateCmds = [][]string{append([]string{dnfPath, "upgrade", "-y"}, definition.DNFPackages...)}
+				plan.availableUpdate = func(ctx context.Context) (string, error) {
+					return inspectCheckUpdate(ctx, dnfPath, definition.DNFPackages)
+				}
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.DNFService); serviceName != "" {
@@ -514,6 +538,9 @@ func detectActionPlan(definition Definition) actionPlan {
 			}
 			if strings.TrimSpace(definition.UpdateLabel) != "" {
 				plan.updateCmds = [][]string{append([]string{yumPath, "update", "-y"}, definition.YUMPackages...)}
+				plan.availableUpdate = func(ctx context.Context) (string, error) {
+					return inspectCheckUpdate(ctx, yumPath, definition.YUMPackages)
+				}
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.YUMService); serviceName != "" {
@@ -536,6 +563,9 @@ func detectActionPlan(definition Definition) actionPlan {
 			}
 			if strings.TrimSpace(definition.UpdateLabel) != "" {
 				plan.updateCmds = [][]string{append([]string{pacmanPath, "-Syu", "--noconfirm"}, definition.PacmanPackages...)}
+				plan.availableUpdate = func(ctx context.Context) (string, error) {
+					return inspectPacmanUpdate(ctx, pacmanPath, definition.PacmanPackages[0])
+				}
 			}
 			if systemctlPath, ok := lookupCommand("systemctl"); ok {
 				if serviceName := strings.TrimSpace(definition.PacmanService); serviceName != "" {
@@ -687,6 +717,112 @@ func inspectSystemdService(ctx context.Context, systemctlPath, serviceName strin
 	}
 
 	return strings.EqualFold(strings.TrimSpace(output), "active"), nil
+}
+
+func inspectHomebrewUpdate(ctx context.Context, brewPath, formula string) (string, error) {
+	output, err := runInspectCommand(ctx, brewPath, "outdated", "--json=v2", formula)
+	if err != nil {
+		return "", err
+	}
+
+	var payload struct {
+		Formulae []struct {
+			Name           string `json:"name"`
+			CurrentVersion string `json:"current_version"`
+		} `json:"formulae"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		return "", fmt.Errorf("parse Homebrew update status: %w", err)
+	}
+	for _, candidate := range payload.Formulae {
+		if candidate.Name == formula {
+			return strings.TrimSpace(candidate.CurrentVersion), nil
+		}
+	}
+	return "", nil
+}
+
+func inspectAPTUpdate(ctx context.Context, aptCachePath, packageName string) (string, error) {
+	output, err := runInspectCommand(ctx, aptCachePath, "policy", packageName)
+	if err != nil {
+		return "", err
+	}
+
+	var installed, candidate string
+	for _, line := range strings.Split(output, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "Installed":
+			installed = strings.TrimSpace(value)
+		case "Candidate":
+			candidate = strings.TrimSpace(value)
+		}
+	}
+	if installed == "" || installed == "(none)" || candidate == "" || candidate == "(none)" || candidate == installed {
+		return "", nil
+	}
+	return candidate, nil
+}
+
+func inspectCheckUpdate(ctx context.Context, packageManagerPath string, packageNames []string) (string, error) {
+	args := append([]string{"--quiet", "check-update"}, packageNames...)
+	commandCtx, cancel := context.WithTimeout(ctx, statusCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, packageManagerPath, args...)
+	output, err := cmd.CombinedOutput()
+	if commandCtx.Err() != nil {
+		return "", commandCtx.Err()
+	}
+	if err != nil {
+		var exitError *exec.ExitError
+		if !errors.As(err, &exitError) || exitError.ExitCode() != 100 {
+			return "", fmt.Errorf("%s %s: %s", filepath.Base(packageManagerPath), strings.Join(args, " "), strings.TrimSpace(string(output)))
+		}
+	}
+
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name := strings.SplitN(fields[0], ".", 2)[0]
+		for _, packageName := range packageNames {
+			if name == packageName {
+				return fields[1], nil
+			}
+		}
+	}
+	return "", nil
+}
+
+func inspectPacmanUpdate(ctx context.Context, pacmanPath, packageName string) (string, error) {
+	commandCtx, cancel := context.WithTimeout(ctx, statusCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, pacmanPath, "-Qu", packageName)
+	output, err := cmd.CombinedOutput()
+	if commandCtx.Err() != nil {
+		return "", commandCtx.Err()
+	}
+	if err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() == 1 && strings.TrimSpace(string(output)) == "" {
+			return "", nil
+		}
+		return "", fmt.Errorf("pacman -Qu %s: %s", packageName, strings.TrimSpace(string(output)))
+	}
+
+	fields := strings.Fields(string(output))
+	for index, field := range fields {
+		if field == "->" && index+1 < len(fields) {
+			return fields[index+1], nil
+		}
+	}
+	return "", nil
 }
 
 func runInspectCommand(ctx context.Context, name string, args ...string) (string, error) {
