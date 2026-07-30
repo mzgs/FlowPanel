@@ -214,7 +214,7 @@ func NewFFmpegService(logger *zap.Logger) *Service {
 		VersionArgs:     []string{"-version"},
 		InstallLabel:    "Install FFmpeg",
 		RemoveLabel:     "Remove FFmpeg",
-		HomebrewFormula: "ffmpeg",
+		HomebrewFormula: "ffmpeg-full",
 		APTPackages:     []string{"ffmpeg"},
 		DNFPackages:     []string{"ffmpeg"},
 		YUMPackages:     []string{"ffmpeg"},
