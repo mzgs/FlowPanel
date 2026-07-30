@@ -21,6 +21,11 @@ import (
 const statusCommandTimeout = 3 * time.Second
 
 const mongoDBAPTSeries = "8.0"
+const (
+	ytdlpReleaseURL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+	ytdlpReleaseAPI = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+	ytdlpBinaryPath = "/usr/local/bin/yt-dlp"
+)
 
 var versionPattern = regexp.MustCompile(`\b(\d+(?:\.\d+)+)\b`)
 
@@ -105,6 +110,9 @@ type actionPlan struct {
 	restartCmds     [][]string
 	serviceStatus   func(context.Context) (bool, error)
 	availableUpdate func(context.Context) (string, error)
+	installAction   func(context.Context) error
+	updateAction    func(context.Context) error
+	removeAction    func(context.Context) error
 }
 
 func NewService(logger *zap.Logger, definition Definition) *Service {
@@ -242,7 +250,7 @@ func NewYTDLPService(logger *zap.Logger) *Service {
 	return NewService(logger, Definition{
 		Key:             "ytdlp",
 		DisplayName:     "yt-dlp",
-		BinaryNames:     []string{"yt-dlp"},
+		BinaryNames:     []string{ytdlpBinaryPath, "yt-dlp"},
 		VersionArgs:     []string{"--version"},
 		InstallLabel:    "Install yt-dlp",
 		UpdateLabel:     "Update yt-dlp",
@@ -279,14 +287,14 @@ func (s *Service) Status(ctx context.Context) Status {
 		}
 	}
 
-	status.InstallAvailable = len(plan.installCmds) > 0 && !status.Installed
-	if len(plan.updateCmds) > 0 && status.Installed && plan.availableUpdate != nil {
+	status.InstallAvailable = (len(plan.installCmds) > 0 || plan.installAction != nil) && !status.Installed
+	if (len(plan.updateCmds) > 0 || plan.updateAction != nil) && status.Installed && plan.availableUpdate != nil {
 		if latestVersion, err := plan.availableUpdate(ctx); err == nil {
 			status.LatestVersion = latestVersion
 			status.UpdateAvailable = latestVersion != ""
 		}
 	}
-	status.RemoveAvailable = len(plan.removeCmds) > 0 && status.Installed
+	status.RemoveAvailable = (len(plan.removeCmds) > 0 || plan.removeAction != nil) && status.Installed
 	if plan.serviceStatus != nil && status.Installed {
 		running, err := plan.serviceStatus(ctx)
 		if err == nil {
@@ -329,7 +337,7 @@ func (s *Service) Install(ctx context.Context) error {
 	}
 
 	plan := detectActionPlan(s.definition)
-	if len(plan.installCmds) == 0 {
+	if len(plan.installCmds) == 0 && plan.installAction == nil {
 		return fmt.Errorf("automatic %s installation is not supported on %s", strings.ToLower(s.definition.DisplayName), runtime.GOOS)
 	}
 
@@ -337,6 +345,9 @@ func (s *Service) Install(ctx context.Context) error {
 		zap.String("runtime", s.definition.Key),
 		zap.String("package_manager", plan.packageManager),
 	)
+	if plan.installAction != nil {
+		return plan.installAction(ctx)
+	}
 	if err := runCommands(ctx, plan.installCmds...); err != nil {
 		if fallback := s.definition.InstallFallback; fallback != nil {
 			if handled, fallbackErr := fallback(ctx, plan, err); handled {
@@ -355,7 +366,7 @@ func (s *Service) Update(ctx context.Context) error {
 	}
 
 	plan := detectActionPlan(s.definition)
-	if len(plan.updateCmds) == 0 {
+	if len(plan.updateCmds) == 0 && plan.updateAction == nil {
 		return fmt.Errorf("automatic %s updates are not supported on %s", strings.ToLower(s.definition.DisplayName), runtime.GOOS)
 	}
 
@@ -363,6 +374,9 @@ func (s *Service) Update(ctx context.Context) error {
 		zap.String("runtime", s.definition.Key),
 		zap.String("package_manager", plan.packageManager),
 	)
+	if plan.updateAction != nil {
+		return plan.updateAction(ctx)
+	}
 	return runCommands(ctx, plan.updateCmds...)
 }
 
@@ -372,7 +386,7 @@ func (s *Service) Remove(ctx context.Context) error {
 	}
 
 	plan := detectActionPlan(s.definition)
-	if len(plan.removeCmds) == 0 {
+	if len(plan.removeCmds) == 0 && plan.removeAction == nil {
 		return fmt.Errorf("automatic %s removal is not supported on %s", strings.ToLower(s.definition.DisplayName), runtime.GOOS)
 	}
 
@@ -380,6 +394,9 @@ func (s *Service) Remove(ctx context.Context) error {
 		zap.String("runtime", s.definition.Key),
 		zap.String("package_manager", plan.packageManager),
 	)
+	if plan.removeAction != nil {
+		return plan.removeAction(ctx)
+	}
 	return runCommands(ctx, plan.removeCmds...)
 }
 
@@ -438,6 +455,16 @@ func (s *Service) Restart(ctx context.Context) error {
 }
 
 func detectActionPlan(definition Definition) actionPlan {
+	if definition.Key == "ytdlp" && runtime.GOOS == "linux" && os.Geteuid() == 0 {
+		return actionPlan{
+			packageManager:  "github",
+			installAction:   installLatestYTDLP,
+			updateAction:    installLatestYTDLP,
+			removeAction:    func(ctx context.Context) error { return removeYTDLP(ctx, definition) },
+			availableUpdate: inspectYTDLPUpdate,
+		}
+	}
+
 	switch runtime.GOOS {
 	case "darwin":
 		if brewPath, ok := lookupCommand("brew"); ok {
@@ -1044,6 +1071,101 @@ func bootstrapMongoDBAPTRepository(ctx context.Context, repository mongoDBAPTRep
 	}
 
 	return runCommands(ctx, []string{aptPath, "update"})
+}
+
+func installLatestYTDLP(ctx context.Context) error {
+	if err := os.MkdirAll(filepath.Dir(ytdlpBinaryPath), 0o755); err != nil {
+		return fmt.Errorf("create yt-dlp install directory: %w", err)
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ytdlpReleaseURL, nil)
+	if err != nil {
+		return fmt.Errorf("prepare yt-dlp download: %w", err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("download yt-dlp: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("download yt-dlp: unexpected status %s", response.Status)
+	}
+
+	file, err := os.CreateTemp(filepath.Dir(ytdlpBinaryPath), ".yt-dlp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary yt-dlp binary: %w", err)
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+
+	if _, err := io.Copy(file, response.Body); err != nil {
+		file.Close()
+		return fmt.Errorf("write yt-dlp binary: %w", err)
+	}
+	if err := file.Chmod(0o755); err != nil {
+		file.Close()
+		return fmt.Errorf("make yt-dlp executable: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close yt-dlp binary: %w", err)
+	}
+	if _, err := inspectVersion(ctx, tempPath, "--version"); err != nil {
+		return fmt.Errorf("validate yt-dlp binary: %w", err)
+	}
+	if err := os.Rename(tempPath, ytdlpBinaryPath); err != nil {
+		return fmt.Errorf("install yt-dlp: %w", err)
+	}
+
+	return nil
+}
+
+func inspectYTDLPUpdate(ctx context.Context) (string, error) {
+	binaryPath, installed := lookupFirstCommand(ytdlpBinaryPath, "yt-dlp")
+	if !installed {
+		return "", nil
+	}
+	currentVersion, err := inspectVersion(ctx, binaryPath, "--version")
+	if err != nil {
+		return "", err
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, statusCommandTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, ytdlpReleaseAPI, nil)
+	if err != nil {
+		return "", fmt.Errorf("prepare yt-dlp release request: %w", err)
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("User-Agent", "FlowPanel")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("inspect latest yt-dlp release: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("inspect latest yt-dlp release: unexpected status %s", response.Status)
+	}
+
+	var payload struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("parse latest yt-dlp release: %w", err)
+	}
+	latestVersion := strings.TrimPrefix(strings.TrimSpace(payload.TagName), "v")
+	if latestVersion == "" || latestVersion == currentVersion {
+		return "", nil
+	}
+	return latestVersion, nil
+}
+
+func removeYTDLP(ctx context.Context, definition Definition) error {
+	if err := os.Remove(ytdlpBinaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove yt-dlp binary: %w", err)
+	}
+
+	definition.Key = "ytdlp-package"
+	return runCommands(ctx, detectActionPlan(definition).removeCmds...)
 }
 
 func downloadFile(ctx context.Context, url string, pattern string) (string, error) {
