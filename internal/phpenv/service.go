@@ -349,7 +349,10 @@ func (s *Service) InstallVersion(ctx context.Context, version string) error {
 		}
 	}
 
-	return s.installComposerIfMissing(ctx, target, plan)
+	if err := s.installComposerIfMissing(ctx, target, plan); err != nil {
+		return err
+	}
+	return s.initializeSettingsForVersion(ctx, target)
 }
 
 func (s *Service) Remove(ctx context.Context) error {

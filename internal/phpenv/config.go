@@ -15,6 +15,7 @@ import (
 var phpSizeSettingPattern = regexp.MustCompile(`^(?:\d+[KMGkmg]?|-1)$`)
 
 const phpErrorAllMask = 32767
+const defaultDisabledFunctions = "exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec"
 
 var phpErrorReportingConstants = []struct {
 	name  string
@@ -106,6 +107,43 @@ func (s *Service) UpdateSettingsForVersion(ctx context.Context, version string, 
 		nextStatus.ManagedConfigFile = configInfo.managedConfigFile
 	}
 	return nextStatus, err
+}
+
+func (s *Service) initializeSettingsForVersion(ctx context.Context, version string) error {
+	status, configInfo, err := s.inspectManagedConfigTarget(ctx, version)
+	if err != nil {
+		return err
+	}
+
+	emptyPaths := make([]string, 0, len(configInfo.managedConfigFiles))
+	content := ""
+	for _, path := range configInfo.managedConfigFiles {
+		current, readErr := readPHPConfigContent(path)
+		if readErr != nil {
+			return fmt.Errorf("read managed php settings: %w", readErr)
+		}
+		if strings.TrimSpace(current) == "" {
+			emptyPaths = append(emptyPaths, path)
+		} else if content == "" {
+			content = current
+		}
+	}
+	if len(emptyPaths) == 0 {
+		return nil
+	}
+
+	if content == "" {
+		settings := configInfo.settings
+		settings.MaxExecutionTime = "600"
+		settings.MaxInputTime = "600"
+		settings.MemoryLimit = "1024M"
+		settings.PostMaxSize = "1024M"
+		settings.UploadMaxFilesize = "1024M"
+		settings.DisableFunctions = defaultDisabledFunctions
+		content = renderManagedPHPConfig(settings)
+	}
+	_, err = s.writePHPConfigFiles(ctx, status, emptyPaths, content)
+	return err
 }
 
 func ValidateUpdateSettingsInput(input UpdateSettingsInput) ValidationErrors {
