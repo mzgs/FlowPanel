@@ -83,8 +83,7 @@ export function mergePHPSettingsForm(
       overrides.error_reporting || normalizedBase.error_reporting,
     ),
     display_errors: overrides.display_errors || normalizedBase.display_errors,
-    disable_functions:
-      overrides.disable_functions || normalizedBase.disable_functions,
+    disable_functions: normalizedBase.disable_functions,
   };
 }
 

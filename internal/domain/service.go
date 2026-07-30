@@ -710,6 +710,7 @@ func (s *Service) UpdatePHPSettings(
 	}
 
 	record.PHPVersion = phpenv.NormalizeVersion(input.PHPVersion)
+	input.DisableFunctions = ""
 	record.PHPSettings = phpenv.NormalizeUpdateSettingsInput(input.UpdateSettingsInput)
 	record = s.withTransientFields(record)
 

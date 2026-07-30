@@ -2008,7 +2008,7 @@ export function DomainDetailPage() {
         default_socket_timeout: phpForm.default_socket_timeout ?? "",
         error_reporting: phpForm.error_reporting ?? "",
         display_errors: phpForm.display_errors ?? "Off",
-        disable_functions: phpForm.disable_functions ?? "",
+        disable_functions: "",
       });
       const nextRuntime = getPHPRuntimeStatus(
         phpStatus,
