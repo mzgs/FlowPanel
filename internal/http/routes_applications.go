@@ -647,6 +647,9 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 		defer cancel()
 
 		output, err := runPHPInfoCommand(runCtx, status.PHPPath)
+		if status.FPMInstalled && strings.TrimSpace(status.FPMPath) != "" {
+			output, err = runPHPFPMInfoCommand(runCtx, status.FPMPath)
+		}
 		if err != nil {
 			a.app.Logger.Error("generate php info failed", zap.String("version", status.Version), zap.String("php_path", status.PHPPath), zap.Error(err))
 			writeHTML(w, stdhttp.StatusInternalServerError, renderPHPInfoErrorDocument("PHP info could not be generated."))

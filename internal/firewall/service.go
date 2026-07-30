@@ -78,6 +78,11 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool, cfg Config) (Sta
 	if _, err := exec.LookPath("iptables"); err != nil {
 		return s.status(ctx, cfg), errors.New("iptables is required for managed firewall")
 	}
+	if enabled && hostHasPublicIPv6() {
+		if _, err := exec.LookPath("ip6tables"); err != nil {
+			return s.status(ctx, cfg), errors.New("ip6tables is required because this host has IPv6 connectivity")
+		}
+	}
 	if enabled {
 		if err := s.apply(ctx, "iptables", desiredPorts(ctx, cfg)); err != nil {
 			return s.status(ctx, cfg), err
@@ -111,6 +116,11 @@ func (s *Service) Reconcile(ctx context.Context, cfg Config) error {
 	if _, err := exec.LookPath("iptables"); err != nil {
 		return errors.New("iptables is required for managed firewall")
 	}
+	if hostHasPublicIPv6() {
+		if _, err := exec.LookPath("ip6tables"); err != nil {
+			return errors.New("ip6tables is required because this host has IPv6 connectivity")
+		}
+	}
 	ports := desiredPorts(ctx, cfg)
 	if err := s.apply(ctx, "iptables", ports); err != nil {
 		return err
@@ -136,12 +146,24 @@ func (s *Service) status(ctx context.Context, cfg Config) Status {
 		notice = "Managed firewall is available on Linux hosts only."
 	}
 
+	ipv6Required := supported && hostHasPublicIPv6()
+	ipv6Available := false
+	if supported {
+		_, err := exec.LookPath("ip6tables")
+		ipv6Available = err == nil
+		if ipv6Required && !ipv6Available {
+			notice = "Install ip6tables to protect this host's IPv6 traffic."
+		}
+	}
 	enabled := s.enabled()
 	active := false
 	if supported {
 		active = commandOK(ctx, "iptables", "-C", "INPUT", "-j", chainName)
+		if ipv6Required {
+			active = active && ipv6Available && commandOK(ctx, "ip6tables", "-C", "INPUT", "-j", chainName)
+		}
 	}
-	if enabled && supported && !active {
+	if enabled && supported && !active && notice == "" {
 		notice = "Managed firewall is enabled but its rules are not active. Reconcile the rules."
 	}
 
@@ -154,6 +176,26 @@ func (s *Service) status(ctx context.Context, cfg Config) Status {
 		DockerPorts: dockerPublicPorts(ctx),
 		Notice:      notice,
 	}
+}
+
+func hostHasPublicIPv6() bool {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, iface := range interfaces {
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err == nil && ip.To4() == nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Service) enabled() bool {

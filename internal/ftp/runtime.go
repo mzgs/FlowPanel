@@ -339,12 +339,34 @@ func (d *driver) resolvePath(requestPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	rootPath, err = filepath.EvalSymlinks(rootPath)
+	if err != nil {
+		return "", err
+	}
 	cleaned := strings.TrimPrefix(filepath.Clean(requestPath), string(filepath.Separator))
 	fullPath := filepath.Join(rootPath, cleaned)
 	resolvedRoot := rootPath + string(filepath.Separator)
 	resolvedPath := fullPath
 	if !strings.HasPrefix(resolvedPath+string(filepath.Separator), resolvedRoot) && resolvedPath != rootPath {
 		return "", fs.ErrPermission
+	}
+
+	current := rootPath
+	for _, component := range strings.Split(cleaned, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if errors.Is(statErr, os.ErrNotExist) {
+			break
+		}
+		if statErr != nil {
+			return "", statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fs.ErrPermission
+		}
 	}
 
 	return fullPath, nil

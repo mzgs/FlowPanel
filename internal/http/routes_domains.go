@@ -1282,6 +1282,12 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			return
 		}
 
+		if err := reconcileUpdatedDomainRuntime(r.Context(), a.app.PM2, a.app.Domains.BasePath(), previous, record); err != nil {
+			a.app.Logger.Error("reconcile runtime after domain update failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "domain updated but its runtime process could not be reconciled"})
+			return
+		}
+
 		if a.app.FTPAccounts != nil {
 			if err := a.app.FTPAccounts.ReconcileDomain(r.Context(), record); err != nil {
 				a.app.Logger.Error("reconcile ftp account after domain update failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
@@ -1743,11 +1749,48 @@ func deleteDomainNodeJSProcess(ctx context.Context, pm2Manager pm2.Manager, base
 		return err
 	}
 	process, ok := matchDomainNodeJSProcess(processes, runtimeConfig)
-	if !ok {
+	if !ok || process.ID < 0 {
 		return nil
 	}
 
 	_, err = pm2Manager.DeleteProcess(ctx, process.ID)
+	return err
+}
+
+func reconcileUpdatedDomainRuntime(ctx context.Context, pm2Manager pm2.Manager, basePath string, previous, current domain.Record) error {
+	if pm2Manager == nil || !supportsDomainRuntime(previous.Kind) || !pm2Manager.Status(ctx).Installed {
+		return nil
+	}
+	previousConfig, err := resolveDomainRuntimeProcessConfig(basePath, previous)
+	if err != nil {
+		return err
+	}
+	processes, err := pm2Manager.List(ctx)
+	if err != nil {
+		return err
+	}
+	process, ok := matchDomainNodeJSProcess(processes, previousConfig)
+	if !ok || process.ID < 0 {
+		return nil
+	}
+	wasRunning := canStopDomainNodeJSProcess(process)
+	if _, err := pm2Manager.DeleteProcess(ctx, process.ID); err != nil {
+		return err
+	}
+	if !wasRunning || !supportsDomainRuntime(current.Kind) {
+		return nil
+	}
+	currentConfig, err := resolveDomainRuntimeProcessConfig(basePath, current)
+	if err != nil {
+		return err
+	}
+	_, err = pm2Manager.CreateProcess(ctx, pm2.CreateProcessInput{
+		Name:             current.Hostname,
+		ScriptPath:       currentConfig.ScriptPath,
+		WorkingDirectory: currentConfig.WorkingDirectory,
+		Interpreter:      currentConfig.InterpreterPath,
+		Environment:      domain.EnvironmentMap(current),
+	})
 	return err
 }
 

@@ -360,7 +360,10 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			"succeeded",
 			fmt.Sprintf("Created Docker container %q from %q.", label, input.Image),
 		)
-		_ = a.reconcileFirewall(actionCtx)
+		if err := a.reconcileFirewall(actionCtx); err != nil {
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "container created but firewall reconciliation failed", "container": container})
+			return
+		}
 		writeJSON(w, stdhttp.StatusCreated, map[string]any{"container": container})
 	})
 
@@ -448,7 +451,10 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 				"succeeded",
 				fmt.Sprintf("%s Docker container %q.", dockerContainerActionPastTense(action), label),
 			)
-			_ = a.reconcileFirewall(actionCtx)
+			if err := a.reconcileFirewall(actionCtx); err != nil {
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "container changed but firewall reconciliation failed", "container": container})
+				return
+			}
 			writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
 		}
 	}
@@ -565,7 +571,10 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			"succeeded",
 			fmt.Sprintf("Deleted Docker container %q.", label),
 		)
-		_ = a.reconcileFirewall(actionCtx)
+		if err := a.reconcileFirewall(actionCtx); err != nil {
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "container deleted but firewall reconciliation failed"})
+			return
+		}
 		w.WriteHeader(stdhttp.StatusNoContent)
 	})
 
@@ -607,7 +616,10 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			"succeeded",
 			fmt.Sprintf("Recreated Docker container %q.", label),
 		)
-		_ = a.reconcileFirewall(actionCtx)
+		if err := a.reconcileFirewall(actionCtx); err != nil {
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "container recreated but firewall reconciliation failed", "container": container})
+			return
+		}
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
 	})
 
@@ -869,7 +881,10 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			"succeeded",
 			fmt.Sprintf("Updated Docker container %q settings.", label),
 		)
-		_ = a.reconcileFirewall(actionCtx)
+		if err := a.reconcileFirewall(actionCtx); err != nil {
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "container updated but firewall reconciliation failed", "container": container})
+			return
+		}
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"container": container})
 	})
 
@@ -2417,8 +2432,6 @@ func stringFromAny(value any) string {
 	case string:
 		return typed
 	case fmt.Stringer:
-		return typed.String()
-	case json.Number:
 		return typed.String()
 	default:
 		return fmt.Sprint(value)

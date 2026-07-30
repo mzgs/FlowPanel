@@ -641,16 +641,16 @@ func runGitCommand(
 	token string,
 	args ...string,
 ) (string, error) {
-	commandArgs := make([]string, 0, len(args)+2)
-	if strings.TrimSpace(token) != "" {
-		authValue := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + strings.TrimSpace(token)))
-		commandArgs = append(commandArgs, "-c", "http.extraHeader=Authorization: Basic "+authValue)
-		commandArgs = append(commandArgs, "-c", buildGitHubTokenRewriteConfig(strings.TrimSpace(token)))
-	}
-	commandArgs = append(commandArgs, args...)
-
-	cmd := exec.CommandContext(ctx, gitPath, commandArgs...)
+	cmd := exec.CommandContext(ctx, gitPath, args...)
 	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	if strings.TrimSpace(token) != "" {
+		cleanup, err := configureGitHubAskPass(cmd, strings.TrimSpace(token))
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+	}
 
 	var output bytes.Buffer
 	cmd.Stdout = &output
@@ -673,9 +673,29 @@ func runGitCommand(
 	return strings.TrimSpace(output.String()), nil
 }
 
-func buildGitHubTokenRewriteConfig(token string) string {
-	escapedToken := strings.ReplaceAll(token, "@", "%40")
-	return fmt.Sprintf("url.https://x-access-token:%s@github.com/.insteadOf=https://github.com/", escapedToken)
+func configureGitHubAskPass(cmd *exec.Cmd, token string) (func(), error) {
+	tempDir, err := os.MkdirTemp("", "flowpanel-git-auth-*")
+	if err != nil {
+		return nil, fmt.Errorf("create git authentication helper: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tempDir) }
+	tokenPath := filepath.Join(tempDir, "token")
+	helperPath := filepath.Join(tempDir, "askpass")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("write git authentication token: %w", err)
+	}
+	helper := "#!/bin/sh\ncase \"$1\" in\n*Username*) printf '%s\\n' 'x-access-token' ;;\n*) cat \"$FLOWPANEL_GIT_TOKEN_FILE\" ;;\nesac\n"
+	if err := os.WriteFile(helperPath, []byte(helper), 0o700); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("write git authentication helper: %w", err)
+	}
+	cmd.Env = append(cmd.Env,
+		"GIT_ASKPASS="+helperPath,
+		"GIT_TERMINAL_PROMPT=0",
+		"FLOWPANEL_GIT_TOKEN_FILE="+tokenPath,
+	)
+	return cleanup, nil
 }
 
 func verifyGitHubWebhookSignature(secret string, body []byte, signature string) bool {

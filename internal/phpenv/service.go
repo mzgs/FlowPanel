@@ -474,6 +474,15 @@ func (s *Service) inspectVersion(ctx context.Context, version string) RuntimeSta
 	if fpmInstalled {
 		status.FPMInstalled = true
 		status.FPMPath = fpmPath
+		if infoOutput, err := runInspectCommand(ctx, fpmPath, "-i"); err == nil {
+			if loadedConfigFile := parsePHPInfoOutputValue(infoOutput, "Loaded Configuration File"); loadedConfigFile != "" {
+				status.LoadedConfigFile = loadedConfigFile
+			}
+			if scanDir := parsePHPInfoOutputValue(infoOutput, "Scan this dir for additional .ini files"); scanDir != "" {
+				status.ScanDir = scanDir
+				status.ManagedConfigFile = determineManagedPHPConfigFile(status.LoadedConfigFile, scanDir)
+			}
+		}
 		output, err := runInspectCommand(ctx, fpmPath, "-tt")
 		if err != nil {
 			status.Issues = append(status.Issues, err.Error())

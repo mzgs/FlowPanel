@@ -59,6 +59,11 @@ func newTerminalWebSocketHandler(app *app.App) stdhttp.Handler {
 	logger := app.Logger.Named("terminal")
 
 	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if !requestHasTrustedOrigin(app, r) {
+			writeJSON(w, stdhttp.StatusForbidden, map[string]any{"error": "request origin is not trusted"})
+			return
+		}
+
 		conn, _, _, err := ws.UpgradeHTTP(r, w)
 		if err != nil {
 			logger.Warn("upgrade terminal websocket failed", zap.Error(err))

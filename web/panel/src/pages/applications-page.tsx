@@ -1392,6 +1392,7 @@ export function ApplicationsPage() {
   const pm2ProcessListRequestIdRef = useRef(0);
   const pm2CreateRequestIdRef = useRef(0);
   const pm2LogsRequestIdRef = useRef(0);
+  const pageLoadRequestIdRef = useRef(0);
   const pm2ProcessesBusy = pm2ProcessActionKey !== null || pm2CreateSubmitting;
   const postInstallServiceStartingAction = getPostInstallServiceStartingAction(
     runningAction,
@@ -1683,6 +1684,8 @@ export function ApplicationsPage() {
     showRefreshToast?: boolean;
     ignoreIfUnmounted?: () => boolean;
   }) {
+    const requestId = pageLoadRequestIdRef.current + 1;
+    pageLoadRequestIdRef.current = requestId;
     const showLoading = options?.showLoading ?? false;
     if (showLoading) {
       setLoading(true);
@@ -1722,7 +1725,7 @@ export function ApplicationsPage() {
       fetchNodeJSStatus(),
       fetchPM2Status(),
     ]);
-    if (options?.ignoreIfUnmounted?.()) {
+    if (options?.ignoreIfUnmounted?.() || pageLoadRequestIdRef.current !== requestId) {
       return;
     }
 
@@ -1844,6 +1847,7 @@ export function ApplicationsPage() {
 
     return () => {
       unmounted = true;
+      pageLoadRequestIdRef.current += 1;
     };
   }, []);
 

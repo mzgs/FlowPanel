@@ -192,10 +192,6 @@ func (a *apiRoutes) startBackgroundRuntimeAction(
 func (a *apiRoutes) trackCaddyStatus(status caddy.Status) caddy.Status {
 	switch a.runtimeActions.Current("caddy") {
 	case "restart":
-		if status.Started && status.ConfigLoaded {
-			a.runtimeActions.End("caddy", "restart")
-			return status
-		}
 		status.State = "restarting"
 		status.Message = "Caddy restart and domain sync are running in the background."
 		status.RestartAvailable = false
@@ -207,38 +203,18 @@ func (a *apiRoutes) trackCaddyStatus(status caddy.Status) caddy.Status {
 func (a *apiRoutes) trackPHPStatus(status phpenv.Status) phpenv.Status {
 	switch a.runtimeActions.Current("php") {
 	case "install":
-		if status.PHPInstalled && status.FPMInstalled && status.ServiceRunning {
-			a.runtimeActions.End("php", "install")
-			return status
-		}
 		status.State = "installing"
 		status.Message = "PHP installation is running in the background."
 	case "remove":
-		if !status.PHPInstalled && !status.FPMInstalled {
-			a.runtimeActions.End("php", "remove")
-			return status
-		}
 		status.State = "removing"
 		status.Message = "PHP removal is running in the background."
 	case "start":
-		if status.ServiceRunning {
-			a.runtimeActions.End("php", "start")
-			return status
-		}
 		status.State = "starting"
 		status.Message = "PHP-FPM is starting in the background."
 	case "stop":
-		if status.FPMInstalled && !status.ServiceRunning {
-			a.runtimeActions.End("php", "stop")
-			return status
-		}
 		status.State = "stopping"
 		status.Message = "PHP-FPM is stopping in the background."
 	case "restart":
-		if status.ServiceRunning {
-			a.runtimeActions.End("php", "restart")
-			return status
-		}
 		status.State = "restarting"
 		status.Message = "PHP-FPM is restarting in the background."
 	default:
@@ -257,38 +233,18 @@ func (a *apiRoutes) trackPHPStatus(status phpenv.Status) phpenv.Status {
 func (a *apiRoutes) trackMariaDBStatus(status mariadb.Status) mariadb.Status {
 	switch a.runtimeActions.Current("mariadb") {
 	case "install":
-		if status.ServerInstalled && status.ServiceRunning {
-			a.runtimeActions.End("mariadb", "install")
-			return status
-		}
 		status.State = "installing"
 		status.Message = "MariaDB installation is running in the background."
 	case "remove":
-		if !status.ServerInstalled && !status.ClientInstalled {
-			a.runtimeActions.End("mariadb", "remove")
-			return status
-		}
 		status.State = "removing"
 		status.Message = "MariaDB removal is running in the background."
 	case "start":
-		if status.ServiceRunning {
-			a.runtimeActions.End("mariadb", "start")
-			return status
-		}
 		status.State = "starting"
 		status.Message = "MariaDB is starting in the background."
 	case "stop":
-		if status.ServerInstalled && !status.ServiceRunning {
-			a.runtimeActions.End("mariadb", "stop")
-			return status
-		}
 		status.State = "stopping"
 		status.Message = "MariaDB is stopping in the background."
 	case "restart":
-		if status.ServiceRunning {
-			a.runtimeActions.End("mariadb", "restart")
-			return status
-		}
 		status.State = "restarting"
 		status.Message = "MariaDB is restarting in the background."
 	default:
@@ -307,17 +263,9 @@ func (a *apiRoutes) trackMariaDBStatus(status mariadb.Status) mariadb.Status {
 func (a *apiRoutes) trackGoStatus(status golang.Status) golang.Status {
 	switch a.runtimeActions.Current("golang") {
 	case "install":
-		if status.Installed {
-			a.runtimeActions.End("golang", "install")
-			return status
-		}
 		status.State = "installing"
 		status.Message = "Go installation is running in the background."
 	case "remove":
-		if !status.Installed {
-			a.runtimeActions.End("golang", "remove")
-			return status
-		}
 		status.State = "removing"
 		status.Message = "Go removal is running in the background."
 	default:
@@ -332,17 +280,9 @@ func (a *apiRoutes) trackGoStatus(status golang.Status) golang.Status {
 func (a *apiRoutes) trackNodeJSStatus(status nodejs.Status) nodejs.Status {
 	switch a.runtimeActions.Current("nodejs") {
 	case "install":
-		if status.Installed {
-			a.runtimeActions.End("nodejs", "install")
-			return status
-		}
 		status.State = "installing"
 		status.Message = "Node.js installation is running in the background."
 	case "remove":
-		if !status.Installed {
-			a.runtimeActions.End("nodejs", "remove")
-			return status
-		}
 		status.State = "removing"
 		status.Message = "Node.js removal is running in the background."
 	default:
@@ -357,17 +297,9 @@ func (a *apiRoutes) trackNodeJSStatus(status nodejs.Status) nodejs.Status {
 func (a *apiRoutes) trackPM2Status(status pm2.Status) pm2.Status {
 	switch a.runtimeActions.Current("pm2") {
 	case "install":
-		if status.Installed {
-			a.runtimeActions.End("pm2", "install")
-			return status
-		}
 		status.State = "installing"
 		status.Message = "PM2 installation is running in the background."
 	case "remove":
-		if !status.Installed {
-			a.runtimeActions.End("pm2", "remove")
-			return status
-		}
 		status.State = "removing"
 		status.Message = "PM2 removal is running in the background."
 	default:
@@ -382,17 +314,9 @@ func (a *apiRoutes) trackPM2Status(status pm2.Status) pm2.Status {
 func (a *apiRoutes) trackPHPMyAdminStatus(status phpmyadmin.Status) phpmyadmin.Status {
 	switch a.runtimeActions.Current("phpmyadmin") {
 	case "install":
-		if status.Installed {
-			a.runtimeActions.End("phpmyadmin", "install")
-			return status
-		}
 		status.State = "installing"
 		status.Message = "phpMyAdmin installation is running in the background."
 	case "remove":
-		if !status.Installed {
-			a.runtimeActions.End("phpmyadmin", "remove")
-			return status
-		}
 		status.State = "removing"
 		status.Message = "phpMyAdmin removal is running in the background."
 	default:
@@ -407,41 +331,21 @@ func (a *apiRoutes) trackPHPMyAdminStatus(status phpmyadmin.Status) phpmyadmin.S
 func (a *apiRoutes) trackPackageRuntimeStatus(key, label string, status packageruntime.Status) packageruntime.Status {
 	switch a.runtimeActions.Current(key) {
 	case "install":
-		if status.Installed {
-			a.runtimeActions.End(key, "install")
-			return status
-		}
 		status.State = "installing"
 		status.Message = fmt.Sprintf("%s installation is running in the background.", label)
 	case "update":
 		status.State = "updating"
 		status.Message = fmt.Sprintf("%s update is running.", label)
 	case "remove":
-		if !status.Installed {
-			a.runtimeActions.End(key, "remove")
-			return status
-		}
 		status.State = "removing"
 		status.Message = fmt.Sprintf("%s removal is running in the background.", label)
 	case "start":
-		if status.ServiceRunning {
-			a.runtimeActions.End(key, "start")
-			return status
-		}
 		status.State = "starting"
 		status.Message = fmt.Sprintf("%s is starting in the background.", label)
 	case "stop":
-		if status.Installed && !status.ServiceRunning {
-			a.runtimeActions.End(key, "stop")
-			return status
-		}
 		status.State = "stopping"
 		status.Message = fmt.Sprintf("%s is stopping in the background.", label)
 	case "restart":
-		if status.ServiceRunning {
-			a.runtimeActions.End(key, "restart")
-			return status
-		}
 		status.State = "restarting"
 		status.Message = fmt.Sprintf("%s is restarting in the background.", label)
 	default:

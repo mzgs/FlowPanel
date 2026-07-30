@@ -919,12 +919,17 @@ func phpSubrouteRoutes(root, fastCGIAddress string, settings phpenv.Settings, en
 
 func phpFastCGIEnv(settings phpenv.Settings, environment map[string]string) map[string]string {
 	values := cloneStringMap(environment)
-	phpValue := phpSettingsValue(settings)
-	if phpValue != "" {
-		if values == nil {
-			values = make(map[string]string, 1)
+	for name, value := range map[string]string{
+		"PHP_VALUE":       phpUserSettingsValue(settings),
+		"PHP_ADMIN_VALUE": phpAdminSettingsValue(settings),
+	} {
+		if value == "" {
+			continue
 		}
-		values["PHP_VALUE"] = phpValue
+		if values == nil {
+			values = make(map[string]string, 2)
+		}
+		values[name] = value
 	}
 	if len(values) == 0 {
 		return nil
@@ -933,8 +938,8 @@ func phpFastCGIEnv(settings phpenv.Settings, environment map[string]string) map[
 	return values
 }
 
-func phpSettingsValue(settings phpenv.Settings) string {
-	lines := make([]string, 0, 10)
+func phpSettingsValue(settings ...[2]string) string {
+	lines := make([]string, 0, len(settings))
 	appendSetting := func(name, value string) {
 		value = strings.TrimSpace(value)
 		if value == "" {
@@ -943,18 +948,31 @@ func phpSettingsValue(settings phpenv.Settings) string {
 		lines = append(lines, fmt.Sprintf("%s=%s", name, value))
 	}
 
-	appendSetting("max_execution_time", settings.MaxExecutionTime)
-	appendSetting("max_input_time", settings.MaxInputTime)
-	appendSetting("memory_limit", settings.MemoryLimit)
-	appendSetting("post_max_size", settings.PostMaxSize)
-	appendSetting("file_uploads", settings.FileUploads)
-	appendSetting("upload_max_filesize", settings.UploadMaxFilesize)
-	appendSetting("max_file_uploads", settings.MaxFileUploads)
-	appendSetting("default_socket_timeout", settings.DefaultSocketTimeout)
-	appendSetting("error_reporting", settings.ErrorReporting)
-	appendSetting("display_errors", settings.DisplayErrors)
+	for _, setting := range settings {
+		appendSetting(setting[0], setting[1])
+	}
 
 	return strings.Join(lines, "\n")
+}
+
+func phpUserSettingsValue(settings phpenv.Settings) string {
+	return phpSettingsValue(
+		[2]string{"max_execution_time", settings.MaxExecutionTime},
+		[2]string{"memory_limit", settings.MemoryLimit},
+		[2]string{"default_socket_timeout", settings.DefaultSocketTimeout},
+		[2]string{"error_reporting", settings.ErrorReporting},
+		[2]string{"display_errors", settings.DisplayErrors},
+	)
+}
+
+func phpAdminSettingsValue(settings phpenv.Settings) string {
+	return phpSettingsValue(
+		[2]string{"max_input_time", settings.MaxInputTime},
+		[2]string{"post_max_size", settings.PostMaxSize},
+		[2]string{"file_uploads", settings.FileUploads},
+		[2]string{"upload_max_filesize", settings.UploadMaxFilesize},
+		[2]string{"max_file_uploads", settings.MaxFileUploads},
+	)
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

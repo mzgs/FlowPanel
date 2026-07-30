@@ -128,6 +128,14 @@ var runPHPInfoCommand = func(ctx context.Context, phpPath string) ([]byte, error
 	}
 }
 
+var runPHPFPMInfoCommand = func(ctx context.Context, fpmPath string) ([]byte, error) {
+	output, err := exec.CommandContext(ctx, fpmPath, "-i").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("inspect php-fpm: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return output, nil
+}
+
 type runtimeActionTracker struct {
 	mu      sync.Mutex
 	actions map[string]string

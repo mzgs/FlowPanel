@@ -38,11 +38,12 @@ var phpErrorReportingConstants = []struct {
 }
 
 type phpConfigInfo struct {
-	loadedConfigFile  string
-	scanDir           string
-	managedConfigFile string
-	extensionDir      string
-	settings          Settings
+	loadedConfigFile   string
+	scanDir            string
+	managedConfigFile  string
+	managedConfigFiles []string
+	extensionDir       string
+	settings           Settings
 }
 
 func (s *Service) ReadManagedConfigForVersion(ctx context.Context, version string) (ManagedConfig, error) {
@@ -100,7 +101,7 @@ func (s *Service) UpdateSettingsForVersion(ctx context.Context, version string, 
 	}
 
 	normalized := NormalizeUpdateSettingsInput(input)
-	nextStatus, err := s.writePHPConfigFile(ctx, status, configInfo.managedConfigFile, renderManagedPHPConfig(normalized))
+	nextStatus, err := s.writePHPConfigFiles(ctx, status, configInfo.managedConfigFiles, renderManagedPHPConfig(normalized))
 	if nextStatus.ManagedConfigFile == "" {
 		nextStatus.ManagedConfigFile = configInfo.managedConfigFile
 	}
@@ -260,6 +261,8 @@ func (s *Service) inspectManagedConfigTarget(ctx context.Context, version string
 	if err != nil {
 		return RuntimeStatus{}, phpConfigInfo{}, err
 	}
+	configInfo.managedConfigFiles = managedPHPConfigPaths(status, configInfo)
+	configInfo.managedConfigFile = firstNonEmpty(configInfo.managedConfigFiles...)
 	if configInfo.managedConfigFile == "" {
 		return RuntimeStatus{}, phpConfigInfo{}, fmt.Errorf("flowpanel could not determine where to write PHP settings")
 	}
@@ -310,6 +313,34 @@ func (s *Service) writePHPConfigFile(
 
 	nextStatus := s.StatusForVersion(ctx, status.Version)
 	return nextStatus, nil
+}
+
+func (s *Service) writePHPConfigFiles(
+	ctx context.Context,
+	status RuntimeStatus,
+	paths []string,
+	content string,
+) (RuntimeStatus, error) {
+	for _, path := range dedupeStrings(paths) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return RuntimeStatus{}, fmt.Errorf("create php config directory: %w", err)
+		}
+		if err := os.WriteFile(path, []byte(normalizePHPConfigContent(content)), 0o644); err != nil {
+			return RuntimeStatus{}, fmt.Errorf("write php settings: %w", err)
+		}
+	}
+
+	if status.ServiceRunning {
+		if err := s.RestartVersion(ctx, status.Version); err != nil {
+			if status.FPMPath == "" {
+				return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
+			}
+			if fallbackErr := restartPHPFPM(ctx, status.FPMPath); fallbackErr != nil {
+				return RuntimeStatus{}, fmt.Errorf("php settings saved but failed to restart php-fpm: %w", err)
+			}
+		}
+	}
+	return s.StatusForVersion(ctx, status.Version), nil
 }
 
 func normalizePHPConfigContent(content string) string {
@@ -579,6 +610,53 @@ func determineManagedPHPConfigFile(loadedConfigFile, scanDir string) string {
 	}
 	if loadedConfigFile != "" {
 		return filepath.Join(filepath.Dir(loadedConfigFile), "99-flowpanel.ini")
+	}
+	return ""
+}
+
+func managedPHPConfigPaths(status RuntimeStatus, info phpConfigInfo) []string {
+	dirs := []string{}
+	if status.ScanDir != "" {
+		dirs = append(dirs, status.ScanDir)
+	}
+	if info.scanDir != "" {
+		dirs = append(dirs, info.scanDir)
+	}
+	version := NormalizeVersion(status.Version)
+	switch strings.TrimSpace(status.PackageManager) {
+	case "apt":
+		if version != "" {
+			dirs = append(dirs, filepath.Join("/etc/php", version, "cli", "conf.d"))
+			if status.FPMInstalled {
+				dirs = append(dirs, filepath.Join("/etc/php", version, "fpm", "conf.d"))
+			}
+		}
+	case "dnf", "yum":
+		if version != "" {
+			dirs = append(dirs, filepath.Join("/etc/opt/remi", remiCollectionForVersion(version), "php.d"))
+		}
+		dirs = append(dirs, "/etc/php.d")
+	}
+	paths := make([]string, 0, len(dirs))
+	for _, dir := range dedupeStrings(dirs) {
+		paths = append(paths, filepath.Join(dir, "99-flowpanel.ini"))
+	}
+	if len(paths) == 0 && info.managedConfigFile != "" {
+		paths = append(paths, info.managedConfigFile)
+	}
+	return dedupeStrings(paths)
+}
+
+func parsePHPInfoOutputValue(output, label string) string {
+	for _, line := range strings.Split(output, "\n") {
+		parts := strings.SplitN(line, "=>", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) != label {
+			continue
+		}
+		value := normalizePHPIniOutputValue(parts[1])
+		if value != "" && value != "(none)" {
+			return value
+		}
 	}
 	return ""
 }
