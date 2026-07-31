@@ -339,6 +339,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 		CacheEnabled: input.CacheEnabled,
 		CreatedAt:    time.Now().UTC(),
 	}
+	if kind == KindPHP {
+		record.PHPSettings = phpenv.DefaultDomainSettings()
+	}
 	record = s.withTransientFields(record)
 
 	if s.store != nil {
@@ -710,7 +713,6 @@ func (s *Service) UpdatePHPSettings(
 	}
 
 	record.PHPVersion = phpenv.NormalizeVersion(input.PHPVersion)
-	input.DisableFunctions = ""
 	record.PHPSettings = phpenv.NormalizeUpdateSettingsInput(input.UpdateSettingsInput)
 	record = s.withTransientFields(record)
 

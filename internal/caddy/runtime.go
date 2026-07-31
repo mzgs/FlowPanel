@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -76,8 +77,9 @@ type configSummary struct {
 }
 
 type phpRouteConfig struct {
-	defaultVersion   string
-	fastCGIAddresses map[string]string
+	defaultVersion         string
+	fastCGIAddresses       map[string]string
+	domainFastCGIAddresses map[string]string
 }
 
 type phpMyAdminRouteConfig struct {
@@ -409,8 +411,9 @@ func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Re
 	}
 
 	config := &phpRouteConfig{
-		defaultVersion:   aggregateStatus.DefaultVersion,
-		fastCGIAddresses: make(map[string]string, len(requiredVersions)),
+		defaultVersion:         aggregateStatus.DefaultVersion,
+		fastCGIAddresses:       make(map[string]string, len(requiredVersions)),
+		domainFastCGIAddresses: make(map[string]string, len(records)),
 	}
 	for version := range requiredVersions {
 		status := r.php.StatusForVersion(ctx, version)
@@ -421,6 +424,31 @@ func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Re
 			return nil, fmt.Errorf("php-fpm %s listen address is not configured", version)
 		}
 		config.fastCGIAddresses[version] = status.ListenAddress
+	}
+
+	poolInputs := make([]phpenv.DomainPoolInput, 0, len(records))
+	for _, record := range records {
+		if record.Kind != domain.KindPHP || strings.TrimSpace(record.PHPSettings.FPMMaxChildren) == "" {
+			continue
+		}
+		version := strings.TrimSpace(record.PHPVersion)
+		if version == "" {
+			version = strings.TrimSpace(config.defaultVersion)
+		}
+		poolInputs = append(poolInputs, phpenv.DomainPoolInput{
+			DomainID:     record.ID,
+			Hostname:     record.Hostname,
+			Version:      version,
+			DocumentRoot: record.Target,
+			Settings:     mergePHPSettings(r.php.StatusForVersion(ctx, version).Settings, record.PHPSettings),
+		})
+	}
+	pools, err := r.php.ReconcileDomainPools(ctx, poolInputs)
+	if err != nil {
+		return nil, err
+	}
+	for domainID, pool := range pools {
+		config.domainFastCGIAddresses[domainID] = pool.ListenAddress
 	}
 
 	return config, nil
@@ -648,7 +676,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 		if phpConfig == nil {
 			return nil, false, fmt.Errorf("php-fpm is not configured for %q", record.Hostname)
 		}
-		fastCGIAddress, err := phpConfig.fastCGIAddressFor(record.PHPVersion)
+		fastCGIAddress, err := phpConfig.fastCGIAddressFor(record)
 		if err != nil {
 			return nil, false, err
 		}
@@ -988,12 +1016,16 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return cloned
 }
 
-func (c *phpRouteConfig) fastCGIAddressFor(version string) (string, error) {
+func (c *phpRouteConfig) fastCGIAddressFor(record domain.Record) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("php-fpm is not configured")
 	}
 
-	resolvedVersion := strings.TrimSpace(version)
+	if address := strings.TrimSpace(c.domainFastCGIAddresses[record.ID]); address != "" {
+		return address, nil
+	}
+
+	resolvedVersion := strings.TrimSpace(record.PHPVersion)
 	if resolvedVersion == "" {
 		resolvedVersion = strings.TrimSpace(c.defaultVersion)
 	}
@@ -1007,6 +1039,18 @@ func (c *phpRouteConfig) fastCGIAddressFor(version string) (string, error) {
 	}
 
 	return address, nil
+}
+
+func mergePHPSettings(base, override phpenv.Settings) phpenv.Settings {
+	merged := base
+	baseValue := reflect.ValueOf(&merged).Elem()
+	overrideValue := reflect.ValueOf(override)
+	for i := 0; i < baseValue.NumField(); i++ {
+		if value := strings.TrimSpace(overrideValue.Field(i).String()); value != "" {
+			baseValue.Field(i).SetString(value)
+		}
+	}
+	return merged
 }
 
 func fastCGIDialAddress(address string) string {

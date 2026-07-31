@@ -330,7 +330,7 @@ func installWordPress(
 				return wordPressStatus{}, record, false, fmt.Errorf("clear document root: %w", err)
 			}
 		}
-		if _, _, ranAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.PHPVersion, targetPath, "core", "download"); err != nil {
+		if _, _, ranAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.ID, record.PHPVersion, targetPath, "core", "download"); err != nil {
 			return wordPressStatus{}, record, false, err
 		} else if ranAsWorker {
 			executedAsWorker = true
@@ -362,7 +362,7 @@ func installWordPress(
 		if database.Password != "" {
 			args = append(args, "--dbpass="+database.Password)
 		}
-		if _, _, ranAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.PHPVersion, targetPath, args...); err != nil {
+		if _, _, ranAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.ID, record.PHPVersion, targetPath, args...); err != nil {
 			return wordPressStatus{}, record, false, err
 		} else if ranAsWorker {
 			executedAsWorker = true
@@ -372,6 +372,7 @@ func installWordPress(
 	if _, _, ranAsWorker, err := runWordPressCommandWithWorker(
 		ctx,
 		php,
+		record.ID,
 		record.PHPVersion,
 		targetPath,
 		"core",
@@ -432,7 +433,7 @@ func runWordPressExtensionAction(
 	if !ok {
 		return wordPressStatus{}, domain.Record{}, false, domain.ErrNotFound
 	}
-	_, _, executedAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.PHPVersion, targetPath, resource, action, name)
+	_, _, executedAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.ID, record.PHPVersion, targetPath, resource, action, name)
 	if err != nil {
 		return wordPressStatus{}, domain.Record{}, false, err
 	}
@@ -525,7 +526,7 @@ func installWordPressExtension(
 		return wordPressStatus{}, record, false, validation
 	}
 
-	_, _, executedAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.PHPVersion, targetPath, resource, "install", slug)
+	_, _, executedAsWorker, err := runWordPressCommandWithWorker(ctx, php, record.ID, record.PHPVersion, targetPath, resource, "install", slug)
 	if err != nil {
 		return wordPressStatus{}, record, false, err
 	}
@@ -972,13 +973,14 @@ func runWordPressCommand(
 	targetPath string,
 	args ...string,
 ) ([]byte, string, error) {
-	output, combined, _, err := runWordPressCommandWithWorker(ctx, nil, "", targetPath, args...)
+	output, combined, _, err := runWordPressCommandWithWorker(ctx, nil, "", "", targetPath, args...)
 	return output, combined, err
 }
 
 func runWordPressCommandWithWorker(
 	ctx context.Context,
 	php phpenv.Manager,
+	domainID string,
 	version string,
 	targetPath string,
 	args ...string,
@@ -1006,7 +1008,7 @@ func runWordPressCommandWithWorker(
 		executedAsWorker := false
 		if useWorker {
 			var err error
-			executedAsWorker, err = configureCommandForPHPWorker(runCtx, php, version, cmd)
+			executedAsWorker, err = configureCommandForPHPWorker(runCtx, php, domainID, version, cmd)
 			if err != nil {
 				return nil, "", false, err
 			}

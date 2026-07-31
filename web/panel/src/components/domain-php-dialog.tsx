@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -316,17 +317,66 @@ export function DomainPHPDialog({
             <FieldError message={fieldErrors.error_reporting} />
           </div>
 
-          <div className="space-y-1 border-t border-[var(--app-border)] pt-3 md:col-span-2">
-            <div className="text-sm font-medium text-[var(--app-text)]">Disabled functions</div>
+          <div className="space-y-2 border-t border-[var(--app-border)] pt-3 md:col-span-2">
+            <Label htmlFor="php_disable_functions">Disabled functions</Label>
+            <Textarea
+              id="php_disable_functions"
+              value={form.disable_functions ?? ""}
+              onChange={(event) => onFieldChange("disable_functions", event.target.value)}
+              placeholder="exec,passthru,shell_exec,system,proc_open,popen"
+              className="min-h-20 font-mono text-xs"
+              disabled={busy}
+              aria-invalid={fieldErrors.disable_functions ? true : undefined}
+            />
             <p className="text-xs text-[var(--app-text-muted)]">
-              Managed per PHP version because PHP applies this setting when PHP-FPM starts.
-              Change it in Applications → PHP settings.
+              Comma-separated. Applied only to this domain pool; globally disabled functions remain disabled.
             </p>
-            {status?.settings.disable_functions ? (
-              <div className="break-all font-mono text-xs text-[var(--app-text)]">
-                {status.settings.disable_functions}
-              </div>
-            ) : null}
+            <FieldError message={fieldErrors.disable_functions} />
+          </div>
+        </section>
+
+        <section className="grid gap-3 border-b border-[var(--app-border)] pb-4 md:grid-cols-3">
+          <div className="md:col-span-3">
+            <div className="text-sm font-medium text-[var(--app-text)]">PHP-FPM capacity</div>
+            <p className="mt-1 text-xs text-[var(--app-text-muted)]">
+              This domain uses an isolated on-demand pool. Idle workers stop automatically.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="php_fpm_max_children">Concurrent requests</Label>
+            <Input
+              id="php_fpm_max_children"
+              value={form.fpm_max_children ?? "3"}
+              onChange={(event) => onFieldChange("fpm_max_children", event.target.value)}
+              inputMode="numeric"
+              disabled={busy}
+              aria-invalid={fieldErrors.fpm_max_children ? true : undefined}
+            />
+            <FieldError message={fieldErrors.fpm_max_children} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="php_fpm_idle_timeout">Idle timeout</Label>
+            <Input
+              id="php_fpm_idle_timeout"
+              value={form.fpm_idle_timeout ?? "30s"}
+              onChange={(event) => onFieldChange("fpm_idle_timeout", event.target.value)}
+              placeholder="30s"
+              disabled={busy}
+              aria-invalid={fieldErrors.fpm_idle_timeout ? true : undefined}
+            />
+            <FieldError message={fieldErrors.fpm_idle_timeout} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="php_fpm_max_requests">Recycle after requests</Label>
+            <Input
+              id="php_fpm_max_requests"
+              value={form.fpm_max_requests ?? "500"}
+              onChange={(event) => onFieldChange("fpm_max_requests", event.target.value)}
+              inputMode="numeric"
+              disabled={busy}
+              aria-invalid={fieldErrors.fpm_max_requests ? true : undefined}
+            />
+            <FieldError message={fieldErrors.fpm_max_requests} />
           </div>
         </section>
 

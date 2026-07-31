@@ -111,7 +111,7 @@ func installDomainTemplate(
 	}
 
 	definition := domainTemplateDefinitions[templateKey]
-	executedAsWorker, err := installComposerTemplate(ctx, mariadbManager, php, record.PHPVersion, targetPath, hostname, templateKey, definition, input)
+	executedAsWorker, err := installComposerTemplate(ctx, mariadbManager, php, record.ID, record.PHPVersion, targetPath, hostname, templateKey, definition, input)
 	if err != nil {
 		return domainTemplateInstallResult{}, record, false, err
 	}
@@ -190,6 +190,7 @@ func installComposerTemplate(
 	ctx context.Context,
 	mariadbManager mariadb.Manager,
 	php phpenv.Manager,
+	domainID string,
 	phpVersion string,
 	targetPath string,
 	hostname string,
@@ -274,7 +275,7 @@ func installComposerTemplate(
 		copiedPaths = append(copiedPaths, destinationPath)
 	}
 	if executedAsWorker && len(copiedPaths) > 0 {
-		if err := ensurePHPWorkerOwnership(runCtx, php, phpVersion, true, copiedPaths...); err != nil {
+		if err := ensurePHPWorkerOwnership(runCtx, php, domainID, phpVersion, true, copiedPaths...); err != nil {
 			return false, err
 		}
 	}
@@ -682,7 +683,7 @@ func runTemplateCommand(
 		executedAsWorker := false
 		if useWorker {
 			var err error
-			executedAsWorker, err = configureCommandForPHPWorker(ctx, php, phpVersion, cmd)
+			executedAsWorker, err = configureCommandForPHPWorker(ctx, php, "", phpVersion, cmd)
 			if err != nil {
 				return false, "", err
 			}

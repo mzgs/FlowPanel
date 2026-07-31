@@ -36,6 +36,8 @@ type Manager interface {
 	Status(context.Context) Status
 	StatusForVersion(context.Context, string) RuntimeStatus
 	WorkerIdentity(context.Context, string) (WorkerIdentity, error)
+	DomainWorkerIdentity(context.Context, string, string) (WorkerIdentity, error)
+	ReconcileDomainPools(context.Context, []DomainPoolInput) (map[string]DomainPool, error)
 	Install(context.Context) error
 	InstallVersion(context.Context, string) error
 	InstallExtension(context.Context, string) (Status, error)
@@ -62,6 +64,20 @@ type ManagedConfig struct {
 type WorkerIdentity struct {
 	User  string `json:"user,omitempty"`
 	Group string `json:"group,omitempty"`
+}
+
+type DomainPoolInput struct {
+	DomainID     string
+	Hostname     string
+	Version      string
+	DocumentRoot string
+	Settings     Settings
+}
+
+type DomainPool struct {
+	User          string `json:"user"`
+	Group         string `json:"group"`
+	ListenAddress string `json:"listen_address"`
 }
 
 type RuntimeStatus struct {
@@ -144,6 +160,9 @@ type Settings struct {
 	ErrorReporting       string `json:"error_reporting,omitempty"`
 	DisplayErrors        string `json:"display_errors,omitempty"`
 	DisableFunctions     string `json:"disable_functions,omitempty"`
+	FPMMaxChildren       string `json:"fpm_max_children,omitempty"`
+	FPMIdleTimeout       string `json:"fpm_idle_timeout,omitempty"`
+	FPMMaxRequests       string `json:"fpm_max_requests,omitempty"`
 }
 
 type UpdateSettingsInput struct {
@@ -158,6 +177,9 @@ type UpdateSettingsInput struct {
 	ErrorReporting       string `json:"error_reporting"`
 	DisplayErrors        string `json:"display_errors"`
 	DisableFunctions     string `json:"disable_functions"`
+	FPMMaxChildren       string `json:"fpm_max_children"`
+	FPMIdleTimeout       string `json:"fpm_idle_timeout"`
+	FPMMaxRequests       string `json:"fpm_max_requests"`
 }
 
 type ValidationErrors map[string]string

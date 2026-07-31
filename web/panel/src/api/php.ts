@@ -10,6 +10,9 @@ export type PHPSettings = {
   error_reporting?: string;
   display_errors?: string;
   disable_functions?: string;
+  fpm_max_children?: string;
+  fpm_idle_timeout?: string;
+  fpm_max_requests?: string;
 };
 
 export type PHPIniFile = {
@@ -117,6 +120,9 @@ export type UpdatePHPSettingsInput = {
   error_reporting: string;
   display_errors: string;
   disable_functions: string;
+  fpm_max_children: string;
+  fpm_idle_timeout: string;
+  fpm_max_requests: string;
 };
 
 export type PHPApiError = Error & {

@@ -76,7 +76,7 @@ func runDomainComposerAction(
 		executedAsWorker := false
 		if useWorker {
 			var err error
-			executedAsWorker, err = configureCommandForPHPWorker(runCtx, php, record.PHPVersion, cmd)
+			executedAsWorker, err = configureCommandForPHPWorker(runCtx, php, record.ID, record.PHPVersion, cmd)
 			if err != nil {
 				return false, "", err
 			}

@@ -2008,7 +2008,10 @@ export function DomainDetailPage() {
         default_socket_timeout: phpForm.default_socket_timeout ?? "",
         error_reporting: phpForm.error_reporting ?? "",
         display_errors: phpForm.display_errors ?? "Off",
-        disable_functions: "",
+        disable_functions: phpForm.disable_functions ?? "",
+        fpm_max_children: phpForm.fpm_max_children ?? "3",
+        fpm_idle_timeout: phpForm.fpm_idle_timeout ?? "30s",
+        fpm_max_requests: phpForm.fpm_max_requests ?? "500",
       });
       const nextRuntime = getPHPRuntimeStatus(
         phpStatus,

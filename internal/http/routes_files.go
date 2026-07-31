@@ -3,6 +3,7 @@ package httpx
 import (
 	"fmt"
 	stdhttp "net/http"
+	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -43,6 +44,10 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 			writeFileError(w, err)
 			return
 		}
+		if err := ensureCreatedPHPPathOwnership(r, a, input.Path, input.Name); err != nil {
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "directory created but domain ownership could not be updated"})
+			return
+		}
 
 		writeJSON(w, stdhttp.StatusCreated, map[string]any{"ok": true})
 	})
@@ -64,6 +69,10 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 
 		if err := a.app.Files.CreateFile(input.Path, input.Name); err != nil {
 			writeFileError(w, err)
+			return
+		}
+		if err := ensureCreatedPHPPathOwnership(r, a, input.Path, input.Name); err != nil {
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "file created but domain ownership could not be updated"})
 			return
 		}
 
@@ -329,4 +338,12 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/files/archive", filesCreateArchiveHandler)
 	r.Method(stdhttp.MethodPost, "/files/extract", filesExtractArchiveHandler)
 	r.Method(stdhttp.MethodPost, "/files/transfer", filesTransferHandler)
+}
+
+func ensureCreatedPHPPathOwnership(r *stdhttp.Request, a *apiRoutes, parentPath, name string) error {
+	parent, _, err := a.app.Files.ResolveDirectory(parentPath)
+	if err != nil {
+		return err
+	}
+	return ensurePHPUploadWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, parent, []string{filepath.Join(parent, name)})
 }

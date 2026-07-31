@@ -13,6 +13,8 @@ import (
 )
 
 var phpSizeSettingPattern = regexp.MustCompile(`^(?:\d+[KMGkmg]?|-1)$`)
+var phpFunctionListPattern = regexp.MustCompile(`^[A-Za-z0-9_,]*$`)
+var fpmDurationPattern = regexp.MustCompile(`^[1-9]\d*[smhd]?$`)
 
 const phpErrorAllMask = 32767
 const defaultDisabledFunctions = "exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec"
@@ -179,6 +181,18 @@ func ValidateUpdateSettingsInput(input UpdateSettingsInput) ValidationErrors {
 	if !isValidPHPOnOff(input.DisplayErrors) {
 		validation["display_errors"] = "Choose On or Off."
 	}
+	if !phpFunctionListPattern.MatchString(strings.ReplaceAll(input.DisableFunctions, " ", "")) {
+		validation["disable_functions"] = "Use comma-separated PHP function names."
+	}
+	if !isValidOptionalPositiveInteger(input.FPMMaxChildren, false) {
+		validation["fpm_max_children"] = "Enter a number greater than 0."
+	}
+	if value := strings.TrimSpace(input.FPMIdleTimeout); value != "" && !fpmDurationPattern.MatchString(value) {
+		validation["fpm_idle_timeout"] = "Use a duration such as 30s or 1m."
+	}
+	if !isValidOptionalPositiveInteger(input.FPMMaxRequests, true) {
+		validation["fpm_max_requests"] = "Enter 0 or a positive number."
+	}
 
 	return validation
 }
@@ -196,6 +210,18 @@ func NormalizeUpdateSettingsInput(input UpdateSettingsInput) Settings {
 		ErrorReporting:       strings.TrimSpace(input.ErrorReporting),
 		DisplayErrors:        normalizePHPOnOff(input.DisplayErrors),
 		DisableFunctions:     normalizePHPList(input.DisableFunctions),
+		FPMMaxChildren:       firstNonEmpty(strings.TrimSpace(input.FPMMaxChildren), "3"),
+		FPMIdleTimeout:       firstNonEmpty(strings.TrimSpace(input.FPMIdleTimeout), "30s"),
+		FPMMaxRequests:       firstNonEmpty(strings.TrimSpace(input.FPMMaxRequests), "500"),
+	}
+}
+
+func DefaultDomainSettings() Settings {
+	return Settings{
+		DisableFunctions: defaultDisabledFunctions,
+		FPMMaxChildren:   "3",
+		FPMIdleTimeout:   "30s",
+		FPMMaxRequests:   "500",
 	}
 }
 
@@ -225,6 +251,15 @@ func isValidPHPInteger(value string, allowNegativeOne bool) bool {
 		}
 	}
 	return true
+}
+
+func isValidOptionalPositiveInteger(value string, allowZero bool) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	parsed, err := strconv.Atoi(value)
+	return err == nil && (parsed > 0 || allowZero && parsed == 0)
 }
 
 func isValidPHPSize(value string, allowNegativeOne bool) bool {

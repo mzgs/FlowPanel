@@ -16,7 +16,9 @@ import (
 	"sync"
 
 	"flowpanel/internal/app"
+	"flowpanel/internal/domain"
 	filesvc "flowpanel/internal/files"
+	"flowpanel/internal/phpenv"
 
 	"github.com/creack/pty"
 	"github.com/gobwas/ws"
@@ -85,7 +87,11 @@ func newTerminalWebSocketHandler(app *app.App) stdhttp.Handler {
 			return
 		}
 
-		ptyFile, cmd, cwd, shell, err := startTerminalSession(ctx, startDir)
+		var phpDomain *domain.Record
+		if record, ok := resolvePHPDomainRecordForPath(app.Domains, startDir); ok {
+			phpDomain = &record
+		}
+		ptyFile, cmd, cwd, shell, err := startTerminalSession(ctx, startDir, app.PHP, phpDomain)
 		if err != nil {
 			logger.Error("start terminal session failed", zap.Error(err))
 			_ = socket.writeJSON(terminalServerMessage{
@@ -178,7 +184,7 @@ func terminalStartErrorMessage(err error) string {
 	}
 }
 
-func startTerminalSession(ctx context.Context, startDir string) (*os.File, *exec.Cmd, string, string, error) {
+func startTerminalSession(ctx context.Context, startDir string, php phpenv.Manager, phpDomain *domain.Record) (*os.File, *exec.Cmd, string, string, error) {
 	shell, args, err := resolveTerminalShell()
 	if err != nil {
 		return nil, nil, "", "", err
@@ -199,6 +205,15 @@ func startTerminalSession(ctx context.Context, startDir string) (*os.File, *exec
 		"COLORTERM=truecolor",
 		"TERM_PROGRAM=FlowPanel",
 	)
+	if phpDomain != nil {
+		configured, err := configureCommandForPHPWorker(ctx, php, phpDomain.ID, phpDomain.PHPVersion, cmd)
+		if err != nil {
+			return nil, nil, "", "", err
+		}
+		if !configured {
+			return nil, nil, "", "", errors.New("domain terminal isolation is unavailable")
+		}
+	}
 
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: defaultTerminalCols,

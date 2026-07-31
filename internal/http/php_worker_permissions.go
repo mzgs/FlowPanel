@@ -33,7 +33,7 @@ func ensurePHPDocumentRootWorkerOwnership(
 		return fmt.Errorf("resolve domain document root: %w", err)
 	}
 
-	return ensurePHPWorkerOwnership(ctx, php, record.PHPVersion, true, documentRoot)
+	return ensurePHPWorkerOwnership(ctx, php, record.ID, record.PHPVersion, true, documentRoot)
 }
 
 func ensurePHPUploadWorkerOwnership(
@@ -52,12 +52,13 @@ func ensurePHPUploadWorkerOwnership(
 	paths = append(paths, uploadDirectory)
 	paths = append(paths, uploadedPaths...)
 
-	return ensurePHPWorkerOwnership(ctx, php, record.PHPVersion, false, paths...)
+	return ensurePHPWorkerOwnership(ctx, php, record.ID, record.PHPVersion, false, paths...)
 }
 
 func ensurePHPWorkerOwnership(
 	ctx context.Context,
 	php phpenv.Manager,
+	domainID string,
 	version string,
 	recursive bool,
 	paths ...string,
@@ -66,7 +67,7 @@ func ensurePHPWorkerOwnership(
 		return nil
 	}
 
-	identity, err := php.WorkerIdentity(ctx, version)
+	identity, err := php.DomainWorkerIdentity(ctx, domainID, version)
 	if err != nil {
 		return err
 	}
@@ -195,6 +196,7 @@ func resolvePHPWorkerRuntime(identity phpenv.WorkerIdentity) (phpWorkerRuntime, 
 func configureCommandForPHPWorker(
 	ctx context.Context,
 	php phpenv.Manager,
+	domainID string,
 	version string,
 	cmd *exec.Cmd,
 ) (bool, error) {
@@ -202,7 +204,7 @@ func configureCommandForPHPWorker(
 		return false, nil
 	}
 
-	identity, err := php.WorkerIdentity(ctx, version)
+	identity, err := php.DomainWorkerIdentity(ctx, domainID, version)
 	if err != nil {
 		return false, err
 	}

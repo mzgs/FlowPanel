@@ -30,6 +30,9 @@ export const emptyPHPSettings: PHPSettings = {
   error_reporting: defaultPHPErrorReporting,
   display_errors: "Off",
   disable_functions: defaultDisabledFunctions,
+  fpm_max_children: "3",
+  fpm_idle_timeout: "30s",
+  fpm_max_requests: "500",
 };
 
 export function normalizePHPErrorReporting(value?: string | null) {
@@ -55,6 +58,9 @@ export function toPHPSettingsForm(settings?: PHPSettings | null): UpdatePHPSetti
     display_errors: settings?.display_errors ?? "Off",
     disable_functions:
       settings?.disable_functions ?? defaultDisabledFunctions,
+    fpm_max_children: settings?.fpm_max_children ?? "3",
+    fpm_idle_timeout: settings?.fpm_idle_timeout ?? "30s",
+    fpm_max_requests: settings?.fpm_max_requests ?? "500",
   };
 }
 
@@ -83,7 +89,14 @@ export function mergePHPSettingsForm(
       overrides.error_reporting || normalizedBase.error_reporting,
     ),
     display_errors: overrides.display_errors || normalizedBase.display_errors,
-    disable_functions: normalizedBase.disable_functions,
+    disable_functions:
+      overrides.disable_functions ?? normalizedBase.disable_functions,
+    fpm_max_children:
+      overrides.fpm_max_children || normalizedBase.fpm_max_children,
+    fpm_idle_timeout:
+      overrides.fpm_idle_timeout || normalizedBase.fpm_idle_timeout,
+    fpm_max_requests:
+      overrides.fpm_max_requests || normalizedBase.fpm_max_requests,
   };
 }
 
@@ -99,6 +112,9 @@ export function samePHPSettings(left: PHPSettings, right: PHPSettings) {
     left.default_socket_timeout === right.default_socket_timeout &&
     left.error_reporting === right.error_reporting &&
     left.display_errors === right.display_errors &&
-    left.disable_functions === right.disable_functions
+    left.disable_functions === right.disable_functions &&
+    left.fpm_max_children === right.fpm_max_children &&
+    left.fpm_idle_timeout === right.fpm_idle_timeout &&
+    left.fpm_max_requests === right.fpm_max_requests
   );
 }
