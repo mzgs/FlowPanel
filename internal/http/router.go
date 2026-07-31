@@ -710,6 +710,29 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 			writeJSON(w, stdhttp.StatusOK, map[string]any{"update": status})
 		})
+		panelUpdateStartHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			status, err := inspectPanelUpdate(r.Context(), app.Version)
+			if err != nil {
+				app.Logger.Warn("inspect panel update before starting failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": "failed to check for panel updates"})
+				return
+			}
+			if !status.UpdateAvailable {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "FlowPanel is already up to date"})
+				return
+			}
+			if err := startPanelUpdate(app.Logger, status.LatestVersion); err != nil {
+				if errors.Is(err, errPanelUpdateRunning) {
+					writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})
+					return
+				}
+				app.Logger.Error("start panel update failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to start panel update"})
+				return
+			}
+			api.mutationEvent(r.Context(), "panel", "update", "panel", "flowpanel", "FlowPanel", "succeeded", fmt.Sprintf("Started FlowPanel update to v%s.", status.LatestVersion))
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
+		})
 		systemHistoryHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.SystemMonitor == nil {
 				writeJSON(w, stdhttp.StatusOK, map[string]any{
@@ -744,6 +767,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodHead, "/system", systemStatusHandler)
 		r.Method(stdhttp.MethodGet, "/panel/update", panelUpdateHandler)
 		r.Method(stdhttp.MethodHead, "/panel/update", panelUpdateHandler)
+		r.Method(stdhttp.MethodPost, "/panel/update", panelUpdateStartHandler)
 		r.Method(stdhttp.MethodGet, "/system/history", systemHistoryHandler)
 		r.Method(stdhttp.MethodHead, "/system/history", systemHistoryHandler)
 

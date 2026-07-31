@@ -56,7 +56,7 @@ import {
   stopRedis,
   type RedisStatus,
 } from "@/api/redis";
-import { fetchPanelUpdate, fetchSystemStatus, type PanelUpdateStatus, type SystemStatus } from "@/api/system";
+import { fetchPanelUpdate, fetchSystemStatus, updatePanel, type PanelUpdateStatus, type SystemStatus } from "@/api/system";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { LoaderCircle, Trash2, Database, PlayerPlayFilled, PlayerStop, RefreshCw, World } from "@/components/icons/lucide-icons";
 import { PM2ProcessList } from "@/components/pm2-process-list";
@@ -414,7 +414,17 @@ function formatPM2Meta(status: PM2Status | null, processes: PM2Process[]) {
   return { countLabel, toolchain };
 }
 
-function SystemInfoCard({ panelUpdate, status }: { panelUpdate: PanelUpdateStatus | null; status: SystemStatus | null }) {
+function SystemInfoCard({
+  onUpdate,
+  panelUpdate,
+  status,
+  updating,
+}: {
+  onUpdate: () => void;
+  panelUpdate: PanelUpdateStatus | null;
+  status: SystemStatus | null;
+  updating: boolean;
+}) {
   const details = [
     {
       label: "IPv4 Public IP",
@@ -447,9 +457,17 @@ function SystemInfoCard({ panelUpdate, status }: { panelUpdate: PanelUpdateStatu
             ))}
           </div>
           {panelUpdate?.update_available && panelUpdate.latest_version ? (
-            <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-              Update v{panelUpdate.latest_version}
-            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 shrink-0 rounded-full border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-semibold text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
+              disabled={updating}
+              onClick={onUpdate}
+            >
+              {updating ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+              {updating ? "Updating..." : `Update v${panelUpdate.latest_version}`}
+            </Button>
           ) : null}
         </div>
       </div>
@@ -559,6 +577,7 @@ export function DashboardPage() {
   });
   const [siteCount, setSiteCount] = useState<number | null>(null);
   const [panelUpdate, setPanelUpdate] = useState<PanelUpdateStatus | null>(null);
+  const [panelUpdating, setPanelUpdating] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [systemStatusHistory, setSystemStatusHistory] = useState<SystemStatusSample[]>([]);
   const [loading, setLoading] = useState(true);
@@ -620,6 +639,43 @@ export function DashboardPage() {
       toast.error(message);
     } finally {
       setInstalledAppsActionKey((current) => (current === action.key ? null : current));
+    }
+  }
+
+  async function handlePanelUpdate() {
+    if (panelUpdating) {
+      return;
+    }
+
+    setPanelUpdating(true);
+    try {
+      await updatePanel();
+      toast.success("FlowPanel update started. The panel will restart when it is ready.");
+
+      for (let attempt = 0; attempt < 90; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        try {
+          const status = await fetchPanelUpdate();
+          setPanelUpdate(status);
+          if (status.update_error) {
+            throw new Error(status.update_error);
+          }
+          if (!status.update_available) {
+            window.location.reload();
+            return;
+          }
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith("Panel update failed")) {
+            throw error;
+          }
+          // The panel is temporarily unreachable while its service restarts.
+        }
+      }
+
+      throw new Error("The update is taking longer than expected. Reload the panel in a moment.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to update FlowPanel."));
+      setPanelUpdating(false);
     }
   }
 
@@ -1214,7 +1270,12 @@ export function DashboardPage() {
   return (
     <>
       <div className="px-4 pb-3 pt-4 sm:px-6 lg:px-8">
-        <SystemInfoCard panelUpdate={panelUpdate} status={systemStatus} />
+        <SystemInfoCard
+          panelUpdate={panelUpdate}
+          status={systemStatus}
+          updating={panelUpdating || Boolean(panelUpdate?.updating)}
+          onUpdate={() => void handlePanelUpdate()}
+        />
       </div>
 
       <div className="px-4 pb-6 pt-3 sm:px-6 lg:px-8">

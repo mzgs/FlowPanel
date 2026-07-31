@@ -33,6 +33,8 @@ export type PanelUpdateStatus = {
   current_version: string;
   latest_version?: string;
   update_available: boolean;
+  updating?: boolean;
+  update_error?: string;
 };
 
 export type SystemHistorySample = {
@@ -110,4 +112,13 @@ export async function fetchPanelUpdate(): Promise<PanelUpdateStatus> {
 
   const payload = await parseSystemResponse<PanelUpdatePayload>(response);
   return payload.update;
+}
+
+export async function updatePanel(): Promise<void> {
+  const response = await fetch("/api/panel/update", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  await parseSystemResponse<{ ok: boolean }>(response);
 }
