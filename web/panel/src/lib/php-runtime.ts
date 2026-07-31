@@ -55,7 +55,7 @@ export function getPHPServiceLabel(status: PHPRuntimeStatus | null) {
   }
 
   if (status.fpm_installed) {
-    return "Installed";
+    return "Stopped";
   }
 
   return "Not installed";

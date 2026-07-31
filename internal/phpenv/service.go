@@ -21,6 +21,7 @@ import (
 const (
 	statusCommandTimeout = 3 * time.Second
 	dialTimeout          = 500 * time.Millisecond
+	serviceStartTimeout  = 10 * time.Second
 )
 
 var supportedPHPVersions = []string{
@@ -417,7 +418,14 @@ func (s *Service) StartVersion(ctx context.Context, version string) error {
 		zap.String("version", target),
 		zap.String("package_manager", plan.packageManager),
 	)
-	return runCommands(ctx, plan.startCmds...)
+	status := s.StatusForVersion(ctx, target)
+	if err := runCommands(ctx, plan.startCmds...); err != nil {
+		return err
+	}
+	if status.ListenAddress != "" && !waitForFastCGI(ctx, status.ListenAddress) {
+		return fmt.Errorf("php-fpm start completed, but PHP %s is not reachable at %s", target, status.ListenAddress)
+	}
+	return nil
 }
 
 func (s *Service) Stop(ctx context.Context) error {
@@ -1320,4 +1328,27 @@ func canDialFastCGI(address string) bool {
 	_ = conn.Close()
 
 	return true
+}
+
+func waitForFastCGI(ctx context.Context, address string) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline := time.NewTimer(serviceStartTimeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+
+	for {
+		if canDialFastCGI(address) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return false
+		case <-ticker.C:
+		}
+	}
 }

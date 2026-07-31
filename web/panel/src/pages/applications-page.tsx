@@ -1170,7 +1170,7 @@ function PHPRuntimeCard({
     serviceStartingAfterInstall
       ? "Service starting..."
       : busyLabel?.replace("...", "") ??
-        (status?.service_running ? "Running" : status?.fpm_installed ? "Installed" : "Stopped");
+        (status?.service_running ? "Running" : status?.fpm_installed ? "Stopped" : "Not installed");
   const serviceTone: StatusMetaTone | undefined = serviceStartingAfterInstall
     ? "info"
     : busyLabel
