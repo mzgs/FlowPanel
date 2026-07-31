@@ -18,6 +18,7 @@ import {
   GoogleDrive,
   LoaderCircle,
   RefreshCw,
+  TimerReset,
   Upload,
   Wrench,
 } from "@/components/icons/lucide-icons";
@@ -32,6 +33,7 @@ type SettingsFormState = {
   panel_name: string;
   panel_url: string;
   github_token: string;
+  login_timeout_minutes: string;
   ftp_enabled: boolean;
   ftp_port: string;
   ftp_passive_ports: string;
@@ -41,6 +43,7 @@ const initialForm: SettingsFormState = {
   panel_name: "",
   panel_url: "",
   github_token: "",
+  login_timeout_minutes: "",
   ftp_enabled: false,
   ftp_port: "",
   ftp_passive_ports: "",
@@ -52,6 +55,7 @@ function toFormState(settings: PanelSettings): SettingsFormState {
     panel_name: settings.panel_name,
     panel_url: settings.panel_url,
     github_token: settings.github_token,
+    login_timeout_minutes: String(settings.login_timeout_minutes),
     ftp_enabled: settings.ftp_enabled,
     ftp_port: String(settings.ftp_port),
     ftp_passive_ports: settings.ftp_passive_ports,
@@ -63,6 +67,7 @@ function sameFormState(left: SettingsFormState, right: SettingsFormState) {
     left.panel_name === right.panel_name &&
     left.panel_url === right.panel_url &&
     left.github_token === right.github_token &&
+    left.login_timeout_minutes === right.login_timeout_minutes &&
     left.ftp_enabled === right.ftp_enabled &&
     left.ftp_port === right.ftp_port &&
     left.ftp_passive_ports === right.ftp_passive_ports
@@ -167,6 +172,8 @@ export function SettingsPage() {
         panel_name: form.panel_name,
         panel_url: form.panel_url,
         github_token: form.github_token,
+        login_timeout_minutes:
+          Number.parseInt(form.login_timeout_minutes, 10) || 0,
         ftp_enabled: form.ftp_enabled,
         ftp_port: Number.parseInt(form.ftp_port, 10) || 0,
         ftp_passive_ports: form.ftp_passive_ports,
@@ -393,6 +400,45 @@ export function SettingsPage() {
                   />
                   <FieldError message={fieldErrors.github_token} />
                 </div>
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)]">
+              <div className="border-b border-[var(--app-border)] px-6 py-4">
+                <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--app-text)]">
+                  <TimerReset className="h-4 w-4" />
+                  Security
+                </h2>
+                <p className="mt-1 text-sm text-[var(--app-text-muted)]">
+                  Control how long an inactive panel login remains valid.
+                </p>
+              </div>
+
+              <div className="max-w-md space-y-2 px-6 py-5">
+                <Label htmlFor="login_timeout_minutes">
+                  Login timeout (minutes)
+                </Label>
+                <Input
+                  id="login_timeout_minutes"
+                  type="number"
+                  min="5"
+                  max="1440"
+                  value={form.login_timeout_minutes}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      login_timeout_minutes: event.target.value,
+                    }))
+                  }
+                  aria-invalid={
+                    fieldErrors.login_timeout_minutes ? true : undefined
+                  }
+                />
+                <p className="text-sm text-[var(--app-text-muted)]">
+                  You will be signed out after 5 minutes to 24 hours of
+                  inactivity.
+                </p>
+                <FieldError message={fieldErrors.login_timeout_minutes} />
               </div>
             </section>
 

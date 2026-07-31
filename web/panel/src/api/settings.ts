@@ -2,6 +2,7 @@ export type PanelSettings = {
   panel_name: string;
   panel_url: string;
   github_token: string;
+  login_timeout_minutes: number;
   default_php_version: string;
   ftp_enabled: boolean;
   ftp_port: number;
@@ -16,6 +17,7 @@ export type UpdatePanelSettingsInput = Pick<
   | "panel_name"
   | "panel_url"
   | "github_token"
+  | "login_timeout_minutes"
   | "ftp_enabled"
   | "ftp_port"
   | "ftp_passive_ports"

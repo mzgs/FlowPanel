@@ -58,6 +58,7 @@ type storageEnsurer interface {
 
 type panelStores struct {
 	Auth          *auth.Store
+	Sessions      *auth.SessionStore
 	Domain        *domain.Store
 	MariaDB       *mariadb.Store
 	PM2           *pm2.Store
@@ -106,6 +107,7 @@ func run(args []string) error {
 func newPanelStores(dbConn *sql.DB) panelStores {
 	return panelStores{
 		Auth:          auth.NewStore(dbConn),
+		Sessions:      auth.NewSessionStore(dbConn),
 		Domain:        domain.NewStore(dbConn),
 		MariaDB:       mariadb.NewStore(dbConn),
 		PM2:           pm2.NewStore(dbConn),
@@ -829,6 +831,7 @@ func repairPanelStorage(ctx context.Context, w io.Writer) error {
 		ctx,
 		namedStore{name: "domain", store: stores.Domain},
 		namedStore{name: "auth", store: stores.Auth},
+		namedStore{name: "sessions", store: stores.Sessions},
 		namedStore{name: "mariadb", store: stores.MariaDB},
 		namedStore{name: "pm2", store: stores.PM2},
 		namedStore{name: "cron", store: stores.Cron},
@@ -1683,6 +1686,7 @@ func runServer() error {
 		startupCtx,
 		namedStore{name: "domain", store: stores.Domain},
 		namedStore{name: "auth", store: stores.Auth},
+		namedStore{name: "sessions", store: stores.Sessions},
 		namedStore{name: "mariadb", store: stores.MariaDB},
 		namedStore{name: "pm2", store: stores.PM2},
 		namedStore{name: "cron", store: stores.Cron},
@@ -1699,7 +1703,7 @@ func runServer() error {
 		return fmt.Errorf("load persisted domains: %w", err)
 	}
 
-	sessionManager := auth.NewSessionManager(cfg)
+	sessionManager := auth.NewSessionManager(cfg, stores.Sessions)
 	authService := auth.NewService(stores.Auth)
 	if strings.TrimSpace(cfg.InitialAdmin.Username) != "" {
 		user, created, err := authService.EnsureInitialAdmin(startupCtx, auth.CreateInitialAdminInput{

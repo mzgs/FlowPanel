@@ -1125,6 +1125,7 @@ func writeSettingsResponse(w stdhttp.ResponseWriter, statusCode int, app *app.Ap
 		"panel_name":             record.PanelName,
 		"panel_url":              record.PanelURL,
 		"github_token":           record.GitHubToken,
+		"login_timeout_minutes":  record.LoginTimeoutMinutes,
 		"default_php_version":    record.DefaultPHPVersion,
 		"ftp_enabled":            record.FTPEnabled,
 		"ftp_port":               record.FTPPort,

@@ -3,6 +3,7 @@ package httpx
 import (
 	stdhttp "net/http"
 	"strings"
+	"time"
 
 	"flowpanel/internal/app"
 
@@ -10,8 +11,9 @@ import (
 )
 
 const (
-	panelUserIDSessionKey  = "panel_user_id"
-	panelSessionVersionKey = "panel_session_version"
+	panelUserIDSessionKey       = "panel_user_id"
+	panelSessionVersionKey      = "panel_session_version"
+	panelLastActivitySessionKey = "panel_last_activity"
 )
 
 func RequirePanelAuth(app *app.App) func(stdhttp.Handler) stdhttp.Handler {
@@ -44,9 +46,22 @@ func RequirePanelAuth(app *app.App) func(stdhttp.Handler) stdhttp.Handler {
 }
 
 func panelSessionMatches(app *app.App, r *stdhttp.Request, version string) bool {
-	return app != nil && app.Sessions != nil &&
-		strings.TrimSpace(version) != "" &&
-		app.Sessions.GetString(r.Context(), panelSessionVersionKey) == version
+	if app == nil || app.Sessions == nil || r == nil || strings.TrimSpace(version) == "" ||
+		app.Sessions.GetString(r.Context(), panelSessionVersionKey) != version {
+		return false
+	}
+
+	now := time.Now()
+	lastActivity := app.Sessions.GetInt64(r.Context(), panelLastActivitySessionKey)
+	timeout := 12 * time.Hour
+	if app.Settings != nil {
+		timeout = app.Settings.LoginTimeout()
+	}
+	if lastActivity > 0 && now.Sub(time.Unix(lastActivity, 0)) > timeout {
+		return false
+	}
+	app.Sessions.Put(r.Context(), panelLastActivitySessionKey, now.Unix())
+	return true
 }
 
 func clearPanelAuthSession(app *app.App, r *stdhttp.Request) {
@@ -55,6 +70,7 @@ func clearPanelAuthSession(app *app.App, r *stdhttp.Request) {
 	}
 	app.Sessions.Remove(r.Context(), panelUserIDSessionKey)
 	app.Sessions.Remove(r.Context(), panelSessionVersionKey)
+	app.Sessions.Remove(r.Context(), panelLastActivitySessionKey)
 }
 
 func writeAuthRequired(w stdhttp.ResponseWriter, r *stdhttp.Request) {

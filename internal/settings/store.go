@@ -14,6 +14,7 @@ const (
 	panelNameKey           = panelSettingsKeyPrefix + "panel_name"
 	panelURLKey            = panelSettingsKeyPrefix + "panel_url"
 	gitHubTokenKey         = panelSettingsKeyPrefix + "github_token"
+	loginTimeoutMinutesKey = panelSettingsKeyPrefix + "login_timeout_minutes"
 	defaultPHPVersionKey   = panelSettingsKeyPrefix + "default_php_version"
 	ftpEnabledKey          = panelSettingsKeyPrefix + "ftp_enabled"
 	ftpHostKey             = panelSettingsKeyPrefix + "ftp_host"
@@ -28,6 +29,7 @@ var panelSettingKeys = []string{
 	panelNameKey,
 	panelURLKey,
 	gitHubTokenKey,
+	loginTimeoutMinutesKey,
 	defaultPHPVersionKey,
 	ftpEnabledKey,
 	ftpHostKey,
@@ -77,27 +79,18 @@ func (s *Store) Get(ctx context.Context) (Record, error) {
 		return defaultRecord(), nil
 	}
 
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(panelSettingKeys)), ",")
 	query := fmt.Sprintf(`
 SELECT key, value
 FROM %s
-WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, settingsTableName)
+WHERE key IN (%s)
+`, settingsTableName, placeholders)
+	args := make([]any, len(panelSettingKeys))
+	for index, key := range panelSettingKeys {
+		args[index] = key
+	}
 
-	rows, err := s.db.QueryContext(
-		ctx,
-		query,
-		panelNameKey,
-		panelURLKey,
-		gitHubTokenKey,
-		defaultPHPVersionKey,
-		ftpEnabledKey,
-		ftpHostKey,
-		ftpPortKey,
-		ftpPublicIPKey,
-		ftpPassivePortsKey,
-		googleDriveEmailKey,
-		googleDriveRefreshKey,
-	)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return Record{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -122,6 +115,10 @@ WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			record.PanelURL = strings.TrimSpace(value)
 		case gitHubTokenKey:
 			record.GitHubToken = strings.TrimSpace(value)
+		case loginTimeoutMinutesKey:
+			if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+				record.LoginTimeoutMinutes = parsed
+			}
 		case defaultPHPVersionKey:
 			record.DefaultPHPVersion = strings.TrimSpace(value)
 		case ftpEnabledKey:
@@ -178,17 +175,18 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 `, settingsTableName)
 
 	values := map[string]string{
-		panelNameKey:          record.PanelName,
-		panelURLKey:           record.PanelURL,
-		gitHubTokenKey:        record.GitHubToken,
-		defaultPHPVersionKey:  record.DefaultPHPVersion,
-		ftpEnabledKey:         boolString(record.FTPEnabled),
-		ftpHostKey:            record.FTPHost,
-		ftpPortKey:            strconv.Itoa(record.FTPPort),
-		ftpPublicIPKey:        record.FTPPublicIP,
-		ftpPassivePortsKey:    record.FTPPassivePorts,
-		googleDriveEmailKey:   record.GoogleDriveEmail,
-		googleDriveRefreshKey: record.GoogleDriveRefreshToken,
+		panelNameKey:           record.PanelName,
+		panelURLKey:            record.PanelURL,
+		gitHubTokenKey:         record.GitHubToken,
+		loginTimeoutMinutesKey: strconv.Itoa(record.LoginTimeoutMinutes),
+		defaultPHPVersionKey:   record.DefaultPHPVersion,
+		ftpEnabledKey:          boolString(record.FTPEnabled),
+		ftpHostKey:             record.FTPHost,
+		ftpPortKey:             strconv.Itoa(record.FTPPort),
+		ftpPublicIPKey:         record.FTPPublicIP,
+		ftpPassivePortsKey:     record.FTPPassivePorts,
+		googleDriveEmailKey:    record.GoogleDriveEmail,
+		googleDriveRefreshKey:  record.GoogleDriveRefreshToken,
 	}
 
 	for _, key := range panelSettingKeys {

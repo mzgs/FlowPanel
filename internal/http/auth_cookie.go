@@ -4,6 +4,7 @@ import (
 	"fmt"
 	stdhttp "net/http"
 	"strings"
+	"time"
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/auth"
@@ -23,5 +24,6 @@ func renewPanelSession(app *app.App, r *stdhttp.Request, user auth.PublicUser) e
 
 	app.Sessions.Put(r.Context(), panelUserIDSessionKey, user.ID)
 	app.Sessions.Put(r.Context(), panelSessionVersionKey, user.SessionVersion)
+	app.Sessions.Put(r.Context(), panelLastActivitySessionKey, time.Now().Unix())
 	return nil
 }

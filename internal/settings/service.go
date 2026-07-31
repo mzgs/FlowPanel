@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"flowpanel/internal/ftp"
 	"flowpanel/internal/phpenv"
@@ -19,12 +21,16 @@ const (
 	maxPanelURLLength    = 512
 	maxGitHubTokenLength = 4096
 	maxPassivePortsLen   = 32
+	defaultLoginTimeout  = 720
+	minLoginTimeout      = 5
+	maxLoginTimeout      = 1440
 )
 
 type Record struct {
 	PanelName               string `json:"panel_name"`
 	PanelURL                string `json:"panel_url"`
 	GitHubToken             string `json:"github_token"`
+	LoginTimeoutMinutes     int    `json:"login_timeout_minutes"`
 	DefaultPHPVersion       string `json:"default_php_version"`
 	FTPEnabled              bool   `json:"ftp_enabled"`
 	FTPHost                 string
@@ -37,12 +43,13 @@ type Record struct {
 }
 
 type UpdateInput struct {
-	PanelName       string `json:"panel_name"`
-	PanelURL        string `json:"panel_url"`
-	GitHubToken     string `json:"github_token"`
-	FTPEnabled      bool   `json:"ftp_enabled"`
-	FTPPort         int    `json:"ftp_port"`
-	FTPPassivePorts string `json:"ftp_passive_ports"`
+	PanelName           string `json:"panel_name"`
+	PanelURL            string `json:"panel_url"`
+	GitHubToken         string `json:"github_token"`
+	LoginTimeoutMinutes int    `json:"login_timeout_minutes"`
+	FTPEnabled          bool   `json:"ftp_enabled"`
+	FTPPort             int    `json:"ftp_port"`
+	FTPPassivePorts     string `json:"ftp_passive_ports"`
 }
 
 type ValidationErrors map[string]string
@@ -52,16 +59,21 @@ func (v ValidationErrors) Error() string {
 }
 
 type Service struct {
-	store *Store
+	store               *Store
+	loginTimeoutMinutes atomic.Int64
 }
 
 func NewService(store *Store) *Service {
-	return &Service{store: store}
+	service := &Service{store: store}
+	service.loginTimeoutMinutes.Store(defaultLoginTimeout)
+	return service
 }
 
 func (s *Service) Get(ctx context.Context) (Record, error) {
 	if s == nil || s.store == nil {
-		return defaultRecord(), nil
+		record := defaultRecord()
+		s.cacheLoginTimeout(record)
+		return record, nil
 	}
 
 	record, err := s.store.Get(ctx)
@@ -70,10 +82,14 @@ func (s *Service) Get(ctx context.Context) (Record, error) {
 		record.FTPPublicIP = ""
 		record.DefaultPHPVersion = phpenv.NormalizeVersion(record.DefaultPHPVersion)
 		record.FTPPassivePorts = normalizeFTPPassivePorts(record.FTPPassivePorts)
+		record.LoginTimeoutMinutes = normalizeLoginTimeout(record.LoginTimeoutMinutes)
+		s.cacheLoginTimeout(record)
 		return record, nil
 	}
 	if err == sql.ErrNoRows {
-		return defaultRecord(), nil
+		record := defaultRecord()
+		s.cacheLoginTimeout(record)
+		return record, nil
 	}
 
 	return Record{}, err
@@ -86,14 +102,15 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	}
 
 	record := Record{
-		PanelName:       normalizeSingleLine(input.PanelName, defaultPanelName, maxPanelNameLength),
-		PanelURL:        normalizePanelURL(input.PanelURL),
-		GitHubToken:     normalizeOptionalSingleLine(input.GitHubToken, maxGitHubTokenLength),
-		FTPEnabled:      input.FTPEnabled,
-		FTPHost:         ftp.DefaultHost(),
-		FTPPort:         normalizeFTPPort(input.FTPPort),
-		FTPPublicIP:     "",
-		FTPPassivePorts: normalizeFTPPassivePorts(input.FTPPassivePorts),
+		PanelName:           normalizeSingleLine(input.PanelName, defaultPanelName, maxPanelNameLength),
+		PanelURL:            normalizePanelURL(input.PanelURL),
+		GitHubToken:         normalizeOptionalSingleLine(input.GitHubToken, maxGitHubTokenLength),
+		LoginTimeoutMinutes: normalizeLoginTimeout(input.LoginTimeoutMinutes),
+		FTPEnabled:          input.FTPEnabled,
+		FTPHost:             ftp.DefaultHost(),
+		FTPPort:             normalizeFTPPort(input.FTPPort),
+		FTPPublicIP:         "",
+		FTPPassivePorts:     normalizeFTPPassivePorts(input.FTPPassivePorts),
 	}
 
 	if s == nil || s.store == nil {
@@ -112,8 +129,22 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	if err := s.store.Upsert(ctx, record); err != nil {
 		return Record{}, err
 	}
+	s.cacheLoginTimeout(record)
 
 	return record, nil
+}
+
+func (s *Service) LoginTimeout() time.Duration {
+	if s == nil {
+		return defaultLoginTimeout * time.Minute
+	}
+	return time.Duration(s.loginTimeoutMinutes.Load()) * time.Minute
+}
+
+func (s *Service) cacheLoginTimeout(record Record) {
+	if s != nil {
+		s.loginTimeoutMinutes.Store(int64(normalizeLoginTimeout(record.LoginTimeoutMinutes)))
+	}
 }
 
 func (s *Service) SetGoogleDriveConnection(ctx context.Context, email string, refreshToken string) (Record, error) {
@@ -189,6 +220,7 @@ func defaultRecord() Record {
 		PanelName:            defaultPanelName,
 		PanelURL:             "",
 		GitHubToken:          "",
+		LoginTimeoutMinutes:  defaultLoginTimeout,
 		DefaultPHPVersion:    "",
 		FTPEnabled:           false,
 		FTPHost:              "0.0.0.0",
@@ -222,6 +254,9 @@ func validateUpdateInput(input UpdateInput) ValidationErrors {
 	if len(strings.TrimSpace(input.GitHubToken)) > maxGitHubTokenLength {
 		validation["github_token"] = fmt.Sprintf("GitHub token must be %d characters or fewer.", maxGitHubTokenLength)
 	}
+	if input.LoginTimeoutMinutes < minLoginTimeout || input.LoginTimeoutMinutes > maxLoginTimeout {
+		validation["login_timeout_minutes"] = "Login timeout must be between 5 and 1440 minutes."
+	}
 
 	ftpPort := normalizeFTPPort(input.FTPPort)
 	if ftpPort < 1 || ftpPort > 65535 {
@@ -239,6 +274,13 @@ func validateUpdateInput(input UpdateInput) ValidationErrors {
 	}
 
 	return validation
+}
+
+func normalizeLoginTimeout(value int) int {
+	if value < minLoginTimeout || value > maxLoginTimeout {
+		return defaultLoginTimeout
+	}
+	return value
 }
 
 func normalizeSingleLine(value, fallback string, maxLen int) string {
