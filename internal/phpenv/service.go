@@ -420,6 +420,14 @@ func (s *Service) StartVersion(ctx context.Context, version string) error {
 	)
 	status := s.StatusForVersion(ctx, target)
 	if err := runCommands(ctx, plan.startCmds...); err != nil {
+		if status.FPMPath != "" {
+			if _, configErr := runInspectCommand(ctx, status.FPMPath, "-tt"); configErr != nil {
+				return fmt.Errorf("php-fpm configuration check failed: %w", configErr)
+			}
+		}
+		if details := serviceFailureDetails(ctx, plan.startCmds); details != "" {
+			return fmt.Errorf("%w\n\n%s", err, details)
+		}
 		return err
 	}
 	if status.ListenAddress != "" && !waitForFastCGI(ctx, status.ListenAddress) {
@@ -1351,4 +1359,12 @@ func waitForFastCGI(ctx context.Context, address string) bool {
 		case <-ticker.C:
 		}
 	}
+}
+
+func serviceFailureDetails(ctx context.Context, commands [][]string) string {
+	if len(commands) == 0 || len(commands[0]) < 3 || filepath.Base(commands[0][0]) != "systemctl" {
+		return ""
+	}
+	output, _ := runCommand(ctx, commands[0][0], "status", "--no-pager", "--full", commands[0][len(commands[0])-1])
+	return strings.TrimSpace(output)
 }

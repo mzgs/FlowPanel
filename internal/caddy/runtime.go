@@ -55,6 +55,7 @@ type Runtime struct {
 	mu      sync.Mutex
 	started bool
 	rawJSON []byte
+	records []domain.Record
 }
 
 type Status struct {
@@ -212,7 +213,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL string) error {
+func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL string) (syncErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -223,6 +224,21 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL st
 	if !r.started {
 		return ErrRuntimeNotStarted
 	}
+	previousRecords := append([]domain.Record(nil), r.records...)
+	committed := false
+	defer func() {
+		if committed || r.php == nil {
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if _, err := r.resolvePHPRouteConfig(rollbackCtx, previousRecords); err != nil {
+			r.logger.Error("rollback php pools after caddy sync failure failed", zap.Error(err))
+			if syncErr != nil {
+				syncErr = fmt.Errorf("%w; rollback php pools: %v", syncErr, err)
+			}
+		}
+	}()
 
 	phpConfig, err := r.resolvePHPRouteConfig(ctx, records)
 	if err != nil {
@@ -273,6 +289,8 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL st
 		}
 
 		r.rawJSON = append(r.rawJSON[:0], rawConfig...)
+		r.records = append(r.records[:0], records...)
+		committed = true
 
 		fields := []zap.Field{
 			zap.Int("configured_domains", summary.configuredDomains),
@@ -408,7 +426,8 @@ func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Re
 	}
 
 	if len(requiredVersions) == 0 {
-		return nil, nil
+		_, err := r.php.ReconcileDomainPools(ctx, nil)
+		return nil, err
 	}
 
 	config := &phpRouteConfig{

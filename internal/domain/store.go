@@ -298,10 +298,79 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 		return nil
 	}
 
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM domains WHERE id = ?`, id); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin domain deletion: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM domain_github_integrations WHERE domain_id = ?`, id); err != nil {
+		return fmt.Errorf("delete domain github integration %q: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM domains WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete domain %q: %w", id, err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit domain deletion %q: %w", id, err)
+	}
+	return nil
+}
 
+func (s *Store) Restore(ctx context.Context, record Record) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin domain restore: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO domains (id, hostname, kind, target, nodejs_script_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    hostname = excluded.hostname,
+    kind = excluded.kind,
+    target = excluded.target,
+    nodejs_script_path = excluded.nodejs_script_path,
+    php_version = excluded.php_version,
+    php_settings = excluded.php_settings,
+    environment_variables = excluded.environment_variables,
+    cache_enabled = excluded.cache_enabled,
+    protection_config = excluded.protection_config,
+    created_at = excluded.created_at
+`, record.ID, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano())
+	if err != nil {
+		return fmt.Errorf("restore domain %q: %w", record.ID, err)
+	}
+	if record.GitHub == nil {
+		_, err = tx.ExecContext(ctx, `DELETE FROM domain_github_integrations WHERE domain_id = ?`, record.ID)
+	} else {
+		integration := *record.GitHub
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO domain_github_integrations (
+    domain_id, repository_url, auto_deploy_on_push, default_branch, post_fetch_script,
+    webhook_secret, webhook_id, created_at, updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(domain_id) DO UPDATE SET
+    repository_url = excluded.repository_url,
+    auto_deploy_on_push = excluded.auto_deploy_on_push,
+    default_branch = excluded.default_branch,
+    post_fetch_script = excluded.post_fetch_script,
+    webhook_secret = excluded.webhook_secret,
+    webhook_id = excluded.webhook_id,
+    created_at = excluded.created_at,
+    updated_at = excluded.updated_at
+`, record.ID, integration.RepositoryURL, boolToInt(integration.AutoDeployOnPush), integration.DefaultBranch, integration.PostFetchScript, integration.WebhookSecret, integration.WebhookID, integration.CreatedAt.UTC().UnixNano(), integration.UpdatedAt.UTC().UnixNano())
+	}
+	if err != nil {
+		return fmt.Errorf("restore domain github integration %q: %w", record.ID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit domain restore %q: %w", record.ID, err)
+	}
 	return nil
 }
 

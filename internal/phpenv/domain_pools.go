@@ -26,8 +26,20 @@ type domainPoolRuntimeConfig struct {
 	dir    string
 }
 
-func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolInput) (map[string]DomainPool, error) {
-	pools := make(map[string]DomainPool, len(inputs))
+type domainPoolFileSnapshot struct {
+	content []byte
+	mode    fs.FileMode
+	exists  bool
+}
+
+type domainRootSnapshot struct {
+	uid  int
+	gid  int
+	mode fs.FileMode
+}
+
+func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolInput) (pools map[string]DomainPool, reconcileErr error) {
+	pools = make(map[string]DomainPool, len(inputs))
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return pools, nil
 	}
@@ -37,6 +49,18 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 	desiredUsers := map[string]struct{}{}
 	staleUsers := map[string]struct{}{}
 	changedVersions := map[string]domainPoolRuntimeConfig{}
+	snapshots := map[string]domainPoolFileSnapshot{}
+	rootSnapshots := map[string]domainRootSnapshot{}
+	createdUsers := map[string]struct{}{}
+	committed := false
+	defer func() {
+		if committed || reconcileErr == nil {
+			return
+		}
+		if err := rollbackDomainPoolChanges(ctx, snapshots, rootSnapshots, changedVersions, createdUsers); err != nil {
+			reconcileErr = fmt.Errorf("%w; rollback PHP pools: %v", reconcileErr, err)
+		}
+	}()
 
 	for _, input := range inputs {
 		version := NormalizeVersion(input.Version)
@@ -67,6 +91,12 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 		if err != nil {
 			return nil, fmt.Errorf("ensure PHP user for %q: %w", input.Hostname, err)
 		}
+		if created {
+			createdUsers[name] = struct{}{}
+		}
+		if err := snapshotDomainRoot(root, rootSnapshots); err != nil {
+			return nil, fmt.Errorf("snapshot PHP root ownership for %q: %w", input.Hostname, err)
+		}
 		if err := ensureDomainRootOwnership(root, name, created); err != nil {
 			return nil, fmt.Errorf("isolate PHP files for %q: %w", input.Hostname, err)
 		}
@@ -75,6 +105,9 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 		pool := DomainPool{User: name, Group: name, ListenAddress: socket}
 		configPath := filepath.Join(runtimeConfig.dir, domainPoolFilePrefix+strings.TrimPrefix(name, "fp_")+".conf")
 		desiredFiles[configPath] = struct{}{}
+		if err := snapshotDomainPoolFile(configPath, snapshots); err != nil {
+			return nil, fmt.Errorf("snapshot PHP pool for %q: %w", input.Hostname, err)
+		}
 		changed, err := writeFileIfChanged(configPath, renderDomainPool(input, pool))
 		if err != nil {
 			return nil, fmt.Errorf("write PHP pool for %q: %w", input.Hostname, err)
@@ -99,6 +132,9 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 			if _, keep := desiredFiles[path]; keep {
 				continue
 			}
+			if err := snapshotDomainPoolFile(path, snapshots); err != nil {
+				return nil, fmt.Errorf("snapshot stale PHP pool %q: %w", path, err)
+			}
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return nil, fmt.Errorf("remove stale PHP pool %q: %w", path, err)
 			}
@@ -112,8 +148,10 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 		if output, err := exec.CommandContext(ctx, config.status.FPMPath, "-tt").CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("validate PHP %s pools: %w: %s", version, err, strings.TrimSpace(string(output)))
 		}
-		if err := runPHPFPMServiceCommand(ctx, config.status.FPMPath, "reload"); err != nil {
-			return nil, fmt.Errorf("reload PHP %s pools: %w", version, err)
+		if config.status.ServiceRunning {
+			if err := runPHPFPMServiceCommand(ctx, config.status.FPMPath, "reload"); err != nil {
+				return nil, fmt.Errorf("reload PHP %s pools: %w", version, err)
+			}
 		}
 	}
 
@@ -134,6 +172,7 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 		}
 	}
 
+	committed = true
 	return pools, nil
 }
 func poolVersion(inputs []DomainPoolInput, userName string) string {
@@ -304,6 +343,108 @@ clear_env = no
 security.limit_extensions = .php .phar
 php_admin_value[disable_functions] = %s
 `, pool.User, pool.User, pool.Group, pool.ListenAddress, pool.User, pool.Group, maxChildren, idleTimeout, maxRequests, input.DocumentRoot, settings.DisableFunctions)
+}
+
+func snapshotDomainPoolFile(path string, snapshots map[string]domainPoolFileSnapshot) error {
+	if _, exists := snapshots[path]; exists {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		snapshots[path] = domainPoolFileSnapshot{}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	snapshots[path] = domainPoolFileSnapshot{content: content, mode: info.Mode().Perm(), exists: true}
+	return nil
+}
+
+func rollbackDomainPoolChanges(
+	ctx context.Context,
+	snapshots map[string]domainPoolFileSnapshot,
+	rootSnapshots map[string]domainRootSnapshot,
+	changedVersions map[string]domainPoolRuntimeConfig,
+	createdUsers map[string]struct{},
+) error {
+	if ctx == nil || ctx.Err() != nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+	}
+	var rollbackErrors []error
+	for path, snapshot := range snapshots {
+		var err error
+		if snapshot.exists {
+			err = os.WriteFile(path, snapshot.content, snapshot.mode)
+		} else {
+			err = os.Remove(path)
+			if errors.Is(err, os.ErrNotExist) {
+				err = nil
+			}
+		}
+		if err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("restore %q: %w", path, err))
+		}
+	}
+	for version, config := range changedVersions {
+		if !config.status.ServiceRunning {
+			continue
+		}
+		if err := runPHPFPMServiceCommand(ctx, config.status.FPMPath, "reload"); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("reload PHP %s: %w", version, err))
+		}
+	}
+	for root, snapshot := range rootSnapshots {
+		if err := restoreDomainRoot(root, snapshot); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("restore ownership for %q: %w", root, err))
+		}
+	}
+	for name := range createdUsers {
+		if err := deleteDomainUser(ctx, name); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("remove PHP user %q: %w", name, err))
+		}
+	}
+	return errors.Join(rollbackErrors...)
+}
+
+func snapshotDomainRoot(root string, snapshots map[string]domainRootSnapshot) error {
+	if _, exists := snapshots[root]; exists {
+		return nil
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("unsupported file metadata")
+	}
+	snapshots[root] = domainRootSnapshot{uid: int(stat.Uid), gid: int(stat.Gid), mode: info.Mode().Perm()}
+	return nil
+}
+
+func restoreDomainRoot(root string, snapshot domainRootSnapshot) error {
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		return os.Chown(path, snapshot.uid, snapshot.gid)
+	}); err != nil {
+		return err
+	}
+	return os.Chmod(root, snapshot.mode)
 }
 
 func writeFileIfChanged(path, content string) (bool, error) {

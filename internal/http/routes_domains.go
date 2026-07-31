@@ -1150,7 +1150,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			}
 		}
 
-		record, err := a.app.Domains.Create(r.Context(), input)
+		record, artifacts, err := a.app.Domains.Create(r.Context(), input)
 		if err != nil {
 			var validation domain.ValidationErrors
 			switch {
@@ -1172,11 +1172,9 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
-			_, removed, rollbackErr := a.app.Domains.Delete(r.Context(), record.ID)
+			rollbackErr := a.rollbackCreatedDomain(r.Context(), record, artifacts)
 			if rollbackErr != nil {
 				a.app.Logger.Error("rollback created domain after ownership update failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
-			} else if !removed {
-				a.app.Logger.Error("rollback created domain after ownership update missing", zap.String("domain_id", record.ID))
 			}
 			a.app.Logger.Error("apply php worker ownership after domain create failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "failed", "Created domain record but failed to set php-fpm ownership on the document root.")
@@ -1186,11 +1184,9 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 
 		if a.app.FTPAccounts != nil {
 			if err := a.app.FTPAccounts.ReconcileDomain(r.Context(), record); err != nil {
-				_, removed, rollbackErr := a.app.Domains.Delete(r.Context(), record.ID)
+				rollbackErr := a.rollbackCreatedDomain(r.Context(), record, artifacts)
 				if rollbackErr != nil {
 					a.app.Logger.Error("rollback created domain after ftp setup failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
-				} else if !removed {
-					a.app.Logger.Error("rollback created domain after ftp setup missing", zap.String("domain_id", record.ID))
 				}
 				a.app.Logger.Error("create default ftp account failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
 				a.mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "failed", "Created domain record but failed to provision its FTP account.")
@@ -1200,16 +1196,9 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		if err := a.syncDomainsWithCaddy(r.Context()); err != nil {
-			_, removed, rollbackErr := a.app.Domains.Delete(r.Context(), record.ID)
+			rollbackErr := a.rollbackCreatedDomain(r.Context(), record, artifacts)
 			if rollbackErr != nil {
 				a.app.Logger.Error("rollback created domain failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
-			} else if !removed {
-				a.app.Logger.Error("rollback created domain missing", zap.String("domain_id", record.ID))
-			}
-			if a.app.FTPAccounts != nil {
-				if cleanupErr := a.app.FTPAccounts.DeleteDomain(r.Context(), record.ID); cleanupErr != nil {
-					a.app.Logger.Warn("cleanup ftp account after domain publish failure failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(cleanupErr))
-				}
 			}
 			a.app.Logger.Error("publish domain failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Created domain record but failed to publish it.", err))
@@ -1248,7 +1237,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		domainID := chi.URLParam(r, "domainID")
-		record, previous, err := a.app.Domains.Update(r.Context(), domainID, input)
+		record, previous, artifacts, err := a.app.Domains.Update(r.Context(), domainID, input)
 		if err != nil {
 			var validation domain.ValidationErrors
 			switch {
@@ -1272,7 +1261,8 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		if err := a.syncDomainsWithCaddy(r.Context()); err != nil {
-			if rollbackErr := a.app.Domains.Restore(r.Context(), previous); rollbackErr != nil {
+			rollbackErr := errors.Join(a.app.Domains.Restore(r.Context(), previous), artifacts.Cleanup())
+			if rollbackErr != nil {
 				a.app.Logger.Error("rollback updated domain failed", zap.String("domain_id", previous.ID), zap.Error(rollbackErr))
 			}
 			a.app.Logger.Error("publish updated domain failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
@@ -1283,15 +1273,27 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		}
 
 		if err := reconcileUpdatedDomainRuntime(r.Context(), a.app.PM2, a.app.Domains.BasePath(), previous, record); err != nil {
+			rollbackErr := a.rollbackDomainUpdate(r.Context(), previous, record, artifacts, false, false)
+			message := "domain update was rolled back because its runtime process could not be reconciled"
 			a.app.Logger.Error("reconcile runtime after domain update failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "domain updated but its runtime process could not be reconciled"})
+			if rollbackErr != nil {
+				message = "domain runtime update failed and rollback was incomplete"
+				a.app.Logger.Error("rollback domain after runtime reconciliation failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
+			}
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": message})
 			return
 		}
 
 		if a.app.FTPAccounts != nil {
 			if err := a.app.FTPAccounts.ReconcileDomain(r.Context(), record); err != nil {
+				rollbackErr := a.rollbackDomainUpdate(r.Context(), previous, record, artifacts, true, true)
+				message := "domain update was rolled back because its ftp account could not be reconciled"
 				a.app.Logger.Error("reconcile ftp account after domain update failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
-				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "domain updated but ftp account could not be reconciled"})
+				if rollbackErr != nil {
+					message = "domain ftp update failed and rollback was incomplete"
+					a.app.Logger.Error("rollback domain after ftp reconciliation failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
+				}
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": message})
 				return
 			}
 		}
@@ -1335,15 +1337,15 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				a.app.Logger.Warn("delete linked databases failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(cleanupErr))
 			}
 		}
+		if cleanupErr := deleteDomainNodeJSProcess(r.Context(), a.app.PM2, a.app.Domains.BasePath(), record); cleanupErr != nil {
+			warnings = append(warnings, "The PM2 process for this domain could not be removed.")
+			a.app.Logger.Warn("delete domain nodejs process failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(cleanupErr))
+		}
 		if deleteDocumentRoot {
 			if warning, cleanupErr := deleteDomainDocumentRoot(record, a.app.Domains.BasePath()); cleanupErr != nil {
 				warnings = append(warnings, warning)
 				a.app.Logger.Warn("delete domain document root failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(cleanupErr))
 			}
-		}
-		if cleanupErr := deleteDomainNodeJSProcess(r.Context(), a.app.PM2, a.app.Domains.BasePath(), record); cleanupErr != nil {
-			warnings = append(warnings, "The PM2 process for this domain could not be removed.")
-			a.app.Logger.Warn("delete domain nodejs process failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(cleanupErr))
 		}
 
 		if a.app.FTPAccounts != nil {
@@ -1782,16 +1784,24 @@ func reconcileUpdatedDomainRuntime(ctx context.Context, pm2Manager pm2.Manager, 
 	}
 	currentConfig, err := resolveDomainRuntimeProcessConfig(basePath, current)
 	if err != nil {
-		return err
+		_, rollbackErr := createDomainRuntimeProcess(ctx, pm2Manager, previous, previousConfig)
+		return errors.Join(err, rollbackErr)
 	}
-	_, err = pm2Manager.CreateProcess(ctx, pm2.CreateProcessInput{
-		Name:             current.Hostname,
-		ScriptPath:       currentConfig.ScriptPath,
-		WorkingDirectory: currentConfig.WorkingDirectory,
-		Interpreter:      currentConfig.InterpreterPath,
-		Environment:      domain.EnvironmentMap(current),
+	if _, err = createDomainRuntimeProcess(ctx, pm2Manager, current, currentConfig); err == nil {
+		return nil
+	}
+	_, rollbackErr := createDomainRuntimeProcess(ctx, pm2Manager, previous, previousConfig)
+	return errors.Join(err, rollbackErr)
+}
+
+func createDomainRuntimeProcess(ctx context.Context, manager pm2.Manager, record domain.Record, config domainRuntimeProcessConfig) ([]pm2.Process, error) {
+	return manager.CreateProcess(ctx, pm2.CreateProcessInput{
+		Name:             record.Hostname,
+		ScriptPath:       config.ScriptPath,
+		WorkingDirectory: config.WorkingDirectory,
+		Interpreter:      config.InterpreterPath,
+		Environment:      domain.EnvironmentMap(record),
 	})
-	return err
 }
 
 func supportsDomainRuntime(kind domain.Kind) bool {
@@ -2105,4 +2115,45 @@ func deleteDomainDocumentRoot(record domain.Record, basePath string) (string, er
 	}
 
 	return "", nil
+}
+
+func (a *apiRoutes) rollbackCreatedDomain(ctx context.Context, record domain.Record, artifacts domain.CreateArtifacts) error {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctx = rollbackCtx
+	_, removed, deleteErr := a.app.Domains.Delete(ctx, record.ID)
+	if deleteErr == nil && !removed {
+		deleteErr = errors.New("created domain was missing during rollback")
+	}
+	errs := []error{deleteErr}
+	if a.app.FTPAccounts != nil {
+		errs = append(errs, a.app.FTPAccounts.DeleteDomain(ctx, record.ID))
+	}
+	errs = append(errs, artifacts.Cleanup())
+	return errors.Join(errs...)
+}
+
+func (a *apiRoutes) rollbackDomainUpdate(
+	ctx context.Context,
+	previous domain.Record,
+	current domain.Record,
+	artifacts domain.CreateArtifacts,
+	rollbackRuntime bool,
+	rollbackFTP bool,
+) error {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctx = rollbackCtx
+	if err := a.app.Domains.Restore(ctx, previous); err != nil {
+		return err
+	}
+	errs := []error{a.syncDomainsWithCaddy(ctx)}
+	if rollbackRuntime {
+		errs = append(errs, reconcileUpdatedDomainRuntime(ctx, a.app.PM2, a.app.Domains.BasePath(), current, previous))
+	}
+	if rollbackFTP && a.app.FTPAccounts != nil {
+		errs = append(errs, a.app.FTPAccounts.ReconcileDomain(ctx, previous))
+	}
+	errs = append(errs, artifacts.Cleanup())
+	return errors.Join(errs...)
 }

@@ -133,6 +133,25 @@ type Service struct {
 	githubByDomainID map[string]GitHubIntegration
 }
 
+type CreateArtifacts struct {
+	rootPath    string
+	indexPath   string
+	removeRoot  bool
+	removeIndex bool
+}
+
+func (a CreateArtifacts) Cleanup() error {
+	if a.removeRoot {
+		return os.RemoveAll(a.rootPath)
+	}
+	if a.removeIndex {
+		if err := os.Remove(a.indexPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func NewService(store *Store) *Service {
 	return NewServiceWithBasePath(defaultSitesBasePath(), store)
 }
@@ -294,9 +313,6 @@ func (s *Service) Delete(ctx context.Context, id string) (Record, bool, error) {
 		}
 
 		if s.store != nil {
-			if err := s.store.DeleteGitHubIntegration(ctx, record.ID); err != nil {
-				return Record{}, false, err
-			}
 			if err := s.store.Delete(ctx, record.ID); err != nil {
 				return Record{}, false, err
 			}
@@ -310,10 +326,10 @@ func (s *Service) Delete(ctx context.Context, id string) (Record, bool, error) {
 	return Record{}, false, nil
 }
 
-func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
+func (s *Service) Create(ctx context.Context, input CreateInput) (Record, CreateArtifacts, error) {
 	hostname, kind, target, nodeJSScript, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target, input.NodeJSScript)
 	if err != nil {
-		return Record{}, err
+		return Record{}, CreateArtifacts{}, err
 	}
 
 	s.mu.Lock()
@@ -321,13 +337,15 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 
 	for _, record := range s.records {
 		if record.Hostname == hostname {
-			return Record{}, ErrDuplicateHostname
+			return Record{}, CreateArtifacts{}, ErrDuplicateHostname
 		}
 	}
 
+	artifacts := inspectCreateArtifacts(s.basePath, hostname, kind)
 	resolvedTarget, err := s.deriveTarget(hostname, kind, target)
 	if err != nil {
-		return Record{}, err
+		_ = artifacts.Cleanup()
+		return Record{}, CreateArtifacts{}, err
 	}
 
 	record := Record{
@@ -346,19 +364,19 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 
 	if s.store != nil {
 		if err := s.store.Insert(ctx, record); err != nil {
-			return Record{}, err
+			return Record{}, CreateArtifacts{}, errors.Join(err, artifacts.Cleanup())
 		}
 	}
 
 	s.insertRecordLocked(record)
 
-	return record, nil
+	return record, artifacts, nil
 }
 
-func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Record, Record, error) {
+func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Record, Record, CreateArtifacts, error) {
 	hostname, kind, target, nodeJSScript, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target, input.NodeJSScript)
 	if err != nil {
-		return Record{}, Record{}, err
+		return Record{}, Record{}, CreateArtifacts{}, err
 	}
 
 	s.mu.Lock()
@@ -366,18 +384,20 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 
 	index, current, ok := s.findRecordLocked(id)
 	if !ok {
-		return Record{}, Record{}, ErrNotFound
+		return Record{}, Record{}, CreateArtifacts{}, ErrNotFound
 	}
 
 	if hostname != current.Hostname {
-		return Record{}, Record{}, ValidationErrors{
+		return Record{}, Record{}, CreateArtifacts{}, ValidationErrors{
 			"hostname": "Domain cannot be changed after creation.",
 		}
 	}
 
+	artifacts := inspectCreateArtifacts(s.basePath, current.Hostname, kind)
 	resolvedTarget, err := s.deriveTarget(current.Hostname, kind, target)
 	if err != nil {
-		return Record{}, Record{}, err
+		_ = artifacts.Cleanup()
+		return Record{}, Record{}, CreateArtifacts{}, err
 	}
 
 	updated := current
@@ -390,13 +410,13 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 
 	if s.store != nil {
 		if err := s.store.Update(ctx, updated); err != nil {
-			return Record{}, Record{}, err
+			return Record{}, Record{}, CreateArtifacts{}, errors.Join(err, artifacts.Cleanup())
 		}
 	}
 
 	s.records[index] = updated
 
-	return updated, current, nil
+	return updated, current, artifacts, nil
 }
 
 func (s *Service) Restore(ctx context.Context, record Record) error {
@@ -417,23 +437,8 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 	}
 
 	if s.store != nil {
-		var err error
-		if exists {
-			err = s.store.Update(ctx, record)
-		} else {
-			err = s.store.Insert(ctx, record)
-		}
-		if err != nil {
+		if err := s.store.Restore(ctx, record); err != nil {
 			return err
-		}
-		if record.GitHub == nil {
-			if err := s.store.DeleteGitHubIntegration(ctx, record.ID); err != nil {
-				return err
-			}
-		} else {
-			if err := s.store.UpsertGitHubIntegration(ctx, record.ID, *record.GitHub); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -829,6 +834,26 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 		return target, nil
 	default:
 		return "", fmt.Errorf("unsupported domain kind %q", kind)
+	}
+}
+
+func inspectCreateArtifacts(basePath, hostname string, kind Kind) CreateArtifacts {
+	if !SupportsManagedDocumentRoot(kind) {
+		return CreateArtifacts{}
+	}
+	rootPath := filepath.Join(basePath, hostname)
+	indexName := "index.html"
+	if kind == KindPHP {
+		indexName = "index.php"
+	}
+	indexPath := filepath.Join(rootPath, indexName)
+	_, rootErr := os.Stat(rootPath)
+	_, indexErr := os.Stat(indexPath)
+	return CreateArtifacts{
+		rootPath:    rootPath,
+		indexPath:   indexPath,
+		removeRoot:  errors.Is(rootErr, os.ErrNotExist),
+		removeIndex: !errors.Is(rootErr, os.ErrNotExist) && errors.Is(indexErr, os.ErrNotExist),
 	}
 }
 
