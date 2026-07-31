@@ -104,7 +104,7 @@ func (s *Service) UpdateSettingsForVersion(ctx context.Context, version string, 
 	}
 
 	normalized := NormalizeUpdateSettingsInput(input)
-	nextStatus, err := s.writePHPConfigFiles(ctx, status, configInfo.managedConfigFiles, renderManagedPHPConfig(normalized))
+	nextStatus, err := s.writePHPSettingsFiles(ctx, status, configInfo.managedConfigFiles, normalized)
 	if nextStatus.ManagedConfigFile == "" {
 		nextStatus.ManagedConfigFile = configInfo.managedConfigFile
 	}
@@ -142,10 +142,13 @@ func (s *Service) initializeSettingsForVersion(ctx context.Context, version stri
 		settings.PostMaxSize = "1024M"
 		settings.UploadMaxFilesize = "1024M"
 		settings.DisableFunctions = defaultDisabledFunctions
-		content = renderManagedPHPConfig(settings)
+		content = renderManagedPHPConfig(settings, true)
 	}
-	_, err = s.writePHPConfigFiles(ctx, status, emptyPaths, content)
-	return err
+	if content != "" {
+		_, err = s.writePHPSettingsFiles(ctx, status, emptyPaths, parseManagedPHPConfigContent(content))
+		return err
+	}
+	return nil
 }
 
 func ValidateUpdateSettingsInput(input UpdateSettingsInput) ValidationErrors {
@@ -306,7 +309,7 @@ func normalizePHPOnOff(value string) string {
 	}
 }
 
-func renderManagedPHPConfig(settings Settings) string {
+func renderManagedPHPConfig(settings Settings, includeDisableFunctions bool) string {
 	var builder strings.Builder
 	builder.WriteString("; Managed by FlowPanel.\n")
 	builder.WriteString("; Manual edits may be overwritten.\n")
@@ -320,7 +323,11 @@ func renderManagedPHPConfig(settings Settings) string {
 	builder.WriteString(fmt.Sprintf("default_socket_timeout = %s\n", settings.DefaultSocketTimeout))
 	builder.WriteString(fmt.Sprintf("error_reporting = %s\n", settings.ErrorReporting))
 	builder.WriteString(fmt.Sprintf("display_errors = %s\n", settings.DisplayErrors))
-	builder.WriteString(fmt.Sprintf("disable_functions = %s\n", settings.DisableFunctions))
+	if includeDisableFunctions {
+		builder.WriteString(fmt.Sprintf("disable_functions = %s\n", settings.DisableFunctions))
+	} else {
+		builder.WriteString(fmt.Sprintf("; flowpanel_disable_functions = %s\n", settings.DisableFunctions))
+	}
 	return builder.String()
 }
 
@@ -388,13 +395,14 @@ func (s *Service) writePHPConfigFile(
 	return nextStatus, nil
 }
 
-func (s *Service) writePHPConfigFiles(
+func (s *Service) writePHPSettingsFiles(
 	ctx context.Context,
 	status RuntimeStatus,
 	paths []string,
-	content string,
+	settings Settings,
 ) (RuntimeStatus, error) {
 	for _, path := range dedupeStrings(paths) {
+		content := renderManagedPHPConfig(settings, shouldWriteDisableFunctions(status, path))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return RuntimeStatus{}, fmt.Errorf("create php config directory: %w", err)
 		}
@@ -414,6 +422,14 @@ func (s *Service) writePHPConfigFiles(
 		}
 	}
 	return s.StatusForVersion(ctx, status.Version), nil
+}
+
+func isCLIManagedConfigPath(path string) bool {
+	return strings.Contains(filepath.ToSlash(path), "/cli/conf.d/")
+}
+
+func shouldWriteDisableFunctions(status RuntimeStatus, path string) bool {
+	return status.Platform != "linux" || !status.FPMInstalled || isCLIManagedConfigPath(path)
 }
 
 func normalizePHPConfigContent(content string) string {
@@ -520,10 +536,16 @@ func parseManagedPHPConfig(path string) (Settings, error) {
 		return Settings{}, err
 	}
 
+	return parseManagedPHPConfigContent(string(content)), nil
+}
+
+func parseManagedPHPConfigContent(content string) Settings {
 	settings := Settings{}
-	for _, line := range strings.Split(string(content), "\n") {
+	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
+		if strings.HasPrefix(line, "; flowpanel_disable_functions") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "; flowpanel_"))
+		} else if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
 			continue
 		}
 
@@ -561,7 +583,7 @@ func parseManagedPHPConfig(path string) (Settings, error) {
 		}
 	}
 
-	return settings, nil
+	return settings
 }
 
 func mergeManagedPHPSettings(base, managed Settings) Settings {

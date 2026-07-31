@@ -329,7 +329,7 @@ export function DomainPHPDialog({
               aria-invalid={fieldErrors.disable_functions ? true : undefined}
             />
             <p className="text-xs text-[var(--app-text-muted)]">
-              Comma-separated. Applied only to this domain pool; globally disabled functions remain disabled.
+              Comma-separated. This domain list replaces the global default for its isolated PHP pool.
             </p>
             <FieldError message={fieldErrors.disable_functions} />
           </div>

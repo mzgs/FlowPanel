@@ -136,7 +136,6 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 
 	return pools, nil
 }
-
 func poolVersion(inputs []DomainPoolInput, userName string) string {
 	for _, input := range inputs {
 		if DomainUserName(input.DomainID) == userName {

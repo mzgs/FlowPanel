@@ -85,6 +85,7 @@ type phpRouteConfig struct {
 type phpMyAdminRouteConfig struct {
 	fastCGIAddress string
 	root           string
+	settings       phpenv.Settings
 }
 
 type panelRouteConfig struct {
@@ -435,12 +436,13 @@ func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Re
 		if version == "" {
 			version = strings.TrimSpace(config.defaultVersion)
 		}
+		hasDomainSettings := strings.TrimSpace(record.PHPSettings.FPMMaxChildren) != ""
 		poolInputs = append(poolInputs, phpenv.DomainPoolInput{
 			DomainID:     record.ID,
 			Hostname:     record.Hostname,
 			Version:      version,
 			DocumentRoot: record.Target,
-			Settings:     mergePHPSettings(r.php.StatusForVersion(ctx, version).Settings, record.PHPSettings),
+			Settings:     mergePHPSettings(r.php.StatusForVersion(ctx, version).Settings, record.PHPSettings, hasDomainSettings),
 		})
 	}
 	pools, err := r.php.ReconcileDomainPools(ctx, poolInputs)
@@ -479,6 +481,7 @@ func (r *Runtime) resolvePHPMyAdminRouteConfig(ctx context.Context) (*phpMyAdmin
 	return &phpMyAdminRouteConfig{
 		fastCGIAddress: phpStatus.ListenAddress,
 		root:           status.InstallPath,
+		settings:       phpStatus.Settings,
 	}, nil
 }
 
@@ -816,7 +819,7 @@ func routeForPHPMyAdmin(config phpMyAdminRouteConfig) caddyhttp.Route {
 	return caddyhttp.Route{
 		HandlersRaw: []json.RawMessage{
 			caddyconfig.JSONModuleObject(caddyhttp.Subroute{
-				Routes: phpSubrouteRoutes(config.root, config.fastCGIAddress, phpenv.Settings{}, nil),
+				Routes: phpSubrouteRoutes(config.root, config.fastCGIAddress, config.settings, nil),
 			}, "handler", "subroute", nil),
 		},
 		Terminal: true,
@@ -1000,6 +1003,7 @@ func phpAdminSettingsValue(settings phpenv.Settings) string {
 		[2]string{"file_uploads", settings.FileUploads},
 		[2]string{"upload_max_filesize", settings.UploadMaxFilesize},
 		[2]string{"max_file_uploads", settings.MaxFileUploads},
+		[2]string{"disable_functions", settings.DisableFunctions},
 	)
 }
 
@@ -1041,7 +1045,7 @@ func (c *phpRouteConfig) fastCGIAddressFor(record domain.Record) (string, error)
 	return address, nil
 }
 
-func mergePHPSettings(base, override phpenv.Settings) phpenv.Settings {
+func mergePHPSettings(base, override phpenv.Settings, replaceDisableFunctions bool) phpenv.Settings {
 	merged := base
 	baseValue := reflect.ValueOf(&merged).Elem()
 	overrideValue := reflect.ValueOf(override)
@@ -1049,6 +1053,9 @@ func mergePHPSettings(base, override phpenv.Settings) phpenv.Settings {
 		if value := strings.TrimSpace(overrideValue.Field(i).String()); value != "" {
 			baseValue.Field(i).SetString(value)
 		}
+	}
+	if replaceDisableFunctions {
+		merged.DisableFunctions = override.DisableFunctions
 	}
 	return merged
 }
