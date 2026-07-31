@@ -701,6 +701,15 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				"system": systemstatus.Inspect(r.Context()),
 			})
 		})
+		panelUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			status, err := inspectPanelUpdate(r.Context(), app.Version)
+			if err != nil {
+				app.Logger.Warn("inspect panel update failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": "failed to check for panel updates"})
+				return
+			}
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"update": status})
+		})
 		systemHistoryHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.SystemMonitor == nil {
 				writeJSON(w, stdhttp.StatusOK, map[string]any{
@@ -733,6 +742,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/system", systemStatusHandler)
 		r.Method(stdhttp.MethodHead, "/system", systemStatusHandler)
+		r.Method(stdhttp.MethodGet, "/panel/update", panelUpdateHandler)
+		r.Method(stdhttp.MethodHead, "/panel/update", panelUpdateHandler)
 		r.Method(stdhttp.MethodGet, "/system/history", systemHistoryHandler)
 		r.Method(stdhttp.MethodHead, "/system/history", systemHistoryHandler)
 

@@ -29,6 +29,12 @@ export type SystemStatus = {
 
 export type SystemHistoryRange = "1h" | "6h" | "1d";
 
+export type PanelUpdateStatus = {
+  current_version: string;
+  latest_version?: string;
+  update_available: boolean;
+};
+
 export type SystemHistorySample = {
   sampled_at: string;
   cpu_usage_percent?: number;
@@ -51,6 +57,10 @@ type SystemStatusPayload = {
 
 type SystemHistoryPayload = {
   samples: SystemHistorySample[];
+};
+
+type PanelUpdatePayload = {
+  update: PanelUpdateStatus;
 };
 
 async function parseSystemResponse<T>(response: Response): Promise<T> {
@@ -90,4 +100,14 @@ export async function fetchSystemHistory(range: SystemHistoryRange): Promise<Sys
 
   const payload = await parseSystemResponse<SystemHistoryPayload>(response);
   return payload.samples;
+}
+
+export async function fetchPanelUpdate(): Promise<PanelUpdateStatus> {
+  const response = await fetch("/api/panel/update", {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const payload = await parseSystemResponse<PanelUpdatePayload>(response);
+  return payload.update;
 }

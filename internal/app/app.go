@@ -31,6 +31,7 @@ import (
 
 type App struct {
 	Config        config.Config
+	Version       string
 	Logger        *zap.Logger
 	DB            *sql.DB
 	Domains       *domain.Service
@@ -64,6 +65,7 @@ type App struct {
 
 func New(
 	cfg config.Config,
+	version string,
 	logger *zap.Logger,
 	db *sql.DB,
 	domains *domain.Service,
@@ -96,6 +98,7 @@ func New(
 ) *App {
 	return &App{
 		Config:        cfg,
+		Version:       version,
 		Logger:        logger,
 		DB:            db,
 		Domains:       domains,

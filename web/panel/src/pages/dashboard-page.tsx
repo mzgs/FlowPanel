@@ -56,7 +56,7 @@ import {
   stopRedis,
   type RedisStatus,
 } from "@/api/redis";
-import { fetchSystemStatus, type SystemStatus } from "@/api/system";
+import { fetchPanelUpdate, fetchSystemStatus, type PanelUpdateStatus, type SystemStatus } from "@/api/system";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { LoaderCircle, Trash2, Database, PlayerPlayFilled, PlayerStop, RefreshCw, World } from "@/components/icons/lucide-icons";
 import { PM2ProcessList } from "@/components/pm2-process-list";
@@ -76,6 +76,7 @@ const pm2LogsBottomThresholdPx = 24;
 type OverviewData = {
   databaseCount: number | null;
   health: OperationalHealth;
+  panelUpdate: PanelUpdateStatus | null;
   siteCount: number | null;
   systemStatus: SystemStatus | null;
 };
@@ -134,11 +135,12 @@ async function fetchOperationalHealth(): Promise<OperationalHealth> {
 }
 
 async function fetchOverviewData(): Promise<OverviewData> {
-  const [databaseResult, domainsResult, systemResult, healthResult] = await Promise.allSettled([
+  const [databaseResult, domainsResult, systemResult, healthResult, panelUpdateResult] = await Promise.allSettled([
     fetchMariaDBDatabases(),
     fetchDomains(),
     fetchSystemStatus(),
     fetchOperationalHealth(),
+    fetchPanelUpdate(),
   ]);
 
   return {
@@ -147,6 +149,7 @@ async function fetchOverviewData(): Promise<OverviewData> {
       healthResult.status === "fulfilled"
         ? healthResult.value
         : { backup: null, database: null, runtime: null, webServer: null },
+    panelUpdate: panelUpdateResult.status === "fulfilled" ? panelUpdateResult.value : null,
     siteCount: domainsResult.status === "fulfilled" ? domainsResult.value.domains.length : null,
     systemStatus: systemResult.status === "fulfilled" ? systemResult.value : null,
   };
@@ -411,7 +414,7 @@ function formatPM2Meta(status: PM2Status | null, processes: PM2Process[]) {
   return { countLabel, toolchain };
 }
 
-function SystemInfoCard({ status }: { status: SystemStatus | null }) {
+function SystemInfoCard({ panelUpdate, status }: { panelUpdate: PanelUpdateStatus | null; status: SystemStatus | null }) {
   const details = [
     {
       label: "IPv4 Public IP",
@@ -432,15 +435,22 @@ function SystemInfoCard({ status }: { status: SystemStatus | null }) {
 
   return (
       <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-2">
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-8">
-          {details.map((detail) => (
-            <DetailItem
-              key={detail.label}
-              label={detail.label}
-              value={detail.value}
-              valueClassName={detail.valueClassName}
-            />
-          ))}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-8">
+            {details.map((detail) => (
+              <DetailItem
+                key={detail.label}
+                label={detail.label}
+                value={detail.value}
+                valueClassName={detail.valueClassName}
+              />
+            ))}
+          </div>
+          {panelUpdate?.update_available && panelUpdate.latest_version ? (
+            <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+              Update v{panelUpdate.latest_version}
+            </span>
+          ) : null}
         </div>
       </div>
   );
@@ -548,6 +558,7 @@ export function DashboardPage() {
     webServer: null,
   });
   const [siteCount, setSiteCount] = useState<number | null>(null);
+  const [panelUpdate, setPanelUpdate] = useState<PanelUpdateStatus | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [systemStatusHistory, setSystemStatusHistory] = useState<SystemStatusSample[]>([]);
   const [loading, setLoading] = useState(true);
@@ -841,6 +852,7 @@ export function DashboardPage() {
 
       setDatabaseCount(nextOverview.databaseCount);
       setHealth(nextOverview.health);
+      setPanelUpdate(nextOverview.panelUpdate);
       setSiteCount(nextOverview.siteCount);
       if (nextOverview.systemStatus) {
         syncSystemStatus(nextOverview.systemStatus);
@@ -1202,7 +1214,7 @@ export function DashboardPage() {
   return (
     <>
       <div className="px-4 pb-3 pt-4 sm:px-6 lg:px-8">
-        <SystemInfoCard status={systemStatus} />
+        <SystemInfoCard panelUpdate={panelUpdate} status={systemStatus} />
       </div>
 
       <div className="px-4 pb-6 pt-3 sm:px-6 lg:px-8">

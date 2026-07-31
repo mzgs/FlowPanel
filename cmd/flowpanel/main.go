@@ -1791,6 +1791,7 @@ func runServer() error {
 
 	appContainer := app.New(
 		cfg,
+		panelVersion(),
 		logger,
 		dbConn,
 		domainService,
