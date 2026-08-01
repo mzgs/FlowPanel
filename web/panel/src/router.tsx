@@ -5,9 +5,20 @@ import {
   createRoute,
   createRouter,
   useLocation,
+  useNavigate,
 } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, Suspense, lazy, type ComponentType } from "react";
+import {
+  Fragment,
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type KeyboardEvent,
+} from "react";
 import { fetchAuthSession, logout } from "@/api/auth";
 import { AuthPage } from "@/pages/auth-page";
 import {
@@ -198,7 +209,12 @@ function getBreadcrumbs(pathname: string) {
 
 function RootLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [panelSearch, setPanelSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
   const authQuery = useQuery({
     queryKey: ["auth", "session"],
     queryFn: fetchAuthSession,
@@ -211,12 +227,69 @@ function RootLayout() {
     },
   });
   const breadcrumbs = getBreadcrumbs(location.pathname);
+  const searchResults = useMemo(() => {
+    const query = panelSearch.trim().toLowerCase();
+
+    return query
+      ? navigationItems.filter(
+          (item) => item.label.toLowerCase().includes(query) || item.to.toLowerCase().includes(query),
+        )
+      : navigationItems;
+  }, [panelSearch]);
   const isNavItemActive = (to: string) =>
     location.pathname === to ||
     (to === "/domains" && location.pathname.startsWith("/domains/")) ||
     (to === "/task-manager" && location.pathname === "/security") ||
     (to === "/files" && location.pathname === "/file-manager") ||
     (to === "/cron" && location.pathname === "/jobs");
+
+  useEffect(() => {
+    if (!authQuery.data?.authenticated) {
+      return;
+    }
+
+    const focusSearch = (event: globalThis.KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, [authQuery.data?.authenticated]);
+
+  useEffect(() => {
+    setSelectedSearchIndex(0);
+  }, [panelSearch]);
+
+  const selectSearchResult = (index: number) => {
+    const result = searchResults[index];
+    if (!result) {
+      return;
+    }
+
+    void navigate({ to: result.to });
+    setPanelSearch("");
+    setSearchOpen(false);
+    searchInputRef.current?.blur();
+  };
+
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setSelectedSearchIndex((current) =>
+        searchResults.length ? (current + direction + searchResults.length) % searchResults.length : 0,
+      );
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      selectSearchResult(selectedSearchIndex);
+    } else if (event.key === "Escape") {
+      setSearchOpen(false);
+      searchInputRef.current?.blur();
+    }
+  };
 
   if (authQuery.isLoading) {
     return <AuthLoading />;
@@ -332,15 +405,72 @@ function RootLayout() {
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="relative hidden w-64 lg:block">
+              <div
+                className="relative hidden w-64 lg:block"
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) {
+                    setSearchOpen(false);
+                  }
+                }}
+              >
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input
-                  readOnly
-                  value=""
-                  placeholder="Search panel"
-                  className="h-9 w-full rounded-md border border-input bg-transparent pl-10 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground dark:bg-input/30"
+                  ref={searchInputRef}
+                  value={panelSearch}
+                  onChange={(event) => setPanelSearch(event.target.value)}
+                  onFocus={() => setSearchOpen(true)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="Search panel..."
+                  role="combobox"
+                  aria-label="Search panel pages"
+                  aria-autocomplete="list"
+                  aria-expanded={searchOpen}
+                  aria-controls="panel-search-results"
+                  aria-activedescendant={
+                    searchOpen && searchResults[selectedSearchIndex]
+                      ? `panel-search-result-${selectedSearchIndex}`
+                      : undefined
+                  }
+                  className="h-9 w-full rounded-md border border-input bg-transparent pl-10 pr-12 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20 dark:bg-input/30"
                 />
-              </label>
+                <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  ⌘K
+                </kbd>
+
+                {searchOpen ? (
+                  <div
+                    id="panel-search-results"
+                    role="listbox"
+                    className="absolute right-0 top-[calc(100%+0.375rem)] z-50 max-h-72 w-full overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+                  >
+                    {searchResults.length ? (
+                      searchResults.map((item, index) => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.to}
+                            id={`panel-search-result-${index}`}
+                            type="button"
+                            role="option"
+                            aria-selected={index === selectedSearchIndex}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onMouseEnter={() => setSelectedSearchIndex(index)}
+                            onClick={() => selectSearchResult(index)}
+                            className={`flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm ${
+                              index === selectedSearchIndex ? "bg-accent text-accent-foreground" : "hover:bg-accent"
+                            }`}
+                          >
+                            <Icon className="h-4 w-4 text-muted-foreground" />
+                            <span>{item.label}</span>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="px-2 py-3 text-center text-sm text-muted-foreground">No panel pages found.</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
               <Button variant="ghost" size="icon">
                 <Bell className="h-4 w-4" />
                 <span className="sr-only">Notifications</span>
