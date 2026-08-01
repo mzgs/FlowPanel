@@ -553,6 +553,9 @@ func buildConfig(
 			if blockRoute := securityBlockRouteForRecord(record); blockRoute != nil {
 				routes = append(routes, *blockRoute)
 			}
+			if blockRoute := sensitiveFileBlockRouteForRecord(record); blockRoute != nil {
+				routes = append(routes, *blockRoute)
+			}
 			route, placeholder, err := routeForRecord(record, phpConfig)
 			if err != nil {
 				return nil, configSummary{}, err
@@ -654,6 +657,46 @@ func routeForRecord(record domain.Record, phpConfig *phpRouteConfig) (caddyhttp.
 	}, placeholder, nil
 }
 
+const sensitiveFilePathPattern = `(?i)(?:^|/)(?:\.env(?:[._-][^/]*)?|\.(?:git|svn|hg|aws|ssh|vscode|idea)|\.DS_Store|\.htaccess|\.htpasswd|\.user\.ini|\.npmrc|\.pypirc|\.netrc|\.git-credentials|(?:agents|claude)\.md|auth\.json|composer\.(?:json|lock)|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\.(?:bak|backup|old|orig|save|swp|swo|sql|sqlite|sqlite3|db|pem|key)|[^/]+~)(?:/|$)`
+
+var sensitiveFileHidePatterns = []string{
+	".env", ".env.*", ".env-*", ".env_*",
+	".git", ".svn", ".hg", ".aws", ".ssh", ".vscode", ".idea",
+	".DS_Store", ".htaccess", ".htpasswd", ".user.ini", ".npmrc", ".pypirc", ".netrc", ".git-credentials",
+	"AGENTS.md", "CLAUDE.md",
+	"auth.json", "composer.json", "composer.lock", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+	"*.bak", "*.backup", "*.old", "*.orig", "*.save", "*.swp", "*.swo", "*.sql", "*.sqlite", "*.sqlite3", "*.db", "*.pem", "*.key", "*~",
+}
+
+func sensitiveFileBlockRouteForRecord(record domain.Record) *caddyhttp.Route {
+	if record.Kind != domain.KindStaticSite && record.Kind != domain.KindPHP {
+		return nil
+	}
+
+	return &caddyhttp.Route{
+		MatcherSetsRaw: []caddyv2.ModuleMap{{
+			"host": caddyconfig.JSON(caddyhttp.MatchHost{record.Hostname}, nil),
+			"path_regexp": caddyconfig.JSON(caddyhttp.MatchPathRE{MatchRegexp: caddyhttp.MatchRegexp{
+				Pattern: sensitiveFilePathPattern,
+			}}, nil),
+		}},
+		HandlersRaw: []json.RawMessage{
+			caddyconfig.JSONModuleObject(caddyhttp.StaticResponse{
+				StatusCode: caddyhttp.WeakString("404"),
+				Body:       "Not Found",
+			}, "handler", "static_response", nil),
+		},
+		Terminal: true,
+	}
+}
+
+func managedFileServer(root string) fileserver.FileServer {
+	return fileserver.FileServer{
+		Root: root,
+		Hide: append([]string(nil), sensitiveFileHidePatterns...),
+	}
+}
+
 func securityBlockRouteForRecord(record domain.Record) *caddyhttp.Route {
 	protection := domain.NormalizeProtectionConfig(record.Protection)
 	if len(protection.IPAccess.Blocked) == 0 {
@@ -690,9 +733,7 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 	switch record.Kind {
 	case domain.KindStaticSite:
 		originHandlers = append(originHandlers,
-			caddyconfig.JSONModuleObject(fileserver.FileServer{
-				Root: record.Target,
-			}, "handler", "file_server", nil),
+			caddyconfig.JSONModuleObject(managedFileServer(record.Target), "handler", "file_server", nil),
 		)
 	case domain.KindPHP:
 		if phpConfig == nil {
@@ -958,9 +999,7 @@ func phpSubrouteRoutes(root, fastCGIAddress string, settings phpenv.Settings, en
 		},
 		{
 			HandlersRaw: []json.RawMessage{
-				caddyconfig.JSONModuleObject(fileserver.FileServer{
-					Root: root,
-				}, "handler", "file_server", nil),
+				caddyconfig.JSONModuleObject(managedFileServer(root), "handler", "file_server", nil),
 			},
 			Terminal: true,
 		},
