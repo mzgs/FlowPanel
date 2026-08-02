@@ -34,7 +34,7 @@ import { BackupRecordsDialog } from "@/components/backup-records-dialog";
 import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, toolbarPrimaryButtonClassName } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -917,6 +917,7 @@ export function DomainsPage() {
               type="button"
               onClick={openCreateForm}
               disabled={deletingDomainId !== null}
+              className={toolbarPrimaryButtonClassName}
             >
               <Plus className="h-4 w-4" />
               Add domain

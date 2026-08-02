@@ -15,7 +15,7 @@ import {
 } from "@/components/icons/lucide-icons";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, toolbarButtonClassName, toolbarPrimaryButtonClassName } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -434,6 +434,7 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
         type="button"
         variant={liveUpdates ? "default" : "outline"}
         onClick={() => setLiveUpdates((current) => !current)}
+        className={liveUpdates ? toolbarPrimaryButtonClassName : toolbarButtonClassName}
       >
         <PlayerPlay className="h-4 w-4" />
         {liveUpdates ? "Stop live updates" : "Start live updates"}
@@ -443,11 +444,12 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
         variant="outline"
         onClick={() => void loadLogs(activeFilters, true)}
         disabled={refreshing}
+        className={toolbarButtonClassName}
       >
         {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         Refresh
       </Button>
-      <Button type="button" variant="outline" onClick={handleResetFilters} disabled={refreshing}>
+      <Button type="button" variant="outline" onClick={handleResetFilters} disabled={refreshing} className={toolbarButtonClassName}>
         <TimerReset className="h-4 w-4" />
         Reset
       </Button>
@@ -455,7 +457,7 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
         value={filters.type}
         onValueChange={(value) => setFilters((current) => ({ ...current, type: value as DomainLogType }))}
       >
-        <SelectTrigger className="w-[150px] bg-card">
+        <SelectTrigger className={cn(toolbarButtonClassName, "w-[150px]")}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -468,7 +470,7 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
         value={filters.limit}
         onValueChange={(value) => setFilters((current) => ({ ...current, limit: value }))}
       >
-        <SelectTrigger className="w-[126px] bg-card">
+        <SelectTrigger className={cn(toolbarButtonClassName, "w-[126px]")}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

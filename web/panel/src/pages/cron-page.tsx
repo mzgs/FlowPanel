@@ -24,7 +24,7 @@ import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, toolbarButtonClassName } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -400,7 +400,7 @@ export function CronPage() {
         title="Cron"
         meta="Add local scheduled commands and keep the saved job list in sync with the server."
         actions={
-          <Button type="button" variant="outline" onClick={() => void handleRefresh()} disabled={loading}>
+          <Button type="button" variant="outline" onClick={() => void handleRefresh()} disabled={loading} className={toolbarButtonClassName}>
             {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Refresh
           </Button>

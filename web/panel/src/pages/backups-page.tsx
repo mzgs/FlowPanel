@@ -30,7 +30,7 @@ import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { FieldError } from "@/components/field-error";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
+import { Button, toolbarButtonClassName, toolbarPrimaryButtonClassName } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -486,7 +486,7 @@ export function BackupsPage() {
               variant="outline"
               onClick={handleOpenImportDialog}
               disabled={importing}
-              className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)]"
+              className={toolbarButtonClassName}
             >
               {importing ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -499,7 +499,7 @@ export function BackupsPage() {
               type="button"
               variant="outline"
               onClick={() => setScheduleDialogOpen(true)}
-              className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)]"
+              className={toolbarButtonClassName}
             >
               <Clock className="h-4 w-4" />
               Schedule backup
@@ -507,7 +507,7 @@ export function BackupsPage() {
             <Button
               type="button"
               onClick={() => setCreateDialogOpen(true)}
-              className="h-9 rounded-md px-3 text-[13px] shadow-sm"
+              className={toolbarPrimaryButtonClassName}
             >
               <HardDrive className="h-4 w-4" />
               Create backup
@@ -1157,7 +1157,7 @@ export function BackupsPage() {
               type="button"
               variant="outline"
               asChild
-              className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)]"
+              className={toolbarButtonClassName}
             >
               <Link to="/cron">
                 <Clock className="h-4 w-4 text-[var(--app-text-muted)]" />

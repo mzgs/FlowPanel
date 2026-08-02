@@ -33,7 +33,7 @@ import { Copy, Download, ExternalLink, Eye, EyeOff, LoaderCircle, Pencil, Plus, 
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { BackupRecordsDialog } from "@/components/backup-records-dialog";
-import { Button } from "@/components/ui/button";
+import { Button, toolbarButtonClassName, toolbarPrimaryButtonClassName } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -164,8 +164,7 @@ function ToolbarButton({
   rel?: string;
   title?: string;
 }) {
-  const className =
-    "h-9 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] font-medium text-[var(--app-text)] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)] disabled:opacity-50";
+  const className = toolbarButtonClassName;
 
   if (href && !disabled) {
     return (
@@ -870,7 +869,7 @@ export function DatabasePanel({
                 type="button"
                 onClick={openCreateDialog}
                 disabled={mariaDBNotInstalled}
-                className="h-9 rounded-md px-3 text-[13px] shadow-sm"
+                className={toolbarPrimaryButtonClassName}
                 title={mariaDBNotInstalled ? "MariaDB not installed." : undefined}
               >
                 <Plus className="h-4 w-4" />
@@ -882,7 +881,7 @@ export function DatabasePanel({
                   <Button
                     type="button"
                     variant="ghost"
-                    className="h-9 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] font-medium text-[var(--app-text)] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)]"
+                    className={toolbarButtonClassName}
                   >
                     <ShieldCheck className="h-4 w-4 text-[var(--app-text-muted)]" />
                     Root password

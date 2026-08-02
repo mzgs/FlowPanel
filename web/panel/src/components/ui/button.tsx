@@ -34,6 +34,10 @@ const buttonVariants = cva(
   }
 )
 
+const toolbarButtonClassName =
+  'h-9 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] font-medium text-[var(--app-text)] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)] disabled:opacity-50'
+const toolbarPrimaryButtonClassName = 'h-9 rounded-md px-3 text-[13px] shadow-sm'
+
 function Button({
   className,
   variant,
@@ -55,4 +59,4 @@ function Button({
   )
 }
 
-export { Button }
+export { Button, toolbarButtonClassName, toolbarPrimaryButtonClassName }

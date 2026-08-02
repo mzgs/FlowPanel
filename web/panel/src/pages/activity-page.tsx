@@ -3,7 +3,7 @@ import { fetchEvents, type ActivityEvent } from "@/api/events";
 import { Copy, LoaderCircle, RefreshCw } from "@/components/icons/lucide-icons";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, toolbarButtonClassName } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -99,7 +99,7 @@ export function ActivityPage() {
         title="Activity"
         meta="Recent panel actions and runtime events recorded by the backend."
         actions={(
-          <Button type="button" variant="outline" onClick={() => void loadEvents(true)} disabled={refreshing}>
+          <Button type="button" variant="outline" onClick={() => void loadEvents(true)} disabled={refreshing} className={toolbarButtonClassName}>
             {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Refresh
           </Button>

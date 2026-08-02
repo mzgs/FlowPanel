@@ -19,7 +19,7 @@ import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { LongText } from "@/components/long-text";
 import { PasswordInput } from "@/components/password-input";
 import { Pencil, Plus, Search, Trash2 } from "@/components/icons/lucide-icons";
-import { Button } from "@/components/ui/button";
+import { Button, toolbarPrimaryButtonClassName } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -565,7 +565,7 @@ export function FTPPage() {
               <Button
                 type="button"
                 onClick={openCreateDialog}
-                className="h-9 rounded-md px-3 text-[13px] shadow-sm"
+                className={toolbarPrimaryButtonClassName}
               >
                 <Plus className="h-4 w-4" />
                 Add FTP account

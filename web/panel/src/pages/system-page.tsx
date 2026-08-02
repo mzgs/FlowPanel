@@ -41,7 +41,7 @@ import {
   type SystemStatusSample,
 } from "@/components/system-metrics-card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, toolbarButtonClassName } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1037,11 +1037,11 @@ export function TaskManagerPage() {
         meta="Manage processes, services, monitoring, firewall rules, and other node resources."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setLinuxToolsOpen(true)}>
+            <Button variant="outline" onClick={() => setLinuxToolsOpen(true)} className={toolbarButtonClassName}>
               <Wrench className="h-4 w-4" />
               Linux Tools
             </Button>
-            <Button variant="outline" size="sm" onClick={() => void loadSnapshot(false)} disabled={refreshing}>
+            <Button variant="outline" onClick={() => void loadSnapshot(false)} disabled={refreshing} className={toolbarButtonClassName}>
               {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Refresh
             </Button>
