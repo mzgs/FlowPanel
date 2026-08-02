@@ -144,9 +144,9 @@ const editableExtensions = new Set([
   "zsh",
 ]);
 
-const FileEditor = lazy(() =>
-  import("@/components/file-editor").then((module) => ({ default: module.FileEditor })),
-);
+const loadFileEditor = () =>
+  import("@/components/file-editor").then((module) => ({ default: module.FileEditor }));
+const FileEditor = lazy(loadFileEditor);
 
 function readStoredViewMode(): ViewMode {
   if (typeof window === "undefined") {
@@ -373,10 +373,16 @@ export function FileManager({
   const [editorOriginalContent, setEditorOriginalContent] = useState("");
   const [editorMeta, setEditorMeta] = useState<{ size: number; modifiedAt: string } | null>(null);
   const [editorBusy, setEditorBusy] = useState(false);
+  const [editorDiscardOpen, setEditorDiscardOpen] = useState(false);
   const [permissionTarget, setPermissionTarget] = useState<FileEntry | null>(null);
   const [permissionValue, setPermissionValue] = useState("");
   const [permissionRecursive, setPermissionRecursive] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadFileEditor(), 300);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const listingQuery = useQuery({
     queryKey: ["files", currentPath],
@@ -915,6 +921,15 @@ export function FileManager({
     }
   }
 
+  function closeEditor() {
+    setEditorOpen(false);
+    setEditorPath("");
+    setEditorName("");
+    setEditorContent("");
+    setEditorOriginalContent("");
+    setEditorMeta(null);
+  }
+
   async function downloadSelectedEntry() {
     closeContextMenu();
 
@@ -1224,6 +1239,17 @@ export function FileManager({
         height: Math.abs(marquee.currentY - marquee.startY),
       }
     : null;
+
+  useEffect(() => {
+    if (!editorDirty) return;
+
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [editorDirty]);
 
   return (
     <div className={cn("min-h-[calc(100vh-var(--app-navbar-height))]", className)}>
@@ -1896,37 +1922,80 @@ export function FileManager({
         </DialogContent>
       </Dialog>
 
+      <ActionConfirmDialog
+        open={editorDiscardOpen}
+        onOpenChange={setEditorDiscardOpen}
+        title="Discard unsaved changes?"
+        desc="Your edits have not been saved and will be lost."
+        confirmText="Discard changes"
+        destructive
+        handleConfirm={() => {
+          setEditorDiscardOpen(false);
+          closeEditor();
+        }}
+      />
+
       <Sheet
         open={editorOpen}
         onOpenChange={(open) => {
-          setEditorOpen(open);
-          if (!open) {
-            setEditorPath("");
-            setEditorName("");
-            setEditorContent("");
-            setEditorOriginalContent("");
-            setEditorMeta(null);
+          if (open) {
+            setEditorOpen(true);
+          } else if (editorDirty) {
+            setEditorDiscardOpen(true);
+          } else {
+            closeEditor();
           }
         }}
       >
-        <SheetContent side="left" className="!w-[60vw] !max-w-none sm:!max-w-none gap-0 p-0">
-          <SheetHeader className="gap-1 border-b border-[var(--app-border)] px-5 py-4">
-            <SheetTitle>{editorName || "Editor"}</SheetTitle>
-            <SheetDescription>
-              {editorMeta
-                ? `${formatBytes(editorMeta.size)} / ${formatDateTime(editorMeta.modifiedAt)}`
-                : "Loading file contents..."}
-            </SheetDescription>
+        <SheetContent
+          side="left"
+          overlayClassName="bg-black/60 backdrop-blur-none will-change-opacity data-[state=closed]:duration-150 data-[state=closed]:ease-[cubic-bezier(0.4,0,1,1)] data-[state=open]:duration-200 data-[state=open]:ease-[cubic-bezier(0.16,1,0.3,1)]"
+          className="transform-gpu !w-full !max-w-none gap-0 border-white/[0.08] bg-[#101113] p-0 text-[#e6e6e8] will-change-transform data-[state=closed]:duration-150 data-[state=closed]:ease-[cubic-bezier(0.4,0,1,1)] data-[state=open]:duration-200 data-[state=open]:ease-[cubic-bezier(0.16,1,0.3,1)] sm:!max-w-none md:!w-[min(68vw,900px)] lg:!w-[min(60vw,1000px)]"
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+              event.preventDefault();
+              if (editorDirty && !editorBusy) void saveEditor();
+            }
+          }}
+        >
+          <SheetHeader className="gap-2 border-b border-white/[0.07] bg-[#121315] px-4 py-3 pe-14 sm:px-5">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.04] text-[#c4a7e7]">
+                <FileCode2 className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <SheetTitle className="truncate text-[14px] leading-5 text-[#f0f0f2]">
+                  {editorName || "File editor"}
+                </SheetTitle>
+                <SheetDescription className="truncate text-[11px] leading-4 text-[#767980]">
+                  {editorPath || "Loading file..."}
+                </SheetDescription>
+              </div>
+            </div>
+            <div className="flex min-w-0 items-center gap-2 ps-11 text-[11px] text-[#85878e]">
+              <span
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full",
+                  editorBusy ? "animate-pulse bg-[#e6b673]" : editorDirty ? "bg-[#c4a7e7]" : "bg-[#8fbc8f]",
+                )}
+              />
+              <span>{editorBusy ? "Working…" : editorDirty ? "Unsaved changes" : "All changes saved"}</span>
+              {editorMeta ? (
+                <>
+                  <span className="text-[#46484e]">•</span>
+                  <span>{formatBytes(editorMeta.size)}</span>
+                  <span className="hidden text-[#46484e] sm:inline">•</span>
+                  <span className="hidden truncate sm:inline">Modified {formatDateTime(editorMeta.modifiedAt)}</span>
+                </>
+              ) : null}
+            </div>
           </SheetHeader>
 
-          <div className="flex min-h-0 flex-1 flex-col px-5 py-4">
-            <div className="mb-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-[12px] text-[var(--app-text-muted)]">
-              {editorPath}
-            </div>
+          <div className="flex min-h-0 flex-1 flex-col bg-[#101113] p-2 sm:p-3">
             <Suspense
               fallback={
-                <div className="flex min-h-0 flex-1 items-center justify-center rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[13px] text-[var(--app-text-muted)]">
-                  Loading editor...
+                <div className="flex min-h-0 flex-1 items-center justify-center rounded-[10px] border border-white/[0.08] bg-[#151618] text-[12px] text-[#767980]">
+                  Loading editor…
                 </div>
               }
             >
@@ -1939,11 +2008,20 @@ export function FileManager({
             </Suspense>
           </div>
 
-          <SheetFooter className="mt-0 flex-row items-center justify-between border-t border-[var(--app-border)] px-5 py-4">
-            <div className="text-[12px] text-[var(--app-text-muted)]">
-              {editorDirty ? "Unsaved changes" : "No pending changes"}
+          <SheetFooter className="mt-0 flex-row items-center justify-between border-t border-white/[0.07] bg-[#121315] px-4 py-2.5 sm:px-5">
+            <div className="min-w-0 text-[11px] text-[#767980]">
+              <span className="hidden sm:inline">Use </span>
+              <kbd className="rounded border border-white/[0.09] bg-white/[0.04] px-1.5 py-0.5 font-sans text-[10px] text-[#aaa0b7]">
+                {typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ S" : "Ctrl S"}
+              </kbd>
+              <span className="hidden sm:inline"> to save</span>
             </div>
-            <Button onClick={() => void saveEditor()} disabled={editorBusy || !editorDirty}>
+            <Button
+              size="sm"
+              className="min-w-24 bg-[#3b82f6] text-white shadow-none hover:bg-[#2563eb]"
+              onClick={() => void saveEditor()}
+              disabled={editorBusy || !editorDirty}
+            >
               {editorBusy ? "Saving..." : "Save"}
             </Button>
           </SheetFooter>
