@@ -1,6 +1,6 @@
 #!/bin/bash
 
-go run cmd/flowpanel/main.go serve &
+go run ./cmd/flowpanel serve &
 (cd web/panel && npm run dev) &
 
 wait

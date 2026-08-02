@@ -16,10 +16,10 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:8080",
+        target: "http://127.0.0.1:8080",
         ws: true,
       },
-      "/phpmyadmin": "http://localhost:8080",
+      "/phpmyadmin": "http://127.0.0.1:8080",
     },
   },
   build: {
