@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"flowpanel/internal/alerts"
 	"flowpanel/internal/app"
 	"flowpanel/internal/caddy"
 	eventlog "flowpanel/internal/events"
@@ -76,6 +77,7 @@ func (a *apiRoutes) register(r chi.Router) {
 	}
 
 	a.registerBackupRoutes(r)
+	a.registerAlertRoutes(r)
 	a.registerApplicationRoutes(r)
 	a.registerDomainRoutes(r)
 	a.registerFileRoutes(r)
@@ -128,6 +130,24 @@ func (a *apiRoutes) mutationEvent(ctx context.Context, category, action, resourc
 		Status:        status,
 		Message:       message,
 	})
+}
+
+func (a *apiRoutes) triggerAlert(ctx context.Context, input alerts.TriggerInput) {
+	if a == nil || a.app == nil || a.app.Alerts == nil {
+		return
+	}
+	if err := a.app.Alerts.Trigger(backgroundRequestContext(ctx), input); err != nil {
+		a.app.Logger.Error("trigger alert failed", zap.String("alert_key", input.Key), zap.Error(err))
+	}
+}
+
+func (a *apiRoutes) resolveAlert(ctx context.Context, key string) {
+	if a == nil || a.app == nil || a.app.Alerts == nil {
+		return
+	}
+	if err := a.app.Alerts.Resolve(backgroundRequestContext(ctx), key); err != nil {
+		a.app.Logger.Error("resolve alert failed", zap.String("alert_key", key), zap.Error(err))
+	}
 }
 
 func (a *apiRoutes) currentCaddyStatus() caddy.Status {

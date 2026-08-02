@@ -26,6 +26,7 @@ FlowPanel currently includes:
 - Local and Google Drive backup support with import, restore, download, and per-domain backup actions
 - FTP runtime, global FTP accounts, and domain FTP account management
 - Activity log, domain logs, system monitor, and Linux task-manager tools
+- Webhook and SMTP notifications for disk pressure, failed backups, repeated login failures, certificate expiry, and recovery events
 
 ## Install / Update Latest Release
 
@@ -132,3 +133,17 @@ FLOWPANEL_SESSION_COOKIE_SECURE=true
 ```
 
 Never expose the admin panel over unencrypted HTTP. Use its native TLS listener, a trusted HTTPS reverse proxy, or keep it on loopback behind an SSH tunnel or VPN.
+
+## Monitoring and notifications
+
+Notification channels and alert thresholds are configured from **Settings → Notifications**. Webhook requests can be authenticated with the `X-FlowPanel-Signature` HMAC-SHA256 header. SMTP supports STARTTLS and implicit TLS. Failed deliveries are persisted in SQLite and retried with exponential backoff.
+
+FlowPanel checks disk pressure after three consecutive high-usage samples, scheduled and manual backup failures, repeated sign-in failures, and certificate validity or expiry. Recovery notifications can be enabled per installation.
+
+Monitor FlowPanel itself from another host using:
+
+```text
+https://SERVER_IP:8443/healthz
+```
+
+An external monitor is required for panel or server downtime because an offline FlowPanel process cannot send its own notification.

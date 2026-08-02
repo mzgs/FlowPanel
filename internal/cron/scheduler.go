@@ -78,11 +78,21 @@ type Scheduler struct {
 	store   *Store
 	parser  robfigcron.Parser
 
-	mu      sync.RWMutex
-	started bool
-	cron    *robfigcron.Cron
-	jobs    []Record
-	entries map[string]robfigcron.EntryID
+	mu                sync.RWMutex
+	started           bool
+	cron              *robfigcron.Cron
+	jobs              []Record
+	entries           map[string]robfigcron.EntryID
+	executionObserver func(Record, ExecutionLog)
+}
+
+func (s *Scheduler) SetExecutionObserver(observer func(Record, ExecutionLog)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.executionObserver = observer
+	s.mu.Unlock()
 }
 
 func NewScheduler(logger *zap.Logger, enabled bool, store *Store) *Scheduler {
@@ -477,7 +487,11 @@ func (s *Scheduler) executeJob(job Record) {
 
 	s.mu.Lock()
 	s.prependExecutionLocked(job.ID, execution)
+	observer := s.executionObserver
 	s.mu.Unlock()
+	if observer != nil {
+		observer(job, execution)
+	}
 
 	if err != nil {
 		fields := []zap.Field{

@@ -2,8 +2,10 @@ package httpx
 
 import (
 	"errors"
+	"fmt"
 	stdhttp "net/http"
 
+	"flowpanel/internal/alerts"
 	"flowpanel/internal/app"
 	"flowpanel/internal/auth"
 
@@ -74,7 +76,22 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 		user, err := app.Auth.Authenticate(r.Context(), input)
 		if err != nil {
 			if errors.Is(err, auth.ErrInvalidCredentials) {
-				loginRateLimiter.RecordFailure(rateLimitKeys...)
+				attempts := loginRateLimiter.RecordFailure(rateLimitKeys...)
+				if app.Alerts != nil {
+					config, configErr := app.Alerts.Config(r.Context())
+					if configErr != nil {
+						app.Logger.Error("load login alert settings failed", zap.Error(configErr))
+					} else if config.Enabled && attempts >= config.LoginFailureThreshold {
+						address := clientIPAddress(r)
+						key := "login:" + address + ":" + auth.NormalizeUsername(input.Username)
+						if alertErr := app.Alerts.Trigger(r.Context(), alerts.TriggerInput{
+							Key: key, Severity: "critical", Title: "Repeated login failures",
+							Message: fmt.Sprintf("%d failed sign-in attempts for %q from %s.", attempts, auth.NormalizeUsername(input.Username), address),
+						}); alertErr != nil {
+							app.Logger.Error("trigger login failure alert failed", zap.Error(alertErr))
+						}
+					}
+				}
 				writeJSON(w, stdhttp.StatusUnauthorized, map[string]any{"error": "invalid username or password"})
 				return
 			}
@@ -91,6 +108,12 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 		}
 
 		loginRateLimiter.Clear(rateLimitKeys...)
+		if app.Alerts != nil {
+			key := "login:" + clientIPAddress(r) + ":" + auth.NormalizeUsername(input.Username)
+			if err := app.Alerts.Resolve(r.Context(), key); err != nil {
+				app.Logger.Error("resolve login failure alert failed", zap.Error(err))
+			}
+		}
 		writeAuthSession(w, true, false, user)
 	}))
 

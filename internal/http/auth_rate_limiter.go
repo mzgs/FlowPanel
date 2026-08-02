@@ -72,9 +72,9 @@ func (l *authRateLimiter) Allow(keys ...string) (time.Duration, bool) {
 	return retryAfter, retryAfter <= 0
 }
 
-func (l *authRateLimiter) RecordFailure(keys ...string) {
+func (l *authRateLimiter) RecordFailure(keys ...string) int {
 	if l == nil {
-		return
+		return 0
 	}
 
 	now := l.now().UTC()
@@ -82,6 +82,7 @@ func (l *authRateLimiter) RecordFailure(keys ...string) {
 	defer l.mu.Unlock()
 	l.prune(now)
 
+	maxAttempts := 0
 	for _, key := range keys {
 		entry := l.entries[key]
 		if entry.firstAttempt.IsZero() || now.Sub(entry.firstAttempt) > l.window {
@@ -93,7 +94,11 @@ func (l *authRateLimiter) RecordFailure(keys ...string) {
 			entry.blockedUntil = now.Add(l.lockout)
 		}
 		l.entries[key] = entry
+		if entry.attempts > maxAttempts {
+			maxAttempts = entry.attempts
+		}
 	}
+	return maxAttempts
 }
 
 func (l *authRateLimiter) prune(now time.Time) {

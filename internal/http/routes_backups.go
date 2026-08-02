@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"flowpanel/internal/alerts"
 	"flowpanel/internal/backup"
 	flowcron "flowpanel/internal/cron"
 
@@ -82,11 +83,13 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			}
 			a.app.Logger.Error("create backup failed", zap.Error(err))
 			a.mutationEvent(r.Context(), "backups", "create", "backup", "backup", "FlowPanel backup", "failed", "Failed to create a backup archive.")
+			a.triggerAlert(r.Context(), alerts.TriggerInput{Key: "backup:manual", Severity: "critical", Title: "Backup failed", Message: err.Error()})
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
 
 		a.mutationEvent(r.Context(), "backups", "create", "backup", record.Name, record.Name, "succeeded", fmt.Sprintf("Created backup %q.", record.Name))
+		a.resolveAlert(r.Context(), "backup:manual")
 		writeJSON(w, stdhttp.StatusCreated, map[string]any{"backup": record})
 	})
 	r.Method(stdhttp.MethodPost, "/backups", backupsCreateHandler)

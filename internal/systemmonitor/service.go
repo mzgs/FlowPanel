@@ -2,9 +2,11 @@ package systemmonitor
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"flowpanel/internal/alerts"
 	"flowpanel/internal/systemstatus"
 
 	"go.uber.org/zap"
@@ -18,8 +20,10 @@ const (
 )
 
 type Service struct {
-	logger *zap.Logger
-	store  *Store
+	logger       *zap.Logger
+	store        *Store
+	alerts       *alerts.Service
+	diskBreaches int
 
 	mu          sync.Mutex
 	cancel      context.CancelFunc
@@ -28,7 +32,7 @@ type Service struct {
 	started     bool
 }
 
-func NewService(logger *zap.Logger, store *Store) *Service {
+func NewService(logger *zap.Logger, store *Store, alertService *alerts.Service) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -36,6 +40,7 @@ func NewService(logger *zap.Logger, store *Store) *Service {
 	return &Service{
 		logger: logger,
 		store:  store,
+		alerts: alertService,
 	}
 }
 
@@ -131,8 +136,42 @@ func (s *Service) capture() {
 		s.logger.Error("capture system monitor sample failed", zap.Error(err))
 		return
 	}
+	s.evaluateDisk(ctx, status)
 
 	s.pruneIfNeeded(now)
+}
+
+func (s *Service) evaluateDisk(ctx context.Context, status systemstatus.Status) {
+	const key = "disk:root:pressure"
+	if s.alerts == nil || status.DiskTotalBytes == nil || status.DiskUsedBytes == nil || *status.DiskTotalBytes == 0 {
+		return
+	}
+	config, err := s.alerts.Config(ctx)
+	if err != nil || !config.Enabled {
+		return
+	}
+	usedPercent := float64(*status.DiskUsedBytes) / float64(*status.DiskTotalBytes) * 100
+	if usedPercent < float64(config.DiskWarningPercent) {
+		s.diskBreaches = 0
+		if err := s.alerts.Resolve(ctx, key); err != nil {
+			s.logger.Error("resolve disk pressure alert failed", zap.Error(err))
+		}
+		return
+	}
+	s.diskBreaches++
+	if s.diskBreaches < 3 {
+		return
+	}
+	severity, threshold := "warning", config.DiskWarningPercent
+	if usedPercent >= float64(config.DiskCriticalPercent) {
+		severity, threshold = "critical", config.DiskCriticalPercent
+	}
+	if err := s.alerts.Trigger(ctx, alerts.TriggerInput{
+		Key: key, Severity: severity, Title: "Disk usage is high",
+		Message: fmt.Sprintf("Root disk usage is %.1f%%, above the %d%% threshold.", usedPercent, threshold),
+	}); err != nil {
+		s.logger.Error("trigger disk pressure alert failed", zap.Error(err))
+	}
 }
 
 func (s *Service) pruneIfNeeded(now time.Time) {

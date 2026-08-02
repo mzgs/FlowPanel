@@ -29,6 +29,7 @@ import {
   Wrench,
 } from "@/components/icons/lucide-icons";
 import { FieldError } from "@/components/field-error";
+import { NotificationSettings } from "@/components/notification-settings";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -661,6 +662,8 @@ export function SettingsPage() {
             </div>
           </section>
         ) : null}
+
+        {!loading && !loadError ? <NotificationSettings /> : null}
       </div>
     </>
   );

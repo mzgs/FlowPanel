@@ -1141,6 +1141,11 @@ func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.Res
 	if !result.RestoredPanelDatabase {
 		return nil
 	}
+	if app.Alerts != nil {
+		if err := app.Alerts.Ensure(ctx); err != nil {
+			return fmt.Errorf("ensure alert storage: %w", err)
+		}
+	}
 
 	if app.Domains != nil {
 		if err := app.Domains.Load(ctx); err != nil {

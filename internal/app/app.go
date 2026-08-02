@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 
+	"flowpanel/internal/alerts"
 	"flowpanel/internal/auth"
 	"flowpanel/internal/backup"
 	"flowpanel/internal/caddy"
@@ -61,6 +62,7 @@ type App struct {
 	SystemMonitor *systemmonitor.Service
 	TaskManager   *taskmanager.Service
 	Firewall      *firewall.Service
+	Alerts        *alerts.Service
 }
 
 func New(
@@ -95,6 +97,7 @@ func New(
 	systemMonitorService *systemmonitor.Service,
 	taskManagerService *taskmanager.Service,
 	firewallService *firewall.Service,
+	alertService *alerts.Service,
 ) *App {
 	return &App{
 		Config:        cfg,
@@ -128,5 +131,6 @@ func New(
 		SystemMonitor: systemMonitorService,
 		TaskManager:   taskManagerService,
 		Firewall:      firewallService,
+		Alerts:        alertService,
 	}
 }

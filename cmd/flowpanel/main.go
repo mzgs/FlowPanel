@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"flowpanel/internal/alerts"
 	"flowpanel/internal/app"
 	"flowpanel/internal/auth"
 	"flowpanel/internal/backup"
@@ -67,6 +68,7 @@ type panelStores struct {
 	Settings      *settings.Store
 	FTP           *ftp.Store
 	SystemMonitor *systemmonitor.Store
+	Alerts        *alerts.Store
 }
 
 type namedStore struct {
@@ -116,6 +118,7 @@ func newPanelStores(dbConn *sql.DB) panelStores {
 		Settings:      settings.NewStore(dbConn),
 		FTP:           ftp.NewStore(dbConn),
 		SystemMonitor: systemmonitor.NewStore(dbConn),
+		Alerts:        alerts.NewStore(dbConn),
 	}
 }
 
@@ -839,6 +842,7 @@ func repairPanelStorage(ctx context.Context, w io.Writer) error {
 		namedStore{name: "settings", store: stores.Settings},
 		namedStore{name: "ftp", store: stores.FTP},
 		namedStore{name: "system monitor", store: stores.SystemMonitor},
+		namedStore{name: "alerts", store: stores.Alerts},
 	); err != nil {
 		return err
 	}
@@ -1694,6 +1698,7 @@ func runServer() error {
 		namedStore{name: "settings", store: stores.Settings},
 		namedStore{name: "ftp", store: stores.FTP},
 		namedStore{name: "system monitor", store: stores.SystemMonitor},
+		namedStore{name: "alerts", store: stores.Alerts},
 	); err != nil {
 		return err
 	}
@@ -1751,7 +1756,8 @@ func runServer() error {
 	})
 	ftpService := ftp.NewService(stores.FTP, domainService)
 	ftpRuntime := ftp.NewRuntime(logger.Named("ftp"), ftpService)
-	systemMonitorService := systemmonitor.NewService(logger.Named("system-monitor"), stores.SystemMonitor)
+	alertService := alerts.NewService(logger.Named("alerts"), stores.Alerts)
+	systemMonitorService := systemmonitor.NewService(logger.Named("system-monitor"), stores.SystemMonitor, alertService)
 	taskManagerService := taskmanager.NewService(logger.Named("task-manager"), scheduler)
 	firewallService := firewall.NewService(
 		logger.Named("firewall"),
@@ -1821,7 +1827,37 @@ func runServer() error {
 		systemMonitorService,
 		taskManagerService,
 		firewallService,
+		alertService,
 	)
+	alertService.SetCertificateSources(func() []string {
+		records := domainService.List()
+		hostnames := make([]string, 0, len(records))
+		for _, record := range records {
+			hostnames = append(hostnames, record.Hostname)
+		}
+		return hostnames
+	}, cfg.AdminTLSCertFile)
+	scheduler.SetExecutionObserver(func(job flowcron.Record, execution flowcron.ExecutionLog) {
+		if _, ok := backup.ParseScheduledCommand(job.Command); !ok {
+			return
+		}
+		key := "backup:scheduled:" + job.ID
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if execution.Status == "success" {
+			if err := alertService.Resolve(ctx, key); err != nil {
+				logger.Error("resolve scheduled backup alert failed", zap.Error(err))
+			}
+			return
+		}
+		message := strings.TrimSpace(execution.Error)
+		if message == "" {
+			message = "The scheduled backup command failed."
+		}
+		if err := alertService.Trigger(ctx, alerts.TriggerInput{Key: key, Severity: "critical", Title: "Scheduled backup failed", Message: fmt.Sprintf("%s: %s", job.Name, message)}); err != nil {
+			logger.Error("trigger scheduled backup alert failed", zap.Error(err))
+		}
+	})
 
 	router, err := httpx.NewRouter(appContainer)
 	if err != nil {
@@ -1859,6 +1895,7 @@ func runServer() error {
 	}
 	systemMonitorService.Start()
 	scheduler.Start()
+	alertService.Start()
 
 	server := &stdhttp.Server{
 		Addr:              cfg.AdminListenAddr,
@@ -1915,6 +1952,9 @@ func runServer() error {
 
 	if err := systemMonitorService.Stop(shutdownCtx); err != nil {
 		logger.Error("system monitor shutdown failed", zap.Error(err))
+	}
+	if err := alertService.Stop(shutdownCtx); err != nil {
+		logger.Error("alert service shutdown failed", zap.Error(err))
 	}
 
 	logger.Info("flowpanel stopped")
