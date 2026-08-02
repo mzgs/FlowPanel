@@ -1280,7 +1280,7 @@ export function DashboardPage() {
 
       <div className="px-4 pb-6 pt-3 sm:px-6 lg:px-8">
         {loading ? (
-          <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-8 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
+          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-5 py-8 text-[13px] text-[var(--app-text-muted)] shadow-[var(--app-shadow)]">
             Inspecting local services...
           </section>
         ) : (

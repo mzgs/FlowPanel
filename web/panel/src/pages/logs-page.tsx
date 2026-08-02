@@ -31,6 +31,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  tableStateCellClassName,
 } from "@/components/ui/table";
 import { formatBytes } from "@/lib/format";
 import { cn, getErrorMessage } from "@/lib/utils";
@@ -503,7 +504,7 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
       )}
 
       <div className={cn("pb-6", embedded ? "" : "px-4 sm:px-6 lg:px-8")}>
-        <section className="overflow-hidden rounded-2xl border border-border bg-card/80 shadow-sm">
+        <section className="overflow-hidden rounded-xl border border-border bg-card/80 shadow-[var(--app-shadow)]">
           <form
             className="border-b border-border bg-background/40 px-3 py-3 sm:px-4"
             onSubmit={handleApplyFilters}
@@ -586,13 +587,13 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
               <TableBody>
                 {loading ? (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={7} className="h-64 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={7} className={tableStateCellClassName}>
                       Loading logs...
                     </TableCell>
                   </TableRow>
                 ) : visibleRows.length === 0 ? (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={7} className="h-64 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={7} className={tableStateCellClassName}>
                       No log entries matched the current filters for this domain.
                     </TableCell>
                   </TableRow>

@@ -463,25 +463,25 @@ export function PHPSettingsDialog({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[var(--app-border)] pb-3 text-sm">
             <div className="flex items-center gap-2">
               <span className="text-[var(--app-text-muted)]">Selected runtime</span>
-              <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
+              <Badge variant="outline">
                 {runtimeLabel}
               </Badge>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[var(--app-text-muted)]">Version</span>
-              <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
+              <Badge variant="outline">
                 {formatPHPVersion(status)}
               </Badge>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[var(--app-text-muted)]">Service</span>
-              <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
+              <Badge variant="outline">
                 {getPHPServiceLabel(status)}
               </Badge>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[var(--app-text-muted)]">Site default</span>
-              <Badge variant="outline" className="h-5 rounded-sm px-2 text-[11px]">
+              <Badge variant="outline">
                 {defaultSelected ? "Yes" : "No"}
               </Badge>
             </div>

@@ -19,6 +19,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  tableStateCellClassName,
 } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
 import { copyTextToClipboard, getErrorMessage } from "@/lib/utils";
@@ -107,7 +108,7 @@ export function ActivityPage() {
       />
 
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
-        <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+        <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
           {loadError ? (
             <div className="border-b border-[var(--app-border)] px-4 py-3 text-sm text-[var(--app-danger)]">
               {loadError}
@@ -127,13 +128,13 @@ export function ActivityPage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-40 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={5} className={tableStateCellClassName}>
                     Loading activity...
                   </TableCell>
                 </TableRow>
               ) : events.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-40 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={5} className={tableStateCellClassName}>
                     No events recorded yet.
                   </TableCell>
                 </TableRow>

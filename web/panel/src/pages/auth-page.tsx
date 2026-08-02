@@ -56,7 +56,7 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
     <main className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] px-4 py-6">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-[360px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] p-5 shadow-[var(--app-shadow)]"
+        className="w-full max-w-[360px] rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-5 shadow-[var(--app-shadow)]"
       >
         <div className="mb-5 flex items-start gap-3">
           <FlowPanelMark className="h-9 w-9 shrink-0" />

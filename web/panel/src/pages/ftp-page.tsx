@@ -38,7 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { tableActionButtonClassName, tableActionGroupClassName, tableDangerActionButtonClassName } from "@/components/ui/table";
+import { tableActionButtonClassName, tableActionGroupClassName, tableDangerActionButtonClassName, tableStateCellClassName } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -557,7 +557,7 @@ export function FTPPage() {
             </section>
           ) : null}
 
-          <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+          <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
             <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]/35 px-3 py-2.5">
               <Button
                 type="button"
@@ -603,13 +603,13 @@ export function FTPPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={7} className="px-3 py-10 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={7} className={tableStateCellClassName}>
                         Loading FTP accounts...
                       </td>
                     </tr>
                   ) : filteredAccounts.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-3 py-10 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={7} className={tableStateCellClassName}>
                         No FTP accounts found.
                       </td>
                     </tr>

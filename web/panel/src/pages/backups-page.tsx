@@ -53,6 +53,7 @@ import {
   tableActionButtonClassName,
   tableActionGroupClassName,
   tableDangerActionButtonClassName,
+  tableStateCellClassName,
 } from "@/components/ui/table";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
@@ -1029,7 +1030,7 @@ export function BackupsPage() {
       />
 
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
-        <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+        <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
           {loadError ? (
             <div className="border-b border-[var(--app-border)] px-4 py-3 text-sm text-[var(--app-danger)]">
               {loadError}
@@ -1051,7 +1052,7 @@ export function BackupsPage() {
                 <TableRow>
                   <TableCell
                     colSpan={5}
-                    className="h-40 text-center text-sm text-muted-foreground"
+                    className={tableStateCellClassName}
                   >
                     Loading backups...
                   </TableCell>
@@ -1060,7 +1061,7 @@ export function BackupsPage() {
                 <TableRow>
                   <TableCell
                     colSpan={5}
-                    className="h-40 text-center text-sm text-muted-foreground"
+                    className={tableStateCellClassName}
                   >
                     No backups created yet.
                   </TableCell>
@@ -1149,7 +1150,7 @@ export function BackupsPage() {
           </Table>
         </section>
 
-        <section className="mt-6 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+        <section className="mt-6 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
           <div className="flex flex-col gap-3 border-b border-[var(--app-border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
               <h2 className="text-base font-semibold text-foreground">
@@ -1207,7 +1208,7 @@ export function BackupsPage() {
                 <TableRow>
                   <TableCell
                     colSpan={6}
-                    className="h-32 text-center text-sm text-muted-foreground"
+                    className={tableStateCellClassName}
                   >
                     Loading scheduled backups...
                   </TableCell>
@@ -1216,7 +1217,7 @@ export function BackupsPage() {
                 <TableRow>
                   <TableCell
                     colSpan={6}
-                    className="h-32 text-center text-sm text-muted-foreground"
+                    className={tableStateCellClassName}
                   >
                     No scheduled backups yet.
                   </TableCell>

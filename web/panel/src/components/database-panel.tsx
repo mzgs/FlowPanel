@@ -44,7 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { tableActionButtonClassName, tableActionGroupClassName, tableDangerActionButtonClassName } from "@/components/ui/table";
+import { tableActionButtonClassName, tableActionGroupClassName, tableDangerActionButtonClassName, tableStateCellClassName } from "@/components/ui/table";
 import { getDatabaseNameFromBackupRecord } from "@/lib/backup-records";
 import { cn, copyTextToClipboard, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -860,7 +860,7 @@ export function DatabasePanel({
             </section>
           ) : null}
 
-          <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+          <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
             <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]/35 px-3 py-2.5">
               <Button
                 type="button"
@@ -1019,13 +1019,13 @@ export function DatabasePanel({
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={tableColumnCount} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={tableColumnCount} className={tableStateCellClassName}>
                         Loading databases...
                       </td>
                     </tr>
                   ) : filteredDatabases.length === 0 ? (
                     <tr>
-                      <td colSpan={tableColumnCount} className="px-3 py-8 text-center text-[13px] text-[var(--app-text-muted)]">
+                      <td colSpan={tableColumnCount} className={tableStateCellClassName}>
                         No databases found.
                       </td>
                     </tr>

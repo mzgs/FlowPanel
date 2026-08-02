@@ -932,7 +932,7 @@ export function DomainsPage() {
               </section>
             ) : null}
 
-            <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+            <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
               {loading ? (
                 <div className="px-6 py-10 text-[13px] text-[var(--app-text-muted)]">
                   Loading domains...

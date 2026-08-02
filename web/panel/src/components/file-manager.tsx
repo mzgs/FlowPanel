@@ -1397,7 +1397,7 @@ export function FileManager({
         <div className="space-y-4">
           {flash ? <FlashBanner flash={flash} /> : null}
 
-          <section className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
             <div className="px-4 pb-4 pt-3 md:px-5">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div className="flex min-w-0 flex-wrap items-center gap-1 text-[13px] text-[var(--app-text-muted)]">

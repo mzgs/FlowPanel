@@ -604,7 +604,7 @@ function ApplicationCard({
   const hasConfigAction = configAction !== null;
 
   return (
-    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
       <div className="relative px-4 py-4">
         <div className="flex min-w-0 w-full items-start gap-3">
           <div className={applicationLogoFrameClassName}>
@@ -965,7 +965,7 @@ function ServiceApplicationCard({
 
 function ApplicationCardSkeleton({ showConfigAction = false }: { showConfigAction?: boolean }) {
   return (
-    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
+    <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
       <div className="relative px-4 py-4">
         <div className="flex min-w-0 w-full items-start gap-3">
           <div className={applicationLogoFrameClassName}>

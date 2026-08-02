@@ -107,6 +107,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { underlineTabClassName, underlineTabListClassName } from "@/components/ui/tabs";
 import {
   getDatabaseNameFromBackupRecord,
   getSiteHostnameFromBackupRecord,
@@ -3269,11 +3270,11 @@ export function DomainDetailPage() {
                 </section>
               </aside>
               <div className="space-y-4">
-                <div className="border-b border-[var(--app-border)]">
+                <div>
                   <div
                     role="tablist"
                     aria-label="Domain detail sections"
-                    className="flex gap-5 overflow-x-auto"
+                    className={underlineTabListClassName}
                   >
                     {domainDetailTabs.map((tab) => {
                       const active = detailTab === tab.value;
@@ -3286,12 +3287,8 @@ export function DomainDetailPage() {
                           type="button"
                           aria-selected={active}
                           tabIndex={active ? 0 : -1}
-                          className={cn(
-                            "inline-flex border-b-2 px-1 py-2 text-sm font-medium whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-bg)]",
-                            active
-                              ? "border-[var(--app-text)] text-[var(--app-text)]"
-                              : "border-transparent text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
-                          )}
+                          data-active={active}
+                          className={underlineTabClassName}
                           onClick={() => {
                             activateDetailTab(tab.value);
                           }}
@@ -3539,7 +3536,7 @@ export function DomainDetailPage() {
                         </div>
                       </div>
                       <div role="tablist" aria-label="WordPress sections">
-                        <div className="flex min-w-0 overflow-x-auto px-4">
+                        <div className={cn(underlineTabListClassName, "min-w-0 px-4")}>
                           {wordPressSectionTabs.map(({ value, label, icon: Icon }) => {
                             const active = wordPressSectionTab === value;
 
@@ -3550,12 +3547,8 @@ export function DomainDetailPage() {
                                 type="button"
                                 aria-selected={active}
                                 tabIndex={active ? 0 : -1}
-                                className={cn(
-                                  "inline-flex border-b-2 px-1 py-3 text-sm font-medium whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-surface-muted)]",
-                                  active
-                                    ? "border-[var(--app-text)] text-[var(--app-text)]"
-                                    : "border-transparent text-[var(--app-text-muted)] hover:text-[var(--app-text)]",
-                                )}
+                                data-active={active}
+                                className={cn(underlineTabClassName, "py-3")}
                                 onClick={() => {
                                   setWordPressSectionTab(value);
                                 }}

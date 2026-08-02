@@ -6,6 +6,7 @@ const tableActionButtonClassName =
 const tableDangerActionButtonClassName =
   'inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-destructive shadow-none outline-none transition-colors hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/50 focus-visible:ring-[3px] focus-visible:ring-destructive/30 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-[18px]'
 const tableActionGroupClassName = 'flex items-center justify-end gap-1'
+const tableStateCellClassName = 'h-32 text-center text-sm text-muted-foreground'
 
 function Table({ className, ...props }: React.ComponentProps<'table'>) {
   return (
@@ -91,4 +92,5 @@ export {
   tableActionButtonClassName,
   tableDangerActionButtonClassName,
   tableActionGroupClassName,
+  tableStateCellClassName,
 }

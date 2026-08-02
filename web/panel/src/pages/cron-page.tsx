@@ -428,7 +428,7 @@ export function CronPage() {
       />
 
       <div className="space-y-6 px-4 pb-8 sm:px-6 lg:px-8">
-        <section className="rounded-lg border bg-card">
+        <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
           <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={schedulerBadge.variant}>{schedulerBadge.label}</Badge>
@@ -462,7 +462,7 @@ export function CronPage() {
         ) : null}
 
         <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-          <section className="rounded-lg border bg-card">
+          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
             <div className="border-b px-4 py-4">
               <h2 className="text-base font-semibold tracking-tight">{isEditing ? "Edit job" : "New job"}</h2>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -535,7 +535,7 @@ export function CronPage() {
             </form>
           </section>
 
-          <section className="rounded-lg border bg-card">
+          <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
             <div className="border-b px-4 py-4">
               <h2 className="text-base font-semibold tracking-tight">Saved jobs</h2>
               <p className="mt-1 text-sm text-muted-foreground">

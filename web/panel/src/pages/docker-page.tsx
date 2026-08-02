@@ -74,6 +74,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { segmentedTabClassName } from "@/components/ui/tabs";
 import { formatBytes } from "@/lib/format";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -543,7 +544,7 @@ function ResourceMeter({
 
 function ContainersSkeleton() {
   return (
-    <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+    <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
       <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
         <div>Name</div>
         <div>Image</div>
@@ -575,7 +576,7 @@ function ContainersSkeleton() {
 
 function ImagesSkeleton() {
   return (
-    <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+    <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
       <div className="hidden grid-cols-[minmax(0,1.2fr)_160px_140px_140px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
         <div>Repository</div>
         <div>Tag</div>
@@ -604,7 +605,7 @@ type EmptyStateProps = {
 
 function DockerEmptyState({ title, description }: EmptyStateProps) {
   return (
-    <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-6 py-10 text-center shadow-[var(--app-shadow)]">
+    <div className="flex min-h-[320px] items-center justify-center rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-6 py-10 text-center shadow-[var(--app-shadow)]">
       <div className="max-w-md space-y-4">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)]">
           <Docker className="h-7 w-7" />
@@ -634,12 +635,11 @@ function TabButton({
       type="button"
       role="tab"
       aria-selected={active}
+      data-active={active}
       onClick={onClick}
       className={cn(
-        "flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition-colors",
-        active
-          ? "bg-background text-foreground shadow-[var(--app-shadow)]"
-          : "text-muted-foreground hover:bg-[var(--app-surface)] hover:text-foreground",
+        segmentedTabClassName,
+        "h-auto min-w-0 flex-1 justify-between gap-3 px-4 py-3 text-left text-sm",
       )}
     >
       <span className="truncate text-sm font-medium">{label}</span>
@@ -862,7 +862,7 @@ function ContainerList({
   }, [expandedContainerID, containerLogs.output]);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+    <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
       <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
         <div className="flex items-center gap-3">
           <ChevronDownIcon className="h-4 w-4 text-muted-foreground/70" />
@@ -1364,7 +1364,7 @@ function DockerHubImageResults({
   onAction,
 }: DockerHubImageResultsProps) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+    <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
       <div className="flex items-center gap-2 border-b border-[var(--app-border)] px-4 py-3 text-sm text-muted-foreground">
         <Docker className="h-4 w-4" />
         <span>Docker Hub results</span>
@@ -1457,7 +1457,7 @@ function ImageList({
   onDelete,
 }: ImageListProps) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+    <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
       <div className="hidden grid-cols-[minmax(0,1.2fr)_160px_140px_140px_auto] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
         <div className="flex items-center gap-3">
           <Package className="h-4 w-4 text-muted-foreground/70" />
@@ -3086,7 +3086,7 @@ export function DockerPage() {
       <section className="px-4 sm:px-6 lg:px-8">
         <div className="space-y-4">
           <div
-            className="flex flex-col gap-2 rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-2 shadow-[var(--app-shadow)] sm:flex-row"
+            className="flex flex-col gap-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-2 shadow-[var(--app-shadow)] sm:flex-row"
             role="tablist"
             aria-label="Docker inventory tabs"
           >
