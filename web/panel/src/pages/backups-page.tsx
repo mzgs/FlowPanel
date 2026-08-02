@@ -50,6 +50,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  tableActionButtonClassName,
+  tableActionGroupClassName,
+  tableDangerActionButtonClassName,
 } from "@/components/ui/table";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
@@ -1084,13 +1087,14 @@ export function BackupsPage() {
                         {formatBytes(backup.size)}
                       </TableCell>
                       <TableCell>
-                        <div className="flex justify-end gap-2">
+                        <div className={tableActionGroupClassName}>
                           <Button
                             type="button"
                             variant="outline"
                             size="icon"
                             onClick={() => handleRestoreBackup(backup)}
                             disabled={restoring || deleting}
+                            className={tableActionButtonClassName}
                             aria-label={`Restore ${backup.name}`}
                             title={`Restore ${backup.name}`}
                           >
@@ -1106,6 +1110,7 @@ export function BackupsPage() {
                             variant="outline"
                             size="icon"
                             asChild
+                            className={tableActionButtonClassName}
                           >
                             <a
                               href={getBackupDownloadUrl(
@@ -1124,6 +1129,7 @@ export function BackupsPage() {
                             size="icon"
                             onClick={() => handleDeleteBackup(backup)}
                             disabled={deleting}
+                            className={tableDangerActionButtonClassName}
                             aria-label={`Delete ${backup.name}`}
                             title={`Delete ${backup.name}`}
                           >
@@ -1234,7 +1240,7 @@ export function BackupsPage() {
                       {formatDateTime(backupSchedule.created_at)}
                     </TableCell>
                     <TableCell>
-                      <div className="flex justify-end gap-2">
+                      <div className={tableActionGroupClassName}>
                         <Button
                           type="button"
                           variant="destructive"
@@ -1243,6 +1249,7 @@ export function BackupsPage() {
                             handleDeleteScheduledBackup(backupSchedule)
                           }
                           disabled={deletingScheduleId === backupSchedule.id}
+                          className={tableDangerActionButtonClassName}
                           aria-label={`Delete ${backupSchedule.name}`}
                           title={`Delete ${backupSchedule.name}`}
                         >

@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { tableActionButtonClassName, tableActionGroupClassName, tableDangerActionButtonClassName } from "@/components/ui/table";
 import { getDatabaseNameFromBackupRecord } from "@/lib/backup-records";
 import { cn, copyTextToClipboard, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -114,14 +115,10 @@ function maskPassword(password: string) {
   return password ? "**********" : "";
 }
 
-const databaseTableHeaderCellClass = "px-3 py-0.5 font-medium";
-const databaseTableBodyCellClass = "px-3 py-0.5 align-middle";
+const databaseTableHeaderCellClass = "h-9 px-3 font-semibold";
+const databaseTableBodyCellClass = "px-3 py-[5px] align-middle";
 const databaseTableActionHeaderCellClass = `${databaseTableHeaderCellClass} text-right`;
 const databaseTableActionBodyCellClass = `${databaseTableBodyCellClass} text-right`;
-const databaseActionButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
-const databaseDangerActionButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
 
 type CopyWithFeedbackInput = {
   text: string;
@@ -1036,7 +1033,7 @@ export function DatabasePanel({
                     filteredDatabases.map((database) => (
                       <tr
                         key={database.name}
-                        className="border-b border-[var(--app-border)] text-[14px] text-[var(--app-text)] last:border-b-0"
+                        className="border-b border-[var(--app-border)] text-[14px] text-[var(--app-text)] transition-colors last:border-b-0 hover:bg-[var(--app-surface)]/65"
                       >
                         <td className={databaseTableBodyCellClass}>{database.name}</td>
                         <td className={databaseTableBodyCellClass}>{database.username || "Not set"}</td>
@@ -1112,7 +1109,7 @@ export function DatabasePanel({
                           )}
                         </td>
                         <td className={databaseTableActionBodyCellClass}>
-                          <div className="flex items-center justify-end gap-0.5">
+                          <div className={tableActionGroupClassName}>
                             <button
                               type="button"
                               onClick={() => {
@@ -1125,15 +1122,15 @@ export function DatabasePanel({
                                   ? `Downloading backup for ${database.name}`
                                   : `Download backup for ${database.name}`
                               }
-                              className={databaseActionButtonClass}
+                              className={tableActionButtonClassName}
                             >
                               {downloadingName === database.name ? (
                                 <LoaderCircle
-                                  className="size-6 animate-spin"
+                                  className="size-4 animate-spin"
                                 />
                               ) : (
                                 <Download
-                                  className="size-6"
+                                  className="size-4"
                                 />
                               )}
                             </button>
@@ -1142,10 +1139,10 @@ export function DatabasePanel({
                               onClick={() => openEditDialog(database)}
                               aria-label={`Edit ${database.name}`}
                               title={`Edit ${database.name}`}
-                              className={databaseActionButtonClass}
+                              className={tableActionButtonClassName}
                             >
                               <Pencil
-                                className="size-6"
+                                className="size-4"
                               />
                             </button>
                             <button
@@ -1156,15 +1153,15 @@ export function DatabasePanel({
                               disabled={deletingName !== null}
                               aria-label={`Delete ${database.name}`}
                               title={deletingName === database.name ? `Deleting ${database.name}` : `Delete ${database.name}`}
-                              className={databaseDangerActionButtonClass}
+                              className={tableDangerActionButtonClassName}
                             >
                               {deletingName === database.name ? (
                                 <LoaderCircle
-                                  className="size-6 animate-spin"
+                                  className="size-4 animate-spin"
                                 />
                               ) : (
                                 <Trash2
-                                  className="size-6"
+                                  className="size-4"
                                 />
                               )}
                             </button>

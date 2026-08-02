@@ -53,6 +53,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  tableActionButtonClassName,
+  tableActionGroupClassName,
+  tableDangerActionButtonClassName,
 } from "@/components/ui/table";
 import { getSiteHostnameFromBackupRecord } from "@/lib/backup-records";
 import { getFilesPathFromDomainTarget } from "@/lib/domain-targets";
@@ -114,10 +117,6 @@ const initialDeleteDomainOptions = {
   deleteDocumentRoot: false,
 };
 
-const domainActionButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
-const domainDangerActionButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
 
 const hostnamePattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/i;
@@ -1031,7 +1030,7 @@ export function DomainsPage() {
                               )}
                             </TableCell>
                             <TableCell className="w-[260px]">
-                              <div className="flex items-center justify-end gap-0.5">
+                              <div className={tableActionGroupClassName}>
                                 {filesPath !== null ? (
                                   <Button
                                     type="button"
@@ -1047,15 +1046,15 @@ export function DomainsPage() {
                                         ? `Downloading files for ${domain.hostname}`
                                         : `Download files for ${domain.hostname}`
                                     }
-                                    className={domainActionButtonClass}
+                                    className={tableActionButtonClassName}
                                   >
                                     {downloadingDomainId === domain.id ? (
                                       <LoaderCircle
-                                        className="size-5 animate-spin"
+                                        className="size-4 animate-spin"
                                       />
                                     ) : (
                                       <Download
-                                        className="size-5"
+                                        className="size-4"
                                       />
                                     )}
                                   </Button>
@@ -1071,10 +1070,10 @@ export function DomainsPage() {
                                     }}
                                     aria-label={`Open site folder for ${domain.hostname}`}
                                     title="Open site folder"
-                                    className={domainActionButtonClass}
+                                    className={tableActionButtonClassName}
                                   >
                                     <FolderOpen
-                                      className="size-5"
+                                      className="size-4"
                                     />
                                   </Button>
                                 ) : null}
@@ -1088,10 +1087,10 @@ export function DomainsPage() {
                                   disabled={deletingDomainId !== null}
                                   aria-label={`Manage FTP for ${domain.hostname}`}
                                   title="Manage FTP"
-                                  className={domainActionButtonClass}
+                                  className={tableActionButtonClassName}
                                 >
                                   <UserCog
-                                    className="size-5"
+                                    className="size-4"
                                   />
                                 </Button>
                                 <Button
@@ -1102,10 +1101,10 @@ export function DomainsPage() {
                                   disabled={deletingDomainId !== null}
                                   aria-label={`Edit ${domain.hostname}`}
                                   title="Edit"
-                                  className={domainActionButtonClass}
+                                  className={tableActionButtonClassName}
                                 >
                                   <Pencil
-                                    className="size-5"
+                                    className="size-4"
                                   />
                                 </Button>
                                 <Button
@@ -1116,17 +1115,17 @@ export function DomainsPage() {
                                     void handleDelete(domain);
                                   }}
                                   disabled={deletingDomainId !== null}
-                                  className={domainDangerActionButtonClass}
+                                  className={tableDangerActionButtonClassName}
                                   aria-label={`Delete ${domain.hostname}`}
                                   title="Delete"
                                 >
                                   {deletingDomainId === domain.id ? (
                                     <LoaderCircle
-                                      className="size-5 animate-spin"
+                                      className="size-4 animate-spin"
                                     />
                                   ) : (
                                     <Trash2
-                                      className="size-5"
+                                      className="size-4"
                                     />
                                   )}
                                 </Button>

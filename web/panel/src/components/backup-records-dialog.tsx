@@ -21,6 +21,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  tableActionButtonClassName,
+  tableActionGroupClassName,
+  tableDangerActionButtonClassName,
 } from "@/components/ui/table";
 import { formatBytes, formatDateTime } from "@/lib/format";
 
@@ -122,7 +125,7 @@ export function BackupRecordsTable({
                 {formatBytes(backup.size)}
               </TableCell>
               <TableCell className="text-right">
-                <div className="flex items-center justify-end gap-1">
+                <div className={tableActionGroupClassName}>
                   <Button
                     type="button"
                     variant="ghost"
@@ -136,12 +139,13 @@ export function BackupRecordsTable({
                     }
                     aria-label={`Restore ${backup.name}`}
                     title={`Restore ${backup.name}`}
+                    className={tableActionButtonClassName}
                   >
                     <ActionFeedbackIcon
                       busy={restoringBackupName === backup.name}
                       done={restoredBackupName === backup.name}
                       icon={RotateCcw}
-                      className="size-5"
+                      className="size-4"
                     />
                   </Button>
                   <Button
@@ -151,9 +155,10 @@ export function BackupRecordsTable({
                     size="icon"
                     aria-label={`Download ${backup.name}`}
                     title={`Download ${backup.name}`}
+                    className={tableActionButtonClassName}
                   >
                     <a href={getBackupDownloadUrl(backup.id, backup.location)}>
-                      <Download className="size-5" />
+                      <Download className="size-4" />
                     </a>
                   </Button>
                   <Button
@@ -169,13 +174,14 @@ export function BackupRecordsTable({
                     }
                     aria-label={`Delete ${backup.name}`}
                     title={`Delete ${backup.name}`}
+                    className={tableDangerActionButtonClassName}
                   >
                     {deletingBackupName === backup.name ? (
                       <LoaderCircle
-                        className="size-5 animate-spin"
+                        className="size-4 animate-spin"
                       />
                     ) : (
-                      <Trash2 className="size-5" />
+                      <Trash2 className="size-4" />
                     )}
                   </Button>
                 </div>

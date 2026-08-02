@@ -1,6 +1,12 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
+const tableActionButtonClassName =
+  'inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground shadow-none outline-none transition-colors hover:border-border hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-[18px]'
+const tableDangerActionButtonClassName =
+  'inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-destructive shadow-none outline-none transition-colors hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/50 focus-visible:ring-[3px] focus-visible:ring-destructive/30 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-[18px]'
+const tableActionGroupClassName = 'flex items-center justify-end gap-1'
+
 function Table({ className, ...props }: React.ComponentProps<'table'>) {
   return (
     <div
@@ -54,7 +60,7 @@ function TableHead({ className, ...props }: React.ComponentProps<'th'>) {
     <th
       data-slot='table-head'
       className={cn(
-        'h-10 px-2 text-start align-middle font-semibold whitespace-nowrap text-foreground [&>[role=checkbox]]:translate-y-[2px]',
+        'h-9 px-3 text-start align-middle font-semibold whitespace-nowrap text-foreground [&>[role=checkbox]]:translate-y-[2px]',
         className
       )}
       {...props}
@@ -67,7 +73,7 @@ function TableCell({ className, ...props }: React.ComponentProps<'td'>) {
     <td
       data-slot='table-cell'
       className={cn(
-        'p-2 align-middle whitespace-nowrap [&>[role=checkbox]]:translate-y-[2px]',
+        'px-3 py-[5px] align-middle whitespace-nowrap [&>[role=checkbox]]:translate-y-[2px]',
         className
       )}
       {...props}
@@ -82,4 +88,7 @@ export {
   TableHead,
   TableRow,
   TableCell,
+  tableActionButtonClassName,
+  tableDangerActionButtonClassName,
+  tableActionGroupClassName,
 }

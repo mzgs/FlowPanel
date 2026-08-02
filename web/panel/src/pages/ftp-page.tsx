@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { tableActionButtonClassName, tableActionGroupClassName, tableDangerActionButtonClassName } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -74,12 +75,8 @@ const supportedDomainKinds = new Set([
   "Node.js",
   "Python",
 ]);
-const tableHeaderCellClass = "px-3 py-2 text-left text-[13px] font-medium text-[var(--app-text-muted)]";
-const tableBodyCellClass = "px-3 py-3 align-middle text-[14px] text-[var(--app-text)]";
-const actionButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-text-muted)] transition hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-60";
-const dangerActionButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--app-danger)] transition hover:bg-[var(--app-danger-soft)] hover:text-[var(--app-danger)] disabled:cursor-not-allowed disabled:opacity-60";
+const tableHeaderCellClass = "h-9 px-3 text-left text-[13px] font-semibold text-[var(--app-text-muted)]";
+const tableBodyCellClass = "px-3 py-[5px] align-middle text-[14px] text-[var(--app-text)]";
 
 function generateFTPPassword(length = 20) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -620,7 +617,7 @@ export function FTPPage() {
                     filteredAccounts.map((account) => (
                       <tr
                         key={account.id}
-                        className="border-b border-[var(--app-border)] last:border-b-0"
+                        className="border-b border-[var(--app-border)] transition-colors last:border-b-0 hover:bg-[var(--app-surface)]/65"
                       >
                         <td className={tableBodyCellClass}>
                           <div className="font-medium">{account.username}</div>
@@ -659,11 +656,11 @@ export function FTPPage() {
                         </td>
                         <td className={tableBodyCellClass}>{formatDateTime(account.updated_at)}</td>
                         <td className={`${tableBodyCellClass} text-right`}>
-                          <div className="flex items-center justify-end gap-1">
+                          <div className={tableActionGroupClassName}>
                             <button
                               type="button"
                               onClick={() => openEditDialog(account)}
-                              className={actionButtonClass}
+                              className={tableActionButtonClassName}
                               aria-label={`Edit ${account.username}`}
                               title="Edit FTP account"
                             >
@@ -672,7 +669,7 @@ export function FTPPage() {
                             <button
                               type="button"
                               onClick={() => setDeleteCandidate(account)}
-                              className={dangerActionButtonClass}
+                              className={tableDangerActionButtonClassName}
                               aria-label={`Delete ${account.username}`}
                               title="Delete FTP account"
                             >

@@ -35,6 +35,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  tableActionButtonClassName,
+  tableActionGroupClassName,
+  tableDangerActionButtonClassName,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
@@ -576,7 +579,7 @@ export function CronPage() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{formatDateTime(job.created_at)}</TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                        <div className={tableActionGroupClassName}>
                           <Button
                             type="button"
                             variant="ghost"
@@ -585,6 +588,7 @@ export function CronPage() {
                             disabled={runningJobId === job.id}
                             aria-label={`Run ${job.name} now`}
                             title="Run now"
+                            className={tableActionButtonClassName}
                           >
                             {runningJobId === job.id ? (
                               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -599,6 +603,7 @@ export function CronPage() {
                             onClick={() => handleEdit(job)}
                             aria-label={`Edit ${job.name}`}
                             title="Edit"
+                            className={tableActionButtonClassName}
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
@@ -609,6 +614,7 @@ export function CronPage() {
                             onClick={() => setLogsJobId(job.id)}
                             aria-label={`Show logs for ${job.name}`}
                             title="Logs"
+                            className={tableActionButtonClassName}
                           >
                             <TerminalSquare className="h-4 w-4" />
                           </Button>
@@ -620,6 +626,7 @@ export function CronPage() {
                             disabled={deletingJobId === job.id}
                             aria-label={`Delete ${job.name}`}
                             title="Delete"
+                            className={tableDangerActionButtonClassName}
                           >
                             {deletingJobId === job.id ? (
                               <LoaderCircle className="h-4 w-4 animate-spin" />
