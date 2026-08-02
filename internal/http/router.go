@@ -227,8 +227,32 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	router.Use(app.Sessions.LoadAndSave)
 
 	healthHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		databaseHealthy := app != nil && app.DB != nil && app.DB.PingContext(ctx) == nil
+		caddyHealthy := false
+		if app != nil && app.Caddy != nil {
+			status := app.Caddy.Status()
+			caddyHealthy = status.Started && status.ConfigLoaded
+		}
+		checkStatus := func(healthy bool) string {
+			if healthy {
+				return "ok"
+			}
+			return "unavailable"
+		}
+		checks := map[string]string{
+			"database": checkStatus(databaseHealthy),
+			"caddy":    checkStatus(caddyHealthy),
+		}
+
+		statusCode, status := stdhttp.StatusOK, "ok"
+		if !databaseHealthy || !caddyHealthy {
+			statusCode, status = stdhttp.StatusServiceUnavailable, "unhealthy"
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, statusCode, map[string]any{"status": status, "checks": checks})
 	})
 	router.Method(stdhttp.MethodGet, "/healthz", healthHandler)
 	router.Method(stdhttp.MethodHead, "/healthz", healthHandler)
