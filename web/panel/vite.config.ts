@@ -33,6 +33,14 @@ export default defineConfig({
             return;
           }
 
+          if (
+            normalizedId.includes("/node_modules/codemirror/") ||
+            normalizedId.includes("/node_modules/@codemirror/") ||
+            normalizedId.includes("/node_modules/@lezer/")
+          ) {
+            return;
+          }
+
           if (normalizedId.includes("@xterm")) {
             return "vendor-terminal";
           }
