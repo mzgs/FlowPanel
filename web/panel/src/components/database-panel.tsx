@@ -29,7 +29,7 @@ import {
 } from "@/api/backups";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
-import { Copy, Download, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from "@/components/icons/lucide-icons";
+import { Copy, Download, ExternalLink, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2 } from "@/components/icons/lucide-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { BackupRecordsDialog } from "@/components/backup-records-dialog";
@@ -165,7 +165,7 @@ function ToolbarButton({
   title?: string;
 }) {
   const className =
-    "h-10 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 text-[13px] font-medium text-[var(--app-text)] disabled:opacity-80";
+    "h-9 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] font-medium text-[var(--app-text)] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)] disabled:opacity-50";
 
   if (href && !disabled) {
     return (
@@ -865,16 +865,16 @@ export function DatabasePanel({
           ) : null}
 
           <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
-            <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] px-3 py-3">
+            <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]/35 px-3 py-2.5">
               <Button
                 type="button"
                 onClick={openCreateDialog}
                 disabled={mariaDBNotInstalled}
-                className="h-10 rounded-lg border border-emerald-700/50 bg-emerald-600 px-4 text-[13px] font-medium text-white hover:bg-emerald-500"
+                className="h-9 rounded-md px-3 text-[13px] shadow-sm"
                 title={mariaDBNotInstalled ? "MariaDB not installed." : undefined}
               >
                 <Plus className="h-4 w-4" />
-                Add DB
+                Add database
               </Button>
 
               <Popover open={rootPasswordOpen} onOpenChange={setRootPasswordOpen}>
@@ -882,8 +882,9 @@ export function DatabasePanel({
                   <Button
                     type="button"
                     variant="ghost"
-                    className="h-10 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 text-[13px] font-medium text-[var(--app-text)]"
+                    className="h-9 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] font-medium text-[var(--app-text)] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)]"
                   >
+                    <ShieldCheck className="h-4 w-4 text-[var(--app-text-muted)]" />
                     Root password
                   </Button>
                 </PopoverTrigger>
@@ -986,6 +987,7 @@ export function DatabasePanel({
                 }
               >
                 phpMyAdmin
+                <ExternalLink className="h-3.5 w-3.5 text-[var(--app-text-muted)]" />
               </ToolbarButton>
 
               {showSearch ? (
@@ -996,7 +998,7 @@ export function DatabasePanel({
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
                       placeholder={scopedDomain ? "Search linked databases" : "Database search"}
-                      className="h-10 rounded-lg border-[var(--app-border)] bg-[var(--app-surface-muted)] pl-9"
+                      className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-elev)] pl-9"
                     />
                   </label>
                 </div>
