@@ -561,14 +561,14 @@ export function FTPPage() {
           ) : null}
 
           <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)]">
-            <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] px-3 py-3">
+            <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]/35 px-3 py-2.5">
               <Button
                 type="button"
                 onClick={openCreateDialog}
-                className="h-10 rounded-lg border border-emerald-700/50 bg-emerald-600 px-4 text-[13px] font-medium text-white hover:bg-emerald-500"
+                className="h-9 rounded-md px-3 text-[13px] shadow-sm"
               >
                 <Plus className="h-4 w-4" />
-                Add FTP
+                Add FTP account
               </Button>
 
               <div className="ms-auto flex items-center gap-2">
@@ -578,7 +578,7 @@ export function FTPPage() {
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="Search FTP accounts"
-                    className="h-10 rounded-lg border-[var(--app-border)] bg-[var(--app-surface-muted)] pl-9"
+                    className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-elev)] pl-9"
                   />
                 </label>
               </div>

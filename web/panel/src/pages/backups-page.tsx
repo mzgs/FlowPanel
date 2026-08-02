@@ -486,6 +486,7 @@ export function BackupsPage() {
               variant="outline"
               onClick={handleOpenImportDialog}
               disabled={importing}
+              className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)]"
             >
               {importing ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -498,11 +499,16 @@ export function BackupsPage() {
               type="button"
               variant="outline"
               onClick={() => setScheduleDialogOpen(true)}
+              className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)]"
             >
               <Clock className="h-4 w-4" />
               Schedule backup
             </Button>
-            <Button type="button" onClick={() => setCreateDialogOpen(true)}>
+            <Button
+              type="button"
+              onClick={() => setCreateDialogOpen(true)}
+              className="h-9 rounded-md px-3 text-[13px] shadow-sm"
+            >
               <HardDrive className="h-4 w-4" />
               Create backup
             </Button>
@@ -1147,8 +1153,16 @@ export function BackupsPage() {
                 Recurring backup jobs created from this page.
               </p>
             </div>
-            <Button type="button" variant="outline" asChild>
-              <Link to="/cron">Open cron</Link>
+            <Button
+              type="button"
+              variant="outline"
+              asChild
+              className="h-9 rounded-md border-[var(--app-border)] bg-[var(--app-surface-elev)] px-3 text-[13px] shadow-sm hover:border-[var(--app-border-strong)] hover:bg-[var(--app-accent-soft)]"
+            >
+              <Link to="/cron">
+                <Clock className="h-4 w-4 text-[var(--app-text-muted)]" />
+                Open cron
+              </Link>
             </Button>
           </div>
 
