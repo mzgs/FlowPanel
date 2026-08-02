@@ -9,11 +9,13 @@ import {
 import {
   disconnectGoogleDrive,
   fetchSettings,
+  panelSettingsQueryKey,
   uploadGoogleDriveOAuthCredentials,
   updateSettings,
   type PanelSettings,
   type SettingsApiError,
 } from "@/api/settings";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   CircleCheck,
   Copy,
@@ -81,6 +83,7 @@ function sameFormState(left: SettingsFormState, right: SettingsFormState) {
 }
 
 export function SettingsPage() {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<SettingsFormState>(initialForm);
   const [savedForm, setSavedForm] = useState<SettingsFormState | null>(null);
   const [settings, setSettings] = useState<PanelSettings | null>(null);
@@ -98,6 +101,7 @@ export function SettingsPage() {
 
   function applySettings(nextSettings: PanelSettings) {
     const nextForm = toFormState(nextSettings);
+    queryClient.setQueryData(panelSettingsQueryKey, nextSettings);
     setSettings(nextSettings);
     setForm(nextForm);
     setSavedForm(nextForm);

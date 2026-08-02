@@ -27,6 +27,8 @@ export type SettingsApiError = Error & {
   fieldErrors?: Record<string, string>;
 };
 
+export const panelSettingsQueryKey = ["panel-settings"] as const;
+
 type SettingsPayload = {
   settings: PanelSettings;
 };

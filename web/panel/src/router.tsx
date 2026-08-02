@@ -20,6 +20,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { fetchAuthSession, logout } from "@/api/auth";
+import { fetchSettings, panelSettingsQueryKey } from "@/api/settings";
 import { AuthPage } from "@/pages/auth-page";
 import {
   Bell,
@@ -220,6 +221,11 @@ function RootLayout() {
     queryFn: fetchAuthSession,
     retry: false,
   });
+  const settingsQuery = useQuery({
+    queryKey: panelSettingsQueryKey,
+    queryFn: fetchSettings,
+    enabled: Boolean(authQuery.data?.authenticated),
+  });
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess: (session) => {
@@ -227,6 +233,8 @@ function RootLayout() {
     },
   });
   const breadcrumbs = getBreadcrumbs(location.pathname);
+  const currentPageName = breadcrumbs[breadcrumbs.length - 1]?.label;
+  const panelName = settingsQuery.data?.panel_name || "FlowPanel";
   const searchResults = useMemo(() => {
     const query = panelSearch.trim().toLowerCase();
 
@@ -262,6 +270,10 @@ function RootLayout() {
   useEffect(() => {
     setSelectedSearchIndex(0);
   }, [panelSearch]);
+
+  useEffect(() => {
+    document.title = currentPageName ? `${currentPageName} · ${panelName}` : panelName;
+  }, [currentPageName, panelName]);
 
   const selectSearchResult = (index: number) => {
     const result = searchResults[index];
@@ -311,7 +323,7 @@ function RootLayout() {
             <Link to="/" className="flex items-center gap-3">
               <FlowPanelMark />
               <div className="min-w-0">
-                <div className="text-sm font-semibold tracking-tight">FlowPanel</div>
+                <div className="truncate text-sm font-semibold tracking-tight">{panelName}</div>
                 <div className="text-xs text-muted-foreground">Admin panel</div>
               </div>
             </Link>
