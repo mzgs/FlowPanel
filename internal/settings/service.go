@@ -23,7 +23,7 @@ const (
 	maxPassivePortsLen   = 32
 	defaultLoginTimeout  = 720
 	minLoginTimeout      = 5
-	maxLoginTimeout      = 1440
+	maxLoginTimeout      = 10080
 )
 
 type Record struct {
@@ -255,7 +255,7 @@ func validateUpdateInput(input UpdateInput) ValidationErrors {
 		validation["github_token"] = fmt.Sprintf("GitHub token must be %d characters or fewer.", maxGitHubTokenLength)
 	}
 	if input.LoginTimeoutMinutes < minLoginTimeout || input.LoginTimeoutMinutes > maxLoginTimeout {
-		validation["login_timeout_minutes"] = "Login timeout must be between 5 and 1440 minutes."
+		validation["login_timeout_minutes"] = "Login timeout must be between 5 and 10080 minutes."
 	}
 
 	ftpPort := normalizeFTPPort(input.FTPPort)
