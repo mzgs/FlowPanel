@@ -18,13 +18,29 @@ const emptyForm: AuthCredentials = {
   password: "",
 };
 
+type PasswordCredentialConstructor = new (data: AuthCredentials & { id: string }) => Credential;
+
+async function offerToSaveCredentials(credentials: AuthCredentials) {
+  const PasswordCredential = (window as typeof window & {
+    PasswordCredential?: PasswordCredentialConstructor;
+  }).PasswordCredential;
+  if (!PasswordCredential || !window.isSecureContext) return;
+
+  try {
+    await navigator.credentials.store(new PasswordCredential({ ...credentials, id: credentials.username }));
+  } catch {
+    // Login should still succeed when credential storage is unavailable or declined.
+  }
+}
+
 export function AuthPage({ setupRequired }: AuthPageProps) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(emptyForm);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const mutation = useMutation<AuthSession, AuthApiError, AuthCredentials>({
     mutationFn: login,
-    onSuccess: (session) => {
+    onSuccess: async (session, credentials) => {
+      await offerToSaveCredentials(credentials);
       queryClient.setQueryData(["auth", "session"], session);
     },
     onError: (error) => {
