@@ -1,77 +1,22 @@
-import { useState, type FormEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { login, type AuthApiError, type AuthCredentials, type AuthSession } from "@/api/auth";
 import { PasswordInput } from "@/components/password-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FieldError } from "@/components/field-error";
 import { FlowPanelMark } from "@/components/flowpanel-mark";
 
 type AuthPageProps = {
   setupRequired: boolean;
 };
 
-const emptyForm: AuthCredentials = {
-  username: "",
-  password: "",
-};
-
-type PasswordCredentialConstructor = new (data: AuthCredentials & { id: string }) => Credential;
-
-async function offerToSaveCredentials(credentials: AuthCredentials) {
-  const PasswordCredential = (window as typeof window & {
-    PasswordCredential?: PasswordCredentialConstructor;
-  }).PasswordCredential;
-  if (!PasswordCredential || !window.isSecureContext) return;
-
-  try {
-    await navigator.credentials.store(new PasswordCredential({ ...credentials, id: credentials.username }));
-  } catch {
-    // Login should still succeed when credential storage is unavailable or declined.
-  }
-}
-
 export function AuthPage({ setupRequired }: AuthPageProps) {
-  const queryClient = useQueryClient();
-  const [form, setForm] = useState(emptyForm);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const mutation = useMutation<AuthSession, AuthApiError, AuthCredentials>({
-    mutationFn: login,
-    onSuccess: async (session, credentials) => {
-      await offerToSaveCredentials(credentials);
-      queryClient.setQueryData(["auth", "session"], session);
-    },
-    onError: (error) => {
-      setFieldErrors(error.fieldErrors ?? {});
-    },
-  });
-
-  function updateField(field: keyof AuthCredentials, value: string) {
-    setForm((current) => ({ ...current, [field]: value }));
-    if (fieldErrors[field]) {
-      setFieldErrors((current) => {
-        const next = { ...current };
-        delete next[field];
-        return next;
-      });
-    }
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFieldErrors({});
-    mutation.mutate({
-      username: form.username.trim().toLowerCase(),
-      password: form.password,
-    });
-  }
+  const error = new URLSearchParams(window.location.search).get("auth_error");
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] px-4 py-6">
       <form
-        onSubmit={handleSubmit}
+        action="/api/auth/login"
+        method="post"
         autoComplete="on"
         className="w-full max-w-[360px] rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-5 shadow-[var(--app-shadow)]"
       >
@@ -92,9 +37,9 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
           </Alert>
         ) : null}
 
-        {mutation.error && !mutation.error.fieldErrors ? (
+        {error ? (
           <Alert variant="destructive" className="mb-4 rounded-md px-3 py-2">
-            <AlertDescription>{mutation.error.message}</AlertDescription>
+            <AlertDescription>{error}</AlertDescription>
           </Alert>
         ) : null}
 
@@ -107,11 +52,7 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
               autoComplete="username"
               autoFocus
               required
-              value={form.username}
-              onChange={(event) => updateField("username", event.target.value)}
-              aria-invalid={fieldErrors.username ? true : undefined}
             />
-            <FieldError message={fieldErrors.username} />
           </div>
 
           <div className="space-y-1.5">
@@ -121,16 +62,12 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
               name="password"
               autoComplete="current-password"
               required
-              value={form.password}
-              onChange={(event) => updateField("password", event.target.value)}
-              aria-invalid={fieldErrors.password ? true : undefined}
             />
-            <FieldError message={fieldErrors.password} />
           </div>
         </div>
 
-        <Button type="submit" className="mt-5 h-9 w-full" disabled={mutation.isPending}>
-          {mutation.isPending ? "Working..." : "Sign in"}
+        <Button type="submit" className="mt-5 h-9 w-full">
+          Sign in
         </Button>
       </form>
     </main>

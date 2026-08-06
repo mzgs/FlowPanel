@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	stdhttp "net/http"
+	"net/url"
+	"strings"
 
 	"flowpanel/internal/alerts"
 	"flowpanel/internal/app"
@@ -56,20 +58,40 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 	router.Method(stdhttp.MethodHead, "/api/auth/session", sessionHandler)
 
 	router.Method(stdhttp.MethodPost, "/api/auth/login", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		formRequest := strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded")
+		writeError := func(status int, message string) {
+			if formRequest {
+				stdhttp.Redirect(w, r, "/?auth_error="+url.QueryEscape(message), stdhttp.StatusSeeOther)
+				return
+			}
+			writeJSON(w, status, map[string]any{"error": message})
+		}
+
 		if app.Auth == nil {
-			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "panel auth is not configured"})
+			writeError(stdhttp.StatusServiceUnavailable, "panel auth is not configured")
 			return
 		}
 
 		var input auth.LoginInput
-		if err := decodeJSON(r, &input); err != nil {
-			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid request body"})
+		var err error
+		if formRequest {
+			err = r.ParseForm()
+			input = auth.LoginInput{Username: r.PostFormValue("username"), Password: r.PostFormValue("password")}
+		} else {
+			err = decodeJSON(r, &input)
+		}
+		if err != nil {
+			writeError(stdhttp.StatusBadRequest, "invalid request body")
 			return
 		}
 
 		rateLimitKeys := authRateLimitKeys(r, input)
 		if retryAfter, ok := loginRateLimiter.Allow(rateLimitKeys...); !ok {
-			writeAuthRateLimited(w, retryAfter)
+			if formRequest {
+				writeError(stdhttp.StatusTooManyRequests, "too many sign-in attempts; try again later")
+			} else {
+				writeAuthRateLimited(w, retryAfter)
+			}
 			return
 		}
 
@@ -92,18 +114,18 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 						}
 					}
 				}
-				writeJSON(w, stdhttp.StatusUnauthorized, map[string]any{"error": "invalid username or password"})
+				writeError(stdhttp.StatusUnauthorized, "invalid username or password")
 				return
 			}
 
 			app.Logger.Error("panel login failed", zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to sign in"})
+			writeError(stdhttp.StatusInternalServerError, "failed to sign in")
 			return
 		}
 
 		if err := renewPanelSession(app, r, user); err != nil {
 			app.Logger.Error("create panel login session failed", zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to sign in"})
+			writeError(stdhttp.StatusInternalServerError, "failed to sign in")
 			return
 		}
 
@@ -114,7 +136,11 @@ func registerPanelAuthRoutes(router chi.Router, app *app.App) {
 				app.Logger.Error("resolve login failure alert failed", zap.Error(err))
 			}
 		}
-		writeAuthSession(w, true, false, user)
+		if formRequest {
+			stdhttp.Redirect(w, r, "/", stdhttp.StatusSeeOther)
+		} else {
+			writeAuthSession(w, true, false, user)
+		}
 	}))
 
 	router.Method(stdhttp.MethodPost, "/api/auth/logout", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
