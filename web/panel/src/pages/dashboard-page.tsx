@@ -1216,7 +1216,7 @@ export function DashboardPage() {
   const pm2DeleteDialogDescription = pm2DeleteCandidate
     ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`} from PM2? The process will be removed from the runtime list and must be created again to restore it.`
     : "Delete this PM2 process?";
-  const pm2ProcessesSection = (
+  const pm2ProcessesSection = pm2Status?.installed === false ? null : (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
       <div className="min-w-0">
         <div className="min-w-0">
@@ -1224,33 +1224,26 @@ export function DashboardPage() {
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--app-text-muted)]">
             <span className="font-mono">{pm2Meta.toolchain}</span>
             {pm2Status?.installed ? <span>{pm2Meta.countLabel}</span> : null}
-            {pm2Status && !pm2Status.installed && pm2Status.message ? <span>{pm2Status.message}</span> : null}
           </div>
         </div>
       </div>
 
       <div className="mt-3">
-        {pm2Status && !pm2Status.installed && !pm2Error ? (
-          <div className="rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-6 text-sm text-[var(--app-text-muted)]">
-            PM2 is not installed on this node.
-          </div>
-        ) : (
-          <PM2ProcessList
-            mode="dashboard"
-            processes={pm2Processes}
-            error={pm2Error}
-            loading={pm2Loading}
-            busy={pm2ProcessActionKey !== null}
-            processActionKey={pm2ProcessActionKey}
-            onProcessAction={(action, process) => {
-              void handlePM2ProcessAction(action, process);
-            }}
-            onDelete={(process) => {
-              setPM2DeleteCandidate(process);
-            }}
-            onOpenLogs={openPM2Logs}
-          />
-        )}
+        <PM2ProcessList
+          mode="dashboard"
+          processes={pm2Processes}
+          error={pm2Error}
+          loading={pm2Loading}
+          busy={pm2ProcessActionKey !== null}
+          processActionKey={pm2ProcessActionKey}
+          onProcessAction={(action, process) => {
+            void handlePM2ProcessAction(action, process);
+          }}
+          onDelete={(process) => {
+            setPM2DeleteCandidate(process);
+          }}
+          onOpenLogs={openPM2Logs}
+        />
       </div>
     </section>
   );
