@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"flowpanel/internal/domain"
+	flowlogging "flowpanel/internal/logging"
 	"flowpanel/internal/phpenv"
 	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/tlsutil"
@@ -1390,11 +1391,13 @@ func cacheHandlerConfig() httpcache.SouinCaddyMiddleware {
 }
 
 func domainLoggingConfig(records []domain.Record) *caddyv2.Logging {
-	if len(records) == 0 {
-		return nil
+	logs := make(map[string]*caddyv2.CustomLog, len(records)*2+1)
+	logs["default"] = &caddyv2.CustomLog{
+		BaseLog: caddyv2.BaseLog{
+			WriterRaw: caddyconfig.JSONModuleObject(flowlogging.CaddyWriter{}, "output", "flowpanel", nil),
+			Level:     "INFO",
+		},
 	}
-
-	logs := make(map[string]*caddyv2.CustomLog, len(records)*2)
 	for _, record := range records {
 		if strings.TrimSpace(record.Logs.Access) == "" || strings.TrimSpace(record.Logs.Error) == "" {
 			continue
@@ -1404,8 +1407,9 @@ func domainLoggingConfig(records []domain.Record) *caddyv2.Logging {
 		logs[accessLoggerName] = &caddyv2.CustomLog{
 			BaseLog: caddyv2.BaseLog{
 				WriterRaw: caddyconfig.JSONModuleObject(caddylogging.FileWriter{
-					Filename: record.Logs.Access,
-					DirMode:  "0755",
+					Filename:   record.Logs.Access,
+					DirMode:    "0755",
+					RollSizeMB: flowlogging.MaxFileSizeMB,
 				}, "output", "file", nil),
 				Level: "INFO",
 			},
@@ -1414,17 +1418,14 @@ func domainLoggingConfig(records []domain.Record) *caddyv2.Logging {
 		logs[errorLoggerName] = &caddyv2.CustomLog{
 			BaseLog: caddyv2.BaseLog{
 				WriterRaw: caddyconfig.JSONModuleObject(caddylogging.FileWriter{
-					Filename: record.Logs.Error,
-					DirMode:  "0755",
+					Filename:   record.Logs.Error,
+					DirMode:    "0755",
+					RollSizeMB: flowlogging.MaxFileSizeMB,
 				}, "output", "file", nil),
 				Level: "INFO",
 			},
 			Include: []string{"http.log.error." + errorLoggerName},
 		}
-	}
-
-	if len(logs) == 0 {
-		return nil
 	}
 
 	return &caddyv2.Logging{

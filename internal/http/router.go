@@ -220,7 +220,6 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 	router := chi.NewRouter()
 	router.Use(chimiddleware.RequestID)
-	router.Use(RequestLogger(app.Logger.Named("http")))
 	router.Use(Recoverer(app.Logger.Named("panic")))
 	router.Use(SecurityHeaders)
 	router.Use(SameOriginProtection(app))

@@ -1651,12 +1651,13 @@ func runServer() error {
 		return err
 	}
 
-	logger, err := logging.New(cfg.Env)
+	logger, logWriter, err := logging.NewRotating(cfg.Env, panelLogPath())
 	if err != nil {
 		return fmt.Errorf("build logger: %w", err)
 	}
 	defer func() {
 		_ = logger.Sync()
+		_ = logWriter.Close()
 	}()
 
 	pid := os.Getpid()
