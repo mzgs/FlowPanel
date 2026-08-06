@@ -56,6 +56,7 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
     <main className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] px-4 py-6">
       <form
         onSubmit={handleSubmit}
+        autoComplete="on"
         className="w-full max-w-[360px] rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] p-5 shadow-[var(--app-shadow)]"
       >
         <div className="mb-5 flex items-start gap-3">
@@ -86,8 +87,10 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
             <Label htmlFor="panel-auth-username">Username</Label>
             <Input
               id="panel-auth-username"
+              name="username"
               autoComplete="username"
               autoFocus
+              required
               value={form.username}
               onChange={(event) => updateField("username", event.target.value)}
               aria-invalid={fieldErrors.username ? true : undefined}
@@ -99,7 +102,9 @@ export function AuthPage({ setupRequired }: AuthPageProps) {
             <Label htmlFor="panel-auth-password">Password</Label>
             <PasswordInput
               id="panel-auth-password"
+              name="password"
               autoComplete="current-password"
+              required
               value={form.password}
               onChange={(event) => updateField("password", event.target.value)}
               aria-invalid={fieldErrors.password ? true : undefined}
