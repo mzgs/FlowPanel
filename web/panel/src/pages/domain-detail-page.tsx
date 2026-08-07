@@ -554,6 +554,9 @@ const domainDetailTabs: IconTab<DomainDetailTab>[] = [
   { value: "terminal", label: "Terminal", icon: TerminalSquare },
   { value: "logs", label: "Logs", icon: List },
 ];
+const domainDetailTabValues = new Set<DomainDetailTab>(
+  domainDetailTabs.map(({ value }) => value),
+);
 const wordPressSectionTabs: IconTab<WordPressSectionTab>[] = [
   { value: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { value: "plugins", label: "Plugins", icon: Package },
@@ -561,13 +564,20 @@ const wordPressSectionTabs: IconTab<WordPressSectionTab>[] = [
   { value: "database", label: "Database", icon: Database },
 ];
 
-function createMountedDomainDetailTabs(): Record<DomainDetailTab, boolean> {
+function getDomainDetailTabFromHash(): DomainDetailTab {
+  const tab = window.location.hash.slice(1) as DomainDetailTab;
+  return domainDetailTabValues.has(tab) ? tab : "general";
+}
+
+function createMountedDomainDetailTabs(
+  activeTab: DomainDetailTab = "general",
+): Record<DomainDetailTab, boolean> {
   return {
     general: true,
-    files: false,
-    database: false,
-    terminal: false,
-    logs: false,
+    files: activeTab === "files",
+    database: activeTab === "database",
+    terminal: activeTab === "terminal",
+    logs: activeTab === "logs",
   };
 }
 
@@ -879,9 +889,11 @@ export function DomainDetailPage() {
   >(null);
   const [wordPressSummary, setWordPressSummary] =
     useState<WordPressSummary | null>(null);
-  const [detailTab, setDetailTab] = useState<DomainDetailTab>("general");
-  const [mountedDetailTabs, setMountedDetailTabs] = useState(
-    createMountedDomainDetailTabs,
+  const [detailTab, setDetailTab] = useState<DomainDetailTab>(
+    getDomainDetailTabFromHash,
+  );
+  const [mountedDetailTabs, setMountedDetailTabs] = useState(() =>
+    createMountedDomainDetailTabs(getDomainDetailTabFromHash()),
   );
   const [wordPressSectionTab, setWordPressSectionTab] =
     useState<WordPressSectionTab>("dashboard");
@@ -1001,8 +1013,9 @@ export function DomainDetailPage() {
     setPHPError(null);
     setPHPRunningAction(null);
     setWordPressSummary(null);
-    setDetailTab("general");
-    setMountedDetailTabs(createMountedDomainDetailTabs());
+    const initialDetailTab = getDomainDetailTabFromHash();
+    setDetailTab(initialDetailTab);
+    setMountedDetailTabs(createMountedDomainDetailTabs(initialDetailTab));
     setWordPressSectionTab("dashboard");
     setWordPressDetails(null);
     setWordPressDetailsLoadedSections(createWordPressDetailsLoadedState());
@@ -1090,6 +1103,19 @@ export function DomainDetailPage() {
       active = false;
     };
   }, [hostname]);
+
+  useEffect(() => {
+    function handleHashChange() {
+      const tab = getDomainDetailTabFromHash();
+      setDetailTab(tab);
+      setMountedDetailTabs((current) =>
+        current[tab] ? current : { ...current, [tab]: true },
+      );
+    }
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
 
   useEffect(() => {
     if (!connectionDialogOpen || !domain) {
@@ -2438,6 +2464,7 @@ export function DomainDetailPage() {
     setMountedDetailTabs((current) =>
       current[tab] ? current : { ...current, [tab]: true },
     );
+    window.location.hash = tab;
   }
 
   return (
