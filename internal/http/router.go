@@ -865,12 +865,6 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 			stdhttp.Error(w, phpStatus.Message, stdhttp.StatusServiceUnavailable)
 			return
 		}
-		if err := syncPHPMyAdminRoute(r.Context(), app); err != nil {
-			app.Logger.Error("sync phpmyadmin route failed", zap.Error(err))
-			stdhttp.Error(w, "phpMyAdmin route could not be published.", stdhttp.StatusInternalServerError)
-			return
-		}
-
 		if r.URL.Path == "/phpmyadmin" {
 			stdhttp.Redirect(w, r, "/phpmyadmin/", stdhttp.StatusTemporaryRedirect)
 			return
@@ -916,13 +910,10 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 			request.Header.Set("X-Forwarded-Host", publicHost)
 			request.Header.Set("X-Forwarded-Prefix", "/phpmyadmin")
 			request.Header.Set("X-Forwarded-Proto", publicScheme)
+			request.Header.Set("Scheme", publicScheme)
 		}
 		proxy.ServeHTTP(w, r)
 	})
-}
-
-func syncPHPMyAdminRoute(ctx context.Context, app *app.App) error {
-	return syncDomainsWithCurrentSettings(ctx, app)
 }
 
 func syncDomainsWithCurrentSettings(ctx context.Context, app *app.App) error {
