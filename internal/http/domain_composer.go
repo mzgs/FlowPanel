@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -72,7 +73,7 @@ func runDomainComposerAction(
 	runComposer := func(useWorker bool) (bool, string, error) {
 		cmd := exec.CommandContext(runCtx, composerPath, action, "--no-interaction", "--no-progress")
 		cmd.Dir = targetPath
-		cmd.Env = append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1")
+		cmd.Env = composerCommandEnvironment()
 		executedAsWorker := false
 		if useWorker {
 			var err error
@@ -108,4 +109,14 @@ func runDomainComposerAction(
 	}
 
 	return record, executedAsWorker, nil
+}
+
+func composerCommandEnvironment() []string {
+	env := append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1")
+	if strings.TrimSpace(os.Getenv("HOME")) == "" {
+		if currentUser, err := user.Current(); err == nil && strings.TrimSpace(currentUser.HomeDir) != "" {
+			env = append(env, "HOME="+strings.TrimSpace(currentUser.HomeDir))
+		}
+	}
+	return env
 }

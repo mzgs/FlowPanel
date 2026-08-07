@@ -589,6 +589,7 @@ func runGitHubPostFetchScript(ctx context.Context, targetPath string, script str
 	commandName, commandArgs := gitHubShellCommand(script)
 	cmd := exec.CommandContext(ctx, commandName, commandArgs...)
 	cmd.Dir = targetPath
+	cmd.Env = composerCommandEnvironment()
 
 	var output bytes.Buffer
 	cmd.Stdout = &output

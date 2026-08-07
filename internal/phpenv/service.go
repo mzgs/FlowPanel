@@ -202,7 +202,6 @@ type versionActionPlan struct {
 	stopLabel      string
 	restartLabel   string
 	installCmds    [][]string
-	composerCmds   [][]string
 	removeCmds     [][]string
 	startCmds      [][]string
 	stopCmds       [][]string
@@ -372,7 +371,7 @@ func (s *Service) InstallVersion(ctx context.Context, version string) error {
 		}
 	}
 
-	if err := s.installComposerIfMissing(ctx, target, plan); err != nil {
+	if err := s.installLatestComposer(ctx, target); err != nil {
 		return err
 	}
 	return s.initializeSettingsForVersion(ctx, target)
@@ -775,9 +774,6 @@ func detectVersionActionPlan(version string) versionActionPlan {
 				installCmds: [][]string{
 					{brewPath, "install", formula},
 				},
-				composerCmds: [][]string{
-					{brewPath, "install", "composer"},
-				},
 				removeCmds: [][]string{
 					{brewPath, "uninstall", formula},
 				},
@@ -815,9 +811,6 @@ func detectVersionActionPlan(version string) versionActionPlan {
 					{aptPath, "update"},
 					installArgs,
 				},
-				composerCmds: [][]string{
-					{aptPath, "install", "-y", "composer"},
-				},
 				removeCmds: [][]string{
 					removeArgs,
 				},
@@ -850,9 +843,6 @@ func detectVersionActionPlan(version string) versionActionPlan {
 				restartLabel:   fmt.Sprintf("Restart PHP %s FPM", version),
 				installCmds: [][]string{
 					installArgs,
-				},
-				composerCmds: [][]string{
-					{dnfPath, "install", "-y", "composer"},
 				},
 				removeCmds: [][]string{
 					removeArgs,
@@ -887,9 +877,6 @@ func detectVersionActionPlan(version string) versionActionPlan {
 				installCmds: [][]string{
 					installArgs,
 				},
-				composerCmds: [][]string{
-					{yumPath, "install", "-y", "composer"},
-				},
 				removeCmds: [][]string{
 					removeArgs,
 				},
@@ -908,28 +895,6 @@ func detectVersionActionPlan(version string) versionActionPlan {
 	}
 
 	return versionActionPlan{}
-}
-
-func (s *Service) installComposerIfMissing(ctx context.Context, version string, plan versionActionPlan) error {
-	if _, ok := lookupCommand("composer"); ok {
-		return nil
-	}
-	if len(plan.composerCmds) == 0 {
-		return fmt.Errorf("php %s was installed, but automatic Composer installation is not supported on %s", version, runtime.GOOS)
-	}
-
-	s.logger.Info("installing composer",
-		zap.String("version", version),
-		zap.String("package_manager", plan.packageManager),
-	)
-	if err := runCommands(ctx, plan.composerCmds...); err != nil {
-		return err
-	}
-	if _, ok := lookupCommand("composer"); ok {
-		return nil
-	}
-
-	return fmt.Errorf("php %s was installed, but composer is still unavailable", version)
 }
 
 func aptVersionPackages(version string) []string {

@@ -35,6 +35,32 @@ download() {
   fi
 }
 
+install_latest_composer() {
+  if ! command -v php >/dev/null 2>&1; then
+    return
+  fi
+
+  temp_dir="$(mktemp -d)"
+  installer="$temp_dir/composer-setup.php"
+  signature="$temp_dir/installer.sig"
+  trap 'rm -rf "$temp_dir"' EXIT INT TERM
+
+  echo "Installing the latest stable Composer release..."
+  download "https://composer.github.io/installer.sig" "$signature" || return 1
+  download "https://getcomposer.org/installer" "$installer" || return 1
+  expected_checksum="$(tr -d '[:space:]' < "$signature")"
+  actual_checksum="$(php -r 'echo hash_file("sha384", $argv[1]);' "$installer")"
+  if [ "$expected_checksum" != "$actual_checksum" ]; then
+    echo "Composer installer checksum verification failed." >&2
+    return 1
+  fi
+
+  as_root mkdir -p "$BIN_DIR" || return 1
+  as_root php "$installer" --install-dir="$BIN_DIR" --filename=composer --quiet || return 1
+  rm -rf "$temp_dir"
+  trap - EXIT INT TERM
+}
+
 random_hex() {
   dd if=/dev/urandom bs="$1" count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
 }
@@ -468,12 +494,14 @@ case "$(uname -s)" in
     action="$(installed_action linux_installed)"
     stop_linux_service
     install_binary linux "$arch" "$action"
+    install_latest_composer || echo "Warning: Composer could not be upgraded; FlowPanel will continue with the installed version." >&2
     install_linux_service "$action"
     ;;
   Darwin)
     action="$(installed_action macos_installed)"
     stop_macos_service
     install_binary darwin "$arch" "$action"
+    install_latest_composer || echo "Warning: Composer could not be upgraded; FlowPanel will continue with the installed version." >&2
     install_macos_service "$action"
     ;;
   *)
