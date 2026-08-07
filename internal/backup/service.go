@@ -844,15 +844,19 @@ func (s *Service) resolveBackupPath(name string) (string, error) {
 }
 
 func (s *Service) createDatabaseSnapshot(ctx context.Context, stagingPath string) (string, string, error) {
-	if s.db == nil {
-		return "", "", fmt.Errorf("sqlite database is not available")
+	if s.db == nil || strings.TrimSpace(s.databasePath) == "" || s.databasePath == ":memory:" {
+		return "", "", nil
 	}
-	if strings.TrimSpace(s.databasePath) == "" || s.databasePath == ":memory:" {
-		return "", "", fmt.Errorf("sqlite database path is not configured for backup")
+	if !filepath.IsAbs(s.databasePath) {
+		return "", "", nil
 	}
 
-	const relPath = "flowpanel.db"
-	snapshotPath := filepath.Join(stagingPath, relPath)
+	relPath, ok := archiveRelativePath(s.dataPath, s.databasePath)
+	if !ok {
+		return "", "", nil
+	}
+
+	snapshotPath := filepath.Join(stagingPath, filepath.Base(relPath))
 	statement := fmt.Sprintf("VACUUM INTO %s", sqliteStringLiteral(snapshotPath))
 	if _, err := s.db.ExecContext(ctx, statement); err != nil {
 		return "", "", fmt.Errorf("create sqlite backup snapshot: %w", err)
