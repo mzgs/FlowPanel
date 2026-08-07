@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net"
 	stdhttp "net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -812,7 +813,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 	})
 
-	phpMyAdminHandler := RequirePanelAuth(app)(newPHPMyAdminRedirectHandler(app))
+	phpMyAdminHandler := RequirePanelAuth(app)(newPHPMyAdminProxyHandler(app))
 	router.Handle("/phpmyadmin", phpMyAdminHandler)
 	router.Handle("/phpmyadmin/*", phpMyAdminHandler)
 	domainPreviewHandler := RequirePanelAuth(app)(newDomainLivePreviewHandler(app))
@@ -841,7 +842,7 @@ func parseSystemHistoryRange(value string) (time.Duration, bool) {
 	}
 }
 
-func newPHPMyAdminRedirectHandler(app *app.App) stdhttp.Handler {
+func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if app.PHPMyAdmin == nil {
 			stdhttp.Error(w, "phpMyAdmin is not configured.", stdhttp.StatusServiceUnavailable)
@@ -870,13 +871,53 @@ func newPHPMyAdminRedirectHandler(app *app.App) stdhttp.Handler {
 			return
 		}
 
-		target, err := phpMyAdminExternalURL(app.Config.PHPMyAdminAddr, r.Host, strings.TrimPrefix(r.URL.Path, "/phpmyadmin"))
-		if err != nil {
-			stdhttp.Error(w, "phpMyAdmin URL is not configured.", stdhttp.StatusInternalServerError)
+		if r.URL.Path == "/phpmyadmin" {
+			stdhttp.Redirect(w, r, "/phpmyadmin/", stdhttp.StatusTemporaryRedirect)
 			return
 		}
-		target.RawQuery = r.URL.RawQuery
-		stdhttp.Redirect(w, r, target.String(), stdhttp.StatusTemporaryRedirect)
+
+		target, err := phpMyAdminUpstreamURL(app.Config.PHPMyAdminAddr)
+		if err != nil {
+			stdhttp.Error(w, "phpMyAdmin upstream is not configured.", stdhttp.StatusInternalServerError)
+			return
+		}
+		publicHost := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
+		if publicHost == "" {
+			publicHost = r.Host
+		}
+		publicScheme := firstForwardedValue(r.Header.Get("X-Forwarded-Proto"))
+		if publicScheme != "http" && publicScheme != "https" {
+			publicScheme = "http"
+			if r.TLS != nil {
+				publicScheme = "https"
+			}
+		}
+
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.ErrorHandler = func(w stdhttp.ResponseWriter, _ *stdhttp.Request, proxyErr error) {
+			app.Logger.Error("proxy phpmyadmin failed", zap.Error(proxyErr))
+			stdhttp.Error(w, "phpMyAdmin is unavailable.", stdhttp.StatusBadGateway)
+		}
+		proxy.ModifyResponse = func(response *stdhttp.Response) error {
+			if location := strings.TrimSpace(response.Header.Get("Location")); location != "" {
+				response.Header.Set("Location", rewritePHPMyAdminLocation(location, target, publicHost))
+			}
+			return nil
+		}
+
+		originalDirector := proxy.Director
+		proxy.Director = func(request *stdhttp.Request) {
+			originalDirector(request)
+			request.URL.Path = strings.TrimPrefix(r.URL.Path, "/phpmyadmin")
+			if request.URL.Path == "" {
+				request.URL.Path = "/"
+			}
+			request.URL.RawPath = ""
+			request.Header.Set("X-Forwarded-Host", publicHost)
+			request.Header.Set("X-Forwarded-Prefix", "/phpmyadmin")
+			request.Header.Set("X-Forwarded-Proto", publicScheme)
+		}
+		proxy.ServeHTTP(w, r)
 	})
 }
 
@@ -914,35 +955,41 @@ func currentPanelURL(ctx context.Context, app *app.App) (string, error) {
 	return record.PanelURL, nil
 }
 
-func phpMyAdminExternalURL(listenAddr, requestHost, requestPath string) (*url.URL, error) {
+func phpMyAdminUpstreamURL(listenAddr string) (*url.URL, error) {
 	listenHost, listenPort, err := splitHostPortDefault(listenAddr)
 	if err != nil {
 		return nil, err
-	}
-	requestHostOnly, _, err := splitHostPortDefault(requestHost)
-	if err != nil {
-		requestHostOnly = strings.TrimSpace(requestHost)
 	}
 
 	host := listenHost
 	switch host {
 	case "", "0.0.0.0", "::":
-		host = requestHostOnly
-	}
-	if host == "" {
 		host = "localhost"
-	}
-
-	pathValue := "/" + strings.TrimPrefix(strings.TrimSpace(requestPath), "/")
-	if pathValue == "/" {
-		pathValue = "/"
 	}
 
 	return &url.URL{
 		Scheme: "http",
 		Host:   net.JoinHostPort(host, listenPort),
-		Path:   pathValue,
 	}, nil
+}
+
+func rewritePHPMyAdminLocation(location string, upstream *url.URL, requestHost string) string {
+	parsed, err := url.Parse(location)
+	if err != nil || (parsed.Host == "" && !strings.HasPrefix(parsed.Path, "/")) {
+		return location
+	}
+	if strings.HasPrefix(parsed.Path, "/phpmyadmin/") {
+		return location
+	}
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, upstream.Host) && !strings.EqualFold(parsed.Host, requestHost) {
+		return location
+	}
+
+	pathValue := parsed.EscapedPath()
+	if pathValue == "" {
+		pathValue = "/"
+	}
+	return "/phpmyadmin" + pathValue + parsedQueryAndFragment(parsed)
 }
 
 func splitHostPortDefault(address string) (string, string, error) {
