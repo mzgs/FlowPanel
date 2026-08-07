@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 const maxEditableFileSize int64 = 1 << 20
@@ -1166,6 +1168,20 @@ func extractArchiveToDirectory(archivePath string, archiveName string, destinati
 		defer gzipReader.Close()
 
 		return extractTarStream(gzipReader, destinationPath)
+	case "tar.zst":
+		file, err := os.Open(archivePath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		zstdReader, err := zstd.NewReader(file)
+		if err != nil {
+			return ErrInvalidArchive
+		}
+		defer zstdReader.Close()
+
+		return extractTarStream(zstdReader, destinationPath)
 	case "tar":
 		file, err := os.Open(archivePath)
 		if err != nil {
@@ -1192,6 +1208,8 @@ func detectArchiveFormat(fileName string) string {
 	switch {
 	case strings.HasSuffix(normalized, ".tar.gz"), strings.HasSuffix(normalized, ".tgz"):
 		return "tar.gz"
+	case strings.HasSuffix(normalized, ".tar.zst"), strings.HasSuffix(normalized, ".tzst"):
+		return "tar.zst"
 	case strings.HasSuffix(normalized, ".tar"):
 		return "tar"
 	case strings.HasSuffix(normalized, ".zip"):

@@ -269,6 +269,8 @@ function isExtractableArchive(item: FileEntry) {
   return (
     normalizedName.endsWith(".tar.gz") ||
     normalizedName.endsWith(".tgz") ||
+    normalizedName.endsWith(".tar.zst") ||
+    normalizedName.endsWith(".tzst") ||
     normalizedName.endsWith(".tar") ||
     normalizedName.endsWith(".zip")
   );

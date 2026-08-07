@@ -12,6 +12,7 @@ require (
 	github.com/darkweak/souin v1.7.7
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/goftp/server v0.0.0-20200708154336-f64f7c2d8a42
+	github.com/klauspost/compress v1.18.7
 	github.com/mholt/caddy-ratelimit v0.1.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v4 v4.26.2
@@ -110,7 +111,6 @@ require (
 	github.com/jlaffaye/ftp v0.2.0 // indirect
 	github.com/kaptinlin/go-i18n v0.1.4 // indirect
 	github.com/kaptinlin/jsonschema v0.4.6 // indirect
-	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
