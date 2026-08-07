@@ -724,6 +724,13 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 				"system": systemstatus.Inspect(r.Context()),
 			})
 		})
+		diskStatusHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			scanCtx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+			defer cancel()
+			writeJSON(w, stdhttp.StatusOK, map[string]any{
+				"disk": systemstatus.InspectDisk(scanCtx),
+			})
+		})
 		panelUpdateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			status, err := inspectPanelUpdate(r.Context(), app.Version)
 			if err != nil {
@@ -788,6 +795,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		})
 		r.Method(stdhttp.MethodGet, "/system", systemStatusHandler)
 		r.Method(stdhttp.MethodHead, "/system", systemStatusHandler)
+		r.Method(stdhttp.MethodGet, "/system/disk", diskStatusHandler)
+		r.Method(stdhttp.MethodHead, "/system/disk", diskStatusHandler)
 		r.Method(stdhttp.MethodGet, "/panel/update", panelUpdateHandler)
 		r.Method(stdhttp.MethodHead, "/panel/update", panelUpdateHandler)
 		r.Method(stdhttp.MethodPost, "/panel/update", panelUpdateStartHandler)

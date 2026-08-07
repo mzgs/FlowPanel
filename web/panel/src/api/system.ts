@@ -29,6 +29,26 @@ export type SystemStatus = {
 
 export type SystemHistoryRange = "1h" | "6h" | "1d";
 
+export type DiskSnapshot = {
+  mounts: Array<{
+    device: string;
+    mountpoint: string;
+    filesystem: string;
+    total_bytes: number;
+    used_bytes: number;
+    free_bytes: number;
+    used_percent: number;
+  }>;
+  largest_files: Array<{
+    path: string;
+    size_bytes: number;
+    modified_at: string;
+  }>;
+  scanned_path: string;
+  scanned_at: string;
+  scan_complete: boolean;
+};
+
 export type PanelUpdateStatus = {
   current_version: string;
   latest_version?: string;
@@ -102,6 +122,17 @@ export async function fetchSystemHistory(range: SystemHistoryRange): Promise<Sys
 
   const payload = await parseSystemResponse<SystemHistoryPayload>(response);
   return payload.samples;
+}
+
+export async function fetchDiskSnapshot(signal?: AbortSignal): Promise<DiskSnapshot> {
+  const response = await fetch("/api/system/disk", {
+    credentials: "include",
+    cache: "no-store",
+    signal,
+  });
+
+  const payload = await parseSystemResponse<{ disk: DiskSnapshot }>(response);
+  return payload.disk;
 }
 
 export async function fetchPanelUpdate(): Promise<PanelUpdateStatus> {

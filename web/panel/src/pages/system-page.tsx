@@ -20,6 +20,7 @@ import {
 } from "@/api/task-manager";
 import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { FirewallPanel } from "@/components/firewall-panel";
+import { DiskPanel } from "@/components/disk-panel";
 import { PageHeader } from "@/components/page-header";
 import {
   Clock,
@@ -55,7 +56,7 @@ import { toast } from "sonner";
 const refreshIntervalMs = 10_000;
 const systemStatusRefreshIntervalMs = 5_000;
 
-type TaskManagerSection = "processes" | "services" | "startup" | "users" | "scheduled" | "monitor" | "firewall";
+type TaskManagerSection = "processes" | "services" | "startup" | "users" | "scheduled" | "monitor" | "disk" | "firewall";
 
 const sectionMeta: Array<{
   id: TaskManagerSection;
@@ -68,6 +69,7 @@ const sectionMeta: Array<{
   { id: "users", label: "Users", description: "Review local accounts and active sessions." },
   { id: "scheduled", label: "Scheduled Tasks", description: "Track scheduled jobs and recent execution state." },
   { id: "monitor", label: "Monitor", description: "Track live network, disk, CPU, and RAM activity." },
+  { id: "disk", label: "Disk", description: "Review mounted volumes and find the files using the most space." },
   { id: "firewall", label: "Firewall", description: "Manage inbound protection and open or close custom ports." },
 ] as const;
 
@@ -964,6 +966,7 @@ export function TaskManagerPage() {
     users: snapshot?.users.length || 0,
     scheduled: snapshot?.scheduled_tasks.length || 0,
     monitor: 0,
+    disk: 0,
     firewall: 0,
   };
 
@@ -1020,7 +1023,7 @@ export function TaskManagerPage() {
   }
 
   const currentSection = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
-  const tableSectionContent: Record<Exclude<TaskManagerSection, "monitor" | "firewall">, ReactNode> = {
+  const tableSectionContent: Record<Exclude<TaskManagerSection, "monitor" | "disk" | "firewall">, ReactNode> = {
     processes: <ProcessesTable processes={filtered.processes} pendingAction={pendingAction} onTerminate={handleTerminate} />,
     services: <ServicesTable services={filtered.services} pendingAction={pendingAction} onAction={handleServiceAction} />,
     startup: <StartupItemsTable items={filtered.startup} pendingAction={pendingAction} onAction={handleStartupAction} />,
@@ -1028,6 +1031,7 @@ export function TaskManagerPage() {
     scheduled: <ScheduledTasksTable tasks={filtered.scheduled} />,
   };
   const monitorActive = activeSection === "monitor";
+  const diskActive = activeSection === "disk";
   const firewallActive = activeSection === "firewall";
 
   return (
@@ -1086,7 +1090,7 @@ export function TaskManagerPage() {
               <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">{currentSection.label}</div>
               <div className="text-sm text-[var(--app-text-muted)]">{currentSection.description}</div>
             </div>
-            {monitorActive || firewallActive ? null : (
+            {monitorActive || diskActive || firewallActive ? null : (
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <label className="relative min-w-0 sm:w-[20rem]">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1122,7 +1126,7 @@ export function TaskManagerPage() {
                     )}
                   >
                     <span>{section.label}</span>
-                    {section.id === "monitor" || section.id === "firewall" ? null : (
+                    {section.id === "monitor" || section.id === "disk" || section.id === "firewall" ? null : (
                       <span className="rounded bg-black/10 px-1.5 py-0.5 text-[11px]">{counts[section.id]}</span>
                     )}
                   </button>
@@ -1131,7 +1135,7 @@ export function TaskManagerPage() {
             </div>
           </div>
 
-          {monitorActive || firewallActive ? null : (
+          {monitorActive || diskActive || firewallActive ? null : (
             <div className="px-4 py-3">
               {loading && !snapshot ? (
                 <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
@@ -1164,6 +1168,7 @@ export function TaskManagerPage() {
             </section>
           )
         ) : null}
+        {diskActive ? <DiskPanel /> : null}
       </div>
     </div>
   );
