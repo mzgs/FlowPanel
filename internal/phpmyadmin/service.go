@@ -29,6 +29,10 @@ const (
 	versionMetadataFile = ".flowpanel-version"
 	passwordBytesLength = 24
 	runtimeDirPerm      = 0o1777
+	panelAutoLoginMark  = "FlowPanel panel-auth auto-login"
+
+	PanelUserHeader     = "X-FlowPanel-PhpMyAdmin-User"
+	PanelPasswordHeader = "X-FlowPanel-PhpMyAdmin-Password"
 )
 
 var (
@@ -47,6 +51,7 @@ type Manager interface {
 	Install(context.Context) error
 	Remove(context.Context) error
 	ImportTheme(context.Context, io.Reader) (Status, error)
+	EnsurePanelAutoLogin(context.Context) error
 }
 
 type Status struct {
@@ -191,6 +196,28 @@ func (s *Service) Remove(context.Context) error {
 	)
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove phpmyadmin path: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) EnsurePanelAutoLogin(ctx context.Context) error {
+	status := s.Status(ctx)
+	if !status.Installed || status.InstallPath == "" {
+		return errors.New("phpmyadmin must be installed before configuring panel auto-login")
+	}
+
+	configPath := filepath.Join(status.InstallPath, "config.inc.php")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read phpmyadmin config: %w", err)
+	}
+	updated := addPanelAutoLoginConfig(string(content))
+	if updated == string(content) {
+		return nil
+	}
+	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write phpmyadmin panel auto-login config: %w", err)
 	}
 
 	return nil
@@ -480,12 +507,38 @@ func writeRuntimeConfig(installPath string) error {
 
 	updated = strings.TrimRight(updated, "\n") + "\n\n" +
 		fmt.Sprintf("$cfg['TempDir'] = '%s';\n", phpConfigPath(filepath.Join(installPath, "tmp")))
+	updated = addPanelAutoLoginConfig(updated)
 
 	if err := os.WriteFile(filepath.Join(installPath, "config.inc.php"), []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write phpmyadmin config: %w", err)
 	}
 
 	return nil
+}
+
+func addPanelAutoLoginConfig(content string) string {
+	if strings.Contains(content, panelAutoLoginMark) {
+		return content
+	}
+
+	snippet := `
+/* FlowPanel panel-auth auto-login. */
+$flowPanelPmaUser = $_SERVER['HTTP_X_FLOWPANEL_PHPMYADMIN_USER'] ?? '';
+$flowPanelPmaPassword = $_SERVER['HTTP_X_FLOWPANEL_PHPMYADMIN_PASSWORD'] ?? '';
+if ($flowPanelPmaUser !== '' && $flowPanelPmaPassword !== '') {
+    $cfg['Servers'][$i]['auth_type'] = 'config';
+    $cfg['Servers'][$i]['user'] = $flowPanelPmaUser;
+    $cfg['Servers'][$i]['password'] = $flowPanelPmaPassword;
+}
+unset($flowPanelPmaUser, $flowPanelPmaPassword);
+`
+	content = strings.TrimRight(content, "\n")
+	if strings.HasSuffix(strings.TrimSpace(content), "?>") {
+		index := strings.LastIndex(content, "?>")
+		return strings.TrimRight(content[:index], "\n") + "\n" + snippet + "?>\n"
+	}
+
+	return content + "\n" + snippet
 }
 
 func ensureRuntimeDirectories(installPath string) error {

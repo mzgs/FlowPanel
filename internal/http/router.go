@@ -30,6 +30,7 @@ import (
 	eventlog "flowpanel/internal/events"
 	"flowpanel/internal/ftp"
 	"flowpanel/internal/googledrive"
+	"flowpanel/internal/phpmyadmin"
 	"flowpanel/internal/settings"
 	"flowpanel/internal/systemstatus"
 	"flowpanel/web"
@@ -869,6 +870,25 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 			stdhttp.Redirect(w, r, "/phpmyadmin/", stdhttp.StatusTemporaryRedirect)
 			return
 		}
+		if r.URL.Path == "/phpmyadmin/" || r.URL.Path == "/phpmyadmin/index.php" {
+			if err := app.PHPMyAdmin.EnsurePanelAutoLogin(r.Context()); err != nil {
+				app.Logger.Error("configure phpmyadmin panel auto-login failed", zap.Error(err))
+				stdhttp.Error(w, "phpMyAdmin auto-login could not be configured.", stdhttp.StatusInternalServerError)
+				return
+			}
+		}
+
+		phpMyAdminPath := strings.TrimPrefix(r.URL.Path, "/phpmyadmin")
+		phpMyAdminExtension := path.Ext(phpMyAdminPath)
+		databasePassword := ""
+		if app.MariaDB != nil && (phpMyAdminExtension == "" || strings.EqualFold(phpMyAdminExtension, ".php")) {
+			password, configured, passwordErr := app.MariaDB.RootPassword(r.Context())
+			if passwordErr != nil {
+				app.Logger.Warn("read mariadb root password for phpmyadmin auto-login failed", zap.Error(passwordErr))
+			} else if configured {
+				databasePassword = password
+			}
+		}
 
 		target, err := phpMyAdminUpstreamURL(app.Config.PHPMyAdminAddr)
 		if err != nil {
@@ -902,7 +922,7 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 		originalDirector := proxy.Director
 		proxy.Director = func(request *stdhttp.Request) {
 			originalDirector(request)
-			request.URL.Path = strings.TrimPrefix(r.URL.Path, "/phpmyadmin")
+			request.URL.Path = phpMyAdminPath
 			if request.URL.Path == "" {
 				request.URL.Path = "/"
 			}
@@ -911,6 +931,12 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 			request.Header.Set("X-Forwarded-Prefix", "/phpmyadmin")
 			request.Header.Set("X-Forwarded-Proto", publicScheme)
 			request.Header.Set("Scheme", publicScheme)
+			request.Header.Del(phpmyadmin.PanelUserHeader)
+			request.Header.Del(phpmyadmin.PanelPasswordHeader)
+			if databasePassword != "" {
+				request.Header.Set(phpmyadmin.PanelUserHeader, "root")
+				request.Header.Set(phpmyadmin.PanelPasswordHeader, databasePassword)
+			}
 		}
 		proxy.ServeHTTP(w, r)
 	})
