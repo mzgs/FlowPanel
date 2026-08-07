@@ -144,7 +144,7 @@ func errorsIsRuntimeNotStarted(err error) bool {
 func rewriteDomainPreviewResponse(response *stdhttp.Response, hostname, prefix string) error {
 	response.Header.Del("Set-Cookie")
 	response.Header.Set("Cache-Control", "no-store")
-	response.Header.Set("Content-Security-Policy", "sandbox allow-scripts; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src * data: blob:; img-src * data: blob:; media-src * data: blob:; style-src * 'unsafe-inline'; frame-ancestors 'self';")
+	response.Header.Set("Content-Security-Policy", "sandbox allow-forms allow-scripts; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src * data: blob:; img-src * data: blob:; media-src * data: blob:; style-src * 'unsafe-inline'; frame-ancestors 'self';")
 	response.Header.Set("X-Frame-Options", "SAMEORIGIN")
 	if location := strings.TrimSpace(response.Header.Get("Location")); location != "" {
 		response.Header.Set("Location", rewriteDomainPreviewLocation(location, hostname, prefix))
