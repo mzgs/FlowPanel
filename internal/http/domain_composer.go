@@ -55,7 +55,11 @@ func runDomainComposerAction(
 		return domain.Record{}, false, fmt.Errorf("inspect composer manifest: %w", err)
 	}
 
-	composerPath, err := exec.LookPath("composer")
+	if err := ensurePHPDocumentRootWorkerOwnership(ctx, php, domains, record); err != nil {
+		return record, false, fmt.Errorf("prepare composer file ownership: %w", err)
+	}
+
+	composerPath, err := composerExecutablePath()
 	if err != nil {
 		return domain.Record{}, false, errComposerUnavailable
 	}
@@ -112,11 +116,47 @@ func runDomainComposerAction(
 }
 
 func composerCommandEnvironment() []string {
-	env := append(os.Environ(), "COMPOSER_ALLOW_SUPERUSER=1")
+	env := os.Environ()
+	pathValue := strings.TrimSpace(os.Getenv("PATH"))
+	if pathValue == "" {
+		pathValue = "/usr/local/bin:/usr/bin:/bin"
+	} else if !pathListContains(pathValue, "/usr/local/bin") {
+		pathValue = "/usr/local/bin" + string(os.PathListSeparator) + pathValue
+	}
+	env = setCommandEnvironmentValue(env, "PATH", pathValue)
+	env = setCommandEnvironmentValue(env, "COMPOSER_ALLOW_SUPERUSER", "1")
 	if strings.TrimSpace(os.Getenv("HOME")) == "" {
 		if currentUser, err := user.Current(); err == nil && strings.TrimSpace(currentUser.HomeDir) != "" {
-			env = append(env, "HOME="+strings.TrimSpace(currentUser.HomeDir))
+			env = setCommandEnvironmentValue(env, "HOME", strings.TrimSpace(currentUser.HomeDir))
 		}
 	}
 	return env
+}
+
+func composerExecutablePath() (string, error) {
+	const managedPath = "/usr/local/bin/composer"
+	if info, err := os.Stat(managedPath); err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
+		return managedPath, nil
+	}
+	return exec.LookPath("composer")
+}
+
+func pathListContains(list string, target string) bool {
+	for _, entry := range filepath.SplitList(list) {
+		if filepath.Clean(entry) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func setCommandEnvironmentValue(env []string, key string, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			result = append(result, entry)
+		}
+	}
+	return append(result, prefix+value)
 }

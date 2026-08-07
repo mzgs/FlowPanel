@@ -198,7 +198,7 @@ func installComposerTemplate(
 	definition domainTemplateDefinition,
 	input domainTemplateInstallInput,
 ) (bool, error) {
-	composerPath, err := exec.LookPath("composer")
+	composerPath, err := composerExecutablePath()
 	if err != nil {
 		return false, errComposerUnavailable
 	}
@@ -312,7 +312,7 @@ func finalizeComposerTemplateInstall(
 }
 
 func finalizeSymfonyInstall(ctx context.Context, php phpenv.Manager, phpVersion string, stagePath string) error {
-	composerPath, err := exec.LookPath("composer")
+	composerPath, err := composerExecutablePath()
 	if err != nil {
 		return errComposerUnavailable
 	}

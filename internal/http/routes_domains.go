@@ -826,6 +826,11 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
+		if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+			a.app.Logger.Error("apply php worker ownership after github deploy failed", zap.String("hostname", hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "github deploy finished but php-fpm ownership could not be updated"})
+			return
+		}
 
 		a.mutationEvent(r.Context(), "domains", "github_deploy", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Deployed %q from GitHub.", record.Hostname))
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true, "action": result.Action})
@@ -1550,6 +1555,11 @@ func (a *apiRoutes) githubWebhookHandler() stdhttp.Handler {
 			a.app.Logger.Error("github webhook deploy failed", zap.String("hostname", hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Push webhook deployment failed for %q.", record.Hostname))
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+			a.app.Logger.Error("apply php worker ownership after github webhook deploy failed", zap.String("hostname", hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "github deploy finished but php-fpm ownership could not be updated"})
 			return
 		}
 
