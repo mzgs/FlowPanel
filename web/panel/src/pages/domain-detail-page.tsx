@@ -528,10 +528,6 @@ const devToolActions: DomainActionItem[] = [
     title: "Github",
     icon: GitBranch,
   },
-  {
-    title: "Website Importing",
-    icon: Download,
-  },
 ];
 const nodeJSDevToolAction: DomainActionItem = {
   title: "npm install",
