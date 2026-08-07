@@ -58,6 +58,11 @@ type UpdatePermissionsInput = {
 
 type FileApiError = Error;
 
+export type FileUploadProgress = {
+  loaded: number;
+  total: number;
+};
+
 export async function fetchFiles(path = ""): Promise<FileListing> {
   const response = await fetch(`/api/files?path=${encodeURIComponent(path)}`, {
     credentials: "include",
@@ -120,22 +125,34 @@ export async function updatePermissions(input: UpdatePermissionsInput): Promise<
   await sendJSON("/api/files/permissions", "PUT", input, "update permissions");
 }
 
-export async function uploadFiles(path: string, files: File[]): Promise<void> {
+export function uploadFiles(
+  path: string,
+  files: File[],
+  onProgress?: (progress: FileUploadProgress) => void,
+): Promise<void> {
   const formData = new FormData();
   formData.set("path", path);
   for (const file of files) {
     formData.append("files", file);
   }
 
-  const response = await fetch("/api/files/upload", {
-    method: "POST",
-    credentials: "include",
-    body: formData,
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/files/upload");
+    request.withCredentials = true;
+    request.upload.onprogress = (event) => {
+      onProgress?.({ loaded: event.loaded, total: event.lengthComputable ? event.total : 0 });
+    };
+    request.onerror = () => reject(new Error("Upload failed because of a network error."));
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        resolve();
+        return;
+      }
+      reject(parseFileApiError(request.status, request.responseText, "upload files"));
+    };
+    request.send(formData);
   });
-
-  if (!response.ok) {
-    throw await readFileApiError(response, "upload files");
-  }
 }
 
 function getDownloadUrl(path: string) {
@@ -213,10 +230,14 @@ async function sendJSON<T>(
 }
 
 async function readFileApiError(response: Response, action: string): Promise<FileApiError> {
-  let message = `${action} request failed with status ${response.status}`;
+  return parseFileApiError(response.status, await response.text(), action);
+}
+
+function parseFileApiError(status: number, body: string, action: string): FileApiError {
+  let message = `${action} request failed with status ${status}`;
 
   try {
-    const payload = (await response.json()) as { error?: unknown };
+    const payload = JSON.parse(body) as { error?: unknown };
     if (typeof payload.error === "string" && payload.error) {
       message = payload.error;
     }

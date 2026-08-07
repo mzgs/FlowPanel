@@ -49,6 +49,7 @@ import {
   uploadFiles,
   type FileEntry,
   type FileListing,
+  type FileUploadProgress,
 } from "@/api/files";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { TerminalWindow } from "@/components/terminal-window";
@@ -88,6 +89,7 @@ type ViewMode = "list" | "grid";
 type DialogMode = "folder" | "file" | "rename" | null;
 type ClipboardMode = "copy" | "move" | null;
 type FlashTone = "success" | "error";
+type UploadProgressState = FileUploadProgress & { fileCount: number };
 
 type FlashMessage = {
   tone: FlashTone;
@@ -291,6 +293,42 @@ function FlashBanner({ flash }: { flash: FlashMessage }) {
   );
 }
 
+function UploadProgressBanner({ progress }: { progress: UploadProgressState }) {
+  const percent =
+    progress.total > 0 ? Math.min(100, Math.floor((progress.loaded / progress.total) * 100)) : 0;
+  const finishing = percent === 100;
+
+  return (
+    <div className="rounded-[12px] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3">
+      <div className="flex items-center justify-between gap-3 text-[13px]">
+        <span className="font-medium text-[var(--app-text)]">
+          {finishing
+            ? "Finishing upload…"
+            : `Uploading ${progress.fileCount} file${progress.fileCount === 1 ? "" : "s"}`}
+        </span>
+        <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
+          {progress.total > 0
+            ? `${formatBytes(Math.min(progress.loaded, progress.total))} / ${formatBytes(progress.total)} · ${percent}%`
+            : formatBytes(progress.loaded)}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="File upload progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--app-surface-muted)]"
+      >
+        <div
+          className="h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-200"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({ searchActive }: { searchActive: boolean }) {
   return (
     <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 px-6 text-center">
@@ -347,6 +385,7 @@ export function FileManager({
   const [dialogValue, setDialogValue] = useState("");
   const [confirmDeletePaths, setConfirmDeletePaths] = useState<string[]>([]);
   const [flash, setFlash] = useState<FlashMessage | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
   const [clipboardMode, setClipboardMode] = useState<ClipboardMode>(null);
   const [clipboardPaths, setClipboardPaths] = useState<string[]>([]);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -696,7 +735,16 @@ export function FileManager({
   });
 
   const uploadMutation = useMutation({
-    mutationFn: ({ path, files }: { path: string; files: File[] }) => uploadFiles(path, files),
+    mutationFn: ({ path, files }: { path: string; files: File[] }) => {
+      const fileCount = files.length;
+      setFlash(null);
+      setUploadProgress({
+        loaded: 0,
+        total: files.reduce((total, file) => total + file.size, 0),
+        fileCount,
+      });
+      return uploadFiles(path, files, (progress) => setUploadProgress({ ...progress, fileCount }));
+    },
     onSuccess: async () => {
       await invalidateCurrentListing();
       setDropTargetPath(null);
@@ -706,6 +754,7 @@ export function FileManager({
     onError: (error) => {
       setFlash({ tone: "error", text: getErrorMessage(error, "Failed to upload files.") });
     },
+    onSettled: () => setUploadProgress(null),
   });
 
   const createArchiveMutation = useMutation({
@@ -1082,7 +1131,7 @@ export function FileManager({
 
   function handleUploadSelection(files: FileList | null, targetPath = currentPath) {
     closeContextMenu();
-    if (!files || files.length === 0) {
+    if (!files || files.length === 0 || uploadMutation.isPending) {
       return;
     }
 
@@ -1373,7 +1422,10 @@ export function FileManager({
                 <FilePlus2 className="h-4 w-4" />
                 New file
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => uploadInputRef.current?.click()}>
+              <DropdownMenuItem
+                disabled={uploadMutation.isPending}
+                onSelect={() => uploadInputRef.current?.click()}
+              >
                 <Upload className="h-4 w-4" />
                 Upload
               </DropdownMenuItem>
@@ -1396,6 +1448,7 @@ export function FileManager({
       <div className="px-4 pb-6 pt-4 sm:px-6 lg:px-8">
         <div className="space-y-4">
           {flash ? <FlashBanner flash={flash} /> : null}
+          {uploadProgress ? <UploadProgressBanner progress={uploadProgress} /> : null}
 
           <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
             <div className="px-4 pb-4 pt-3 md:px-5">
@@ -1486,6 +1539,7 @@ export function FileManager({
                       aria-label="Upload"
                       title="Upload"
                       onClick={() => uploadInputRef.current?.click()}
+                      disabled={uploadMutation.isPending}
                     >
                       <Upload className="h-4 w-4" />
                       <span className="sr-only">Upload</span>
