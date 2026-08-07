@@ -641,7 +641,12 @@ func runGitCommand(
 	token string,
 	args ...string,
 ) (string, error) {
-	cmd := exec.CommandContext(ctx, gitPath, args...)
+	safeDirectory, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve git working directory: %w", err)
+	}
+	commandArgs := append([]string{"-c", "safe.directory=" + safeDirectory}, args...)
+	cmd := exec.CommandContext(ctx, gitPath, commandArgs...)
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	if strings.TrimSpace(token) != "" {
