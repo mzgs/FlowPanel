@@ -299,32 +299,30 @@ function UploadProgressBanner({ progress }: { progress: UploadProgressState }) {
   const finishing = percent === 100;
 
   return (
-    <div className="rounded-[12px] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3">
-      <div className="flex items-center justify-between gap-3 text-[13px]">
-        <span className="font-medium text-[var(--app-text)]">
-          {finishing
-            ? "Finishing upload…"
-            : `Uploading ${progress.fileCount} file${progress.fileCount === 1 ? "" : "s"}`}
-        </span>
-        <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
-          {progress.total > 0
-            ? `${formatBytes(Math.min(progress.loaded, progress.total))} / ${formatBytes(progress.total)} · ${percent}%`
-            : formatBytes(progress.loaded)}
-        </span>
-      </div>
+    <div className="flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
+      <span className="shrink-0 font-medium text-[var(--app-text)]">
+        {finishing
+          ? "Finishing…"
+          : `Uploading ${progress.fileCount} file${progress.fileCount === 1 ? "" : "s"}`}
+      </span>
       <div
         role="progressbar"
         aria-label="File upload progress"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent}
-        className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--app-surface-muted)]"
+        className="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-[var(--app-surface-muted)]"
       >
         <div
           className="h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-200"
           style={{ width: `${percent}%` }}
         />
       </div>
+      <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
+        {progress.total > 0
+          ? `${formatBytes(Math.min(progress.loaded, progress.total))} / ${formatBytes(progress.total)} · ${percent}%`
+          : formatBytes(progress.loaded)}
+      </span>
     </div>
   );
 }
