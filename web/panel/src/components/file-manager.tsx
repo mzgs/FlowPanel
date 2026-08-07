@@ -238,7 +238,21 @@ function getGridPreviewTone(item: FileEntry) {
   };
 }
 
-function getBreadcrumbs(listing: FileListing | undefined) {
+function normalizePath(path: string) {
+  return path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+function pathWithinRoot(path: string, rootPath: string) {
+  const normalizedPath = normalizePath(path);
+  const normalizedRoot = normalizePath(rootPath);
+  return (
+    !normalizedRoot ||
+    normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(`${normalizedRoot}/`)
+  );
+}
+
+function getBreadcrumbs(listing: FileListing | undefined, rootPath = "") {
   const rootName = listing?.root_name || "Sites";
   const breadcrumbs = [{ label: rootName, path: "" }];
 
@@ -253,7 +267,13 @@ function getBreadcrumbs(listing: FileListing | undefined) {
     breadcrumbs.push({ label: segment, path: cursor });
   }
 
-  return breadcrumbs;
+  const normalizedRoot = normalizePath(rootPath);
+  if (!normalizedRoot) {
+    return breadcrumbs;
+  }
+
+  const rootIndex = breadcrumbs.findIndex((crumb) => crumb.path === normalizedRoot);
+  return rootIndex < 0 ? [] : breadcrumbs.slice(rootIndex);
 }
 
 function pathLabel(path: string) {
@@ -351,12 +371,14 @@ function EmptyState({ searchActive }: { searchActive: boolean }) {
 
 type FileManagerProps = {
   initialPath?: string;
+  rootPath?: string;
   persistLastPath?: boolean;
   className?: string;
 };
 
 export function FileManager({
   initialPath,
+  rootPath = "",
   persistLastPath = true,
   className,
 }: FileManagerProps) {
@@ -423,6 +445,15 @@ export function FileManager({
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    if (!flash || flash.tone === "error") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setFlash(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [flash]);
+
   const listingQuery = useQuery({
     queryKey: ["files", currentPath],
     queryFn: () => fetchFiles(currentPath),
@@ -457,7 +488,8 @@ export function FileManager({
   const confirmDeleteSingleName = confirmDeleteSinglePath
     ? itemMap.get(confirmDeleteSinglePath)?.name ?? confirmDeleteSinglePath
     : null;
-  const breadcrumbs = getBreadcrumbs(listing);
+  const normalizedRootPath = normalizePath(rootPath);
+  const breadcrumbs = getBreadcrumbs(listing, normalizedRootPath);
   const clipboardReady = clipboardPaths.length > 0 && clipboardMode !== null;
   const canDownloadSelection =
     selectedItems.length > 0 &&
@@ -535,7 +567,7 @@ export function FileManager({
         window.localStorage.removeItem(LAST_PATH_STORAGE_KEY);
       }
 
-      setCurrentPath("");
+      setCurrentPath(normalizedRootPath);
       setSearch("");
       clearSelection();
 
@@ -543,7 +575,7 @@ export function FileManager({
         return;
       }
     }
-  }, [currentPath, listingQuery.error, listingQuery.isError, persistLastPath]);
+  }, [currentPath, listingQuery.error, listingQuery.isError, normalizedRootPath, persistLastPath]);
 
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
@@ -880,6 +912,10 @@ export function FileManager({
   }
 
   function handleNavigate(path: string) {
+    if (!pathWithinRoot(path, normalizedRootPath)) {
+      return;
+    }
+
     closeContextMenu();
     setCurrentPath(path);
     setSearch("");
@@ -1481,8 +1517,11 @@ export function FileManager({
                       className="size-8"
                       aria-label="Up"
                       title="Up"
-                      onClick={() => handleNavigate(listing?.parent_path || "")}
-                      disabled={!listing?.parent_path}
+                      onClick={() => handleNavigate(listing?.parent_path || normalizedRootPath)}
+                      disabled={
+                        !listing?.parent_path ||
+                        !pathWithinRoot(listing.parent_path, normalizedRootPath)
+                      }
                     >
                       <ArrowUp className="h-4 w-4" />
                       <span className="sr-only">Up</span>
