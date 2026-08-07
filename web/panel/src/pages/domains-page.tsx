@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Download,
+  Eye,
   ExternalLink,
   FolderOpen,
   LoaderCircle,
@@ -22,6 +23,7 @@ import {
   createDomain,
   deleteDomain,
   fetchDomains,
+  getDomainLivePreviewUrl,
   getDomainSiteUrl,
   updateDomain,
   type DomainApiError,
@@ -1005,6 +1007,24 @@ export function DomainsPage() {
                                     >
                                       <ExternalLink className="h-3 w-3" />
                                       Visit
+                                    </a>
+                                  </Badge>
+                                  <Badge
+                                    asChild
+                                    variant="outline"
+                                    className="rounded-full"
+                                  >
+                                    <a
+                                      href={getDomainLivePreviewUrl(
+                                        domain.hostname,
+                                      )}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      aria-label={`Preview ${domain.hostname} through FlowPanel`}
+                                      title="Preview through FlowPanel (DNS not required)"
+                                    >
+                                      <Eye className="h-3 w-3" />
+                                      Preview
                                     </a>
                                   </Badge>
                                 </div>

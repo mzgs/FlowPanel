@@ -614,6 +614,10 @@ export function getDomainSiteUrl(hostname: string): string {
   return `https://${hostname}`;
 }
 
+export function getDomainLivePreviewUrl(hostname: string): string {
+  return `/domain-preview/${encodeURIComponent(hostname)}/`;
+}
+
 async function readDomainMutationResponse(
   response: Response,
   action: string,

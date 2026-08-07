@@ -49,6 +49,7 @@ type Runtime struct {
 	adminTLSCertFile string
 	publicHTTPAddr   string
 	publicHTTPSAddr  string
+	previewAddr      string
 	php              phpenv.Manager
 	phpMyAdmin       phpmyadmin.Manager
 	phpMyAdminAddr   string
@@ -180,12 +181,20 @@ func (r *Runtime) Start(ctx context.Context) error {
 	if r.started {
 		return nil
 	}
+	if r.previewAddr == "" {
+		previewAddr, err := availablePreviewAddress()
+		if err != nil {
+			return err
+		}
+		r.previewAddr = previewAddr
+	}
 
 	cfg, summary, err := buildConfig(
 		r.adminListenAddr,
 		r.publicHTTPAddr,
 		r.publicHTTPSAddr,
 		r.phpMyAdminAddr,
+		r.previewAddr,
 		nil,
 		nil,
 		nil,
@@ -261,6 +270,7 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL st
 			r.publicHTTPAddr,
 			r.publicHTTPSAddr,
 			r.phpMyAdminAddr,
+			r.previewAddr,
 			records,
 			phpConfig,
 			phpMyAdminConfig,
@@ -330,6 +340,32 @@ func (r *Runtime) Stop(ctx context.Context) error {
 	r.logger.Info("embedded caddy runtime stopped")
 
 	return nil
+}
+
+func (r *Runtime) PreviewAddress() (string, error) {
+	if r == nil {
+		return "", ErrRuntimeNotStarted
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.started || r.previewAddr == "" {
+		return "", ErrRuntimeNotStarted
+	}
+
+	return r.previewAddr, nil
+}
+
+func availablePreviewAddress() (string, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", fmt.Errorf("reserve domain preview listener: %w", err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		return "", fmt.Errorf("release domain preview listener reservation: %w", err)
+	}
+	return address, nil
 }
 
 func (r *Runtime) ClearDomainCache(ctx context.Context, hostname string) error {
@@ -509,7 +545,8 @@ func buildConfig(
 	adminListenAddr,
 	publicHTTPAddr,
 	publicHTTPSAddr,
-	phpMyAdminAddr string,
+	phpMyAdminAddr,
+	previewAddr string,
 	records []domain.Record,
 	phpConfig *phpRouteConfig,
 	phpMyAdminConfig *phpMyAdminRouteConfig,
@@ -545,30 +582,36 @@ func buildConfig(
 			return nil, configSummary{}, fmt.Errorf("parse public HTTPS listener: %w", err)
 		}
 
-		routes := make(caddyhttp.RouteList, 0, len(records)*2+1)
-		if panelConfig != nil {
-			routes = append(routes, routeForPanel(*panelConfig))
-			summary.activeRoutes++
-		}
+		domainRoutes := make(caddyhttp.RouteList, 0, len(records)*3)
+		previewRoutes := make(caddyhttp.RouteList, 0, len(records)*2)
 		for _, record := range records {
 			if blockRoute := securityBlockRouteForRecord(record); blockRoute != nil {
-				routes = append(routes, *blockRoute)
+				domainRoutes = append(domainRoutes, *blockRoute)
 			}
 			if blockRoute := sensitiveFileBlockRouteForRecord(record); blockRoute != nil {
-				routes = append(routes, *blockRoute)
+				domainRoutes = append(domainRoutes, *blockRoute)
+				previewRoutes = append(previewRoutes, *blockRoute)
 			}
 			route, placeholder, err := routeForRecord(record, phpConfig)
 			if err != nil {
 				return nil, configSummary{}, err
 			}
 
-			routes = append(routes, route)
+			domainRoutes = append(domainRoutes, route)
+			previewRoutes = append(previewRoutes, route)
 			if placeholder {
 				summary.placeholderRoutes++
-				continue
+			} else {
+				summary.activeRoutes++
 			}
+		}
+
+		routes := make(caddyhttp.RouteList, 0, len(domainRoutes)+1)
+		if panelConfig != nil {
+			routes = append(routes, routeForPanel(*panelConfig))
 			summary.activeRoutes++
 		}
+		routes = append(routes, domainRoutes...)
 
 		httpApp.HTTPSPort = httpsPort
 		httpApp.Servers["public"] = &caddyhttp.Server{
@@ -588,6 +631,18 @@ func buildConfig(
 		} else {
 			httpApp.Servers["public"].AutoHTTPS = &caddyhttp.AutoHTTPSConfig{
 				DisableRedir: true,
+			}
+		}
+
+		if len(records) > 0 && strings.TrimSpace(previewAddr) != "" {
+			httpApp.Servers["preview"] = &caddyhttp.Server{
+				Listen:            []string{previewAddr},
+				ReadHeaderTimeout: caddyv2.Duration(10 * time.Second),
+				IdleTimeout:       caddyv2.Duration(2 * time.Minute),
+				MaxHeaderBytes:    1024 * 10,
+				Routes:            previewRoutes,
+				AutoHTTPS:         &caddyhttp.AutoHTTPSConfig{Disabled: true},
+				Logs:              &caddyhttp.ServerLogConfig{},
 			}
 		}
 	}

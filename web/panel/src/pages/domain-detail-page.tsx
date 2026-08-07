@@ -28,6 +28,7 @@ import {
   fetchDomainFTPStatus,
   fetchDomainPreview,
   fetchDomains,
+  getDomainLivePreviewUrl,
   getDomainSiteUrl,
   installDomainNodeJSPackages,
   installDomainPythonRequirements,
@@ -60,6 +61,7 @@ import {
   Copy,
   Database,
   Download,
+  Eye,
   ExternalLink,
   FileCode2,
   FilePlus2,
@@ -903,6 +905,9 @@ export function DomainDetailPage() {
   const nodeJSLogsRequestRef = useRef(0);
   const wordPressDetailsRequestRef = useRef(0);
   const siteUrl = domain ? getDomainSiteUrl(domain.hostname) : "";
+  const livePreviewUrl = domain
+    ? getDomainLivePreviewUrl(domain.hostname)
+    : "";
   const wordPressDetailSection =
     wordPressSectionTab === "dashboard" ? null : wordPressSectionTab;
   const currentWordPressDetailsLoaded = wordPressDetailSection
@@ -3104,6 +3109,22 @@ export function DomainDetailPage() {
                   Visit
                 </a>
               </Badge>
+              <Badge
+                asChild
+                variant="outline"
+                className="rounded-full align-middle"
+              >
+                <a
+                  href={livePreviewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Preview ${domain.hostname} through FlowPanel`}
+                  title="Preview through FlowPanel (DNS not required)"
+                >
+                  <Eye className="h-3 w-3" />
+                  Preview
+                </a>
+              </Badge>
             </span>
           ) : (
             "Domain details"
@@ -3134,11 +3155,11 @@ export function DomainDetailPage() {
                     {domain ? (
                       <>
                         <a
-                          href={siteUrl}
+                          href={livePreviewUrl}
                           target="_blank"
                           rel="noreferrer"
-                          aria-label={`Visit ${domain.hostname}`}
-                          title={`Visit ${domain.hostname}`}
+                          aria-label={`Preview ${domain.hostname} through FlowPanel`}
+                          title="Preview through FlowPanel (DNS not required)"
                           className="group block h-full w-full"
                         >
                           {previewUrl ? (
