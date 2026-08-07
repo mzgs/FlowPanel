@@ -2,6 +2,9 @@ package httpx
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -9,7 +12,9 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"flowpanel/internal/app"
 	"flowpanel/internal/caddy"
@@ -21,6 +26,7 @@ import (
 const (
 	domainPreviewPrefix       = "/domain-preview/"
 	domainPreviewMaxBodyBytes = 8 << 20
+	domainPreviewTokenTTL     = 30 * time.Minute
 )
 
 var (
@@ -29,21 +35,7 @@ var (
 )
 
 func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
-	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		hostname := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "hostname")))
-		if app == nil || app.Domains == nil {
-			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "domains are not configured"})
-			return
-		}
-		if _, ok := app.Domains.FindByHostname(hostname); !ok {
-			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
-			return
-		}
-		if app.Caddy == nil {
-			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "embedded caddy runtime is not configured"})
-			return
-		}
-
+	serve := func(w stdhttp.ResponseWriter, r *stdhttp.Request, hostname, prefix, path string) {
 		previewAddress, err := app.Caddy.PreviewAddress()
 		if err != nil {
 			status := stdhttp.StatusBadGateway
@@ -51,12 +43,6 @@ func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
 				status = stdhttp.StatusServiceUnavailable
 			}
 			writeJSON(w, status, map[string]any{"error": "domain preview is unavailable"})
-			return
-		}
-
-		prefix := domainPreviewPrefix + url.PathEscape(hostname)
-		if r.URL.Path == prefix {
-			stdhttp.Redirect(w, r, prefix+"/", stdhttp.StatusTemporaryRedirect)
 			return
 		}
 
@@ -75,10 +61,7 @@ func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
 		proxy.Director = func(request *stdhttp.Request) {
 			originalDirector(request)
 			request.Host = hostname
-			request.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
-			if request.URL.Path == "" {
-				request.URL.Path = "/"
-			}
+			request.URL.Path = path
 			request.URL.RawPath = ""
 			request.Header.Del("Authorization")
 			request.Header.Del("Cookie")
@@ -87,7 +70,71 @@ func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
 			request.Header.Del("Accept-Encoding")
 		}
 		proxy.ServeHTTP(w, r)
+	}
+
+	var entryHandler stdhttp.Handler
+	entryHandler = RequirePanelAuth(app)(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "hostname")))
+		prefix := domainPreviewPrefix + url.PathEscape(hostname)
+		if r.URL.Path == prefix {
+			stdhttp.Redirect(w, r, prefix+"/", stdhttp.StatusTemporaryRedirect)
+			return
+		}
+		token := newDomainPreviewToken(hostname, app.Config.Session.Secret, time.Now().Add(domainPreviewTokenTTL))
+		stdhttp.Redirect(w, r, prefix+"/"+token+"/", stdhttp.StatusTemporaryRedirect)
+	}))
+
+	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "hostname")))
+		if app == nil || app.Domains == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "domains are not configured"})
+			return
+		}
+		if _, ok := app.Domains.FindByHostname(hostname); !ok {
+			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			return
+		}
+		if app.Caddy == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "embedded caddy runtime is not configured"})
+			return
+		}
+
+		basePrefix := domainPreviewPrefix + url.PathEscape(hostname)
+		remainder := strings.TrimPrefix(r.URL.Path, basePrefix)
+		if remainder == "" || remainder == "/" {
+			entryHandler.ServeHTTP(w, r)
+			return
+		}
+
+		token, path, found := strings.Cut(strings.TrimPrefix(remainder, "/"), "/")
+		if !validDomainPreviewToken(token, hostname, app.Config.Session.Secret, time.Now()) {
+			writeJSON(w, stdhttp.StatusUnauthorized, map[string]any{"error": "domain preview authorization expired"})
+			return
+		}
+		prefix := basePrefix + "/" + token
+		if !found {
+			stdhttp.Redirect(w, r, prefix+"/", stdhttp.StatusTemporaryRedirect)
+			return
+		}
+		serve(w, r, hostname, prefix, "/"+path)
 	})
+}
+
+func newDomainPreviewToken(hostname, secret string, expiresAt time.Time) string {
+	expires := strconv.FormatInt(expiresAt.Unix(), 10)
+	signature := hmac.New(sha256.New, []byte(secret))
+	_, _ = signature.Write([]byte(hostname + "\n" + expires))
+	return expires + "." + base64.RawURLEncoding.EncodeToString(signature.Sum(nil))
+}
+
+func validDomainPreviewToken(token, hostname, secret string, now time.Time) bool {
+	expires, encodedSignature, found := strings.Cut(token, ".")
+	unix, err := strconv.ParseInt(expires, 10, 64)
+	if !found || err != nil || now.After(time.Unix(unix, 0)) {
+		return false
+	}
+	expected := newDomainPreviewToken(hostname, secret, time.Unix(unix, 0))
+	return hmac.Equal([]byte(token), []byte(expected)) && encodedSignature != ""
 }
 
 func errorsIsRuntimeNotStarted(err error) bool {

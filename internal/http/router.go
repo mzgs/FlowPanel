@@ -826,7 +826,7 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 	phpMyAdminHandler := RequirePanelAuth(app)(newPHPMyAdminProxyHandler(app))
 	router.Handle("/phpmyadmin", phpMyAdminHandler)
 	router.Handle("/phpmyadmin/*", phpMyAdminHandler)
-	domainPreviewHandler := RequirePanelAuth(app)(newDomainLivePreviewHandler(app))
+	domainPreviewHandler := newDomainLivePreviewHandler(app)
 	router.Method(stdhttp.MethodGet, "/domain-preview/{hostname}", domainPreviewHandler)
 	router.Method(stdhttp.MethodHead, "/domain-preview/{hostname}", domainPreviewHandler)
 	router.Method(stdhttp.MethodGet, "/domain-preview/{hostname}/*", domainPreviewHandler)
