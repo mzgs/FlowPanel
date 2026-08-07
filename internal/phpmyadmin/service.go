@@ -29,10 +29,11 @@ const (
 	versionMetadataFile = ".flowpanel-version"
 	passwordBytesLength = 24
 	runtimeDirPerm      = 0o1777
-	panelAutoLoginMark  = "FlowPanel panel-auth auto-login"
+	panelAutoLoginMark  = "FlowPanel panel-auth auto-login v2"
 
-	PanelUserHeader     = "X-FlowPanel-PhpMyAdmin-User"
-	PanelPasswordHeader = "X-FlowPanel-PhpMyAdmin-Password"
+	PanelUserHeader      = "X-FlowPanel-PhpMyAdmin-User"
+	PanelPasswordHeader  = "X-FlowPanel-PhpMyAdmin-Password"
+	PanelDatabasesHeader = "X-FlowPanel-PhpMyAdmin-Databases"
 )
 
 var (
@@ -522,15 +523,19 @@ func addPanelAutoLoginConfig(content string) string {
 	}
 
 	snippet := `
-/* FlowPanel panel-auth auto-login. */
+/* FlowPanel panel-auth auto-login v2. */
 $flowPanelPmaUser = $_SERVER['HTTP_X_FLOWPANEL_PHPMYADMIN_USER'] ?? '';
 $flowPanelPmaPassword = $_SERVER['HTTP_X_FLOWPANEL_PHPMYADMIN_PASSWORD'] ?? '';
+$flowPanelPmaDatabases = json_decode($_SERVER['HTTP_X_FLOWPANEL_PHPMYADMIN_DATABASES'] ?? '', true);
 if ($flowPanelPmaUser !== '' && $flowPanelPmaPassword !== '') {
     $cfg['Servers'][$i]['auth_type'] = 'config';
     $cfg['Servers'][$i]['user'] = $flowPanelPmaUser;
     $cfg['Servers'][$i]['password'] = $flowPanelPmaPassword;
 }
-unset($flowPanelPmaUser, $flowPanelPmaPassword);
+if (is_array($flowPanelPmaDatabases)) {
+    $cfg['Servers'][$i]['only_db'] = $flowPanelPmaDatabases;
+}
+unset($flowPanelPmaUser, $flowPanelPmaPassword, $flowPanelPmaDatabases);
 `
 	content = strings.TrimRight(content, "\n")
 	if strings.HasSuffix(strings.TrimSpace(content), "?>") {

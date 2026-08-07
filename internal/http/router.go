@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,7 +41,15 @@ import (
 	"go.uber.org/zap"
 )
 
-const googleDriveOAuthStateSessionKey = "google_drive_oauth_state"
+const (
+	googleDriveOAuthStateSessionKey = "google_drive_oauth_state"
+	phpMyAdminDomainPrefix          = "/phpmyadmin/domain/"
+)
+
+type phpMyAdminDatabaseScope struct {
+	databasesJSON string
+	expiresAt     time.Time
+}
 
 var runPHPInfoCommand = func(ctx context.Context, phpPath string) ([]byte, error) {
 	tempDir, err := os.MkdirTemp("", "flowpanel-phpinfo-*")
@@ -844,6 +853,9 @@ func parseSystemHistoryRange(value string) (time.Duration, bool) {
 }
 
 func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
+	databaseScopes := map[string]phpMyAdminDatabaseScope{}
+	var databaseScopesMu sync.Mutex
+
 	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if app.PHPMyAdmin == nil {
 			stdhttp.Error(w, "phpMyAdmin is not configured.", stdhttp.StatusServiceUnavailable)
@@ -870,7 +882,31 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 			stdhttp.Redirect(w, r, "/phpmyadmin/", stdhttp.StatusTemporaryRedirect)
 			return
 		}
-		if r.URL.Path == "/phpmyadmin/" || r.URL.Path == "/phpmyadmin/index.php" {
+
+		proxyPrefix := "/phpmyadmin"
+		phpMyAdminPath := strings.TrimPrefix(r.URL.Path, proxyPrefix)
+		scopedDomain := ""
+		if strings.HasPrefix(r.URL.Path, phpMyAdminDomainPrefix) {
+			domainPath := strings.TrimPrefix(r.URL.Path, phpMyAdminDomainPrefix)
+			domainName, remainder, found := strings.Cut(domainPath, "/")
+			if !found {
+				stdhttp.Redirect(w, r, r.URL.Path+"/", stdhttp.StatusTemporaryRedirect)
+				return
+			}
+			scopedDomain = strings.ToLower(strings.TrimSpace(domainName))
+			if app.Domains == nil {
+				stdhttp.Error(w, "Domains are not configured.", stdhttp.StatusServiceUnavailable)
+				return
+			}
+			if _, ok := app.Domains.FindByHostname(scopedDomain); !ok {
+				stdhttp.NotFound(w, r)
+				return
+			}
+			proxyPrefix = phpMyAdminDomainPrefix + scopedDomain
+			phpMyAdminPath = "/" + remainder
+		}
+
+		if phpMyAdminPath == "/" || phpMyAdminPath == "/index.php" {
 			if err := app.PHPMyAdmin.EnsurePanelAutoLogin(r.Context()); err != nil {
 				app.Logger.Error("configure phpmyadmin panel auto-login failed", zap.Error(err))
 				stdhttp.Error(w, "phpMyAdmin auto-login could not be configured.", stdhttp.StatusInternalServerError)
@@ -878,7 +914,6 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 			}
 		}
 
-		phpMyAdminPath := strings.TrimPrefix(r.URL.Path, "/phpmyadmin")
 		phpMyAdminExtension := path.Ext(phpMyAdminPath)
 		databasePassword := ""
 		if app.MariaDB != nil && (phpMyAdminExtension == "" || strings.EqualFold(phpMyAdminExtension, ".php")) {
@@ -887,6 +922,40 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 				app.Logger.Warn("read mariadb root password for phpmyadmin auto-login failed", zap.Error(passwordErr))
 			} else if configured {
 				databasePassword = password
+			}
+		}
+		databaseScopeJSON := ""
+		if scopedDomain != "" && app.MariaDB != nil {
+			databaseScopesMu.Lock()
+			cachedScope, cached := databaseScopes[scopedDomain]
+			databaseScopesMu.Unlock()
+			if cached && time.Now().Before(cachedScope.expiresAt) {
+				databaseScopeJSON = cachedScope.databasesJSON
+			} else {
+				databases, listErr := app.MariaDB.ListDatabases(r.Context())
+				if listErr != nil {
+					app.Logger.Error("list domain databases for phpmyadmin failed", zap.String("domain", scopedDomain), zap.Error(listErr))
+					stdhttp.Error(w, "Domain databases could not be loaded.", stdhttp.StatusInternalServerError)
+					return
+				}
+				names := make([]string, 0, len(databases))
+				for _, database := range databases {
+					if strings.EqualFold(database.Domain, scopedDomain) {
+						names = append(names, strings.ReplaceAll(database.Name, "_", `\_`))
+					}
+				}
+				if len(names) == 0 {
+					names = append(names, "flowpanelnodomaindatabases000000000000")
+				}
+				encodedNames, encodeErr := json.Marshal(names)
+				if encodeErr != nil {
+					stdhttp.Error(w, "Domain databases could not be encoded.", stdhttp.StatusInternalServerError)
+					return
+				}
+				databaseScopeJSON = string(encodedNames)
+				databaseScopesMu.Lock()
+				databaseScopes[scopedDomain] = phpMyAdminDatabaseScope{databasesJSON: databaseScopeJSON, expiresAt: time.Now().Add(30 * time.Second)}
+				databaseScopesMu.Unlock()
 			}
 		}
 
@@ -914,7 +983,7 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 		}
 		proxy.ModifyResponse = func(response *stdhttp.Response) error {
 			if location := strings.TrimSpace(response.Header.Get("Location")); location != "" {
-				response.Header.Set("Location", rewritePHPMyAdminLocation(location, target, publicHost))
+				response.Header.Set("Location", rewritePHPMyAdminLocation(location, target, publicHost, proxyPrefix))
 			}
 			return nil
 		}
@@ -928,14 +997,18 @@ func newPHPMyAdminProxyHandler(app *app.App) stdhttp.Handler {
 			}
 			request.URL.RawPath = ""
 			request.Header.Set("X-Forwarded-Host", publicHost)
-			request.Header.Set("X-Forwarded-Prefix", "/phpmyadmin")
+			request.Header.Set("X-Forwarded-Prefix", proxyPrefix)
 			request.Header.Set("X-Forwarded-Proto", publicScheme)
 			request.Header.Set("Scheme", publicScheme)
 			request.Header.Del(phpmyadmin.PanelUserHeader)
 			request.Header.Del(phpmyadmin.PanelPasswordHeader)
+			request.Header.Del(phpmyadmin.PanelDatabasesHeader)
 			if databasePassword != "" {
 				request.Header.Set(phpmyadmin.PanelUserHeader, "root")
 				request.Header.Set(phpmyadmin.PanelPasswordHeader, databasePassword)
+			}
+			if databaseScopeJSON != "" {
+				request.Header.Set(phpmyadmin.PanelDatabasesHeader, databaseScopeJSON)
 			}
 		}
 		proxy.ServeHTTP(w, r)
@@ -990,12 +1063,12 @@ func phpMyAdminUpstreamURL(listenAddr string) (*url.URL, error) {
 	}, nil
 }
 
-func rewritePHPMyAdminLocation(location string, upstream *url.URL, requestHost string) string {
+func rewritePHPMyAdminLocation(location string, upstream *url.URL, requestHost, prefix string) string {
 	parsed, err := url.Parse(location)
 	if err != nil || (parsed.Host == "" && !strings.HasPrefix(parsed.Path, "/")) {
 		return location
 	}
-	if strings.HasPrefix(parsed.Path, "/phpmyadmin/") {
+	if parsed.Path == prefix || strings.HasPrefix(parsed.Path, prefix+"/") {
 		return location
 	}
 	if parsed.Host != "" && !strings.EqualFold(parsed.Host, upstream.Host) && !strings.EqualFold(parsed.Host, requestHost) {
@@ -1006,7 +1079,7 @@ func rewritePHPMyAdminLocation(location string, upstream *url.URL, requestHost s
 	if pathValue == "" {
 		pathValue = "/"
 	}
-	return "/phpmyadmin" + pathValue + parsedQueryAndFragment(parsed)
+	return prefix + pathValue + parsedQueryAndFragment(parsed)
 }
 
 func splitHostPortDefault(address string) (string, string, error) {

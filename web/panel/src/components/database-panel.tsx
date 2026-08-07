@@ -873,7 +873,8 @@ export function DatabasePanel({
                 Add database
               </Button>
 
-              <Popover open={rootPasswordOpen} onOpenChange={setRootPasswordOpen}>
+              <div className={scopedDomain ? "hidden" : "contents"}>
+                <Popover open={rootPasswordOpen} onOpenChange={setRootPasswordOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     type="button"
@@ -968,9 +969,16 @@ export function DatabasePanel({
                     )}
                   </div>
                 </PopoverContent>
-              </Popover>
+                </Popover>
+              </div>
               <ToolbarButton
-                href={phpMyAdminStatus?.installed ? "/phpmyadmin/" : undefined}
+                href={
+                  phpMyAdminStatus?.installed
+                    ? scopedDomain
+                      ? `/phpmyadmin/domain/${encodeURIComponent(scopedDomain)}/`
+                      : "/phpmyadmin/"
+                    : undefined
+                }
                 target="_blank"
                 rel="noreferrer"
                 disabled={!phpMyAdminStatus?.installed}
