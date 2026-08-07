@@ -31,7 +31,10 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			return
 		}
 
-		writeJSON(w, stdhttp.StatusOK, map[string]any{"backups": records})
+		writeJSON(w, stdhttp.StatusOK, map[string]any{
+			"backups":   records,
+			"directory": a.app.Backups.Directory(),
+		})
 	})
 	r.Method(stdhttp.MethodGet, "/backups", backupsListHandler)
 	r.Method(stdhttp.MethodHead, "/backups", backupsListHandler)

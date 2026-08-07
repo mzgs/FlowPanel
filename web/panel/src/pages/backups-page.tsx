@@ -114,6 +114,7 @@ function getBackupKey(record: Pick<BackupRecord, "id" | "location">) {
 
 export function BackupsPage() {
   const [backups, setBackups] = useState<BackupRecord[]>([]);
+  const [backupDirectory, setBackupDirectory] = useState("");
   const [settings, setSettings] = useState<PanelSettings | null>(null);
   const [scheduledBackups, setScheduledBackups] = useState<
     ScheduledBackupRecord[]
@@ -189,6 +190,7 @@ export function BackupsPage() {
     try {
       const payload = await fetchBackups();
       setBackups(payload.backups);
+      setBackupDirectory(payload.directory);
       setLoadError(null);
     } catch (error) {
       setLoadError(getErrorMessage(error, "Failed to load backups."));
@@ -483,6 +485,7 @@ export function BackupsPage() {
     <>
       <PageHeader
         title="Backups"
+        meta={backupDirectory ? `Backup directory: ${backupDirectory}` : undefined}
         actions={
           <>
             <Button

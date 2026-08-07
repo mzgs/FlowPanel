@@ -45,6 +45,7 @@ const backupFormat = "flowpanel-backup-v1"
 
 type Manager interface {
 	List(context.Context) ([]Record, error)
+	Directory() string
 	Create(context.Context, CreateInput) (Record, error)
 	Import(context.Context, string, io.Reader) (Record, error)
 	Restore(context.Context, string, string) (RestoreResult, error)
@@ -168,6 +169,10 @@ func NewService(
 		googleDrive:  googleDriveService,
 		pm2:          pm2Syncer,
 	}
+}
+
+func (s *Service) Directory() string {
+	return s.backupPath
 }
 
 func (s *Service) List(ctx context.Context) ([]Record, error) {

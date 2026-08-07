@@ -44,6 +44,7 @@ export type CreateScheduledBackupInput = {
 
 type BackupsPayload = {
   backups: BackupRecord[];
+  directory: string;
 };
 
 type ScheduledBackupsPayload = {
