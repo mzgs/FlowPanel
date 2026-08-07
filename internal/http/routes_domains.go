@@ -25,7 +25,6 @@ import (
 	"flowpanel/internal/ftp"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/pm2"
-	"flowpanel/internal/settings"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -370,159 +369,6 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			"source_hostname": sourceRecord.Hostname,
 			"target_hostname": targetRecord.Hostname,
 		})
-	})
-
-	domainsWebsiteImportHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		hostname := chi.URLParam(r, "hostname")
-		record, ok := a.app.Domains.FindByHostname(hostname)
-		if !ok {
-			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
-			return
-		}
-		if !isSiteBackedDomainRecord(record) {
-			writeValidationFailed(w, map[string]string{"provider": "Website importing is not available for this domain."})
-			return
-		}
-
-		var input websiteImportInput
-		if err := decodeJSON(r, &input); err != nil {
-			writeInvalidRequestBody(w)
-			return
-		}
-		if validation := input.normalizeAndValidate(); len(validation) > 0 {
-			writeValidationFailed(w, map[string]string(validation))
-			return
-		}
-		if input.Database != nil {
-			if a.app.MariaDB == nil {
-				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "MariaDB is not configured on this server"})
-				return
-			}
-			databases, err := a.app.MariaDB.ListDatabases(r.Context())
-			if err != nil {
-				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "local databases could not be checked before import"})
-				return
-			}
-			for _, database := range databases {
-				if database.Name == input.Database.DestinationName {
-					writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "destination database already exists", "field_errors": map[string]string{"database.destination_name": "Choose a new destination database name."}})
-					return
-				}
-			}
-		}
-
-		var result websiteImportResult
-		var panelDatabaseDump []byte
-		var err error
-		if input.Provider == "plesk" && input.UsePanelBackup {
-			result, panelDatabaseDump, err = importPleskBackup(r.Context(), record, a.app.Domains.BasePath(), input)
-		} else {
-			result, err = importWebsiteFiles(r.Context(), record, a.app.Domains.BasePath(), input)
-		}
-		if err != nil {
-			a.app.Logger.Error("import website failed", zap.String("hostname", record.Hostname), zap.String("provider", input.Provider), zap.String("source_host", input.Host), zap.Error(err))
-			a.mutationEvent(r.Context(), "domains", "import", "website", record.ID, record.Hostname, "failed", "Failed to import website files.")
-			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": fmt.Sprintf("website import failed: %v", err)})
-			return
-		}
-		if input.Database != nil {
-			if input.Provider == "plesk" && input.UsePanelBackup {
-				result.Database, err = restoreImportedWebsiteDatabase(r.Context(), a.app.MariaDB, record.Hostname, *input.Database, panelDatabaseDump)
-			} else {
-				result.Database, err = importWebsiteDatabase(r.Context(), a.app.MariaDB, record.Hostname, *input.Database)
-			}
-			if err != nil {
-				a.app.Logger.Error("import website database failed", zap.String("hostname", record.Hostname), zap.String("source_database", input.Database.SourceName), zap.Error(err))
-				a.mutationEvent(r.Context(), "domains", "import", "website", record.ID, record.Hostname, "failed", "Website files were imported but the database import failed.")
-				var validation mariadb.ValidationErrors
-				if errors.As(err, &validation) {
-					fieldErrors := map[string]string{}
-					fieldNames := map[string]string{"name": "database.destination_name", "username": "database.destination_username", "password": "database.destination_password"}
-					for field, message := range validation {
-						target := fieldNames[field]
-						if target == "" {
-							target = field
-						}
-						fieldErrors[target] = message
-					}
-					writeValidationFailed(w, fieldErrors)
-					return
-				}
-				if errors.Is(err, mariadb.ErrDatabaseAlreadyExists) {
-					writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "destination database already exists", "field_errors": map[string]string{"database.destination_name": "Choose a new destination database name."}})
-					return
-				}
-				writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": fmt.Sprintf("website files were imported, but the database import failed: %v", err)})
-				return
-			}
-		}
-
-		if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
-			a.app.Logger.Error("apply php worker ownership after website import failed", zap.String("hostname", record.Hostname), zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "website files were imported but PHP ownership could not be updated"})
-			return
-		}
-		if err := a.refreshDomainRoutingAfterContentChange(r.Context(), record.Hostname); err != nil {
-			a.app.Logger.Error("republish imported domain failed", zap.String("hostname", record.Hostname), zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "website files were imported but routes could not be refreshed"})
-			return
-		}
-
-		a.mutationEvent(r.Context(), "domains", "import", "website", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Imported %d website files from %s.", result.Files, input.Provider))
-		writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true, "files": result.Files, "bytes": result.Bytes, "database": result.Database})
-	})
-
-	domainsWebsiteImportDiscoverHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		if _, ok := a.app.Domains.FindByHostname(chi.URLParam(r, "hostname")); !ok {
-			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
-			return
-		}
-		var input panelConnectionInput
-		if err := decodeJSON(r, &input); err != nil {
-			writeInvalidRequestBody(w)
-			return
-		}
-		if validation := input.normalizeAndValidate(); len(validation) > 0 {
-			writeValidationFailed(w, validation)
-			return
-		}
-		result, err := discoverPanel(r.Context(), input)
-		if err != nil {
-			a.app.Logger.Warn("discover remote panel failed", zap.String("provider", input.Provider), zap.String("host", input.Host), zap.Error(err))
-			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": fmt.Sprintf("panel connection failed: %v", err)})
-			return
-		}
-		if a.app.Settings != nil {
-			err = a.app.Settings.SaveWebsiteImportProfile(r.Context(), settings.WebsiteImportProfile{
-				Provider: input.Provider, Host: input.Host, Port: input.Port, Username: input.Username,
-				Secret: input.Secret, AuthType: input.AuthType, VerifyTLS: input.VerifyTLS,
-			})
-			if err != nil {
-				a.app.Logger.Error("save website import panel profile failed", zap.String("provider", input.Provider), zap.Error(err))
-				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "panel connection succeeded, but its credentials could not be saved"})
-				return
-			}
-		}
-		writeJSON(w, stdhttp.StatusOK, result)
-	})
-
-	domainsWebsiteImportProfilesHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if _, ok := a.app.Domains.FindByHostname(chi.URLParam(r, "hostname")); !ok {
-			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
-			return
-		}
-		profiles := map[string]settings.WebsiteImportProfile{}
-		if a.app.Settings != nil {
-			var err error
-			profiles, err = a.app.Settings.WebsiteImportProfiles(r.Context())
-			if err != nil {
-				a.app.Logger.Error("load website import panel profiles failed", zap.Error(err))
-				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "saved panel credentials could not be loaded"})
-				return
-			}
-		}
-		writeJSON(w, stdhttp.StatusOK, map[string]any{"profiles": profiles})
 	})
 
 	domainsComposerActionHandler := func(action string) stdhttp.HandlerFunc {
@@ -1591,9 +1437,6 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/cache/clear", domainsCacheClearHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/protection", domainsProtectionUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/copy", domainsWebsiteCopyHandler)
-	r.Method(stdhttp.MethodPost, "/domains/{hostname}/import", domainsWebsiteImportHandler)
-	r.Method(stdhttp.MethodPost, "/domains/{hostname}/import/discover", domainsWebsiteImportDiscoverHandler)
-	r.Method(stdhttp.MethodGet, "/domains/{hostname}/import/profiles", domainsWebsiteImportProfilesHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/templates/install", domainsTemplateInstallHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/install", domainsComposerActionHandler("install"))
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/composer/update", domainsComposerActionHandler("update"))

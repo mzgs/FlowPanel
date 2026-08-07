@@ -93,7 +93,6 @@ import { DomainSecurityDialog } from "@/components/domain-security-dialog";
 import { DomainTemplateInstallDialog } from "@/components/domain-template-install-dialog";
 import { DomainWordPressExtensionInstallDialog } from "@/components/domain-wordpress-extension-install-dialog";
 import { DomainWebsiteCopyDialog } from "@/components/domain-website-copy-dialog";
-import { DomainWebsiteImportDialog } from "@/components/domain-website-import-dialog";
 import { DatabasePanel } from "@/components/database-panel";
 import { FileManager } from "@/components/file-manager";
 import { PageHeader } from "@/components/page-header";
@@ -640,8 +639,7 @@ function getActiveDevToolActions(kind: DomainRecord["kind"] | undefined) {
   const items = devToolActions.filter(
     (item) =>
       (supportsEnvironmentVariables(kind) || item.title !== "Environment") &&
-      (kind === "Php site" || !phpOnlyDevToolTitles.has(item.title)) &&
-      (kind !== "Reverse proxy" || item.title !== "Website Importing"),
+      (kind === "Php site" || !phpOnlyDevToolTitles.has(item.title)),
   );
 
   if (kind === "Node.js") {
@@ -786,7 +784,6 @@ export function DomainDetailPage() {
   const [templateInstallDialogOpen, setTemplateInstallDialogOpen] =
     useState(false);
   const [websiteCopyDialogOpen, setWebsiteCopyDialogOpen] = useState(false);
-  const [websiteImportDialogOpen, setWebsiteImportDialogOpen] = useState(false);
   const [websiteCopyTargetHostname, setWebsiteCopyTargetHostname] =
     useState("");
   const [websiteCopyReplaceTargetFiles, setWebsiteCopyReplaceTargetFiles] =
@@ -947,7 +944,6 @@ export function DomainDetailPage() {
     setPHPDialogOpen(false);
     setTemplateInstallDialogOpen(false);
     setWebsiteCopyDialogOpen(false);
-    setWebsiteImportDialogOpen(false);
     setWebsiteCopyTargetHostname("");
     setWebsiteCopyReplaceTargetFiles(true);
     setWebsiteCopyPending(false);
@@ -2953,29 +2949,6 @@ export function DomainDetailPage() {
           }}
         />
       ) : null}
-      {domain ? (
-        <DomainWebsiteImportDialog
-          open={websiteImportDialogOpen}
-          onOpenChange={setWebsiteImportDialogOpen}
-          domain={domain}
-          onImported={(result) => {
-            setPreviewRefreshing(true);
-            setPreviewError(false);
-            setPreviewErrorMessage(null);
-            setPreviewRefreshToken(Date.now());
-            if (result.database) {
-              void fetchMariaDBDatabases()
-                .then((payload) => {
-                  setDatabases(payload.databases);
-                })
-                .catch(() => undefined);
-            }
-            toast.success(
-              `Imported ${result.files.toLocaleString()} files${result.database ? ` and database ${result.database}` : ""} into ${domain.hostname}.`,
-            );
-          }}
-        />
-      ) : null}
       <Dialog open={nodeJSLogsOpen} onOpenChange={handleNodeJSLogsOpenChange}>
         <DialogContent className="h-[min(80vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
           <DialogHeader className="gap-3">
@@ -3547,11 +3520,6 @@ export function DomainDetailPage() {
 
                       if (item.title === "Github" && domain !== null) {
                         setGitHubDialogOpen(true);
-                        return;
-                      }
-
-                      if (item.title === "Website Importing" && domain !== null) {
-                        setWebsiteImportDialogOpen(true);
                       }
                     }}
                   />
