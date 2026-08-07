@@ -1,12 +1,18 @@
 package httpx
 
 import (
+	"errors"
 	"fmt"
 	stdhttp "net/http"
 	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
+)
+
+const (
+	maxFileUploadBytes     int64 = 8 << 30
+	multipartFormMemoryMax int64 = 8 << 20
 )
 
 func (a *apiRoutes) registerFileRoutes(r chi.Router) {
@@ -185,8 +191,14 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 			return
 		}
 
-		r.Body = stdhttp.MaxBytesReader(w, r.Body, 64<<20)
-		if err := r.ParseMultipartForm(64 << 20); err != nil {
+		r.Body = stdhttp.MaxBytesReader(w, r.Body, maxFileUploadBytes)
+		if err := r.ParseMultipartForm(multipartFormMemoryMax); err != nil {
+			var maxBytesError *stdhttp.MaxBytesError
+			if errors.As(err, &maxBytesError) {
+				writeJSON(w, stdhttp.StatusRequestEntityTooLarge, map[string]any{"error": "upload exceeds the 8 GB limit"})
+				return
+			}
+			a.app.Logger.Warn("parse file upload failed", zap.Error(err))
 			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid upload payload"})
 			return
 		}
