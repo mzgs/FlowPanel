@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Download,
@@ -962,7 +962,24 @@ export function DomainsPage() {
                           siteBackups[domain.hostname]?.length ?? 0;
 
                         return (
-                          <TableRow key={domain.id}>
+                          <TableRow
+                            key={domain.id}
+                            className="cursor-pointer"
+                            onClick={(event) => {
+                              if (
+                                (event.target as HTMLElement).closest(
+                                  "a, button, input, select, textarea, [role=button]",
+                                )
+                              ) {
+                                return;
+                              }
+
+                              void navigate({
+                                to: "/domains/$hostname",
+                                params: { hostname: domain.hostname },
+                              });
+                            }}
+                          >
                             <TableCell className="font-medium text-[var(--app-text)]">
                               <div className="flex items-center gap-2.5">
                                 <span
@@ -973,13 +990,7 @@ export function DomainsPage() {
                                   {getDomainInitial(domain.hostname)}
                                 </span>
                                 <div className="min-w-0 flex flex-wrap items-center gap-2">
-                                  <Link
-                                    to="/domains/$hostname"
-                                    params={{ hostname: domain.hostname }}
-                                    className="transition-colors hover:text-primary hover:underline"
-                                  >
-                                    {domain.hostname}
-                                  </Link>
+                                  <span>{domain.hostname}</span>
                                   <Badge
                                     asChild
                                     variant="outline"
