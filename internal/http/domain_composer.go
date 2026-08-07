@@ -55,10 +55,6 @@ func runDomainComposerAction(
 		return domain.Record{}, false, fmt.Errorf("inspect composer manifest: %w", err)
 	}
 
-	if err := ensurePHPDocumentRootWorkerOwnership(ctx, php, domains, record); err != nil {
-		return record, false, fmt.Errorf("prepare composer file ownership: %w", err)
-	}
-
 	composerPath, err := composerExecutablePath()
 	if err != nil {
 		return domain.Record{}, false, errComposerUnavailable
