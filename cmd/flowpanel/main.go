@@ -1796,7 +1796,8 @@ func runServer() error {
 		phpMyAdminManager,
 		cfg.PHPMyAdminAddr,
 	)
-	fileManager, err := files.NewService(domainService.BasePath())
+	fileManagerRoot := filepath.VolumeName(domainService.BasePath()) + string(filepath.Separator)
+	fileManager, err := files.NewService(fileManagerRoot)
 	if err != nil {
 		return fmt.Errorf("initialize file manager: %w", err)
 	}

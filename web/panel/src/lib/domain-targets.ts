@@ -4,6 +4,12 @@ function normalizeFilesystemPath(value: string) {
   return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+function getFileManagerPath(value: string) {
+  return normalizeFilesystemPath(value)
+    .replace(/^[a-z]:/i, "")
+    .replace(/^\/+/, "");
+}
+
 function usesManagedHostnamePath(kind: DomainKind) {
   return kind === "Node.js" || kind === "Python" || kind === "Reverse proxy";
 }
@@ -19,19 +25,17 @@ export function getFilesPathFromDomainTarget(
     return null;
   }
 
-  if (usesManagedHostnamePath(kind)) {
-    return normalizedHostname;
-  }
-
   const normalizedBasePath = normalizeFilesystemPath(sitesBasePath);
-  const normalizedTargetPath = normalizeFilesystemPath(target);
+  const normalizedTargetPath = usesManagedHostnamePath(kind)
+    ? `${normalizedBasePath}/${normalizedHostname}`
+    : normalizeFilesystemPath(target);
 
   if (!normalizedBasePath || !normalizedTargetPath) {
     return null;
   }
 
   if (normalizedTargetPath === normalizedBasePath) {
-    return "";
+    return getFileManagerPath(normalizedTargetPath);
   }
 
   const prefix = `${normalizedBasePath}/`;
@@ -39,7 +43,7 @@ export function getFilesPathFromDomainTarget(
     return null;
   }
 
-  return normalizedTargetPath.slice(prefix.length);
+  return getFileManagerPath(normalizedTargetPath);
 }
 
 export function getDocumentRootDisplayPath(
