@@ -30,7 +30,13 @@ import {
   updateDockerContainerSettings,
   uploadDockerVolumeData,
 } from "@/api/docker";
-import { type EnvironmentVariable } from "@/api/domains";
+import {
+  createDomain,
+  fetchDomains,
+  type DomainApiError,
+  type DomainRecord,
+  type EnvironmentVariable,
+} from "@/api/domains";
 import { DockerVolumeMappingsEditor } from "@/components/docker-volume-mappings-editor";
 import { EnvironmentVariablesEditor } from "@/components/environment-variables-editor";
 import { FieldError } from "@/components/field-error";
@@ -55,6 +61,7 @@ import {
   PlayerStop,
   Star,
   Trash2,
+  World,
   XIcon,
 } from "@/components/icons/lucide-icons";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -77,6 +84,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { segmentedTabClassName } from "@/components/ui/tabs";
 import { formatBytes } from "@/lib/format";
 import { cn, getErrorMessage } from "@/lib/utils";
@@ -508,6 +522,27 @@ function getDockerContainerPortSummary(ports: DockerContainerPortMapping[]) {
   return Array.from(new Set(ports.map((port) => formatDockerPortMapping(port))));
 }
 
+function getDockerPublicPorts(container: DockerContainer) {
+  return Array.from(
+    new Set(
+      container.ports
+        .filter((port) => port.host_port && (port.public || isDockerPublicHostIP(port.host_ip)))
+        .map((port) => port.host_port),
+    ),
+  );
+}
+
+function getDockerDomainTarget(port: string) {
+  return `http://127.0.0.1:${port}`;
+}
+
+function getDockerContainerDomains(container: DockerContainer, domains: DomainRecord[]) {
+  const targets = new Set(getDockerPublicPorts(container).map(getDockerDomainTarget));
+  return domains.filter(
+    (domain) => domain.kind === "Reverse proxy" && targets.has(domain.target.replace(/\/$/, "")),
+  );
+}
+
 function formatDockerHost(host: string) {
   const normalized = host.replace(/^\[|\]$/g, "");
   return normalized.includes(":") ? `[${normalized}]` : normalized;
@@ -569,17 +604,18 @@ function ResourceMeter({
 function ContainersSkeleton() {
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] gap-6 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(110px,0.45fr)_100px] gap-5 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
         <div>Name</div>
         <div>Image</div>
         <div>Ports</div>
+        <div>Domain</div>
         <div>Status</div>
         <div className="text-right">Actions</div>
       </div>
       {Array.from({ length: 4 }).map((_, index) => (
         <div
           key={index}
-          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] md:px-6"
+          className="grid gap-4 border-b border-[var(--app-border)] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(110px,0.45fr)_100px] md:gap-5 md:px-6"
         >
           <div className="h-5 w-40 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="h-5 w-52 animate-pulse rounded bg-[var(--app-surface)]" />
@@ -588,6 +624,7 @@ function ContainersSkeleton() {
             <div className="h-5 w-32 animate-pulse rounded bg-[var(--app-surface)]" />
           </div>
           <div className="h-5 w-24 animate-pulse rounded bg-[var(--app-surface)]" />
+          <div className="h-5 w-28 animate-pulse rounded bg-[var(--app-surface)]" />
           <div className="flex justify-start gap-2 md:justify-end">
             <div className="h-9 w-9 animate-pulse rounded-md bg-[var(--app-surface)]" />
             <div className="h-9 w-9 animate-pulse rounded-md bg-[var(--app-surface)]" />
@@ -813,6 +850,7 @@ function ContainerResourcesPanel({
 
 function ContainerList({
   containers,
+  domains,
   activeContainerID,
   pendingOperation,
   actionErrors,
@@ -824,10 +862,12 @@ function ContainerList({
   onMenuAction,
   onRename,
   onOpenSettings,
+  onConnectDomain,
   onToggleExpandedContainer,
   onClearContainerLogs,
 }: {
   containers: DockerContainer[];
+  domains: DomainRecord[];
   activeContainerID: string | null;
   pendingOperation: DockerContainerOperation | null;
   actionErrors: DockerContainerActionErrors;
@@ -839,6 +879,7 @@ function ContainerList({
   onMenuAction: (container: DockerContainer, action: DockerContainerMenuAction) => void;
   onRename: (container: DockerContainer, name: string) => Promise<void>;
   onOpenSettings: (container: DockerContainer) => void;
+  onConnectDomain: (container: DockerContainer) => void;
   onToggleExpandedContainer: (container: DockerContainer) => void;
   onClearContainerLogs: (container: DockerContainer) => void;
 }) {
@@ -913,13 +954,14 @@ function ContainerList({
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
-      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] items-center gap-6 border-b border-[var(--app-border)] px-6 py-5 text-sm text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(110px,0.45fr)_100px] items-center gap-5 border-b border-[var(--app-border)] px-6 py-4 text-sm text-muted-foreground md:grid">
         <div className="flex items-center gap-3">
           <ChevronDownIcon className="h-4 w-4 text-muted-foreground/70" />
           <span>Name</span>
         </div>
         <div>Image ↑</div>
         <div>Ports</div>
+        <div>Domain</div>
         <div>Status</div>
         <div className="text-right">Actions</div>
       </div>
@@ -927,6 +969,8 @@ function ContainerList({
       {containers.map((container) => {
         const stateMeta = getContainerStateMeta(container.state);
         const portSummary = getDockerContainerPortSummary(container.ports);
+        const connectedDomains = getDockerContainerDomains(container, domains);
+        const hasPublicPort = getDockerPublicPorts(container).length > 0;
         const busy = activeContainerID === container.id;
         const actions = getContainerActions(container);
         const pendingLabel = busy ? getContainerOperationPendingLabel(pendingOperation) : null;
@@ -950,7 +994,7 @@ function ContainerList({
             key={container.id || `${container.name}-${container.image}`}
             className="border-b border-[var(--app-border)] last:border-b-0"
           >
-            <div className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(140px,0.5fr)_120px] md:px-6 md:py-5">
+            <div className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(110px,0.45fr)_100px] md:gap-5 md:px-6 md:py-4">
               <div className="group/name space-y-1">
                 <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
                   Name
@@ -1095,6 +1139,33 @@ function ContainerList({
 
               <div className="space-y-1">
                 <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
+                  Domain
+                </div>
+                {connectedDomains.length > 0 ? (
+                  <div className="space-y-1">
+                    {connectedDomains.slice(0, 2).map((domain) => (
+                      <a
+                        key={domain.id}
+                        href={`https://${domain.hostname}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex min-w-0 items-center gap-1.5 text-sm text-foreground hover:text-[var(--app-accent)]"
+                      >
+                        <World className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{domain.hostname}</span>
+                      </a>
+                    ))}
+                    {connectedDomains.length > 2 ? (
+                      <div className="text-xs text-muted-foreground">+{connectedDomains.length - 2} more</div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">Not connected</div>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground md:hidden">
                   Status
                 </div>
                 <DropdownMenu modal={false}>
@@ -1175,7 +1246,7 @@ function ContainerList({
                             className="h-9 w-9 rounded-md text-muted-foreground hover:text-foreground"
                             aria-label={`Open more options for ${getContainerLabel(container)}`}
                             title={`Open more options for ${getContainerLabel(container)}`}
-                          >
+                        >
                             {busy && !statusBusy ? (
                               <LoaderCircle className="h-4 w-4 animate-spin" />
                             ) : (
@@ -1187,6 +1258,16 @@ function ContainerList({
                           align="end"
                           className="w-52 border-[var(--app-border)] bg-[var(--app-surface)] p-1 text-[var(--app-text)] shadow-[0_12px_30px_rgba(15,23,42,0.16)]"
                         >
+                          <DropdownMenuItem
+                            disabled={!hasPublicPort}
+                            onSelect={() => {
+                              onConnectDomain(container);
+                            }}
+                          >
+                            <World className="h-4 w-4" />
+                            Connect Domain
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onSelect={() => {
                               onMenuAction(container, "recreate");
@@ -2398,12 +2479,143 @@ function SaveDockerContainerImageDialog({
   );
 }
 
+function ConnectDockerDomainDialog({
+  container,
+  domains,
+  onOpenChange,
+  onCreated,
+}: {
+  container: DockerContainer | null;
+  domains: DomainRecord[];
+  onOpenChange: (open: boolean) => void;
+  onCreated: (domain: DomainRecord) => void;
+}) {
+  const ports = container ? getDockerPublicPorts(container) : [];
+  const [hostname, setHostname] = useState("");
+  const [port, setPort] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHostname("");
+    setPort(ports[0] ?? "");
+    setFieldError(null);
+    setError(null);
+  }, [container]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!container || !port || submitting) return;
+
+    const normalizedHostname = hostname.trim().toLowerCase().replace(/\.$/, "");
+    if (!normalizedHostname) {
+      setFieldError("Domain is required.");
+      return;
+    }
+    if (domains.some((domain) => domain.hostname === normalizedHostname)) {
+      setFieldError("This domain already exists.");
+      return;
+    }
+
+    setSubmitting(true);
+    setFieldError(null);
+    setError(null);
+    try {
+      const domain = await createDomain({
+        hostname: normalizedHostname,
+        kind: "Reverse proxy",
+        target: getDockerDomainTarget(port),
+        cache_enabled: false,
+      });
+      onCreated(domain);
+      onOpenChange(false);
+    } catch (cause) {
+      const domainError = cause as DomainApiError;
+      const hostnameError = domainError.fieldErrors?.hostname;
+      if (hostnameError) setFieldError(hostnameError);
+      else setError(getErrorMessage(cause, "Failed to connect the domain."));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={container !== null} onOpenChange={(open) => !submitting && onOpenChange(open)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Connect domain</DialogTitle>
+          <DialogDescription>
+            Create a reverse proxy to {container ? getContainerLabel(container) : "this container"}.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label htmlFor="docker-domain-hostname" className="text-[13px] font-medium text-foreground">
+              Domain
+            </label>
+            <Input
+              id="docker-domain-hostname"
+              autoFocus
+              value={hostname}
+              onChange={(event) => {
+                setHostname(event.target.value);
+                setFieldError(null);
+              }}
+              placeholder="app.example.com"
+              autoComplete="off"
+              aria-invalid={fieldError ? true : undefined}
+            />
+            <FieldError message={fieldError ?? undefined} />
+          </div>
+          {ports.length > 1 ? (
+            <div className="space-y-2">
+              <label className="text-[13px] font-medium text-foreground">Public port</label>
+              <Select value={port} onValueChange={setPort} disabled={submitting}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ports.map((publicPort) => (
+                    <SelectItem key={publicPort} value={publicPort}>{publicPort}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+          <div className="space-y-2">
+            <label htmlFor="docker-domain-upstream" className="text-[13px] font-medium text-foreground">
+              Upstream URL
+            </label>
+            <Input id="docker-domain-upstream" value={port ? getDockerDomainTarget(port) : ""} readOnly />
+          </div>
+          {error ? (
+            <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-3 py-2 text-sm text-[var(--app-danger)]">
+              {error}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={submitting} onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting || !port}>
+              {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <World className="h-4 w-4" />}
+              Connect domain
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function DockerPage() {
   const imageCreateFeedbackDurationMs = 1500;
   const [activeTab, setActiveTab] = useState<DockerTab>("containers");
   const [status, setStatus] = useState<DockerStatus | null>(null);
   const [containers, setContainers] = useState<DockerContainer[]>([]);
   const [images, setImages] = useState<DockerImage[]>([]);
+  const [domains, setDomains] = useState<DomainRecord[]>([]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [pullDialogOpen, setPullDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -2432,6 +2644,7 @@ export function DockerPage() {
   const [deleteContainerData, setDeleteContainerData] = useState(false);
   const [confirmDeleteImage, setConfirmDeleteImage] = useState<DockerImage | null>(null);
   const [saveImageContainer, setSaveImageContainer] = useState<DockerContainer | null>(null);
+  const [connectDomainContainer, setConnectDomainContainer] = useState<DockerContainer | null>(null);
   const latestRequestRef = useRef(0);
   const createdImageTimeoutRef = useRef<number | null>(null);
   const expandedContainerIDRef = useRef<string | null>(null);
@@ -2684,8 +2897,17 @@ export function DockerPage() {
     setRefreshing(false);
   }
 
+  async function loadDomains() {
+    try {
+      setDomains((await fetchDomains()).domains);
+    } catch {
+      // Docker inventory remains usable when domain data is temporarily unavailable.
+    }
+  }
+
   useEffect(() => {
     void loadDocker();
+    void loadDomains();
 
     return () => {
       latestRequestRef.current += 1;
@@ -3081,7 +3303,10 @@ export function DockerPage() {
       <Button
         variant="outline"
         size="sm"
-        onClick={() => void loadDocker({ silent: true })}
+        onClick={() => {
+          void loadDocker({ silent: true });
+          void loadDomains();
+        }}
         disabled={loading || refreshing || anyActionInFlight}
       >
         {refreshing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -3132,6 +3357,17 @@ export function DockerPage() {
           );
           if (expandedContainerIDRef.current === nextContainer.id) resetExpandedContainerPanel();
           void loadDocker({ silent: true });
+        }}
+      />
+      <ConnectDockerDomainDialog
+        container={connectDomainContainer}
+        domains={domains}
+        onOpenChange={(open) => {
+          if (!open) setConnectDomainContainer(null);
+        }}
+        onCreated={(domain) => {
+          setDomains((current) => [domain, ...current]);
+          toast.success(`Connected ${domain.hostname} to ${connectDomainContainer ? getContainerLabel(connectDomainContainer) : "container"}.`);
         }}
       />
       <SaveDockerContainerImageDialog
@@ -3310,6 +3546,7 @@ export function DockerPage() {
           {!loading && activeTab === "containers" && containers.length > 0 ? (
             <ContainerList
               containers={containers}
+              domains={domains}
               activeContainerID={activeContainerID}
               pendingOperation={pendingOperation}
               actionErrors={containerActionErrors}
@@ -3321,6 +3558,7 @@ export function DockerPage() {
               onMenuAction={handleContainerMenuAction}
               onRename={handleRenameContainer}
               onOpenSettings={setSettingsContainer}
+              onConnectDomain={setConnectDomainContainer}
               onToggleExpandedContainer={handleToggleContainerLogs}
               onClearContainerLogs={handleClearContainerLogs}
             />
