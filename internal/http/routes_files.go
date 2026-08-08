@@ -304,8 +304,19 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 			return
 		}
 
-		if err := a.app.Files.ExtractArchive(input.Path); err != nil {
+		extractedPaths, err := a.app.Files.ExtractArchive(input.Path)
+		if err != nil {
 			writeFileError(w, err)
+			return
+		}
+		extractDirectory, _, err := a.app.Files.ResolveDirectory(filepath.Dir(input.Path))
+		if err != nil {
+			writeFileError(w, err)
+			return
+		}
+		if err := ensurePHPExtractedWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, extractDirectory, extractedPaths); err != nil {
+			a.app.Logger.Error("apply php worker ownership after archive extraction", zap.String("path", input.Path), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "archive extracted but domain ownership could not be updated"})
 			return
 		}
 

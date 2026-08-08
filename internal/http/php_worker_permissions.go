@@ -55,6 +55,24 @@ func ensurePHPUploadWorkerOwnership(
 	return ensurePHPWorkerOwnership(ctx, php, record.ID, record.PHPVersion, false, paths...)
 }
 
+func ensurePHPExtractedWorkerOwnership(
+	ctx context.Context,
+	php phpenv.Manager,
+	domains *domain.Service,
+	extractDirectory string,
+	extractedPaths []string,
+) error {
+	record, ok := resolvePHPDomainRecordForPath(domains, extractDirectory)
+	if !ok {
+		return nil
+	}
+
+	if err := ensurePHPWorkerOwnership(ctx, php, record.ID, record.PHPVersion, false, extractDirectory); err != nil {
+		return err
+	}
+	return ensurePHPWorkerOwnership(ctx, php, record.ID, record.PHPVersion, true, extractedPaths...)
+}
+
 func ensurePHPWorkerOwnership(
 	ctx context.Context,
 	php phpenv.Manager,

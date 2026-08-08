@@ -539,55 +539,57 @@ func (s *Service) CreateArchive(relPaths []string, destination string) (string, 
 	return joinPath(destinationNormalizedPath, archiveFileName), nil
 }
 
-func (s *Service) ExtractArchive(relPath string) error {
+func (s *Service) ExtractArchive(relPath string) ([]string, error) {
 	absolutePath, normalizedPath, entryType, err := s.resolveExisting(relPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if entryType != EntryTypeFile {
 		if entryType == EntryTypeDirectory {
-			return ErrFileExpected
+			return nil, ErrFileExpected
 		}
-		return ErrUnsupportedEntry
+		return nil, ErrUnsupportedEntry
 	}
 
 	destinationAbsolutePath := filepath.Dir(absolutePath)
 	stagingPath, err := os.MkdirTemp(destinationAbsolutePath, ".flowpanel-extract-*")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer os.RemoveAll(stagingPath)
 
 	if err := extractArchiveToDirectory(absolutePath, filepath.Base(normalizedPath), stagingPath); err != nil {
-		return err
+		return nil, err
 	}
 
 	entries, err := os.ReadDir(stagingPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(entries) == 0 {
-		return ErrInvalidArchive
+		return nil, ErrInvalidArchive
 	}
 
 	for _, entry := range entries {
 		targetPath := filepath.Join(destinationAbsolutePath, entry.Name())
 		if _, err := os.Lstat(targetPath); err == nil {
-			return fs.ErrExist
+			return nil, fs.ErrExist
 		} else if !errors.Is(err, fs.ErrNotExist) {
-			return err
+			return nil, err
 		}
 	}
 
+	extractedPaths := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		sourcePath := filepath.Join(stagingPath, entry.Name())
 		targetPath := filepath.Join(destinationAbsolutePath, entry.Name())
 		if err := movePath(sourcePath, targetPath); err != nil {
-			return err
+			return nil, err
 		}
+		extractedPaths = append(extractedPaths, targetPath)
 	}
 
-	return nil
+	return extractedPaths, nil
 }
 
 type downloadSource struct {
@@ -1325,7 +1327,10 @@ func createArchiveDirectory(targetPath string, mode fs.FileMode) error {
 		permissions = 0o755
 	}
 
-	return os.MkdirAll(targetPath, permissions)
+	if err := os.MkdirAll(targetPath, permissions); err != nil {
+		return err
+	}
+	return os.Chmod(targetPath, permissions)
 }
 
 func writeArchiveFile(targetPath string, source io.Reader, mode fs.FileMode) error {
@@ -1348,7 +1353,7 @@ func writeArchiveFile(targetPath string, source io.Reader, mode fs.FileMode) err
 		return ErrInvalidArchive
 	}
 
-	return nil
+	return target.Chmod(permissions)
 }
 
 func isCrossDeviceLinkError(err error) bool {
