@@ -39,7 +39,11 @@ func (s *Service) installLatestComposer(ctx context.Context, version string) err
 		return fmt.Errorf("create Composer install directory: %w", err)
 	}
 	s.logger.Info("installing latest stable Composer", zap.String("php_version", version))
-	if _, err := runCommandWithOptions(ctx, "", []string{"COMPOSER_ALLOW_SUPERUSER=1"}, phpPath,
+	composerEnv := []string{"COMPOSER_ALLOW_SUPERUSER=1"}
+	if strings.TrimSpace(os.Getenv("HOME")) == "" {
+		composerEnv = append(composerEnv, "COMPOSER_HOME="+filepath.Dir(installerPath))
+	}
+	if _, err := runCommandWithOptions(ctx, "", composerEnv, phpPath,
 		"-d", "disable_functions=",
 		installerPath,
 		"--install-dir="+composerInstallDirectory,
