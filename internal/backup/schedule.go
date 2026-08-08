@@ -7,6 +7,7 @@ import (
 )
 
 const ScheduledCommandMarker = "FLOWPANEL_SCHEDULED_BACKUP=1"
+const scheduledScopeV2Marker = "FLOWPANEL_BACKUP_SCOPE_V2=1"
 
 func BuildScheduledCommand(executablePath string, input CreateInput) (string, error) {
 	path := strings.TrimSpace(executablePath)
@@ -18,6 +19,9 @@ func BuildScheduledCommand(executablePath string, input CreateInput) (string, er
 	if input.IncludePanelData {
 		args = append(args, "--panel-data")
 	}
+	if input.IncludeDockerData {
+		args = append(args, "--docker-data")
+	}
 	if input.IncludeSites {
 		args = append(args, "--sites")
 	}
@@ -26,7 +30,7 @@ func BuildScheduledCommand(executablePath string, input CreateInput) (string, er
 	}
 	args = append(args, "--location", quoteCommandArg(normalizeLocation(input.Location)))
 
-	return ScheduledCommandMarker + " " + strings.Join(args, " "), nil
+	return ScheduledCommandMarker + " " + scheduledScopeV2Marker + " " + strings.Join(args, " "), nil
 }
 
 func ParseScheduledCommand(command string) (CreateInput, bool) {
@@ -36,12 +40,16 @@ func ParseScheduledCommand(command string) (CreateInput, bool) {
 	}
 
 	input := CreateInput{
-		IncludePanelData: strings.Contains(normalized, "--panel-data"),
-		IncludeSites:     strings.Contains(normalized, "--sites"),
-		IncludeDatabases: strings.Contains(normalized, "--databases"),
-		Location:         parseScheduledLocation(normalized),
+		IncludePanelData:  strings.Contains(normalized, "--panel-data"),
+		IncludeDockerData: strings.Contains(normalized, "--docker-data"),
+		IncludeSites:      strings.Contains(normalized, "--sites"),
+		IncludeDatabases:  strings.Contains(normalized, "--databases"),
+		Location:          parseScheduledLocation(normalized),
 	}
-	if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
+	if !strings.Contains(normalized, scheduledScopeV2Marker) && input.IncludePanelData {
+		input.IncludeDockerData = true
+	}
+	if !input.IncludePanelData && !input.IncludeDockerData && !input.IncludeSites && !input.IncludeDatabases {
 		return CreateInput{}, false
 	}
 

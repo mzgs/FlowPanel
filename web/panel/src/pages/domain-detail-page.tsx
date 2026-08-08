@@ -1693,6 +1693,7 @@ export function DomainDetailPage() {
     try {
       const record = await createBackup({
         include_panel_data: false,
+        include_docker_data: false,
         include_sites: true,
         include_databases: false,
         site_hostnames: [domain.hostname],
@@ -1736,6 +1737,7 @@ export function DomainDetailPage() {
     try {
       const record = await createBackup({
         include_panel_data: false,
+        include_docker_data: false,
         include_sites: false,
         include_databases: true,
         database_names: [name],

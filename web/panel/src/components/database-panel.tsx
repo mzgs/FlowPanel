@@ -698,6 +698,7 @@ export function DatabasePanel({
     try {
       const record = await createBackup({
         include_panel_data: false,
+        include_docker_data: false,
         include_sites: false,
         include_databases: true,
         database_names: [database.name],

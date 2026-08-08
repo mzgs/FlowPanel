@@ -298,6 +298,7 @@ func newBackupCreateCommand() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&input.IncludePanelData, "panel-data", false, "include FlowPanel data files and SQLite database")
+	cmd.Flags().BoolVar(&input.IncludeDockerData, "docker-data", false, "include FlowPanel-managed Docker data and container definitions")
 	cmd.Flags().BoolVar(&input.IncludeSites, "sites", false, "include managed site files")
 	cmd.Flags().BoolVar(&input.IncludeDatabases, "databases", false, "include MariaDB dumps")
 	cmd.Flags().StringVar(&input.Location, "location", backup.LocationLocal, "backup destination: local or google_drive")
@@ -464,6 +465,7 @@ func promptBackupCreateInput(reader *bufio.Reader, w io.Writer) (backup.CreateIn
 		set   *bool
 	}{
 		{label: "Include FlowPanel data? [Y/n]: ", set: &input.IncludePanelData},
+		{label: "Include Docker data and containers? [Y/n]: ", set: &input.IncludeDockerData},
 		{label: "Include site files? [Y/n]: ", set: &input.IncludeSites},
 		{label: "Include database dumps? [Y/n]: ", set: &input.IncludeDatabases},
 	}
@@ -1559,7 +1561,10 @@ func credentialCommandError(err error) error {
 }
 
 func runBackupCreateCommand(input backup.CreateInput) error {
-	if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
+	if os.Getenv("FLOWPANEL_SCHEDULED_BACKUP") == "1" && os.Getenv("FLOWPANEL_BACKUP_SCOPE_V2") != "1" && input.IncludePanelData {
+		input.IncludeDockerData = true
+	}
+	if !input.IncludePanelData && !input.IncludeDockerData && !input.IncludeSites && !input.IncludeDatabases {
 		return fmt.Errorf("select at least one backup scope")
 	}
 

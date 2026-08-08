@@ -51,12 +51,13 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			IncludeDatabases: true,
 		}
 		var payload struct {
-			IncludePanelData *bool    `json:"include_panel_data"`
-			IncludeSites     *bool    `json:"include_sites"`
-			IncludeDatabases *bool    `json:"include_databases"`
-			SiteHostnames    []string `json:"site_hostnames"`
-			DatabaseNames    []string `json:"database_names"`
-			Location         string   `json:"location"`
+			IncludePanelData  *bool    `json:"include_panel_data"`
+			IncludeDockerData *bool    `json:"include_docker_data"`
+			IncludeSites      *bool    `json:"include_sites"`
+			IncludeDatabases  *bool    `json:"include_databases"`
+			SiteHostnames     []string `json:"site_hostnames"`
+			DatabaseNames     []string `json:"database_names"`
+			Location          string   `json:"location"`
 		}
 		if r.Body != nil {
 			if err := decodeJSON(r, &payload); err != nil && !errors.Is(err, io.EOF) {
@@ -66,6 +67,11 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		}
 		if payload.IncludePanelData != nil {
 			input.IncludePanelData = *payload.IncludePanelData
+		}
+		if payload.IncludeDockerData != nil {
+			input.IncludeDockerData = *payload.IncludeDockerData
+		} else {
+			input.IncludeDockerData = input.IncludePanelData
 		}
 		if payload.IncludeSites != nil {
 			input.IncludeSites = *payload.IncludeSites
@@ -112,14 +118,15 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			}
 
 			schedules = append(schedules, map[string]any{
-				"id":                 job.ID,
-				"name":               job.Name,
-				"schedule":           job.Schedule,
-				"created_at":         job.CreatedAt,
-				"include_panel_data": scope.IncludePanelData,
-				"include_sites":      scope.IncludeSites,
-				"include_databases":  scope.IncludeDatabases,
-				"location":           scope.Location,
+				"id":                  job.ID,
+				"name":                job.Name,
+				"schedule":            job.Schedule,
+				"created_at":          job.CreatedAt,
+				"include_panel_data":  scope.IncludePanelData,
+				"include_docker_data": scope.IncludeDockerData,
+				"include_sites":       scope.IncludeSites,
+				"include_databases":   scope.IncludeDatabases,
+				"location":            scope.Location,
 			})
 		}
 
@@ -144,12 +151,13 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			IncludeDatabases: true,
 		}
 		var payload struct {
-			Name             string `json:"name"`
-			Schedule         string `json:"schedule"`
-			IncludePanelData *bool  `json:"include_panel_data"`
-			IncludeSites     *bool  `json:"include_sites"`
-			IncludeDatabases *bool  `json:"include_databases"`
-			Location         string `json:"location"`
+			Name              string `json:"name"`
+			Schedule          string `json:"schedule"`
+			IncludePanelData  *bool  `json:"include_panel_data"`
+			IncludeDockerData *bool  `json:"include_docker_data"`
+			IncludeSites      *bool  `json:"include_sites"`
+			IncludeDatabases  *bool  `json:"include_databases"`
+			Location          string `json:"location"`
 		}
 		if err := decodeJSON(r, &payload); err != nil {
 			writeInvalidRequestBody(w)
@@ -157,6 +165,11 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		}
 		if payload.IncludePanelData != nil {
 			input.IncludePanelData = *payload.IncludePanelData
+		}
+		if payload.IncludeDockerData != nil {
+			input.IncludeDockerData = *payload.IncludeDockerData
+		} else {
+			input.IncludeDockerData = input.IncludePanelData
 		}
 		if payload.IncludeSites != nil {
 			input.IncludeSites = *payload.IncludeSites
@@ -166,7 +179,7 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		}
 		input.Location = payload.Location
 
-		if !input.IncludePanelData && !input.IncludeSites && !input.IncludeDatabases {
+		if !input.IncludePanelData && !input.IncludeDockerData && !input.IncludeSites && !input.IncludeDatabases {
 			writeValidationFailed(w, map[string]string{
 				"scope": "Select at least one backup source.",
 			})
@@ -207,14 +220,15 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		a.mutationEvent(r.Context(), "backups", "schedule", "backup_schedule", record.ID, record.Name, "succeeded", fmt.Sprintf("Created scheduled backup %q.", record.Name))
 		writeJSON(w, stdhttp.StatusCreated, map[string]any{
 			"schedule": map[string]any{
-				"id":                 record.ID,
-				"name":               record.Name,
-				"schedule":           record.Schedule,
-				"created_at":         record.CreatedAt,
-				"include_panel_data": input.IncludePanelData,
-				"include_sites":      input.IncludeSites,
-				"include_databases":  input.IncludeDatabases,
-				"location":           input.Location,
+				"id":                  record.ID,
+				"name":                record.Name,
+				"schedule":            record.Schedule,
+				"created_at":          record.CreatedAt,
+				"include_panel_data":  input.IncludePanelData,
+				"include_docker_data": input.IncludeDockerData,
+				"include_sites":       input.IncludeSites,
+				"include_databases":   input.IncludeDatabases,
+				"location":            input.Location,
 			},
 		})
 	})
@@ -412,8 +426,18 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "backup restored but runtime sync failed"})
 			return
 		}
+		if len(result.RestoredContainers) > 0 {
+			if err := a.reconcileFirewall(r.Context()); err != nil {
+				a.app.Logger.Error("reconcile firewall after backup restore failed", zap.String("backup_name", name), zap.Error(err))
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Docker containers were restored, but firewall ports could not be reconciled: %v", err))
+			}
+		}
 
-		a.mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "succeeded", fmt.Sprintf("Restored backup %q.", name))
+		detail := fmt.Sprintf("Restored backup %q.", name)
+		if len(result.Warnings) > 0 {
+			detail = fmt.Sprintf("Restored backup %q with %d warning(s).", name, len(result.Warnings))
+		}
+		a.mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "succeeded", detail)
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"restore": result})
 	})
 	r.Method(stdhttp.MethodPost, "/backups/{backupName}/restore", backupsRestoreHandler)

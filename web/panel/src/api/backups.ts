@@ -12,6 +12,7 @@ export type ScheduledBackupRecord = {
   schedule: string;
   created_at: string;
   include_panel_data: boolean;
+  include_docker_data: boolean;
   include_sites: boolean;
   include_databases: boolean;
   location: "local" | "google_drive";
@@ -19,6 +20,7 @@ export type ScheduledBackupRecord = {
 
 export type CreateBackupInput = {
   include_panel_data: boolean;
+  include_docker_data: boolean;
   include_sites: boolean;
   include_databases: boolean;
   site_hostnames?: string[];
@@ -29,14 +31,18 @@ export type CreateBackupInput = {
 export type RestoreBackupResult = {
   restored_panel_files: boolean;
   restored_panel_database: boolean;
+  restored_docker_data: boolean;
+  restored_docker_containers?: string[];
   restored_sites?: string[];
   restored_databases?: string[];
+  warnings?: string[];
 };
 
 export type CreateScheduledBackupInput = {
   name: string;
   schedule: string;
   include_panel_data: boolean;
+  include_docker_data: boolean;
   include_sites: boolean;
   include_databases: boolean;
   location?: "local" | "google_drive";

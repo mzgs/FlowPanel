@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flowpanel/internal/config"
+	"flowpanel/internal/dockercontainer"
 	"fmt"
 	"io"
 	stdhttp "net/http"
@@ -139,77 +140,9 @@ type dockerVolumeMapping struct {
 	ReadOnly    bool   `json:"read_only"`
 }
 
-type dockerInspectRecord struct {
-	ID         string                   `json:"Id"`
-	Name       string                   `json:"Name"`
-	Config     dockerInspectConfig      `json:"Config"`
-	HostConfig dockerInspectHostConfig  `json:"HostConfig"`
-	Mounts     []dockerInspectMount     `json:"Mounts"`
-	Network    dockerInspectNetwork     `json:"NetworkSettings"`
-	State      dockerInspectStateRecord `json:"State"`
-}
-
-type dockerInspectConfig struct {
-	Image        string            `json:"Image"`
-	Env          []string          `json:"Env"`
-	Entrypoint   []string          `json:"Entrypoint"`
-	Cmd          []string          `json:"Cmd"`
-	WorkingDir   string            `json:"WorkingDir"`
-	User         string            `json:"User"`
-	Labels       map[string]string `json:"Labels"`
-	Hostname     string            `json:"Hostname"`
-	Domainname   string            `json:"Domainname"`
-	StopSignal   string            `json:"StopSignal"`
-	Tty          bool              `json:"Tty"`
-	OpenStdin    bool              `json:"OpenStdin"`
-	Volumes      map[string]any    `json:"Volumes"`
-	ExposedPorts map[string]any    `json:"ExposedPorts"`
-}
-
-type dockerInspectHostConfig struct {
-	Binds           []string                       `json:"Binds"`
-	PortBindings    map[string][]dockerPortBinding `json:"PortBindings"`
-	RestartPolicy   dockerRestartPolicy            `json:"RestartPolicy"`
-	NetworkMode     string                         `json:"NetworkMode"`
-	ExtraHosts      []string                       `json:"ExtraHosts"`
-	CapAdd          []string                       `json:"CapAdd"`
-	CapDrop         []string                       `json:"CapDrop"`
-	DNS             []string                       `json:"Dns"`
-	DNSSearch       []string                       `json:"DnsSearch"`
-	Tmpfs           map[string]string              `json:"Tmpfs"`
-	ShmSize         int64                          `json:"ShmSize"`
-	AutoRemove      bool                           `json:"AutoRemove"`
-	PublishAllPorts bool                           `json:"PublishAllPorts"`
-	ReadonlyRootfs  bool                           `json:"ReadonlyRootfs"`
-	Privileged      bool                           `json:"Privileged"`
-	Init            *bool                          `json:"Init"`
-}
-
-type dockerInspectMount struct {
-	Type        string `json:"Type"`
-	Name        string `json:"Name"`
-	Source      string `json:"Source"`
-	Destination string `json:"Destination"`
-	RW          bool   `json:"RW"`
-}
-
-type dockerInspectStateRecord struct {
-	Running bool `json:"Running"`
-}
-
-type dockerInspectNetwork struct {
-	Ports map[string][]dockerPortBinding `json:"Ports"`
-}
-
-type dockerPortBinding struct {
-	HostIP   string `json:"HostIp"`
-	HostPort string `json:"HostPort"`
-}
-
-type dockerRestartPolicy struct {
-	Name              string `json:"Name"`
-	MaximumRetryCount int    `json:"MaximumRetryCount"`
-}
+type dockerInspectRecord = dockercontainer.Record
+type dockerInspectMount = dockercontainer.Mount
+type dockerPortBinding = dockercontainer.PortBinding
 
 type dockerStatsRecord struct {
 	CPUPerc  string `json:"CPUPerc"`
@@ -1528,7 +1461,7 @@ func recreateDockerContainerWithConfig(
 	containerID string,
 	record dockerInspectRecord,
 ) (dockerContainerListItem, error) {
-	args := dockerCreateArgs(record)
+	args := dockercontainer.CreateArgs(record)
 	if err := deleteDockerContainer(ctx, containerID); err != nil {
 		return dockerContainerListItem{}, err
 	}
@@ -1861,220 +1794,6 @@ func parseDockerStatsBytes(value string) *int64 {
 
 	bytes := int64(parsed)
 	return &bytes
-}
-
-func dockerCreateArgs(record dockerInspectRecord) []string {
-	args := []string{"create", "-q"}
-
-	name := strings.TrimPrefix(strings.TrimSpace(record.Name), "/")
-	if name != "" {
-		args = append(args, "--name", name)
-	}
-	if record.Config.Hostname != "" {
-		args = append(args, "--hostname", record.Config.Hostname)
-	}
-	if record.Config.Domainname != "" {
-		args = append(args, "--domainname", record.Config.Domainname)
-	}
-	if record.Config.WorkingDir != "" {
-		args = append(args, "--workdir", record.Config.WorkingDir)
-	}
-	if record.Config.User != "" {
-		args = append(args, "--user", record.Config.User)
-	}
-	if record.Config.StopSignal != "" {
-		args = append(args, "--stop-signal", record.Config.StopSignal)
-	}
-	if record.Config.Tty {
-		args = append(args, "--tty")
-	}
-	if record.Config.OpenStdin {
-		args = append(args, "--interactive")
-	}
-	if record.HostConfig.AutoRemove {
-		args = append(args, "--rm")
-	}
-	if record.HostConfig.PublishAllPorts {
-		args = append(args, "--publish-all")
-	}
-	if record.HostConfig.ReadonlyRootfs {
-		args = append(args, "--read-only")
-	}
-	if record.HostConfig.Privileged {
-		args = append(args, "--privileged")
-	}
-	if record.HostConfig.Init != nil && *record.HostConfig.Init {
-		args = append(args, "--init")
-	}
-	if record.HostConfig.ShmSize > 0 {
-		args = append(args, "--shm-size", strconv.FormatInt(record.HostConfig.ShmSize, 10))
-	}
-	entrypoint, entrypointArgs := dockerCommandParts(record.Config.Entrypoint)
-	if entrypoint != "" {
-		args = append(args, "--entrypoint", entrypoint)
-	}
-	if restart := dockerRestartPolicyValue(record.HostConfig.RestartPolicy); restart != "" {
-		args = append(args, "--restart", restart)
-	}
-	if networkMode := strings.TrimSpace(record.HostConfig.NetworkMode); networkMode != "" && networkMode != "default" {
-		args = append(args, "--network", networkMode)
-	}
-
-	labelKeys := make([]string, 0, len(record.Config.Labels))
-	for key := range record.Config.Labels {
-		labelKeys = append(labelKeys, key)
-	}
-	sort.Strings(labelKeys)
-	for _, key := range labelKeys {
-		args = append(args, "--label", key+"="+record.Config.Labels[key])
-	}
-
-	for _, env := range record.Config.Env {
-		env = strings.TrimSpace(env)
-		if env != "" {
-			args = append(args, "--env", env)
-		}
-	}
-
-	for _, host := range record.HostConfig.ExtraHosts {
-		host = strings.TrimSpace(host)
-		if host != "" {
-			args = append(args, "--add-host", host)
-		}
-	}
-
-	for _, dns := range record.HostConfig.DNS {
-		dns = strings.TrimSpace(dns)
-		if dns != "" {
-			args = append(args, "--dns", dns)
-		}
-	}
-
-	for _, dnsSearch := range record.HostConfig.DNSSearch {
-		dnsSearch = strings.TrimSpace(dnsSearch)
-		if dnsSearch != "" {
-			args = append(args, "--dns-search", dnsSearch)
-		}
-	}
-
-	for _, capability := range record.HostConfig.CapAdd {
-		capability = strings.TrimSpace(capability)
-		if capability != "" {
-			args = append(args, "--cap-add", capability)
-		}
-	}
-
-	for _, capability := range record.HostConfig.CapDrop {
-		capability = strings.TrimSpace(capability)
-		if capability != "" {
-			args = append(args, "--cap-drop", capability)
-		}
-	}
-
-	portKeys := make([]string, 0, len(record.HostConfig.PortBindings))
-	for key := range record.HostConfig.PortBindings {
-		portKeys = append(portKeys, key)
-	}
-	sort.Strings(portKeys)
-	for _, key := range portKeys {
-		bindings := record.HostConfig.PortBindings[key]
-		if len(bindings) == 0 {
-			args = append(args, "--expose", key)
-			continue
-		}
-
-		for _, binding := range bindings {
-			publish := dockerPublishValue(key, binding)
-			if publish != "" {
-				args = append(args, "--publish", publish)
-			}
-		}
-	}
-
-	for _, bind := range record.HostConfig.Binds {
-		bind = strings.TrimSpace(bind)
-		if bind != "" {
-			args = append(args, "--volume", bind)
-		}
-	}
-
-	bindDestinations := make(map[string]struct{}, len(record.HostConfig.Binds))
-	for _, bind := range record.HostConfig.Binds {
-		if destination := dockerBindDestination(bind); destination != "" {
-			bindDestinations[destination] = struct{}{}
-		}
-	}
-
-	for _, mount := range record.Mounts {
-		if strings.TrimSpace(mount.Destination) == "" {
-			continue
-		}
-		if _, exists := bindDestinations[mount.Destination]; exists {
-			continue
-		}
-
-		if mount.Type == "bind" {
-			source := strings.TrimSpace(mount.Source)
-			if source == "" {
-				continue
-			}
-			spec := source + ":" + strings.TrimSpace(mount.Destination)
-			if !mount.RW {
-				spec += ":ro"
-			}
-			args = append(args, "--volume", spec)
-			continue
-		}
-
-		if mount.Type != "volume" {
-			continue
-		}
-
-		spec := "type=volume"
-		if mount.Name != "" {
-			spec += ",src=" + mount.Name
-		}
-		spec += ",dst=" + mount.Destination
-		if !mount.RW {
-			spec += ",readonly"
-		}
-		args = append(args, "--mount", spec)
-	}
-
-	tmpfsKeys := make([]string, 0, len(record.HostConfig.Tmpfs))
-	for key := range record.HostConfig.Tmpfs {
-		tmpfsKeys = append(tmpfsKeys, key)
-	}
-	sort.Strings(tmpfsKeys)
-	for _, key := range tmpfsKeys {
-		spec := key
-		if value := strings.TrimSpace(record.HostConfig.Tmpfs[key]); value != "" {
-			spec += ":" + value
-		}
-		args = append(args, "--tmpfs", spec)
-	}
-
-	exposedPortKeys := make([]string, 0, len(record.Config.ExposedPorts))
-	for key := range record.Config.ExposedPorts {
-		exposedPortKeys = append(exposedPortKeys, key)
-	}
-	sort.Strings(exposedPortKeys)
-	for _, key := range exposedPortKeys {
-		if _, published := record.HostConfig.PortBindings[key]; published {
-			continue
-		}
-		args = append(args, "--expose", key)
-	}
-
-	image := strings.TrimSpace(record.Config.Image)
-	if image == "" {
-		image = strings.TrimSpace(record.ID)
-	}
-	args = append(args, image)
-	args = append(args, entrypointArgs...)
-	args = append(args, record.Config.Cmd...)
-
-	return args
 }
 
 func applyDockerContainerPorts(record *dockerInspectRecord, requested []dockerContainerPortMapping) map[string]string {
@@ -2509,46 +2228,6 @@ func dockerContainerActionPresentParticiple(action string) string {
 	}
 }
 
-func dockerRestartPolicyValue(policy dockerRestartPolicy) string {
-	name := strings.TrimSpace(policy.Name)
-	if name == "" || name == "no" {
-		return ""
-	}
-	if name == "on-failure" && policy.MaximumRetryCount > 0 {
-		return fmt.Sprintf("%s:%d", name, policy.MaximumRetryCount)
-	}
-	return name
-}
-
-func dockerCommandParts(command []string) (string, []string) {
-	trimmed := make([]string, 0, len(command))
-	for _, value := range command {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			trimmed = append(trimmed, value)
-		}
-	}
-	if len(trimmed) == 0 {
-		return "", nil
-	}
-	return trimmed[0], trimmed[1:]
-}
-
-func dockerPublishValue(containerPort string, binding dockerPortBinding) string {
-	hostPort := strings.TrimSpace(binding.HostPort)
-	hostIP := strings.TrimSpace(binding.HostIP)
-	switch {
-	case hostIP != "" && hostPort != "":
-		return hostIP + ":" + hostPort + ":" + containerPort
-	case hostPort != "":
-		return hostPort + ":" + containerPort
-	case hostIP != "":
-		return hostIP + "::" + containerPort
-	default:
-		return containerPort
-	}
-}
-
 func parseDockerVolumeSpec(bind string) (dockerVolumeMapping, bool) {
 	parts := strings.Split(strings.TrimSpace(bind), ":")
 	if len(parts) < 2 {
@@ -2574,14 +2253,6 @@ func parseDockerVolumeSpec(bind string) (dockerVolumeMapping, bool) {
 		Destination: destination,
 		ReadOnly:    readOnly,
 	}, true
-}
-
-func dockerBindDestination(bind string) string {
-	mapping, ok := parseDockerVolumeSpec(bind)
-	if !ok {
-		return ""
-	}
-	return mapping.Destination
 }
 
 func dockerSnapshotFileName(container dockerContainerListItem) string {

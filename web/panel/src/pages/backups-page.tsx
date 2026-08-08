@@ -19,6 +19,7 @@ import { fetchSettings, type PanelSettings } from "@/api/settings";
 import {
   Clock,
   Database,
+  Docker,
   Download,
   FolderOpen,
   HardDrive,
@@ -62,6 +63,7 @@ import { toast } from "sonner";
 
 const initialScope: CreateBackupInput = {
   include_panel_data: true,
+  include_docker_data: true,
   include_sites: true,
   include_databases: true,
   location: "local",
@@ -70,6 +72,7 @@ type ScheduleFormState = {
   name: string;
   schedule: string;
   include_panel_data: boolean;
+  include_docker_data: boolean;
   include_sites: boolean;
   include_databases: boolean;
   location: "local" | "google_drive";
@@ -79,6 +82,7 @@ const initialScheduleForm: ScheduleFormState = {
   name: "Nightly backup",
   schedule: "0 3 * * *",
   include_panel_data: true,
+  include_docker_data: true,
   include_sites: true,
   include_databases: true,
   location: "local",
@@ -95,6 +99,9 @@ function formatScheduledBackupScope(record: ScheduledBackupRecord) {
   const parts: string[] = [];
   if (record.include_panel_data) {
     parts.push("Panel data");
+  }
+  if (record.include_docker_data) {
+    parts.push("Docker data and containers");
   }
   if (record.include_sites) {
     parts.push("Site files");
@@ -204,9 +211,13 @@ export function BackupsPage() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasSelectedScope =
-    scope.include_panel_data || scope.include_sites || scope.include_databases;
+    scope.include_panel_data ||
+    scope.include_docker_data ||
+    scope.include_sites ||
+    scope.include_databases;
   const hasScheduledScope =
     scheduleForm.include_panel_data ||
+    scheduleForm.include_docker_data ||
     scheduleForm.include_sites ||
     scheduleForm.include_databases;
   const googleDriveAvailable = settings?.google_drive_available ?? false;
@@ -218,11 +229,13 @@ export function BackupsPage() {
     scheduleForm.location === "local" ||
     (googleDriveAvailable && googleDriveConnected);
   const panelDataCheckboxId = "backup-scope-panel-data";
+  const dockerDataCheckboxId = "backup-scope-docker-data";
   const siteFilesCheckboxId = "backup-scope-site-files";
   const databaseDumpsCheckboxId = "backup-scope-database-dumps";
   const scheduleNameInputId = "scheduled-backup-name";
   const scheduleInputId = "scheduled-backup-schedule";
   const schedulePanelDataCheckboxId = "scheduled-backup-scope-panel-data";
+  const scheduleDockerDataCheckboxId = "scheduled-backup-scope-docker-data";
   const scheduleSiteFilesCheckboxId = "scheduled-backup-scope-site-files";
   const scheduleDatabaseDumpsCheckboxId =
     "scheduled-backup-scope-database-dumps";
@@ -475,6 +488,9 @@ export function BackupsPage() {
           window.location.reload();
         }, 700);
       }
+      for (const warning of result.warnings ?? []) {
+        toast.warning(warning);
+      }
     } catch (error) {
       toast.error(getErrorMessage(error, "Failed to restore backup."));
     } finally {
@@ -685,6 +701,39 @@ export function BackupsPage() {
                     <HardDrive className="h-4 w-4" />
                     Panel data
                   </Label>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Includes FlowPanel settings, runtime secrets, and the panel
+                    database.
+                  </p>
+                </div>
+              </label>
+
+              <label
+                htmlFor={dockerDataCheckboxId}
+                className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--app-border)] px-3 py-3"
+              >
+                <Checkbox
+                  id={dockerDataCheckboxId}
+                  checked={scope.include_docker_data}
+                  onCheckedChange={(checked) =>
+                    setScope((current) => ({
+                      ...current,
+                      include_docker_data: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={dockerDataCheckboxId}
+                    className="cursor-pointer text-sm text-foreground"
+                  >
+                    <Docker className="h-4 w-4" />
+                    Docker data and containers
+                  </Label>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Includes managed volume folders and container definitions.
+                  </p>
                 </div>
               </label>
 
@@ -917,6 +966,39 @@ export function BackupsPage() {
                     <HardDrive className="h-4 w-4" />
                     Panel data
                   </Label>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Includes FlowPanel settings, runtime secrets, and the panel
+                    database.
+                  </p>
+                </div>
+              </label>
+
+              <label
+                htmlFor={scheduleDockerDataCheckboxId}
+                className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--app-border)] px-3 py-3"
+              >
+                <Checkbox
+                  id={scheduleDockerDataCheckboxId}
+                  checked={scheduleForm.include_docker_data}
+                  onCheckedChange={(checked) =>
+                    setScheduleForm((current) => ({
+                      ...current,
+                      include_docker_data: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={scheduleDockerDataCheckboxId}
+                    className="cursor-pointer text-sm text-foreground"
+                  >
+                    <Docker className="h-4 w-4" />
+                    Docker data and containers
+                  </Label>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Includes managed volume folders and container definitions.
+                  </p>
                 </div>
               </label>
 
@@ -1015,7 +1097,7 @@ export function BackupsPage() {
         title="Restore backup"
         desc={
           confirmRestoreRecord
-            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites the matching panel files, site files, and databases contained in the archive.`
+            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel files, Docker data, site files, and databases, and stops and recreates Docker containers contained in the archive.`
             : "Restore this backup?"
         }
         confirmText="Restore backup"

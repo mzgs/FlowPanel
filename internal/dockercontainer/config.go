@@ -1,0 +1,390 @@
+package dockercontainer
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os/exec"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+type Record struct {
+	ID         string      `json:"Id"`
+	Name       string      `json:"Name"`
+	Config     Config      `json:"Config"`
+	HostConfig HostConfig  `json:"HostConfig"`
+	Mounts     []Mount     `json:"Mounts"`
+	Network    Network     `json:"NetworkSettings"`
+	State      StateRecord `json:"State"`
+}
+
+type Config struct {
+	Image        string            `json:"Image"`
+	Env          []string          `json:"Env"`
+	Entrypoint   []string          `json:"Entrypoint"`
+	Cmd          []string          `json:"Cmd"`
+	WorkingDir   string            `json:"WorkingDir"`
+	User         string            `json:"User"`
+	Labels       map[string]string `json:"Labels"`
+	Hostname     string            `json:"Hostname"`
+	Domainname   string            `json:"Domainname"`
+	StopSignal   string            `json:"StopSignal"`
+	Tty          bool              `json:"Tty"`
+	OpenStdin    bool              `json:"OpenStdin"`
+	Volumes      map[string]any    `json:"Volumes"`
+	ExposedPorts map[string]any    `json:"ExposedPorts"`
+}
+
+type HostConfig struct {
+	Binds           []string                 `json:"Binds"`
+	PortBindings    map[string][]PortBinding `json:"PortBindings"`
+	RestartPolicy   RestartPolicy            `json:"RestartPolicy"`
+	NetworkMode     string                   `json:"NetworkMode"`
+	ExtraHosts      []string                 `json:"ExtraHosts"`
+	CapAdd          []string                 `json:"CapAdd"`
+	CapDrop         []string                 `json:"CapDrop"`
+	DNS             []string                 `json:"Dns"`
+	DNSSearch       []string                 `json:"DnsSearch"`
+	Tmpfs           map[string]string        `json:"Tmpfs"`
+	ShmSize         int64                    `json:"ShmSize"`
+	AutoRemove      bool                     `json:"AutoRemove"`
+	PublishAllPorts bool                     `json:"PublishAllPorts"`
+	ReadonlyRootfs  bool                     `json:"ReadonlyRootfs"`
+	Privileged      bool                     `json:"Privileged"`
+	Init            *bool                    `json:"Init"`
+}
+
+type Mount struct {
+	Type        string `json:"Type"`
+	Name        string `json:"Name"`
+	Source      string `json:"Source"`
+	Destination string `json:"Destination"`
+	RW          bool   `json:"RW"`
+}
+
+type StateRecord struct {
+	Running bool `json:"Running"`
+}
+
+type Network struct {
+	Ports map[string][]PortBinding `json:"Ports"`
+}
+
+type PortBinding struct {
+	HostIP   string `json:"HostIp"`
+	HostPort string `json:"HostPort"`
+}
+
+type RestartPolicy struct {
+	Name              string `json:"Name"`
+	MaximumRetryCount int    `json:"MaximumRetryCount"`
+}
+
+func Snapshot(ctx context.Context) ([]Record, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return nil, nil
+	}
+	ids, err := dockerOutput(ctx, "ps", "-aq")
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(ids)
+	if len(fields) == 0 {
+		return []Record{}, nil
+	}
+	payload, err := dockerOutput(ctx, append([]string{"inspect"}, fields...)...)
+	if err != nil {
+		return nil, err
+	}
+	var records []Record
+	if err := json.Unmarshal([]byte(payload), &records); err != nil {
+		return nil, fmt.Errorf("decode Docker container definitions: %w", err)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Name < records[j].Name })
+	return records, nil
+}
+
+func Restore(ctx context.Context, records []Record) ([]string, error) {
+	if len(records) == 0 {
+		return []string{}, nil
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		return nil, errors.New("Docker is not installed on this server")
+	}
+
+	restored := make([]string, 0, len(records))
+	for _, record := range records {
+		name := strings.TrimPrefix(strings.TrimSpace(record.Name), "/")
+		image := strings.TrimSpace(record.Config.Image)
+		if name == "" || image == "" {
+			return restored, errors.New("Docker backup contains an invalid container definition")
+		}
+		if _, err := dockerOutput(ctx, "image", "inspect", image); err != nil {
+			if _, pullErr := dockerOutput(ctx, "pull", image); pullErr != nil {
+				return restored, fmt.Errorf("restore Docker image %q: %w", image, pullErr)
+			}
+		}
+		if network := strings.TrimSpace(record.HostConfig.NetworkMode); isCustomNetwork(network) {
+			if _, err := dockerOutput(ctx, "network", "inspect", network); err != nil {
+				if _, createErr := dockerOutput(ctx, "network", "create", network); createErr != nil {
+					return restored, fmt.Errorf("restore Docker network %q: %w", network, createErr)
+				}
+			}
+		}
+		_, _ = dockerOutput(ctx, "rm", "-f", name)
+		containerID, err := dockerOutput(ctx, CreateArgs(record)...)
+		if err != nil {
+			return restored, fmt.Errorf("restore Docker container %q: %w", name, err)
+		}
+		if record.State.Running {
+			if _, err := dockerOutput(ctx, "start", strings.TrimSpace(containerID)); err != nil {
+				return restored, fmt.Errorf("start restored Docker container %q: %w", name, err)
+			}
+		}
+		restored = append(restored, name)
+	}
+	return restored, nil
+}
+
+func Stop(ctx context.Context, records []Record) error {
+	if len(records) == 0 {
+		return nil
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		return errors.New("Docker is not installed on this server")
+	}
+	for _, record := range records {
+		name := strings.TrimPrefix(strings.TrimSpace(record.Name), "/")
+		if name == "" {
+			return errors.New("Docker backup contains an invalid container definition")
+		}
+		if _, err := dockerOutput(ctx, "container", "inspect", name); err != nil {
+			continue
+		}
+		if _, err := dockerOutput(ctx, "stop", name); err != nil {
+			return fmt.Errorf("stop Docker container %q before restore: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func CreateArgs(record Record) []string {
+	args := []string{"create", "-q"}
+	add := func(flag, value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			args = append(args, flag, value)
+		}
+	}
+	add("--name", strings.TrimPrefix(record.Name, "/"))
+	add("--hostname", record.Config.Hostname)
+	add("--domainname", record.Config.Domainname)
+	add("--workdir", record.Config.WorkingDir)
+	add("--user", record.Config.User)
+	add("--stop-signal", record.Config.StopSignal)
+	if record.Config.Tty {
+		args = append(args, "--tty")
+	}
+	if record.Config.OpenStdin {
+		args = append(args, "--interactive")
+	}
+	if record.HostConfig.AutoRemove {
+		args = append(args, "--rm")
+	}
+	if record.HostConfig.PublishAllPorts {
+		args = append(args, "--publish-all")
+	}
+	if record.HostConfig.ReadonlyRootfs {
+		args = append(args, "--read-only")
+	}
+	if record.HostConfig.Privileged {
+		args = append(args, "--privileged")
+	}
+	if record.HostConfig.Init != nil && *record.HostConfig.Init {
+		args = append(args, "--init")
+	}
+	if record.HostConfig.ShmSize > 0 {
+		add("--shm-size", strconv.FormatInt(record.HostConfig.ShmSize, 10))
+	}
+	entrypoint, entrypointArgs := commandParts(record.Config.Entrypoint)
+	add("--entrypoint", entrypoint)
+	add("--restart", restartPolicyValue(record.HostConfig.RestartPolicy))
+	if network := strings.TrimSpace(record.HostConfig.NetworkMode); network != "" && network != "default" {
+		add("--network", network)
+	}
+
+	keys := sortedKeys(record.Config.Labels)
+	for _, key := range keys {
+		add("--label", key+"="+record.Config.Labels[key])
+	}
+	for _, value := range record.Config.Env {
+		add("--env", value)
+	}
+	for _, value := range record.HostConfig.ExtraHosts {
+		add("--add-host", value)
+	}
+	for _, value := range record.HostConfig.DNS {
+		add("--dns", value)
+	}
+	for _, value := range record.HostConfig.DNSSearch {
+		add("--dns-search", value)
+	}
+	for _, value := range record.HostConfig.CapAdd {
+		add("--cap-add", value)
+	}
+	for _, value := range record.HostConfig.CapDrop {
+		add("--cap-drop", value)
+	}
+
+	portKeys := make([]string, 0, len(record.HostConfig.PortBindings))
+	for key := range record.HostConfig.PortBindings {
+		portKeys = append(portKeys, key)
+	}
+	sort.Strings(portKeys)
+	for _, key := range portKeys {
+		bindings := record.HostConfig.PortBindings[key]
+		if len(bindings) == 0 {
+			add("--expose", key)
+			continue
+		}
+		for _, binding := range bindings {
+			add("--publish", publishValue(key, binding))
+		}
+	}
+	for _, bind := range record.HostConfig.Binds {
+		add("--volume", bind)
+	}
+
+	bindDestinations := make(map[string]struct{}, len(record.HostConfig.Binds))
+	for _, bind := range record.HostConfig.Binds {
+		if destination := bindDestination(bind); destination != "" {
+			bindDestinations[destination] = struct{}{}
+		}
+	}
+	for _, mount := range record.Mounts {
+		if mount.Destination == "" {
+			continue
+		}
+		if _, exists := bindDestinations[mount.Destination]; exists {
+			continue
+		}
+		switch mount.Type {
+		case "bind":
+			spec := strings.TrimSpace(mount.Source) + ":" + strings.TrimSpace(mount.Destination)
+			if !mount.RW {
+				spec += ":ro"
+			}
+			add("--volume", spec)
+		case "volume":
+			spec := "type=volume"
+			if mount.Name != "" {
+				spec += ",src=" + mount.Name
+			}
+			spec += ",dst=" + mount.Destination
+			if !mount.RW {
+				spec += ",readonly"
+			}
+			add("--mount", spec)
+		}
+	}
+	tmpfsKeys := sortedKeys(record.HostConfig.Tmpfs)
+	for _, key := range tmpfsKeys {
+		spec := key
+		if value := strings.TrimSpace(record.HostConfig.Tmpfs[key]); value != "" {
+			spec += ":" + value
+		}
+		add("--tmpfs", spec)
+	}
+	exposedKeys := make([]string, 0, len(record.Config.ExposedPorts))
+	for key := range record.Config.ExposedPorts {
+		exposedKeys = append(exposedKeys, key)
+	}
+	sort.Strings(exposedKeys)
+	for _, key := range exposedKeys {
+		if _, published := record.HostConfig.PortBindings[key]; !published {
+			add("--expose", key)
+		}
+	}
+	args = append(args, strings.TrimSpace(record.Config.Image))
+	args = append(args, entrypointArgs...)
+	return append(args, record.Config.Cmd...)
+}
+
+func dockerOutput(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return "", errors.New(message)
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func sortedKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func commandParts(command []string) (string, []string) {
+	values := make([]string, 0, len(command))
+	for _, value := range command {
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
+		return "", nil
+	}
+	return values[0], values[1:]
+}
+
+func restartPolicyValue(policy RestartPolicy) string {
+	name := strings.TrimSpace(policy.Name)
+	if name == "" || name == "no" {
+		return ""
+	}
+	if name == "on-failure" && policy.MaximumRetryCount > 0 {
+		return fmt.Sprintf("%s:%d", name, policy.MaximumRetryCount)
+	}
+	return name
+}
+
+func publishValue(containerPort string, binding PortBinding) string {
+	hostPort, hostIP := strings.TrimSpace(binding.HostPort), strings.TrimSpace(binding.HostIP)
+	if hostIP != "" && hostPort != "" {
+		return hostIP + ":" + hostPort + ":" + containerPort
+	}
+	if hostPort != "" {
+		return hostPort + ":" + containerPort
+	}
+	if hostIP != "" {
+		return hostIP + "::" + containerPort
+	}
+	return containerPort
+}
+
+func bindDestination(bind string) string {
+	parts := strings.Split(strings.TrimSpace(bind), ":")
+	if len(parts) < 2 {
+		return ""
+	}
+	if len(parts) > 2 {
+		return strings.TrimSpace(parts[len(parts)-2])
+	}
+	return strings.TrimSpace(parts[1])
+}
+
+func isCustomNetwork(name string) bool {
+	return name != "" && name != "default" && name != "bridge" && name != "host" && name != "none" && !strings.HasPrefix(name, "container:")
+}

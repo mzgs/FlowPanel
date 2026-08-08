@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"flowpanel/internal/dockercontainer"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/mariadb"
@@ -62,12 +63,13 @@ type Record struct {
 }
 
 type CreateInput struct {
-	IncludePanelData bool     `json:"include_panel_data"`
-	IncludeSites     bool     `json:"include_sites"`
-	IncludeDatabases bool     `json:"include_databases"`
-	SiteHostnames    []string `json:"site_hostnames,omitempty"`
-	DatabaseNames    []string `json:"database_names,omitempty"`
-	Location         string   `json:"location,omitempty"`
+	IncludePanelData  bool     `json:"include_panel_data"`
+	IncludeDockerData bool     `json:"include_docker_data"`
+	IncludeSites      bool     `json:"include_sites"`
+	IncludeDatabases  bool     `json:"include_databases"`
+	SiteHostnames     []string `json:"site_hostnames,omitempty"`
+	DatabaseNames     []string `json:"database_names,omitempty"`
+	Location          string   `json:"location,omitempty"`
 }
 
 type ValidationErrors map[string]string
@@ -79,8 +81,11 @@ func (v ValidationErrors) Error() string {
 type RestoreResult struct {
 	RestoredPanelFiles    bool     `json:"restored_panel_files"`
 	RestoredPanelDatabase bool     `json:"restored_panel_database"`
+	RestoredDockerData    bool     `json:"restored_docker_data"`
+	RestoredContainers    []string `json:"restored_docker_containers,omitempty"`
 	RestoredSites         []string `json:"restored_sites,omitempty"`
 	RestoredDatabases     []string `json:"restored_databases,omitempty"`
+	Warnings              []string `json:"warnings,omitempty"`
 }
 
 type DownloadResult struct {
@@ -297,10 +302,11 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 	defer os.RemoveAll(stagingPath)
 
 	var (
-		snapshotPath    string
-		snapshotRelPath string
-		sites           []siteArchive
-		databaseDumps   []databaseDump
+		snapshotPath     string
+		snapshotRelPath  string
+		sites            []siteArchive
+		databaseDumps    []databaseDump
+		dockerContainers []dockercontainer.Record
 	)
 	if input.IncludePanelData {
 		snapshotPath, snapshotRelPath, err = s.createDatabaseSnapshot(ctx, stagingPath)
@@ -320,6 +326,12 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 			return Record{}, err
 		}
 	}
+	if input.IncludeDockerData {
+		dockerContainers, err = dockercontainer.Snapshot(ctx)
+		if err != nil {
+			return Record{}, fmt.Errorf("snapshot Docker containers: %w", err)
+		}
+	}
 
 	file, err := os.OpenFile(tempTargetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -337,13 +349,16 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 	gzipWriter := gzip.NewWriter(file)
 	tarWriter := tar.NewWriter(gzipWriter)
 
-	contents := make([]string, 0, 5)
+	contents := make([]string, 0, 6)
 	if input.IncludePanelData {
 		contents = append(contents,
 			"flowpanel data directory",
 			"sqlite database snapshot",
 			"panel-managed runtime secrets",
 		)
+	}
+	if input.IncludeDockerData {
+		contents = append(contents, "flowpanel-managed docker volume data and container definitions")
 	}
 	if len(sites) > 0 {
 		contents = append(contents, "site roots for static, php, and node.js domains")
@@ -373,6 +388,18 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 
 	if input.IncludePanelData {
 		if err := s.writeDataArchive(tarWriter, snapshotPath, snapshotRelPath); err != nil {
+			_ = tarWriter.Close()
+			_ = gzipWriter.Close()
+			return Record{}, err
+		}
+	}
+	if input.IncludeDockerData {
+		if err := s.writeDockerDataArchive(tarWriter); err != nil {
+			_ = tarWriter.Close()
+			_ = gzipWriter.Close()
+			return Record{}, err
+		}
+		if err := writeDockerContainerArchive(tarWriter, dockerContainers, createdAt); err != nil {
 			_ = tarWriter.Close()
 			_ = gzipWriter.Close()
 			return Record{}, err
@@ -590,7 +617,32 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 	}
 	result.RestoredDatabases = restoredDatabases
 
+	dockerContainers, err := readDockerContainerArchive(stagingPath)
+	if err != nil {
+		result.addWarning(fmt.Sprintf("Docker containers were not restored: %v", err))
+		return result, nil
+	}
+	if err := dockercontainer.Stop(ctx, dockerContainers); err != nil {
+		result.addWarning(fmt.Sprintf("Docker containers were not restored: %v", err))
+		return result, nil
+	}
+	result.RestoredDockerData, err = s.restoreDockerData(stagingPath)
+	if err != nil {
+		result.addWarning(fmt.Sprintf("Docker data and containers were not restored: %v", err))
+		return result, nil
+	}
+	result.RestoredContainers, err = dockercontainer.Restore(ctx, dockerContainers)
+	if err != nil {
+		result.addWarning(fmt.Sprintf("Some Docker containers were not restored: %v", err))
+	}
+
 	return result, nil
+}
+
+func (r *RestoreResult) addWarning(message string) {
+	if message = strings.TrimSpace(message); message != "" {
+		r.Warnings = append(r.Warnings, message)
+	}
 }
 
 func (s *Service) Delete(ctx context.Context, id string, location string) error {
@@ -1011,6 +1063,9 @@ func (s *Service) writeDataArchive(tarWriter *tar.Writer, snapshotPath, snapshot
 		if samePath(currentPath, s.backupPath) {
 			return filepath.SkipDir
 		}
+		if samePath(currentPath, s.dockerDataPath()) {
+			return filepath.SkipDir
+		}
 
 		archivePath, ok := archiveRelativePath(s.dataPath, currentPath)
 		if !ok {
@@ -1043,6 +1098,38 @@ func (s *Service) writeDataArchive(tarWriter *tar.Writer, snapshotPath, snapshot
 		return err
 	}
 	return writeSnapshot()
+}
+
+func (s *Service) writeDockerDataArchive(tarWriter *tar.Writer) error {
+	root := s.dockerDataPath()
+	if root == "" {
+		return nil
+	}
+	if _, err := os.Stat(root); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat Docker data directory %q: %w", root, err)
+	}
+
+	return filepath.WalkDir(root, func(currentPath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk Docker data directory: %w", walkErr)
+		}
+		relativePath, err := filepath.Rel(root, currentPath)
+		if err != nil {
+			return fmt.Errorf("resolve Docker data path %q: %w", currentPath, err)
+		}
+		archivePath := "docker_volumes"
+		if relativePath != "." {
+			archivePath = filepath.Join(archivePath, relativePath)
+		}
+		info, err := os.Lstat(currentPath)
+		if err != nil {
+			return fmt.Errorf("stat Docker data path %q: %w", currentPath, err)
+		}
+		return writeTarEntry(tarWriter, currentPath, archivePath, info)
+	})
 }
 
 func writeSiteArchives(tarWriter *tar.Writer, sites []siteArchive) error {
@@ -1088,6 +1175,29 @@ func writeDatabaseDumps(tarWriter *tar.Writer, dumps []databaseDump, modTime tim
 	}
 
 	return nil
+}
+
+func writeDockerContainerArchive(tarWriter *tar.Writer, records []dockercontainer.Record, modTime time.Time) error {
+	payload, err := json.MarshalIndent(records, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Docker container definitions: %w", err)
+	}
+	return writeTarBytes(tarWriter, "docker/containers.json", payload, modTime)
+}
+
+func readDockerContainerArchive(stagingPath string) ([]dockercontainer.Record, error) {
+	payload, err := os.ReadFile(filepath.Join(stagingPath, "docker", "containers.json"))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read Docker container definitions: %w", err)
+	}
+	var records []dockercontainer.Record
+	if err := json.Unmarshal(payload, &records); err != nil {
+		return nil, ErrInvalidArchive
+	}
+	return records, nil
 }
 
 func writeTarBytes(tarWriter *tar.Writer, archivePath string, payload []byte, modTime time.Time) error {
@@ -1293,7 +1403,7 @@ func hasPanelEntries(stagingPath, snapshotRelPath string) bool {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "manifest.json" || name == "sites" || name == "databases" {
+		if name == "manifest.json" || name == "docker" || name == "docker_volumes" || name == "sites" || name == "databases" {
 			continue
 		}
 		if snapshotRelPath != "" && filepath.Clean(filepath.FromSlash(snapshotRelPath)) == name {
@@ -1317,6 +1427,9 @@ func (s *Service) restorePanelFiles(stagingPath, snapshotRelPath string) error {
 	}
 
 	preservedPaths := map[string]struct{}{}
+	if dockerDataPath := s.dockerDataPath(); dockerDataPath != "" {
+		preservedPaths[dockerDataPath] = struct{}{}
+	}
 	if snapshotRelPath != "" {
 		preservedPaths[filepath.Join(s.dataPath, filepath.FromSlash(snapshotRelPath))] = struct{}{}
 	}
@@ -1337,13 +1450,13 @@ func (s *Service) restorePanelFiles(stagingPath, snapshotRelPath string) error {
 			return fmt.Errorf("resolve restore path %q: %w", currentPath, err)
 		}
 		relativePath = filepath.ToSlash(relativePath)
-		if relativePath == "manifest.json" || relativePath == "sites" || relativePath == "databases" {
+		if relativePath == "manifest.json" || relativePath == "docker" || relativePath == "docker_volumes" || relativePath == "sites" || relativePath == "databases" {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if strings.HasPrefix(relativePath, "sites/") || strings.HasPrefix(relativePath, "databases/") {
+		if strings.HasPrefix(relativePath, "docker/") || strings.HasPrefix(relativePath, "docker_volumes/") || strings.HasPrefix(relativePath, "sites/") || strings.HasPrefix(relativePath, "databases/") {
 			if entry.IsDir() && (relativePath == "sites" || relativePath == "databases") {
 				return filepath.SkipDir
 			}
@@ -1362,6 +1475,35 @@ func (s *Service) restorePanelFiles(stagingPath, snapshotRelPath string) error {
 		}
 		return copyPath(currentPath, targetPath)
 	})
+}
+
+func (s *Service) restoreDockerData(stagingPath string) (bool, error) {
+	sourceRoot := filepath.Join(stagingPath, "docker_volumes")
+	info, err := os.Stat(sourceRoot)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat Docker restore directory: %w", err)
+	}
+	if !info.IsDir() {
+		return false, ErrInvalidArchive
+	}
+
+	targetRoot := s.dockerDataPath()
+	if targetRoot == "" {
+		return false, fmt.Errorf("data path is not configured")
+	}
+	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
+		return false, fmt.Errorf("create Docker data directory %q: %w", targetRoot, err)
+	}
+	if err := clearDirectoryContents(targetRoot, nil); err != nil {
+		return false, err
+	}
+	if err := copyTreeContents(sourceRoot, targetRoot); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Service) restoreSiteArchives(stagingPath string) ([]string, error) {
@@ -1884,7 +2026,7 @@ func validateCreateInput(input CreateInput) ValidationErrors {
 			"database_names": "Select database dumps before choosing specific databases.",
 		}
 	}
-	if input.IncludePanelData || input.IncludeSites || input.IncludeDatabases {
+	if input.IncludePanelData || input.IncludeDockerData || input.IncludeSites || input.IncludeDatabases {
 		return nil
 	}
 
@@ -1894,19 +2036,22 @@ func validateCreateInput(input CreateInput) ValidationErrors {
 }
 
 func backupNamePrefix(input CreateInput) string {
-	if input.IncludePanelData && input.IncludeSites && input.IncludeDatabases {
+	if input.IncludePanelData && input.IncludeDockerData && input.IncludeSites && input.IncludeDatabases {
 		return "flowpanel-full-backup"
 	}
-	if !input.IncludePanelData && input.IncludeSites && !input.IncludeDatabases && len(input.SiteHostnames) == 1 {
+	if !input.IncludePanelData && !input.IncludeDockerData && input.IncludeSites && !input.IncludeDatabases && len(input.SiteHostnames) == 1 {
 		return "flowpanel-site-" + input.SiteHostnames[0] + "-backup"
 	}
-	if !input.IncludePanelData && !input.IncludeSites && input.IncludeDatabases && len(input.DatabaseNames) == 1 {
+	if !input.IncludePanelData && !input.IncludeDockerData && !input.IncludeSites && input.IncludeDatabases && len(input.DatabaseNames) == 1 {
 		return "flowpanel-database-" + input.DatabaseNames[0] + "-backup"
 	}
 
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
 	if input.IncludePanelData {
 		parts = append(parts, "panel")
+	}
+	if input.IncludeDockerData {
+		parts = append(parts, "docker")
 	}
 	if input.IncludeSites {
 		parts = append(parts, "sites")
@@ -1916,6 +2061,13 @@ func backupNamePrefix(input CreateInput) string {
 	}
 
 	return "flowpanel-" + strings.Join(parts, "-") + "-backup"
+}
+
+func (s *Service) dockerDataPath() string {
+	if strings.TrimSpace(s.dataPath) == "" {
+		return ""
+	}
+	return filepath.Join(s.dataPath, "docker_volumes")
 }
 
 func samePath(left, right string) bool {
