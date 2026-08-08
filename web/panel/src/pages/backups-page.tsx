@@ -110,8 +110,12 @@ function formatBackupLocation(location: BackupRecord["location"]) {
   return location === "google_drive" ? "Google Drive" : "Local";
 }
 
-function getBackupKey(record: Pick<BackupRecord, "id" | "location">) {
-  return `${record.location}:${record.id}`;
+function getBackupId(record: BackupRecord) {
+  return record.id || (record.location !== "google_drive" ? record.name : "");
+}
+
+function getBackupKey(record: BackupRecord) {
+  return `${record.location}:${getBackupId(record)}`;
 }
 
 function BackupImportProgress({ progress }: { progress: BackupUploadProgress }) {
@@ -395,7 +399,7 @@ export function BackupsPage() {
     setDeletingBackupKey(backupKey);
 
     try {
-      await deleteBackup(record.id, record.location);
+      await deleteBackup(getBackupId(record), record.location);
       setBackups((current) =>
         current.filter((item) => getBackupKey(item) !== backupKey),
       );
@@ -455,7 +459,7 @@ export function BackupsPage() {
     setRestoredBackupKey(null);
 
     try {
-      const result = await restoreBackup(record.id, record.location);
+      const result = await restoreBackup(getBackupId(record), record.location);
       if (restoredTimeoutRef.current !== null) {
         window.clearTimeout(restoredTimeoutRef.current);
       }
@@ -1164,7 +1168,7 @@ export function BackupsPage() {
                           >
                             <a
                               href={getBackupDownloadUrl(
-                                backup.id,
+                                getBackupId(backup),
                                 backup.location,
                               )}
                               aria-label={`Download ${backup.name}`}

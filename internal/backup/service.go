@@ -512,11 +512,7 @@ func (s *Service) Import(_ context.Context, name string, archive io.Reader) (Rec
 		zap.Int64("size", info.Size()),
 	)
 
-	return Record{
-		Name:      filepath.Base(targetPath),
-		Size:      info.Size(),
-		CreatedAt: info.ModTime().UTC(),
-	}, nil
+	return localRecord(filepath.Base(targetPath), info.Size(), info.ModTime()), nil
 }
 
 func (s *Service) Restore(ctx context.Context, id string, location string) (RestoreResult, error) {
