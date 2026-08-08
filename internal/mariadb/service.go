@@ -88,6 +88,7 @@ type Manager interface {
 	DumpAllDatabasesArchive(context.Context) ([]byte, error)
 	DumpDatabase(context.Context, string) ([]byte, error)
 	RestoreDatabase(context.Context, string, []byte) error
+	RestoreDatabaseAccess(context.Context, DatabaseRecord) error
 	CreateDatabase(context.Context, CreateDatabaseInput) (DatabaseRecord, error)
 	UpdateDatabase(context.Context, string, UpdateDatabaseInput) (DatabaseRecord, error)
 	DeleteDatabase(context.Context, string, DeleteDatabaseInput) error
@@ -790,6 +791,33 @@ func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump
 	}
 
 	return fmt.Errorf("%s failed: %s", clientPath, combinedOutput)
+}
+
+func (s *Service) RestoreDatabaseAccess(ctx context.Context, record DatabaseRecord) error {
+	record.Name = strings.TrimSpace(record.Name)
+	record.Username = strings.TrimSpace(record.Username)
+	if message := validateIdentifier(record.Name, "Database name"); message != "" {
+		return ValidationErrors{"name": message}
+	}
+	if message := validateIdentifier(record.Username, "Username"); message != "" {
+		return ValidationErrors{"username": message}
+	}
+	if record.Password == "" {
+		return ValidationErrors{"password": "Password is required."}
+	}
+
+	userLiteral := quoteLiteral(record.Username)
+	passwordLiteral := quoteLiteral(record.Password)
+	statements := []string{
+		fmt.Sprintf("CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY %s", userLiteral, passwordLiteral),
+		fmt.Sprintf("ALTER USER %s@'localhost' IDENTIFIED BY %s", userLiteral, passwordLiteral),
+		fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO %s@'localhost'", quoteIdentifier(record.Name), userLiteral),
+		"FLUSH PRIVILEGES",
+	}
+	if _, err := s.runSQL(ctx, strings.Join(statements, "; ")); err != nil {
+		return fmt.Errorf("restore access for mariadb database %q: %w", record.Name, err)
+	}
+	return nil
 }
 
 func (s *Service) UpdateDatabase(ctx context.Context, databaseName string, input UpdateDatabaseInput) (DatabaseRecord, error) {

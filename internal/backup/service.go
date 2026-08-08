@@ -120,6 +120,7 @@ type DatabaseSource interface {
 	ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error)
 	DumpDatabase(context.Context, string) ([]byte, error)
 	RestoreDatabase(context.Context, string, []byte) error
+	RestoreDatabaseAccess(context.Context, mariadb.DatabaseRecord) error
 }
 
 type PM2Syncer interface {
@@ -1435,9 +1436,35 @@ func (s *Service) restoreDatabaseDumps(ctx context.Context, stagingPath string) 
 		}
 		restored = append(restored, databaseName)
 	}
+	if err := s.restoreDatabaseAccess(ctx, restored); err != nil {
+		return nil, err
+	}
 
 	sort.Strings(restored)
 	return restored, nil
+}
+
+func (s *Service) restoreDatabaseAccess(ctx context.Context, restored []string) error {
+	if len(restored) == 0 {
+		return nil
+	}
+	records, err := s.mariaDB.ListDatabases(ctx)
+	if err != nil {
+		return fmt.Errorf("list restored mariadb databases: %w", err)
+	}
+	restoredSet := make(map[string]struct{}, len(restored))
+	for _, name := range restored {
+		restoredSet[name] = struct{}{}
+	}
+	for _, record := range records {
+		if _, ok := restoredSet[record.Name]; !ok || record.Username == "" || record.Password == "" {
+			continue
+		}
+		if err := s.mariaDB.RestoreDatabaseAccess(ctx, record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) siteRootPath(hostname string) (string, error) {
