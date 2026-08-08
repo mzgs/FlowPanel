@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	stdhttp "net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,7 @@ const (
 	dockerPullCommandTimeout   = 5 * time.Minute
 	dockerExportCommandTimeout = 2 * time.Minute
 	dockerSearchResultLimit    = 100
+	dockerSearchCandidatePages = 2
 	dockerLogsTailLines        = 200
 	dockerAutomaticHostPort    = 32770
 )
@@ -1360,13 +1362,85 @@ func searchDockerHubImages(ctx context.Context, query string, limit int) ([]dock
 		return nil, errors.New("Docker Hub search output could not be read.")
 	}
 
+	seen := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		seen[strings.ToLower(result.Name)] = struct{}{}
+	}
+	for page := 2; page <= dockerSearchCandidatePages; page++ {
+		pageResults, err := searchDockerHubImagesPage(commandCtx, query, limit, page)
+		if err != nil {
+			break
+		}
+		for _, result := range pageResults {
+			key := strings.ToLower(result.Name)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			results = append(results, result)
+		}
+	}
+
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].StarCount != results[j].StarCount {
 			return results[i].StarCount > results[j].StarCount
 		}
 		return strings.ToLower(results[i].Name) < strings.ToLower(results[j].Name)
 	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
 
+	return results, nil
+}
+
+func searchDockerHubImagesPage(ctx context.Context, query string, pageSize, page int) ([]dockerHubSearchImage, error) {
+	requestURL := fmt.Sprintf(
+		"https://hub.docker.com/v2/search/repositories/?query=%s&page_size=%d&page=%d",
+		url.QueryEscape(query),
+		pageSize,
+		page,
+	)
+	request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("User-Agent", "FlowPanel")
+
+	response, err := stdhttp.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != stdhttp.StatusOK {
+		return nil, fmt.Errorf("Docker Hub search returned %s", response.Status)
+	}
+
+	var payload struct {
+		Results []struct {
+			Name        string `json:"repo_name"`
+			Description string `json:"short_description"`
+			StarCount   int    `json:"star_count"`
+			IsOfficial  bool   `json:"is_official"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&payload); err != nil {
+		return nil, err
+	}
+
+	results := make([]dockerHubSearchImage, 0, len(payload.Results))
+	for _, result := range payload.Results {
+		name := strings.TrimSpace(result.Name)
+		if name == "" {
+			continue
+		}
+		results = append(results, dockerHubSearchImage{
+			Name:        name,
+			Description: strings.TrimSpace(result.Description),
+			StarCount:   result.StarCount,
+			IsOfficial:  result.IsOfficial,
+		})
+	}
 	return results, nil
 }
 
