@@ -63,7 +63,7 @@ import { toast } from "sonner";
 
 const initialScope: CreateBackupInput = {
   include_panel_data: true,
-  include_docker_data: true,
+  include_docker_data: false,
   include_sites: true,
   include_databases: true,
   location: "local",
@@ -699,12 +699,8 @@ export function BackupsPage() {
                     className="cursor-pointer text-sm text-foreground"
                   >
                     <HardDrive className="h-4 w-4" />
-                    Panel data
+                    Panel data and settings
                   </Label>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Includes FlowPanel settings, runtime secrets, and the panel
-                    database.
-                  </p>
                 </div>
               </label>
 
@@ -731,10 +727,6 @@ export function BackupsPage() {
                     <Docker className="h-4 w-4" />
                     Docker data and containers
                   </Label>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Includes managed volume folders, container definitions, and
-                    environment variable values.
-                  </p>
                 </div>
               </label>
 
@@ -795,7 +787,7 @@ export function BackupsPage() {
                     className="cursor-pointer text-sm text-foreground"
                   >
                     <Database className="h-4 w-4" />
-                    Database dumps
+                    Databases
                   </Label>
                 </div>
               </label>
