@@ -599,7 +599,7 @@ func (s *Service) loadDefinitions(ctx context.Context) ([]Definition, error) {
 		return nil, fmt.Errorf("load pm2 process definitions: %w", err)
 	}
 
-	return definitions, nil
+	return deduplicateDefinitions(definitions), nil
 }
 
 func (s *Service) replaceDefinitions(ctx context.Context, definitions []Definition) error {
@@ -653,10 +653,32 @@ func missingDefinitions(stored []Definition, inspected []inspectedProcess) []Def
 }
 
 func definitionKey(definition Definition) string {
-	return strings.TrimSpace(definition.Name) + "\x00" +
-		strings.TrimSpace(definition.ScriptPath) + "\x00" +
-		strings.TrimSpace(definition.WorkingDirectory) + "\x00" +
-		strings.TrimSpace(definition.Interpreter)
+	scriptPath := strings.TrimSpace(definition.ScriptPath)
+	if scriptPath == "" {
+		return strings.TrimSpace(definition.Name)
+	}
+	if !filepath.IsAbs(scriptPath) {
+		if workingDirectory := strings.TrimSpace(definition.WorkingDirectory); workingDirectory != "" {
+			scriptPath = filepath.Join(workingDirectory, scriptPath)
+		}
+	}
+
+	return filepath.Clean(scriptPath)
+}
+
+func deduplicateDefinitions(definitions []Definition) []Definition {
+	unique := make([]Definition, 0, len(definitions))
+	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		key := definitionKey(definition)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, definition)
+	}
+
+	return unique
 }
 
 func preserveStoredDefinitionState(inspected []inspectedProcess, stored []Definition) map[string]int {
