@@ -732,7 +732,8 @@ export function BackupsPage() {
                     Docker data and containers
                   </Label>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Includes managed volume folders and container definitions.
+                    Includes managed volume folders, container definitions, and
+                    environment variable values.
                   </p>
                 </div>
               </label>
@@ -997,7 +998,8 @@ export function BackupsPage() {
                     Docker data and containers
                   </Label>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Includes managed volume folders and container definitions.
+                    Includes managed volume folders, container definitions, and
+                    environment variable values.
                   </p>
                 </div>
               </label>
@@ -1097,7 +1099,7 @@ export function BackupsPage() {
         title="Restore backup"
         desc={
           confirmRestoreRecord
-            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel files, Docker data, site files, and databases, and stops and recreates Docker containers contained in the archive.`
+            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel files, Docker data, site files, and databases, and recreates Docker containers with their saved environment variable values.`
             : "Restore this backup?"
         }
         confirmText="Restore backup"

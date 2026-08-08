@@ -358,7 +358,7 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		)
 	}
 	if input.IncludeDockerData {
-		contents = append(contents, "flowpanel-managed docker volume data and container definitions")
+		contents = append(contents, "flowpanel-managed docker volume data and container definitions, including environment variable values")
 	}
 	if len(sites) > 0 {
 		contents = append(contents, "site roots for static, php, and node.js domains")
