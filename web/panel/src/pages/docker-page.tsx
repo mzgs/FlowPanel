@@ -2010,15 +2010,20 @@ function AddDockerContainerDialog({
       return;
     }
 
-    setCreatingImage(image);
+    const target = image.trim();
+    if (target === "") {
+      return;
+    }
+
+    setCreatingImage(target);
     setError(null);
 
     try {
-      const container = await createDockerContainer({ image });
+      const container = await createDockerContainer({ image: target });
       onCreated(container);
       onOpenChange(false);
     } catch (createError) {
-      const message = getErrorMessage(createError, `Failed to create a container from ${image}.`);
+      const message = getErrorMessage(createError, `Failed to create a container from ${target}.`);
       setError(message);
       toast.error(message);
     } finally {
@@ -2040,15 +2045,15 @@ function AddDockerContainerDialog({
         <DialogHeader>
           <DialogTitle>Add Container</DialogTitle>
           <DialogDescription>
-            Search Docker Hub and create a stopped container from a selected image. FlowPanel pulls the
-            image first if it is missing locally, publishes declared ports from host port 32770 upward, and
-            stores declared Docker volumes under data/docker_volumes. Host ports remain editable in Settings.
+            Enter an exact image reference or search Docker Hub. FlowPanel pulls the image first if it is
+            missing locally, publishes declared ports from host port 32770 upward, and stores declared Docker
+            volumes under data/docker_volumes. Host ports remain editable in Settings.
           </DialogDescription>
         </DialogHeader>
 
         <section className="space-y-3">
           <label htmlFor="docker-image-search" className="text-sm font-medium text-foreground">
-            Search Docker Hub images
+            Image reference or Docker Hub search
           </label>
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -2058,11 +2063,42 @@ function AddDockerContainerDialog({
               onChange={(event) => {
                 setQuery(event.target.value);
               }}
-              placeholder="Search images like nginx, redis, postgres..."
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && trimmedQuery !== "") {
+                  event.preventDefault();
+                  void handleCreate(trimmedQuery);
+                }
+              }}
+              placeholder="Enter ghcr.io/browserless/chromium or search nginx..."
               className="pl-9"
               autoComplete="off"
               disabled={creatingImage !== null}
             />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--app-border)] pt-3">
+            <p className="text-sm text-muted-foreground">
+              Create directly from an exact registry reference, even when it is not in Docker Hub results.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={creatingImage !== null || trimmedQuery === ""}
+              onClick={() => {
+                void handleCreate(trimmedQuery);
+              }}
+            >
+              {creatingImage === trimmedQuery && trimmedQuery !== "" ? (
+                <>
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4" />
+                  Create from reference
+                </>
+              )}
+            </Button>
           </div>
         </section>
 
