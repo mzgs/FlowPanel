@@ -558,7 +558,7 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 	}
 
 	result := RestoreResult{}
-	snapshotRelPath, _ := archiveRelativePath(s.dataPath, s.databasePath)
+	snapshotRelPath := databaseArchivePath(s.dataPath, s.databasePath)
 	snapshotStagingPath := ""
 	if snapshotRelPath != "" {
 		candidate := filepath.Join(stagingPath, filepath.FromSlash(snapshotRelPath))
@@ -851,8 +851,8 @@ func (s *Service) createDatabaseSnapshot(ctx context.Context, stagingPath string
 		return "", "", nil
 	}
 
-	relPath, ok := archiveRelativePath(s.dataPath, s.databasePath)
-	if !ok {
+	relPath := databaseArchivePath(s.dataPath, s.databasePath)
+	if relPath == "" {
 		return "", "", nil
 	}
 
@@ -991,11 +991,22 @@ func (s *Service) collectDatabaseDumps(ctx context.Context, names []string) ([]d
 }
 
 func (s *Service) writeDataArchive(tarWriter *tar.Writer, snapshotPath, snapshotRelPath string) error {
+	writeSnapshot := func() error {
+		if snapshotPath == "" {
+			return nil
+		}
+		info, err := os.Lstat(snapshotPath)
+		if err != nil {
+			return fmt.Errorf("stat backup snapshot %q: %w", snapshotPath, err)
+		}
+		return writeTarEntry(tarWriter, snapshotPath, snapshotRelPath, info)
+	}
 	if strings.TrimSpace(s.dataPath) == "" {
-		return nil
+		return writeSnapshot()
 	}
 
-	return filepath.WalkDir(s.dataPath, func(currentPath string, entry fs.DirEntry, walkErr error) error {
+	snapshotWritten := false
+	err := filepath.WalkDir(s.dataPath, func(currentPath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("walk backup source: %w", walkErr)
 		}
@@ -1017,6 +1028,7 @@ func (s *Service) writeDataArchive(tarWriter *tar.Writer, snapshotPath, snapshot
 		sourcePath := currentPath
 		if snapshotPath != "" && samePath(currentPath, s.databasePath) {
 			sourcePath = snapshotPath
+			snapshotWritten = true
 			info, err = os.Lstat(sourcePath)
 			if err != nil {
 				return fmt.Errorf("stat backup snapshot %q: %w", sourcePath, err)
@@ -1030,6 +1042,10 @@ func (s *Service) writeDataArchive(tarWriter *tar.Writer, snapshotPath, snapshot
 
 		return writeTarEntry(tarWriter, sourcePath, archivePath, info)
 	})
+	if err != nil || snapshotWritten {
+		return err
+	}
+	return writeSnapshot()
 }
 
 func writeSiteArchives(tarWriter *tar.Writer, sites []siteArchive) error {
@@ -1798,6 +1814,17 @@ func archiveRelativePath(rootPath, targetPath string) (string, bool) {
 	}
 
 	return filepath.ToSlash(relPath), true
+}
+
+func databaseArchivePath(dataPath, databasePath string) string {
+	databasePath = filepath.Clean(strings.TrimSpace(databasePath))
+	if databasePath == "" || databasePath == "." || databasePath == ":memory:" || !filepath.IsAbs(databasePath) {
+		return ""
+	}
+	if relPath, ok := archiveRelativePath(dataPath, databasePath); ok {
+		return relPath
+	}
+	return filepath.Base(databasePath)
 }
 
 func siteHostnames(sites []siteArchive) []string {

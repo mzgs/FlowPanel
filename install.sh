@@ -340,7 +340,8 @@ install_linux_service() {
 
   env_dir="/etc/flowpanel"
   env_file="$env_dir/flowpanel.env"
-  data_dir="/var/lib/flowpanel"
+  state_dir="/var/flowpanel"
+  data_dir="$state_dir/data"
   service_file="/etc/systemd/system/$APP.service"
 
   as_root mkdir -p "$env_dir" "$data_dir"
@@ -377,7 +378,7 @@ EOF
     fi
   fi
   configure_admin_https "$env_file" "" "$env_dir/admin.crt" "$env_dir/admin.key"
-  secure_install_permissions "$env_dir" "$env_file" "$data_dir" "/var/flowpanel" "root:root"
+  secure_install_permissions "$env_dir" "$env_file" "$data_dir" "$state_dir" "root:root"
 
   as_root sh -c "cat > '$service_file'" <<EOF
 [Unit]
@@ -410,7 +411,8 @@ install_macos_service() {
 
   env_dir="/usr/local/etc/flowpanel"
   env_file="$env_dir/flowpanel.env"
-  data_dir="/Library/Application Support/FlowPanel"
+  state_dir="/Users/Shared/FlowPanel"
+  data_dir="$state_dir/data"
   log_dir="/Library/Logs/FlowPanel"
   plist_file="/Library/LaunchDaemons/com.mzgs.flowpanel.plist"
 
@@ -447,7 +449,7 @@ EOF
     fi
   fi
   configure_admin_https "$env_file" "export " "$env_dir/admin.crt" "$env_dir/admin.key"
-  secure_install_permissions "$env_dir" "$env_file" "$data_dir" "/Users/Shared/FlowPanel" "root:wheel"
+  secure_install_permissions "$env_dir" "$env_file" "$data_dir" "$state_dir" "root:wheel"
 
   as_root sh -c "cat > '$plist_file'" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
