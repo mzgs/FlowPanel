@@ -439,8 +439,9 @@ export async function createDockerContainer(input: { image: string }): Promise<D
   return parseDockerContainerResponse(response);
 }
 
-export async function deleteDockerContainer(containerID: string): Promise<void> {
-  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}`, {
+export async function deleteDockerContainer(containerID: string, options?: { deleteData?: boolean }): Promise<void> {
+  const suffix = options?.deleteData ? "?delete_data=true" : "";
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}${suffix}`, {
     method: "DELETE",
     credentials: "include",
   });

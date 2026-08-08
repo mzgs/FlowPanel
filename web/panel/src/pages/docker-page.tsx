@@ -59,6 +59,7 @@ import {
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -2039,8 +2040,8 @@ function AddDockerContainerDialog({
           <DialogTitle>Add Container</DialogTitle>
           <DialogDescription>
             Search Docker Hub and create a stopped container from a selected image. FlowPanel pulls the
-            image first if it is missing locally and automatically stores declared Docker volumes under
-            data/docker_volumes.
+            image first if it is missing locally, publishes declared ports from host port 32770 upward, and
+            stores declared Docker volumes under data/docker_volumes. Host ports remain editable in Settings.
           </DialogDescription>
         </DialogHeader>
 
@@ -2364,6 +2365,7 @@ export function DockerPage() {
     action: Extract<DockerContainerMenuAction, "delete" | "recreate">;
     container: DockerContainer;
   } | null>(null);
+  const [deleteContainerData, setDeleteContainerData] = useState(false);
   const [confirmDeleteImage, setConfirmDeleteImage] = useState<DockerImage | null>(null);
   const [saveImageContainer, setSaveImageContainer] = useState<DockerContainer | null>(null);
   const latestRequestRef = useRef(0);
@@ -2837,11 +2839,13 @@ export function DockerPage() {
 
     try {
       if (action === "delete") {
-        await deleteDockerContainer(container.id);
+        await deleteDockerContainer(container.id, { deleteData: deleteContainerData });
         clearContainerActionError(container.id);
         setContainers((current) => current.filter((item) => item.id !== container.id));
         setConfirmAction(null);
-        toast.success(`Deleted container ${getContainerLabel(container)}.`);
+        toast.success(
+          `Deleted container ${getContainerLabel(container)}${deleteContainerData ? " and its data" : ""}.`,
+        );
       } else {
         const nextContainer = await recreateDockerContainer(container.id);
         clearContainerActionError(container.id);
@@ -2957,6 +2961,7 @@ export function DockerPage() {
       return;
     }
 
+    setDeleteContainerData(false);
     setConfirmAction({ action, container });
   }
 
@@ -3102,6 +3107,7 @@ export function DockerPage() {
         onOpenChange={(open) => {
           if (!open && activeContainerID === null) {
             setConfirmAction(null);
+            setDeleteContainerData(false);
           }
         }}
         title={
@@ -3111,7 +3117,7 @@ export function DockerPage() {
         }
         desc={
           confirmAction?.action === "delete"
-            ? "This removes the container immediately. Any stopped or running state for this container will be lost."
+            ? "This removes the container immediately. Its FlowPanel-managed data is preserved unless selected below."
             : "This removes the current container and creates a new one from the same Docker configuration. Running containers are started again after recreation."
         }
         confirmText={confirmAction?.action === "delete" ? "Delete container" : "Recreate container"}
@@ -3128,7 +3134,23 @@ export function DockerPage() {
 
           void handleConfirmedContainerAction(confirmAction.container, confirmAction.action);
         }}
-      />
+      >
+        {confirmAction?.action === "delete" ? (
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--app-border)] px-3 py-3">
+            <Checkbox
+              checked={deleteContainerData}
+              onCheckedChange={(checked) => setDeleteContainerData(checked === true)}
+              className="mt-0.5"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-foreground">Delete container and data</span>
+              <span className="block text-xs text-muted-foreground">
+                Permanently remove this container&apos;s directory under data/docker_volumes.
+              </span>
+            </span>
+          </label>
+        ) : null}
+      </ConfirmDialog>
 
       <section className="px-4 sm:px-6 lg:px-8">
         <div className="space-y-4">

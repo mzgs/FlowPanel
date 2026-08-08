@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -33,7 +34,10 @@ const (
 	dockerExportCommandTimeout = 2 * time.Minute
 	dockerSearchResultLimit    = 100
 	dockerLogsTailLines        = 200
+	dockerAutomaticHostPort    = 32770
 )
+
+var dockerContainerCreateMu sync.Mutex
 
 type dockerContainerListItem struct {
 	ID     string                       `json:"id"`
@@ -486,12 +490,35 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 		if container, err := inspectDockerContainer(actionCtx, containerID); err == nil && strings.TrimSpace(container.Name) != "" {
 			label = container.Name
 		}
+		deleteData := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("delete_data")), "true")
+		var dataPaths []string
+		if deleteData {
+			record, err := inspectDockerContainerConfig(actionCtx, containerID)
+			if err != nil {
+				a.app.Logger.Error("inspect docker container data before delete failed", zap.String("container_id", containerID), zap.Error(err))
+				writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "Container data paths could not be verified, so nothing was deleted."})
+				return
+			}
+			dataPaths = dockerManagedDataPaths(record)
+		}
 
 		if err := deleteDockerContainer(actionCtx, containerID); err != nil {
 			a.app.Logger.Error("delete docker container failed", zap.String("container_id", containerID), zap.Error(err))
 			a.mutationEvent(actionCtx, "runtime", "delete", "docker_container", containerID, label, "failed", err.Error())
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 			return
+		}
+		for _, dataPath := range dataPaths {
+			if err := os.RemoveAll(dataPath); err != nil {
+				a.app.Logger.Error("delete docker container data failed", zap.String("container_id", containerID), zap.String("path", dataPath), zap.Error(err))
+				a.mutationEvent(actionCtx, "runtime", "delete", "docker_container", containerID, label, "failed", "Container deleted but its managed data could not be removed.")
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "Container deleted but its managed data could not be removed."})
+				return
+			}
+		}
+		activityMessage := fmt.Sprintf("Deleted Docker container %q.", label)
+		if deleteData {
+			activityMessage = fmt.Sprintf("Deleted Docker container %q and its managed data.", label)
 		}
 
 		a.mutationEvent(
@@ -502,7 +529,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			containerID,
 			label,
 			"succeeded",
-			fmt.Sprintf("Deleted Docker container %q.", label),
+			activityMessage,
 		)
 		if err := a.reconcileFirewall(actionCtx); err != nil {
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "container deleted but firewall reconciliation failed"})
@@ -1106,6 +1133,53 @@ func dockerContainerVolumeMappings(record dockerInspectRecord) []dockerVolumeMap
 	return values
 }
 
+func dockerAutomaticPortMappings(ctx context.Context, record dockerInspectRecord) ([]dockerContainerPortMapping, error) {
+	keys := make([]string, 0, len(record.Config.ExposedPorts))
+	for key := range record.Config.ExposedPorts {
+		if port := strings.TrimSpace(strings.SplitN(key, "/", 2)[0]); validDockerPortNumber(port) {
+			keys = append(keys, strings.TrimSpace(key))
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	records, err := dockercontainer.Snapshot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("inspect existing Docker ports: %w", err)
+	}
+	used := make(map[int]struct{})
+	for _, existing := range records {
+		for _, port := range dockerContainerPortMappings(existing) {
+			if hostPort, err := strconv.Atoi(port.HostPort); err == nil {
+				used[hostPort] = struct{}{}
+			}
+		}
+	}
+
+	ports := make([]dockerContainerPortMapping, 0, len(keys))
+	hostPort := dockerAutomaticHostPort
+	for _, key := range keys {
+		for ; hostPort <= 65535; hostPort++ {
+			if _, exists := used[hostPort]; !exists {
+				break
+			}
+		}
+		if hostPort > 65535 {
+			return nil, errors.New("No automatic Docker host ports are available.")
+		}
+		ports = append(ports, dockerContainerPortMapping{
+			ContainerPort: key,
+			HostPort:      strconv.Itoa(hostPort),
+			Public:        true,
+		})
+		used[hostPort] = struct{}{}
+		hostPort++
+	}
+	return ports, nil
+}
+
 func dockerAutomaticVolumeMappings(record dockerInspectRecord) ([]dockerVolumeMapping, error) {
 	if len(record.Config.Volumes) == 0 {
 		return nil, nil
@@ -1161,6 +1235,27 @@ func dockerAutomaticVolumeBasePath(containerName string) (string, error) {
 	}
 
 	return filepath.Join(config.FlowPanelDataPath(), "docker_volumes", containerName), nil
+}
+
+func dockerManagedDataPaths(record dockerInspectRecord) []string {
+	root := filepath.Clean(filepath.Join(config.FlowPanelDataPath(), "docker_volumes"))
+	paths := make([]string, 0, 1)
+	seen := make(map[string]struct{})
+	for _, volume := range dockerContainerVolumeMappings(record) {
+		source := filepath.Clean(strings.TrimSpace(volume.Source))
+		relative, err := filepath.Rel(root, source)
+		if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		containerDir := strings.SplitN(relative, string(filepath.Separator), 2)[0]
+		path := filepath.Join(root, containerDir)
+		if _, exists := seen[path]; exists {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func dockerAutomaticVolumePath(containerName, destination string) (string, error) {
@@ -1276,6 +1371,9 @@ func searchDockerHubImages(ctx context.Context, query string, limit int) ([]dock
 }
 
 func createDockerContainer(ctx context.Context, image string) (dockerContainerListItem, error) {
+	dockerContainerCreateMu.Lock()
+	defer dockerContainerCreateMu.Unlock()
+
 	if _, err := exec.LookPath("docker"); err != nil {
 		return dockerContainerListItem{}, errors.New("Docker is not installed on this server.")
 	}
@@ -1303,17 +1401,27 @@ func createDockerContainer(ctx context.Context, image string) (dockerContainerLi
 
 	record, err := inspectDockerContainerConfig(commandCtx, containerID)
 	if err == nil {
+		managedPorts, portErr := dockerAutomaticPortMappings(commandCtx, record)
+		if portErr != nil {
+			_ = deleteDockerContainer(commandCtx, containerID)
+			return dockerContainerListItem{}, portErr
+		}
 		managedVolumes, volumeErr := dockerAutomaticVolumeMappings(record)
 		if volumeErr != nil {
 			_ = deleteDockerContainer(commandCtx, containerID)
 			return dockerContainerListItem{}, volumeErr
+		}
+		if fieldErrors := applyDockerContainerPorts(&record, managedPorts); len(fieldErrors) > 0 {
+			_ = deleteDockerContainer(commandCtx, containerID)
+			return dockerContainerListItem{}, errors.New("FlowPanel could not publish the declared Docker ports.")
 		}
 		if len(managedVolumes) > 0 {
 			if fieldErrors := applyDockerContainerVolumes(&record, managedVolumes); len(fieldErrors) > 0 {
 				_ = deleteDockerContainer(commandCtx, containerID)
 				return dockerContainerListItem{}, errors.New("FlowPanel could not prepare automatic Docker volume storage.")
 			}
-
+		}
+		if len(managedPorts) > 0 || len(managedVolumes) > 0 {
 			return recreateDockerContainerWithConfig(commandCtx, containerID, record)
 		}
 	}
@@ -1626,23 +1734,32 @@ func dockerContainerStats(ctx context.Context, containerID string) (dockerStatsR
 }
 
 func dockerContainerPortMappings(record dockerInspectRecord) []dockerContainerPortMapping {
-	source := record.Network.Ports
-	if len(source) == 0 {
-		source = record.HostConfig.PortBindings
+	keys := make(map[string]struct{}, len(record.Config.ExposedPorts)+len(record.Network.Ports)+len(record.HostConfig.PortBindings))
+	for key := range record.Config.ExposedPorts {
+		keys[key] = struct{}{}
 	}
-	if len(source) == 0 {
+	for key := range record.Network.Ports {
+		keys[key] = struct{}{}
+	}
+	for key := range record.HostConfig.PortBindings {
+		keys[key] = struct{}{}
+	}
+	if len(keys) == 0 {
 		return nil
 	}
 
-	keys := make([]string, 0, len(source))
-	for key := range source {
-		keys = append(keys, key)
+	portKeys := make([]string, 0, len(keys))
+	for key := range keys {
+		portKeys = append(portKeys, key)
 	}
-	sort.Strings(keys)
+	sort.Strings(portKeys)
 
-	ports := make([]dockerContainerPortMapping, 0, len(source))
-	for _, key := range keys {
-		bindings := source[key]
+	ports := make([]dockerContainerPortMapping, 0, len(portKeys))
+	for _, key := range portKeys {
+		bindings := record.Network.Ports[key]
+		if len(bindings) == 0 {
+			bindings = record.HostConfig.PortBindings[key]
+		}
 		if len(bindings) == 0 {
 			ports = append(ports, dockerContainerPortMapping{ContainerPort: key})
 			continue
