@@ -295,7 +295,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			container.ID,
 			label,
 			"succeeded",
-			fmt.Sprintf("Created Docker container %q from %q.", label, input.Image),
+			fmt.Sprintf("Created and started Docker container %q from %q.", label, input.Image),
 		)
 		if err := a.reconcileFirewall(actionCtx); err != nil {
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "container created but firewall reconciliation failed", "container": container})
@@ -1422,22 +1422,19 @@ func createDockerContainer(ctx context.Context, image string) (dockerContainerLi
 			}
 		}
 		if len(managedPorts) > 0 || len(managedVolumes) > 0 {
-			return recreateDockerContainerWithConfig(commandCtx, containerID, record)
+			container, recreateErr := recreateDockerContainerWithConfig(commandCtx, containerID, record)
+			if recreateErr != nil {
+				return dockerContainerListItem{}, recreateErr
+			}
+			containerID = container.ID
 		}
 	}
 
-	container, err := inspectDockerContainer(commandCtx, containerID)
-	if err == nil {
-		return container, nil
+	container, err := startDockerContainer(commandCtx, containerID)
+	if err != nil {
+		return dockerContainerListItem{}, fmt.Errorf("Docker container was created but could not be started: %w", err)
 	}
-
-	return dockerContainerListItem{
-		ID:     containerID,
-		Name:   shortDockerID(containerID),
-		Image:  image,
-		Status: "Created",
-		State:  "created",
-	}, nil
+	return container, nil
 }
 
 func pullDockerImage(ctx context.Context, image string) error {
