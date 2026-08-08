@@ -360,6 +360,24 @@ export async function updateDockerContainerSettings(
   return parseDockerContainerResponse(response);
 }
 
+export async function uploadDockerVolumeData(
+  containerID: string,
+  source: string,
+  archive: File,
+): Promise<DockerContainer> {
+  const body = new FormData();
+  body.append("source", source);
+  body.append("archive", archive);
+
+  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/volumes/upload`, {
+    method: "POST",
+    credentials: "include",
+    body,
+  });
+
+  return parseDockerContainerResponse(response);
+}
+
 export async function renameDockerContainer(containerID: string, name: string): Promise<DockerContainer> {
   const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/rename`, {
     method: "POST",

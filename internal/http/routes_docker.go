@@ -859,6 +859,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/settings", containerSettingsHandler)
 	r.Method(stdhttp.MethodHead, "/docker/containers/{containerID}/settings", containerSettingsHandler)
 	r.Method(stdhttp.MethodPut, "/docker/containers/{containerID}/settings", updateContainerSettingsHandler)
+	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/volumes/upload", stdhttp.HandlerFunc(a.uploadDockerVolumeData))
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/details", containerDetailsHandler)
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/logs", containerLogsHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/start", registerContainerAction("start", startDockerContainer))

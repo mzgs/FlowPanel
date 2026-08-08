@@ -28,6 +28,7 @@ import {
   type DockerStatus,
   searchDockerHubImages,
   updateDockerContainerSettings,
+  uploadDockerVolumeData,
 } from "@/api/docker";
 import { type EnvironmentVariable } from "@/api/domains";
 import { DockerVolumeMappingsEditor } from "@/components/docker-volume-mappings-editor";
@@ -1626,6 +1627,7 @@ type DockerContainerSettingsDialogProps = {
     environment: EnvironmentVariable[],
     volumes: DockerContainerVolumeMapping[],
   ) => Promise<void>;
+  onContainerChanged: (container: DockerContainer) => void;
 };
 
 function DockerContainerSettingsDialog({
@@ -1634,6 +1636,7 @@ function DockerContainerSettingsDialog({
   saving,
   onOpenChange,
   onSave,
+  onContainerChanged,
 }: DockerContainerSettingsDialogProps) {
   const [settings, setSettings] = useState<DockerContainerSettings | null>(null);
   const [ports, setPorts] = useState<DockerContainerPortMapping[]>([]);
@@ -1642,6 +1645,7 @@ function DockerContainerSettingsDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [uploadingVolumeIndex, setUploadingVolumeIndex] = useState<number | null>(null);
   const requestIDRef = useRef(0);
 
   useEffect(() => {
@@ -1655,6 +1659,7 @@ function DockerContainerSettingsDialog({
       setLoading(false);
       setError(null);
       setFieldErrors({});
+      setUploadingVolumeIndex(null);
       return;
     }
 
@@ -1729,19 +1734,39 @@ function DockerContainerSettingsDialog({
     }
   }
 
+  async function handleVolumeUpload(index: number, file: File) {
+    if (!container || uploadingVolumeIndex !== null || saving) return;
+
+    const source = volumes[index]?.source.trim();
+    if (!source) return;
+    setUploadingVolumeIndex(index);
+    setError(null);
+    try {
+      const nextContainer = await uploadDockerVolumeData(container.id, source, file);
+      onContainerChanged(nextContainer);
+      toast.success(`Replaced volume data and restarted ${getContainerLabel(nextContainer)}.`);
+    } catch (uploadError) {
+      const message = getErrorMessage(uploadError, `Failed to upload volume data for ${getContainerLabel(container)}.`);
+      setError(message);
+      toast.error(message);
+    } finally {
+      setUploadingVolumeIndex(null);
+    }
+  }
+
   const dirty = settings
     ? !sameDockerPortMappings(ports, settings.ports) ||
       !sameEnvironmentVariables(environment, settings.environment) ||
       !sameDockerVolumeMappings(volumes, settings.volumes)
     : false;
-  const canSave = !loading && !saving && container !== null && settings !== null && dirty;
+  const canSave = !loading && !saving && uploadingVolumeIndex === null && container !== null && settings !== null && dirty;
   const portRows = getDockerPortSettingsRows(ports);
 
   return (
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && saving) {
+        if (!nextOpen && (saving || uploadingVolumeIndex !== null)) {
           return;
         }
         onOpenChange(nextOpen);
@@ -1856,13 +1881,15 @@ function DockerContainerSettingsDialog({
           {!loading && settings ? (
             <DockerVolumeMappingsEditor
               title="Volume mappings"
-              description="FlowPanel automatically stores declared Docker volumes under data/docker_volumes. Adjust mappings only when you need a custom override."
+              description="FlowPanel stores declared volumes under data/docker_volumes. Uploading a ZIP deletes all current data in that source, extracts the ZIP, fixes permissions, and restarts the container."
               volumes={volumes}
               fieldErrors={fieldErrors}
               fieldNamePrefix="volumes"
               inputIdPrefix="docker_volume"
               emptyMessage="No volume mappings were detected for this container."
-              disabled={saving}
+              disabled={saving || uploadingVolumeIndex !== null}
+              uploadingIndex={uploadingVolumeIndex}
+              onUpload={handleVolumeUpload}
               onAdd={() => {
                 setError(null);
                 setFieldErrors({});
@@ -1964,7 +1991,7 @@ function DockerContainerSettingsDialog({
           ) : null}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving || uploadingVolumeIndex !== null}>
               Cancel
             </Button>
             <Button type="submit" disabled={!canSave}>
@@ -3099,6 +3126,13 @@ export function DockerPage() {
           }
         }}
         onSave={handleSaveContainerSettings}
+        onContainerChanged={(nextContainer) => {
+          setContainers((current) =>
+            sortDockerContainers(current.map((item) => (item.id === nextContainer.id ? nextContainer : item))),
+          );
+          if (expandedContainerIDRef.current === nextContainer.id) resetExpandedContainerPanel();
+          void loadDocker({ silent: true });
+        }}
       />
       <SaveDockerContainerImageDialog
         open={saveImageContainer !== null}

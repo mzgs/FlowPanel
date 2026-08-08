@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { type DockerContainerVolumeMapping } from "@/api/docker";
 import { FieldError } from "@/components/field-error";
-import { Plus, Trash2 } from "@/components/icons/lucide-icons";
+import { LoaderCircle, Plus, Trash2, Upload } from "@/components/icons/lucide-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -15,10 +15,12 @@ type DockerVolumeMappingsEditorProps = {
   emptyMessage: string;
   addLabel?: string;
   disabled?: boolean;
+  uploadingIndex?: number | null;
   onAdd: () => void;
   onRemove: (index: number) => void;
   onSourceChange: (index: number, value: string) => void;
   onDestinationChange: (index: number, value: string) => void;
+  onUpload?: (index: number, file: File) => void;
 };
 
 export function DockerVolumeMappingsEditor({
@@ -31,10 +33,12 @@ export function DockerVolumeMappingsEditor({
   emptyMessage,
   addLabel = "Add volume",
   disabled = false,
+  uploadingIndex = null,
   onAdd,
   onRemove,
   onSourceChange,
   onDestinationChange,
+  onUpload,
 }: DockerVolumeMappingsEditorProps) {
   const pendingFocusIndexRef = useRef<number | null>(null);
   const sourceInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
@@ -86,7 +90,7 @@ export function DockerVolumeMappingsEditor({
             <tr className="text-left text-xs font-medium tracking-[0.08em] text-[var(--app-text-muted)] uppercase">
               <th className="w-[44%] px-3 py-2 font-medium">Source</th>
               <th className="w-[44%] px-3 py-2 font-medium">Container path</th>
-              <th className="w-14 px-3 py-2 font-medium">
+              <th className={onUpload ? "w-24 px-3 py-2 font-medium" : "w-14 px-3 py-2 font-medium"}>
                 <span className="sr-only">Actions</span>
               </th>
             </tr>
@@ -143,17 +147,46 @@ export function DockerVolumeMappingsEditor({
                     </td>
 
                     <td className="px-3 py-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => onRemove(index)}
-                        disabled={disabled}
-                        aria-label={`Remove volume ${index + 1}`}
-                        title="Remove volume"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex gap-1">
+                        {onUpload ? (
+                          <>
+                            <input
+                              id={`${inputIdPrefix}_upload_${index}`}
+                              type="file"
+                              accept=".zip,application/zip"
+                              className="sr-only"
+                              disabled={disabled || !volume.source.startsWith("/")}
+                              onChange={(event) => {
+                                const file = event.target.files?.[0];
+                                event.currentTarget.value = "";
+                                if (file) onUpload(index, file);
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() => document.getElementById(`${inputIdPrefix}_upload_${index}`)?.click()}
+                              disabled={disabled || !volume.source.startsWith("/")}
+                              aria-label={`Upload ZIP data to volume ${index + 1}`}
+                              title={volume.source.startsWith("/") ? "Replace data from ZIP" : "ZIP upload requires a bind-mounted folder"}
+                            >
+                              {uploadingIndex === index ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                            </Button>
+                          </>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => onRemove(index)}
+                          disabled={disabled}
+                          aria-label={`Remove volume ${index + 1}`}
+                          title="Remove volume"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
