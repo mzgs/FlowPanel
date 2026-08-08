@@ -1249,8 +1249,6 @@ func phpSiteIndexContent(hostname string) string {
 declare(strict_types=1);
 
 $hostname = %q;
-$phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
-$serverSoftware = $_SERVER['SERVER_SOFTWARE'] ?? 'Web server';
 $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 ?>
 <!doctype html>
@@ -1341,68 +1339,21 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
       line-height: 1.65;
     }
 
-    .details {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      border-block: 1px solid rgba(255, 255, 255, .08);
-    }
-
-    .detail { padding: 16px 0; }
-    .detail + .detail {
-      padding-left: 20px;
-      border-left: 1px solid rgba(255, 255, 255, .08);
-    }
-
-    .label {
-      display: block;
-      margin-bottom: 5px;
-      color: #6b7280;
-      font-size: 11px;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
-
-    .value {
-      color: #d1d5db;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 13px;
-    }
-
     footer {
-      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255, 255, 255, .08);
       color: #6b7280;
       font-size: 13px;
     }
 
     code { color: #a7f3d0; }
-
-    @media (max-width: 480px) {
-      .details { grid-template-columns: 1fr; }
-      .detail + .detail {
-        padding-left: 0;
-        border-top: 1px solid rgba(255, 255, 255, .08);
-        border-left: 0;
-      }
-    }
   </style>
 </head>
 <body>
   <main>
     <div class="status"><span class="dot"></span>Site is live</div>
     <h1><?= $escape($hostname) ?></h1>
-    <p class="lead">Your PHP site is running and ready for something great. Replace this page with your application to get started.</p>
-
-    <div class="details">
-      <div class="detail">
-        <span class="label">Runtime</span>
-        <span class="value">PHP <?= $escape($phpVersion) ?></span>
-      </div>
-      <div class="detail">
-        <span class="label">Server</span>
-        <span class="value"><?= $escape($serverSoftware) ?></span>
-      </div>
-    </div>
-
+    <p class="lead">Everything is connected and ready. Your new site starts here.</p>
     <footer>Powered by FlowPanel · Edit <code>index.php</code> to begin.</footer>
   </main>
 </body>
