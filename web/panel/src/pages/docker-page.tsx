@@ -41,6 +41,7 @@ import {
   Docker,
   Download,
   DotsVertical,
+  ExternalLink,
   HardDrive,
   LoaderCircle,
   Package,
@@ -505,6 +506,27 @@ function getDockerContainerPortSummary(ports: DockerContainerPortMapping[]) {
   return Array.from(new Set(ports.map((port) => formatDockerPortMapping(port))));
 }
 
+function formatDockerHost(host: string) {
+  const normalized = host.replace(/^\[|\]$/g, "");
+  return normalized.includes(":") ? `[${normalized}]` : normalized;
+}
+
+function getDockerContainerLinks(ports: DockerContainerPortMapping[]) {
+  const browserHost = typeof window === "undefined" ? "localhost" : window.location.hostname;
+  const links = ports.flatMap((port) => {
+    if (!port.host_port) {
+      return [];
+    }
+
+    const host = isDockerPublicHostIP(port.host_ip) ? browserHost : port.host_ip.trim();
+    const address = `${formatDockerHost(host || browserHost)}:${port.host_port}`;
+    const protocol = port.container_port.split("/")[0] === "443" ? "https" : "http";
+    return [{ address, url: `${protocol}://${address}` }];
+  });
+
+  return Array.from(new Map(links.map((link) => [link.url, link])).values());
+}
+
 function ResourceMeter({
   detail,
   label,
@@ -665,6 +687,7 @@ function ContainerResourcesPanel({
   const cpuPercent = clampPercent(resources.details?.cpu_percent);
   const memoryPercent = clampPercent(resources.details?.memory_percent);
   const portMappings = resources.details?.ports ?? [];
+  const containerLinks = getDockerContainerLinks(portMappings);
   const metricsUnavailable = cpuPercent == null && memoryPercent == null;
 
   return (
@@ -756,6 +779,30 @@ function ContainerResourcesPanel({
             <div className="text-sm text-muted-foreground">No published ports.</div>
           )}
         </div>
+
+        {containerLinks.length > 0 ? (
+          <div className="space-y-2">
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              IP + port
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {containerLinks.map((link) => (
+                <a
+                  key={link.url}
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-[var(--app-accent)] hover:text-[var(--app-accent)]"
+                  aria-label={`Open ${link.address} in a new tab`}
+                  title={`Open ${link.url} in a new tab`}
+                >
+                  {link.address}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

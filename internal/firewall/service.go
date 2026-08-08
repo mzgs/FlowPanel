@@ -458,7 +458,7 @@ func dockerPublicPorts(ctx context.Context) []Port {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return ports
 	}
-	output, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{.Ports}}").Output()
+	output, err := exec.CommandContext(ctx, "docker", "ps", "--all", "--format", "{{.Ports}}").Output()
 	if err != nil {
 		return ports
 	}
