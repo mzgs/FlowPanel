@@ -371,10 +371,10 @@ func (s *Service) InstallVersion(ctx context.Context, version string) error {
 		}
 	}
 
-	if err := s.installLatestComposer(ctx, target); err != nil {
+	if err := s.initializeSettingsForVersion(ctx, target); err != nil {
 		return err
 	}
-	return s.initializeSettingsForVersion(ctx, target)
+	return s.installLatestComposer(ctx, target)
 }
 
 func (s *Service) Remove(ctx context.Context) error {

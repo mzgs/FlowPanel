@@ -40,6 +40,7 @@ func (s *Service) installLatestComposer(ctx context.Context, version string) err
 	}
 	s.logger.Info("installing latest stable Composer", zap.String("php_version", version))
 	if _, err := runCommandWithOptions(ctx, "", []string{"COMPOSER_ALLOW_SUPERUSER=1"}, phpPath,
+		"-d", "disable_functions=",
 		installerPath,
 		"--install-dir="+composerInstallDirectory,
 		"--filename=composer",

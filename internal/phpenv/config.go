@@ -140,7 +140,10 @@ func (s *Service) initializeSettingsForVersion(ctx context.Context, version stri
 		settings.MaxInputTime = "600"
 		settings.MemoryLimit = "1024M"
 		settings.PostMaxSize = "1024M"
+		settings.FileUploads = "On"
 		settings.UploadMaxFilesize = "1024M"
+		settings.MaxFileUploads = "100"
+		settings.DefaultSocketTimeout = "600"
 		settings.DisableFunctions = defaultDisabledFunctions
 		content = renderManagedPHPConfig(settings, true)
 	}
