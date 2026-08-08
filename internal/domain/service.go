@@ -1249,17 +1249,162 @@ func phpSiteIndexContent(hostname string) string {
 declare(strict_types=1);
 
 $hostname = %q;
+$phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
+$serverSoftware = $_SERVER['SERVER_SOFTWARE'] ?? 'Web server';
+$escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 ?>
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><?= htmlspecialchars($hostname, ENT_QUOTES, 'UTF-8') ?></title>
+  <meta name="color-scheme" content="dark">
+  <title><?= $escape($hostname) ?> · Ready</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #eef2ff;
+      background: #080b12;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 20%% 10%%, rgba(34, 197, 94, .14), transparent 30%%),
+        radial-gradient(circle at 85%% 80%%, rgba(59, 130, 246, .12), transparent 32%%),
+        #080b12;
+    }
+
+    main {
+      width: min(680px, 100%%);
+      padding: clamp(28px, 6vw, 52px);
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(255, 255, 255, .1);
+      border-radius: 22px;
+      background: rgba(15, 19, 29, .86);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .35);
+    }
+
+    main::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 2px;
+      background: linear-gradient(90deg, #22c55e, #38bdf8, transparent 75%%);
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 28px;
+      padding: 6px 10px;
+      border: 1px solid rgba(34, 197, 94, .25);
+      border-radius: 999px;
+      color: #86efac;
+      background: rgba(34, 197, 94, .08);
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%%;
+      background: #4ade80;
+      box-shadow: 0 0 12px #22c55e;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 7vw, 3.75rem);
+      line-height: 1.05;
+      letter-spacing: -.045em;
+      overflow-wrap: anywhere;
+    }
+
+    .lead {
+      max-width: 520px;
+      margin: 18px 0 30px;
+      color: #9ca3af;
+      font-size: 16px;
+      line-height: 1.65;
+    }
+
+    .details {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border-block: 1px solid rgba(255, 255, 255, .08);
+    }
+
+    .detail { padding: 16px 0; }
+    .detail + .detail {
+      padding-left: 20px;
+      border-left: 1px solid rgba(255, 255, 255, .08);
+    }
+
+    .label {
+      display: block;
+      margin-bottom: 5px;
+      color: #6b7280;
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .value {
+      color: #d1d5db;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+    }
+
+    footer {
+      margin-top: 20px;
+      color: #6b7280;
+      font-size: 13px;
+    }
+
+    code { color: #a7f3d0; }
+
+    @media (max-width: 480px) {
+      .details { grid-template-columns: 1fr; }
+      .detail + .detail {
+        padding-left: 0;
+        border-top: 1px solid rgba(255, 255, 255, .08);
+        border-left: 0;
+      }
+    }
+  </style>
 </head>
 <body>
-  <h1><?= htmlspecialchars($hostname, ENT_QUOTES, 'UTF-8') ?></h1>
-  <p>PHP is working.</p>
+  <main>
+    <div class="status"><span class="dot"></span>Site is live</div>
+    <h1><?= $escape($hostname) ?></h1>
+    <p class="lead">Your PHP site is running and ready for something great. Replace this page with your application to get started.</p>
+
+    <div class="details">
+      <div class="detail">
+        <span class="label">Runtime</span>
+        <span class="value">PHP <?= $escape($phpVersion) ?></span>
+      </div>
+      <div class="detail">
+        <span class="label">Server</span>
+        <span class="value"><?= $escape($serverSoftware) ?></span>
+      </div>
+    </div>
+
+    <footer>Powered by FlowPanel · Edit <code>index.php</code> to begin.</footer>
+  </main>
 </body>
 </html>
 `, hostname)
