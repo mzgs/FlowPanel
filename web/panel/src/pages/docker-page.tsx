@@ -688,6 +688,7 @@ function ContainerResourcesPanel({
   const cpuPercent = clampPercent(resources.details?.cpu_percent);
   const memoryPercent = clampPercent(resources.details?.memory_percent);
   const portMappings = resources.details?.ports ?? [];
+  const portSummary = getDockerContainerPortSummary(portMappings);
   const containerLinks = getDockerContainerLinks(portMappings);
   const metricsUnavailable = cpuPercent == null && memoryPercent == null;
 
@@ -765,14 +766,14 @@ function ContainerResourcesPanel({
             </div>
           ) : resources.error && !resources.details ? (
             <div className="text-sm text-muted-foreground">Port details are unavailable right now.</div>
-          ) : portMappings.length > 0 ? (
+          ) : portSummary.length > 0 ? (
             <div className="space-y-2">
-              {portMappings.map((port) => (
+              {portSummary.map((port) => (
                 <div
-                  key={`${port.container_port}-${port.host_ip}-${port.host_port}`}
+                  key={port}
                   className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-foreground"
                 >
-                  {formatDockerPortMapping(port)}
+                  {port}
                 </div>
               ))}
             </div>
@@ -784,7 +785,7 @@ function ContainerResourcesPanel({
         {containerLinks.length > 0 ? (
           <div className="space-y-2">
             <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              IP + port
+              Open in browser
             </div>
             <div className="flex flex-wrap gap-2">
               {containerLinks.map((link) => (
