@@ -11,6 +11,7 @@ import {
   importBackup,
   restoreBackup,
   type BackupRecord,
+  type BackupUploadProgress,
   type CreateBackupInput,
   type ScheduledBackupRecord,
 } from "@/api/backups";
@@ -83,6 +84,7 @@ const initialScheduleForm: ScheduleFormState = {
   location: "local",
 };
 const backupArchiveExtension = ".tar.gz";
+const maxBackupUploadBytes = 8 * 1024 * 1024 * 1024;
 
 function isBackupArchiveFileName(name: string) {
   const normalizedName = name.trim().toLowerCase();
@@ -110,6 +112,39 @@ function formatBackupLocation(location: BackupRecord["location"]) {
 
 function getBackupKey(record: Pick<BackupRecord, "id" | "location">) {
   return `${record.location}:${record.id}`;
+}
+
+function BackupImportProgress({ progress }: { progress: BackupUploadProgress }) {
+  const percent =
+    progress.total > 0
+      ? Math.min(100, Math.floor((progress.loaded / progress.total) * 100))
+      : 0;
+
+  return (
+    <div className="mb-3 flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
+      <span className="shrink-0 font-medium text-[var(--app-text)]">
+        {percent === 100 ? "Finishing import…" : "Uploading backup"}
+      </span>
+      <div
+        role="progressbar"
+        aria-label="Backup upload progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        className="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-[var(--app-surface-muted)]"
+      >
+        <div
+          className="h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-200"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
+        {progress.total > 0
+          ? `${formatBytes(Math.min(progress.loaded, progress.total))} / ${formatBytes(progress.total)} · ${percent}%`
+          : formatBytes(progress.loaded)}
+      </span>
+    </div>
+  );
 }
 
 export function BackupsPage() {
@@ -142,6 +177,8 @@ export function BackupsPage() {
     null,
   );
   const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] =
+    useState<BackupUploadProgress | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [scheduledLoadError, setScheduledLoadError] = useState<string | null>(
     null,
@@ -461,11 +498,16 @@ export function BackupsPage() {
       toast.error("Select a FlowPanel backup archive ending in .tar.gz.");
       return;
     }
+    if (file.size > maxBackupUploadBytes) {
+      toast.error("Backup upload exceeds the 8 GB limit.");
+      return;
+    }
 
     setImporting(true);
+    setImportProgress({ loaded: 0, total: file.size });
 
     try {
-      const record = await importBackup(file);
+      const record = await importBackup(file, setImportProgress);
       setBackups((current) => [
         record,
         ...current.filter(
@@ -478,6 +520,7 @@ export function BackupsPage() {
       toast.error(getErrorMessage(error, "Failed to import backup."));
     } finally {
       setImporting(false);
+      setImportProgress(null);
     }
   }
 
@@ -1033,6 +1076,9 @@ export function BackupsPage() {
       />
 
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
+        {importProgress ? (
+          <BackupImportProgress progress={importProgress} />
+        ) : null}
         <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
           {loadError ? (
             <div className="border-b border-[var(--app-border)] px-4 py-3 text-sm text-[var(--app-danger)]">

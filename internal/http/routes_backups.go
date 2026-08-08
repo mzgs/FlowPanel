@@ -273,8 +273,13 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "backup service is not configured"})
 			return
 		}
-		r.Body = stdhttp.MaxBytesReader(w, r.Body, 64<<20)
-		if err := r.ParseMultipartForm(64 << 20); err != nil {
+		r.Body = stdhttp.MaxBytesReader(w, r.Body, maxFileUploadBytes)
+		if err := r.ParseMultipartForm(multipartFormMemoryMax); err != nil {
+			var maxBytesError *stdhttp.MaxBytesError
+			if errors.As(err, &maxBytesError) {
+				writeJSON(w, stdhttp.StatusRequestEntityTooLarge, map[string]any{"error": "upload exceeds the 8 GB limit"})
+				return
+			}
 			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid backup upload"})
 			return
 		}

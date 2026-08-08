@@ -69,6 +69,11 @@ type BackupApiError = Error & {
   fieldErrors?: Record<string, string>;
 };
 
+export type BackupUploadProgress = {
+  loaded: number;
+  total: number;
+};
+
 export async function fetchBackups(): Promise<BackupsPayload> {
   const response = await fetch("/api/backups", {
     credentials: "include",
@@ -142,22 +147,38 @@ export async function deleteScheduledBackup(id: string): Promise<void> {
   }
 }
 
-export async function importBackup(file: File): Promise<BackupRecord> {
+export function importBackup(
+  file: File,
+  onProgress?: (progress: BackupUploadProgress) => void,
+): Promise<BackupRecord> {
   const formData = new FormData();
   formData.set("backup", file);
 
-  const response = await fetch("/api/backups/import", {
-    method: "POST",
-    credentials: "include",
-    body: formData,
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/backups/import");
+    request.withCredentials = true;
+    request.upload.onprogress = (event) => {
+      onProgress?.({
+        loaded: event.loaded,
+        total: event.lengthComputable ? event.total : 0,
+      });
+    };
+    request.onerror = () =>
+      reject(new Error("Backup upload failed because of a network error."));
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        try {
+          resolve((JSON.parse(request.responseText) as BackupPayload).backup);
+        } catch {
+          reject(new Error("Import backup returned an invalid response."));
+        }
+        return;
+      }
+      reject(parseBackupApiError(request.status, request.responseText, "import backup"));
+    };
+    request.send(formData);
   });
-
-  if (!response.ok) {
-    throw await readBackupApiError(response, "import backup");
-  }
-
-  const payload = (await response.json()) as BackupPayload;
-  return payload.backup;
 }
 
 export async function deleteBackup(id: string, location: BackupRecord["location"]): Promise<void> {
@@ -202,11 +223,19 @@ async function readBackupApiError(
   response: Response,
   action: string,
 ): Promise<BackupApiError> {
-  let message = `${action} request failed with status ${response.status}`;
+  return parseBackupApiError(response.status, await response.text(), action);
+}
+
+function parseBackupApiError(
+  status: number,
+  responseText: string,
+  action: string,
+): BackupApiError {
+  let message = `${action} request failed with status ${status}`;
   let fieldErrors: Record<string, string> | undefined;
 
   try {
-    const payload = (await response.json()) as {
+    const payload = JSON.parse(responseText) as {
       error?: unknown;
       field_errors?: unknown;
     };
@@ -217,7 +246,7 @@ async function readBackupApiError(
       fieldErrors = payload.field_errors as Record<string, string>;
     }
   } catch {
-    // Keep default message when the response is not JSON.
+    // Keep the status-based message when the response is not JSON.
   }
 
   const error = new Error(message) as BackupApiError;
