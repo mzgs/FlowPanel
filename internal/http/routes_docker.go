@@ -37,6 +37,8 @@ const (
 	dockerSearchCandidatePages = 2
 	dockerLogsTailLines        = 200
 	dockerAutomaticHostPort    = 32770
+	dockerStartCheckAttempts   = 5
+	dockerStartCheckDelay      = 150 * time.Millisecond
 )
 
 var dockerContainerCreateMu sync.Mutex
@@ -1182,7 +1184,7 @@ func dockerAutomaticPortMappings(ctx context.Context, record dockerInspectRecord
 	return ports, nil
 }
 
-func dockerAutomaticVolumeMappings(record dockerInspectRecord) ([]dockerVolumeMapping, error) {
+func dockerAutomaticVolumeMappings(ctx context.Context, record dockerInspectRecord) ([]dockerVolumeMapping, error) {
 	if len(record.Config.Volumes) == 0 {
 		return nil, nil
 	}
@@ -1209,6 +1211,9 @@ func dockerAutomaticVolumeMappings(record dockerInspectRecord) ([]dockerVolumeMa
 		}
 		if err := os.MkdirAll(source, 0o755); err != nil {
 			return nil, fmt.Errorf("create automatic Docker volume path %q: %w", source, err)
+		}
+		if err := dockercontainer.PrepareVolumePermissions(ctx, record, source); err != nil {
+			return nil, err
 		}
 		values = append(values, dockerVolumeMapping{
 			Source:      source,
@@ -1480,7 +1485,7 @@ func createDockerContainer(ctx context.Context, image string) (dockerContainerLi
 			_ = deleteDockerContainer(commandCtx, containerID)
 			return dockerContainerListItem{}, portErr
 		}
-		managedVolumes, volumeErr := dockerAutomaticVolumeMappings(record)
+		managedVolumes, volumeErr := dockerAutomaticVolumeMappings(commandCtx, record)
 		if volumeErr != nil {
 			_ = deleteDockerContainer(commandCtx, containerID)
 			return dockerContainerListItem{}, volumeErr
@@ -1712,8 +1717,54 @@ func runDockerContainerAction(ctx context.Context, containerID, action string) (
 		}
 		return dockerContainerListItem{}, formatDockerCommandError(stderr.String(), err)
 	}
+	if action == "start" || action == "restart" {
+		if err := verifyDockerContainerStarted(commandCtx, containerID); err != nil {
+			return dockerContainerListItem{}, err
+		}
+	}
 
 	return inspectDockerContainer(commandCtx, containerID)
+}
+
+func verifyDockerContainerStarted(ctx context.Context, containerID string) error {
+	for attempt := 0; attempt < dockerStartCheckAttempts; attempt++ {
+		record, err := inspectDockerContainerConfig(ctx, containerID)
+		if err != nil {
+			return err
+		}
+		if !record.State.Running {
+			if record.State.ExitCode == 0 && !record.State.OOMKilled && strings.TrimSpace(record.State.Error) == "" {
+				return nil
+			}
+			return dockerContainerStartError(ctx, containerID, record.State)
+		}
+		if attempt+1 < dockerStartCheckAttempts {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(dockerStartCheckDelay):
+			}
+		}
+	}
+	return nil
+}
+
+func dockerContainerStartError(ctx context.Context, containerID string, state dockercontainer.StateRecord) error {
+	parts := []string{fmt.Sprintf("Docker container exited with code %d shortly after starting.", state.ExitCode)}
+	if state.OOMKilled {
+		parts = append(parts, "The container was killed because it exceeded its memory limit.")
+	}
+	if message := strings.TrimSpace(state.Error); message != "" {
+		parts = append(parts, "Docker runtime error: "+message)
+	}
+	if output, err := dockerContainerLogs(ctx, containerID, ""); err == nil {
+		if output = strings.TrimSpace(output); output != "" {
+			parts = append(parts, "Recent container logs:\n"+output)
+		}
+	} else {
+		parts = append(parts, "Container logs could not be read: "+err.Error())
+	}
+	return errors.New(strings.Join(parts, "\n"))
 }
 
 func inspectDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {

@@ -1230,7 +1230,7 @@ function ContainerList({
 
             {actionError ? (
               <div className="px-4 pb-4 md:px-6">
-                <div className="rounded-xl border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
+                <div className="whitespace-pre-wrap rounded-xl border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
                   {actionError}
                 </div>
               </div>
@@ -2103,7 +2103,7 @@ function AddDockerContainerDialog({
         </section>
 
         {error ? (
-          <div className="rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
+          <div className="whitespace-pre-wrap rounded-xl border border-[var(--app-danger-soft)] bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-foreground">
             {error}
           </div>
         ) : null}

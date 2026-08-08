@@ -631,7 +631,7 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 		result.addWarning(fmt.Sprintf("Docker data and containers were not restored: %v", err))
 		return result, nil
 	}
-	result.RestoredContainers, err = dockercontainer.Restore(ctx, dockerContainers)
+	result.RestoredContainers, err = dockercontainer.Restore(ctx, dockerContainers, s.dockerDataPath())
 	if err != nil {
 		result.addWarning(fmt.Sprintf("Some Docker containers were not restored: %v", err))
 	}
@@ -1869,7 +1869,7 @@ func shouldPreservePath(targetPath string, preserved map[string]struct{}) bool {
 }
 
 func copyTreeContents(sourceRoot, targetRoot string) error {
-	return filepath.WalkDir(sourceRoot, func(currentPath string, entry fs.DirEntry, walkErr error) error {
+	return filepath.WalkDir(sourceRoot, func(currentPath string, _ fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("walk restore source: %w", walkErr)
 		}
@@ -1882,9 +1882,6 @@ func copyTreeContents(sourceRoot, targetRoot string) error {
 			return fmt.Errorf("resolve restore source path %q: %w", currentPath, err)
 		}
 		targetPath := filepath.Join(targetRoot, relativePath)
-		if entry.IsDir() {
-			return os.MkdirAll(targetPath, 0o755)
-		}
 		return copyPath(currentPath, targetPath)
 	})
 }

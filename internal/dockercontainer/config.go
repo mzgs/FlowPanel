@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,7 +69,12 @@ type Mount struct {
 }
 
 type StateRecord struct {
-	Running bool `json:"Running"`
+	Status    string `json:"Status"`
+	Running   bool   `json:"Running"`
+	OOMKilled bool   `json:"OOMKilled"`
+	Dead      bool   `json:"Dead"`
+	Error     string `json:"Error"`
+	ExitCode  int    `json:"ExitCode"`
 }
 
 type Network struct {
@@ -108,7 +115,7 @@ func Snapshot(ctx context.Context) ([]Record, error) {
 	return records, nil
 }
 
-func Restore(ctx context.Context, records []Record) ([]string, error) {
+func Restore(ctx context.Context, records []Record, managedDataRoot string) ([]string, error) {
 	if len(records) == 0 {
 		return []string{}, nil
 	}
@@ -140,6 +147,9 @@ func Restore(ctx context.Context, records []Record) ([]string, error) {
 		if err != nil {
 			return restored, fmt.Errorf("restore Docker container %q: %w", name, err)
 		}
+		if err := PrepareManagedVolumePermissions(ctx, record, managedDataRoot); err != nil {
+			return restored, fmt.Errorf("prepare restored Docker container %q data: %w", name, err)
+		}
 		if record.State.Running {
 			if _, err := dockerOutput(ctx, "start", strings.TrimSpace(containerID)); err != nil {
 				return restored, fmt.Errorf("start restored Docker container %q: %w", name, err)
@@ -148,6 +158,75 @@ func Restore(ctx context.Context, records []Record) ([]string, error) {
 		restored = append(restored, name)
 	}
 	return restored, nil
+}
+
+func PrepareManagedVolumePermissions(ctx context.Context, record Record, root string) error {
+	root = filepath.Clean(strings.TrimSpace(root))
+	if root == "." || root == "" {
+		return nil
+	}
+
+	sources := make([]string, 0, len(record.HostConfig.Binds)+len(record.Mounts))
+	for _, bind := range record.HostConfig.Binds {
+		if source := strings.TrimSpace(strings.SplitN(bind, ":", 2)[0]); source != "" {
+			sources = append(sources, source)
+		}
+	}
+	for _, mount := range record.Mounts {
+		if mount.Type == "bind" && strings.TrimSpace(mount.Source) != "" {
+			sources = append(sources, mount.Source)
+		}
+	}
+
+	seen := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		source = filepath.Clean(source)
+		relative, err := filepath.Rel(root, source)
+		if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if _, exists := seen[source]; exists {
+			continue
+		}
+		seen[source] = struct{}{}
+		if err := PrepareVolumePermissions(ctx, record, source); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func PrepareVolumePermissions(ctx context.Context, record Record, source string) error {
+	user := strings.TrimSpace(record.Config.User)
+	if user == "" || user == "0" || user == "0:0" || user == "root" || user == "root:root" {
+		return nil
+	}
+
+	parts := strings.SplitN(user, ":", 2)
+	uid, uidErr := strconv.Atoi(parts[0])
+	gid, gidErr := -1, error(nil)
+	if len(parts) == 2 {
+		gid, gidErr = strconv.Atoi(parts[1])
+	}
+	if uidErr == nil && gidErr == nil {
+		if err := filepath.Walk(source, func(path string, _ os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			return os.Lchown(path, uid, gid)
+		}); err != nil {
+			return fmt.Errorf("set Docker volume ownership on %q to %q: %w", source, user, err)
+		}
+		return nil
+	}
+
+	if strings.HasPrefix(user, "-") || strings.ContainsAny(user, "\x00\r\n") {
+		return fmt.Errorf("Docker image uses an unsupported container user %q", user)
+	}
+	if _, err := dockerOutput(ctx, "run", "--rm", "--user", "0:0", "--entrypoint", "chown", "--volume", source+":/flowpanel-volume", record.Config.Image, "-R", user, "/flowpanel-volume"); err != nil {
+		return fmt.Errorf("prepare Docker volume %q for container user %q: %w", source, user, err)
+	}
+	return nil
 }
 
 func Stop(ctx context.Context, records []Record) error {
