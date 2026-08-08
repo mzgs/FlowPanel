@@ -88,6 +88,8 @@ func writeFileError(w stdhttp.ResponseWriter, err error) {
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "unsupported archive format"})
 	case errors.Is(err, filesvc.ErrInvalidArchive):
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid archive contents"})
+	case errors.Is(err, filesvc.ErrInvalidArchiveTarget):
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "archive destination cannot be inside a selected directory"})
 	case errors.Is(err, fs.ErrExist):
 		writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "file already exists"})
 	default:

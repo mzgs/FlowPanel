@@ -29,6 +29,7 @@ type apiRoutes struct {
 	runtimeActions          *runtimeActionTracker
 	githubWebhookMu         sync.Mutex
 	githubWebhookDeliveries map[string]time.Time
+	githubWebhooksInFlight  map[string]struct{}
 }
 
 func newAPIRoutes(app *app.App) *apiRoutes {
@@ -36,10 +37,11 @@ func newAPIRoutes(app *app.App) *apiRoutes {
 		app:                     app,
 		runtimeActions:          newRuntimeActionTracker(),
 		githubWebhookDeliveries: make(map[string]time.Time),
+		githubWebhooksInFlight:  make(map[string]struct{}),
 	}
 }
 
-func (a *apiRoutes) acceptGitHubWebhookDelivery(id string) bool {
+func (a *apiRoutes) beginGitHubWebhookDelivery(id string) (started, completed bool) {
 	const (
 		retention  = 24 * time.Hour
 		maxEntries = 10_000
@@ -55,7 +57,23 @@ func (a *apiRoutes) acceptGitHubWebhookDelivery(id string) bool {
 		}
 	}
 	if _, exists := a.githubWebhookDeliveries[id]; exists {
-		return false
+		return false, true
+	}
+	if _, exists := a.githubWebhooksInFlight[id]; exists {
+		return false, false
+	}
+	a.githubWebhooksInFlight[id] = struct{}{}
+	return true, false
+}
+
+func (a *apiRoutes) finishGitHubWebhookDelivery(id string, accepted bool) {
+	const maxEntries = 10_000
+	now := time.Now().UTC()
+	a.githubWebhookMu.Lock()
+	defer a.githubWebhookMu.Unlock()
+	delete(a.githubWebhooksInFlight, id)
+	if !accepted {
+		return
 	}
 	for len(a.githubWebhookDeliveries) >= maxEntries {
 		var oldestID string
@@ -68,7 +86,6 @@ func (a *apiRoutes) acceptGitHubWebhookDelivery(id string) bool {
 		delete(a.githubWebhookDeliveries, oldestID)
 	}
 	a.githubWebhookDeliveries[id] = now
-	return true
 }
 
 func (a *apiRoutes) register(r chi.Router) {
@@ -189,6 +206,7 @@ func (a *apiRoutes) startBackgroundRuntimeAction(
 		defer a.runtimeActions.End(resource, action)
 
 		if err := run(actionCtx); err != nil {
+			a.runtimeActions.Fail(resource, fmt.Sprintf("%s %s failed. Check Activity for details.", resourceLabel, action))
 			a.app.Logger.Error(action+" "+resource+" failed", zap.Error(err))
 			a.mutationEvent(actionCtx, "runtime", action, resourceType, resourceID, resourceLabel, "failed", err.Error())
 			return
@@ -196,6 +214,7 @@ func (a *apiRoutes) startBackgroundRuntimeAction(
 
 		if after != nil {
 			if err := after(actionCtx); err != nil {
+				a.runtimeActions.Fail(resource, fmt.Sprintf("%s %s follow-up failed. Check Activity for details.", resourceLabel, action))
 				a.app.Logger.Error(action+" "+resource+" follow-up failed", zap.Error(err))
 				a.mutationEvent(actionCtx, "runtime", action, resourceType, resourceID, resourceLabel, "failed", err.Error())
 				return
@@ -221,6 +240,10 @@ func (a *apiRoutes) trackCaddyStatus(status caddy.Status) caddy.Status {
 }
 
 func (a *apiRoutes) trackPHPStatus(status phpenv.Status) phpenv.Status {
+	if failure := a.runtimeActions.Failure("php"); failure != "" {
+		status.State, status.Message, status.Ready = "failed", failure, false
+		return status
+	}
 	switch a.runtimeActions.Current("php") {
 	case "install":
 		status.State = "installing"
@@ -251,6 +274,10 @@ func (a *apiRoutes) trackPHPStatus(status phpenv.Status) phpenv.Status {
 }
 
 func (a *apiRoutes) trackMariaDBStatus(status mariadb.Status) mariadb.Status {
+	if failure := a.runtimeActions.Failure("mariadb"); failure != "" {
+		status.State, status.Message, status.Ready = "failed", failure, false
+		return status
+	}
 	switch a.runtimeActions.Current("mariadb") {
 	case "install":
 		status.State = "installing"
@@ -281,6 +308,10 @@ func (a *apiRoutes) trackMariaDBStatus(status mariadb.Status) mariadb.Status {
 }
 
 func (a *apiRoutes) trackGoStatus(status golang.Status) golang.Status {
+	if failure := a.runtimeActions.Failure("golang"); failure != "" {
+		status.State, status.Message = "failed", failure
+		return status
+	}
 	switch a.runtimeActions.Current("golang") {
 	case "install":
 		status.State = "installing"
@@ -298,6 +329,10 @@ func (a *apiRoutes) trackGoStatus(status golang.Status) golang.Status {
 }
 
 func (a *apiRoutes) trackNodeJSStatus(status nodejs.Status) nodejs.Status {
+	if failure := a.runtimeActions.Failure("nodejs"); failure != "" {
+		status.State, status.Message = "failed", failure
+		return status
+	}
 	switch a.runtimeActions.Current("nodejs") {
 	case "install":
 		status.State = "installing"
@@ -315,6 +350,10 @@ func (a *apiRoutes) trackNodeJSStatus(status nodejs.Status) nodejs.Status {
 }
 
 func (a *apiRoutes) trackPM2Status(status pm2.Status) pm2.Status {
+	if failure := a.runtimeActions.Failure("pm2"); failure != "" {
+		status.State, status.Message = "failed", failure
+		return status
+	}
 	switch a.runtimeActions.Current("pm2") {
 	case "install":
 		status.State = "installing"
@@ -332,6 +371,10 @@ func (a *apiRoutes) trackPM2Status(status pm2.Status) pm2.Status {
 }
 
 func (a *apiRoutes) trackPHPMyAdminStatus(status phpmyadmin.Status) phpmyadmin.Status {
+	if failure := a.runtimeActions.Failure("phpmyadmin"); failure != "" {
+		status.State, status.Message = "failed", failure
+		return status
+	}
 	switch a.runtimeActions.Current("phpmyadmin") {
 	case "install":
 		status.State = "installing"
@@ -349,6 +392,10 @@ func (a *apiRoutes) trackPHPMyAdminStatus(status phpmyadmin.Status) phpmyadmin.S
 }
 
 func (a *apiRoutes) trackPackageRuntimeStatus(key, label string, status packageruntime.Status) packageruntime.Status {
+	if failure := a.runtimeActions.Failure(key); failure != "" {
+		status.State, status.Message = "failed", failure
+		return status
+	}
 	switch a.runtimeActions.Current(key) {
 	case "install":
 		status.State = "installing"

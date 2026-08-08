@@ -422,9 +422,7 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 
 		if err := syncBackupRestoreState(r.Context(), a.app, result); err != nil {
 			a.app.Logger.Error("sync restored backup state failed", zap.String("backup_name", name), zap.Error(err))
-			a.mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "failed", "Restored backup archive but failed to reload runtime state.")
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "backup restored but runtime sync failed"})
-			return
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Backup data was restored, but runtime state could not be fully reloaded: %v", err))
 		}
 		if len(result.RestoredContainers) > 0 {
 			if err := a.reconcileFirewall(r.Context()); err != nil {

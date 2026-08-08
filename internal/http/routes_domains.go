@@ -1508,17 +1508,26 @@ func (a *apiRoutes) githubWebhookHandler() stdhttp.Handler {
 			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid github delivery id"})
 			return
 		}
-		if !a.acceptGitHubWebhookDelivery(deliveryID) {
-			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true, "duplicate": true})
+		started, completed := a.beginGitHubWebhookDelivery(deliveryID)
+		if !started {
+			if completed {
+				writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true, "duplicate": true})
+			} else {
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "github delivery is already in progress"})
+			}
 			return
 		}
+		accepted := false
+		defer func() { a.finishGitHubWebhookDelivery(deliveryID, accepted) }()
 
 		switch strings.TrimSpace(r.Header.Get("X-GitHub-Event")) {
 		case "ping":
+			accepted = true
 			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
 			return
 		case "push":
 		default:
+			accepted = true
 			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
 			return
 		}
@@ -1538,6 +1547,7 @@ func (a *apiRoutes) githubWebhookHandler() stdhttp.Handler {
 			defaultBranch = strings.TrimSpace(payload.Repository.DefaultBranch)
 		}
 		if defaultBranch != "" && payload.Ref != "refs/heads/"+defaultBranch {
+			accepted = true
 			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
 			return
 		}
@@ -1564,6 +1574,7 @@ func (a *apiRoutes) githubWebhookHandler() stdhttp.Handler {
 		}
 
 		a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Push webhook deployed %q.", record.Hostname))
+		accepted = true
 		writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true, "action": result.Action})
 	})
 }

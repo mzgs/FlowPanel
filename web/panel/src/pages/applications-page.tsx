@@ -1939,6 +1939,51 @@ export function ApplicationsPage() {
   }, [postInstallServiceStartingAction]);
 
   useEffect(() => {
+    if (!runningAction?.startsWith("remove-")) {
+      return;
+    }
+
+    const removalStatuses: Array<[string, { state: string; message: string } | null]> = [
+          ["remove-mariadb", mariadbStatus],
+          ["remove-docker", dockerStatus],
+          ["remove-ffmpeg", ffmpegStatus],
+          ["remove-ytdlp", ytdlpStatus],
+          ["remove-redis", redisStatus],
+          ["remove-mongodb", mongoDBStatus],
+          ["remove-postgresql", postgresqlStatus],
+          ["remove-phpmyadmin", phpMyAdminStatus],
+          ["remove-golang", golangStatus],
+          ["remove-nodejs", nodeJSStatus],
+          ["remove-pm2", pm2Status],
+        ];
+    const status = runningAction.startsWith("remove-php-")
+      ? phpStatus
+      : removalStatuses.find(([action]) => action === runningAction)?.[1];
+    if (status?.state !== "failed") {
+      return;
+    }
+
+    const message = status.message || "Application removal failed. Check Activity for details.";
+    setPageError(message);
+    toast.error(message);
+    setRunningAction(null);
+  }, [
+    runningAction,
+    phpStatus,
+    mariadbStatus,
+    dockerStatus,
+    ffmpegStatus,
+    ytdlpStatus,
+    redisStatus,
+    mongoDBStatus,
+    postgresqlStatus,
+    phpMyAdminStatus,
+    golangStatus,
+    nodeJSStatus,
+    pm2Status,
+  ]);
+
+  useEffect(() => {
     if (
       runningAction === "install-mariadb" &&
       mariadbStatus?.service_running

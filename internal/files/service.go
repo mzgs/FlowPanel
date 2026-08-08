@@ -25,17 +25,18 @@ import (
 const maxEditableFileSize int64 = 1 << 20
 
 var (
-	ErrNotFound           = errors.New("file not found")
-	ErrInvalidPath        = errors.New("invalid path")
-	ErrUnsupportedEntry   = errors.New("unsupported file type")
-	ErrUnsupportedArchive = errors.New("unsupported archive")
-	ErrInvalidArchive     = errors.New("invalid archive")
-	ErrFileExpected       = errors.New("file expected")
-	ErrDirectoryExpected  = errors.New("directory expected")
-	ErrBinaryFile         = errors.New("file is not editable as text")
-	ErrEditableFileTooBig = errors.New("file is too large to edit")
-	ErrInvalidTransfer    = errors.New("invalid transfer request")
-	ErrInvalidPermissions = errors.New("invalid permissions")
+	ErrNotFound             = errors.New("file not found")
+	ErrInvalidPath          = errors.New("invalid path")
+	ErrUnsupportedEntry     = errors.New("unsupported file type")
+	ErrUnsupportedArchive   = errors.New("unsupported archive")
+	ErrInvalidArchive       = errors.New("invalid archive")
+	ErrInvalidArchiveTarget = errors.New("archive destination is inside a selected directory")
+	ErrFileExpected         = errors.New("file expected")
+	ErrDirectoryExpected    = errors.New("directory expected")
+	ErrBinaryFile           = errors.New("file is not editable as text")
+	ErrEditableFileTooBig   = errors.New("file is too large to edit")
+	ErrInvalidTransfer      = errors.New("invalid transfer request")
+	ErrInvalidPermissions   = errors.New("invalid permissions")
 )
 
 type EntryType string
@@ -508,6 +509,11 @@ func (s *Service) CreateArchive(relPaths []string, destination string) (string, 
 	if err != nil {
 		return "", err
 	}
+	for _, source := range sources {
+		if source.entryType == EntryTypeDirectory && isNestedPath(archiveAbsolutePath, source.absolutePath) {
+			return "", ErrInvalidArchiveTarget
+		}
+	}
 
 	file, err := os.OpenFile(archiveAbsolutePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -845,16 +851,18 @@ func (s *Service) Transfer(mode string, sources []string, target string) error {
 		return ErrInvalidTransfer
 	}
 
+	type operation struct {
+		source      string
+		destination string
+		entryType   EntryType
+	}
+	operations := make([]operation, 0, len(sources))
 	seen := make(map[string]struct{}, len(sources))
+	destinations := make(map[string]struct{}, len(sources))
 	for _, source := range sources {
 		if strings.TrimSpace(source) == "" {
 			continue
 		}
-		if _, exists := seen[source]; exists {
-			continue
-		}
-		seen[source] = struct{}{}
-
 		sourceAbsolutePath, sourceNormalizedPath, sourceType, err := s.resolveExisting(source)
 		if err != nil {
 			return err
@@ -862,6 +870,10 @@ func (s *Service) Transfer(mode string, sources []string, target string) error {
 		if sourceType == EntryTypeSymlink || sourceNormalizedPath == "" {
 			return ErrInvalidTransfer
 		}
+		if _, exists := seen[sourceNormalizedPath]; exists {
+			continue
+		}
+		seen[sourceNormalizedPath] = struct{}{}
 
 		baseName := filepath.Base(sourceAbsolutePath)
 		destinationAbsolutePath := filepath.Join(targetAbsolutePath, baseName)
@@ -879,19 +891,47 @@ func (s *Service) Transfer(mode string, sources []string, target string) error {
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
+		if _, exists := destinations[destinationAbsolutePath]; exists {
+			return ErrInvalidTransfer
+		}
+		destinations[destinationAbsolutePath] = struct{}{}
 
-		switch mode {
-		case "copy":
-			if err := copyPath(sourceAbsolutePath, destinationAbsolutePath); err != nil {
-				return err
-			}
-		case "move":
-			if err := movePath(sourceAbsolutePath, destinationAbsolutePath); err != nil {
-				return err
+		for _, existing := range operations {
+			if (existing.entryType == EntryTypeDirectory && isNestedPath(sourceAbsolutePath, existing.source)) ||
+				(sourceType == EntryTypeDirectory && isNestedPath(existing.source, sourceAbsolutePath)) {
+				return ErrInvalidTransfer
 			}
 		}
+		operations = append(operations, operation{source: sourceAbsolutePath, destination: destinationAbsolutePath, entryType: sourceType})
 	}
 
+	completed := make([]operation, 0, len(operations))
+	for _, item := range operations {
+		var err error
+		if mode == "copy" {
+			err = copyPath(item.source, item.destination)
+		} else {
+			err = movePath(item.source, item.destination)
+		}
+		if err == nil {
+			completed = append(completed, item)
+			continue
+		}
+
+		if !errors.Is(err, fs.ErrExist) {
+			_ = os.RemoveAll(item.destination)
+		}
+		var rollbackErr error
+		for index := len(completed) - 1; index >= 0; index-- {
+			previous := completed[index]
+			if mode == "copy" {
+				rollbackErr = errors.Join(rollbackErr, os.RemoveAll(previous.destination))
+			} else {
+				rollbackErr = errors.Join(rollbackErr, movePath(previous.destination, previous.source))
+			}
+		}
+		return errors.Join(err, rollbackErr)
+	}
 	return nil
 }
 

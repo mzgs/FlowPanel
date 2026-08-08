@@ -148,13 +148,15 @@ var runPHPFPMInfoCommand = func(ctx context.Context, fpmPath string) ([]byte, er
 }
 
 type runtimeActionTracker struct {
-	mu      sync.Mutex
-	actions map[string]string
+	mu       sync.Mutex
+	actions  map[string]string
+	failures map[string]string
 }
 
 func newRuntimeActionTracker() *runtimeActionTracker {
 	return &runtimeActionTracker{
-		actions: make(map[string]string),
+		actions:  make(map[string]string),
+		failures: make(map[string]string),
 	}
 }
 
@@ -177,7 +179,30 @@ func (t *runtimeActionTracker) Begin(resource, action string) error {
 	}
 
 	t.actions[resource] = action
+	delete(t.failures, resource)
 	return nil
+}
+
+func (t *runtimeActionTracker) Fail(resource, message string) {
+	if t == nil {
+		return
+	}
+	resource, message = strings.TrimSpace(resource), strings.TrimSpace(message)
+	if resource == "" || message == "" {
+		return
+	}
+	t.mu.Lock()
+	t.failures[resource] = message
+	t.mu.Unlock()
+}
+
+func (t *runtimeActionTracker) Failure(resource string) string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(t.failures[strings.TrimSpace(resource)])
 }
 
 func (t *runtimeActionTracker) End(resource, action string) {

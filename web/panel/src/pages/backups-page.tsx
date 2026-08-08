@@ -473,16 +473,18 @@ export function BackupsPage() {
 
     try {
       const result = await restoreBackup(getBackupId(record), record.location);
-      if (restoredTimeoutRef.current !== null) {
-        window.clearTimeout(restoredTimeoutRef.current);
+      if ((result.warnings?.length ?? 0) === 0) {
+        if (restoredTimeoutRef.current !== null) {
+          window.clearTimeout(restoredTimeoutRef.current);
+        }
+        setRestoredBackupKey(backupKey);
+        restoredTimeoutRef.current = window.setTimeout(() => {
+          setRestoredBackupKey((current) =>
+            current === backupKey ? null : current,
+          );
+          restoredTimeoutRef.current = null;
+        }, 1500);
       }
-      setRestoredBackupKey(backupKey);
-      restoredTimeoutRef.current = window.setTimeout(() => {
-        setRestoredBackupKey((current) =>
-          current === backupKey ? null : current,
-        );
-        restoredTimeoutRef.current = null;
-      }, 1500);
       if (result.restored_panel_database) {
         window.setTimeout(() => {
           window.location.reload();

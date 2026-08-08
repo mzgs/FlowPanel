@@ -730,7 +730,13 @@ export function DatabasePanel({
     setRestoredBackupName(null);
 
     try {
-      await restoreBackup(name, "local");
+      const result = await restoreBackup(name, "local");
+      for (const warning of result.warnings ?? []) {
+        toast.warning(warning);
+      }
+      if ((result.warnings?.length ?? 0) > 0) {
+        return;
+      }
       if (restoredBackupTimeoutRef.current !== null) {
         window.clearTimeout(restoredBackupTimeoutRef.current);
       }

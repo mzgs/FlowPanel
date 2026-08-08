@@ -570,7 +570,6 @@ func (s *Service) restoreLocalBackup(ctx context.Context, name string) (RestoreR
 }
 
 func (s *Service) restoreArchive(ctx context.Context, backupPath string) (RestoreResult, error) {
-
 	stagingPath, err := os.MkdirTemp("", "flowpanel-restore-*")
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("create restore staging directory: %w", err)
@@ -582,6 +581,10 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 	}
 
 	result := RestoreResult{}
+	partialFailure := func(scope string, err error) (RestoreResult, error) {
+		result.addWarning(fmt.Sprintf("%s may be only partially restored: %v", scope, err))
+		return result, nil
+	}
 	snapshotRelPath := databaseArchivePath(s.dataPath, s.databasePath)
 	snapshotStagingPath := ""
 	if snapshotRelPath != "" {
@@ -593,29 +596,29 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 
 	if hasPanelEntries(stagingPath, snapshotRelPath) {
 		if err := s.restorePanelFiles(stagingPath, snapshotRelPath); err != nil {
-			return RestoreResult{}, err
+			return partialFailure("Panel files", err)
 		}
 		result.RestoredPanelFiles = true
 	}
 
 	if snapshotStagingPath != "" {
 		if err := s.restoreSQLiteSnapshot(ctx, snapshotStagingPath); err != nil {
-			return RestoreResult{}, err
+			return partialFailure("Panel data", err)
 		}
 		result.RestoredPanelDatabase = true
 	}
 
 	restoredSites, err := s.restoreSiteArchives(stagingPath)
-	if err != nil {
-		return RestoreResult{}, err
-	}
 	result.RestoredSites = restoredSites
+	if err != nil {
+		return partialFailure("Sites", err)
+	}
 
 	restoredDatabases, err := s.restoreDatabaseDumps(ctx, stagingPath)
-	if err != nil {
-		return RestoreResult{}, err
-	}
 	result.RestoredDatabases = restoredDatabases
+	if err != nil {
+		return partialFailure("Databases", err)
+	}
 
 	dockerContainers, err := readDockerContainerArchive(stagingPath)
 	if err != nil {
@@ -1529,18 +1532,18 @@ func (s *Service) restoreSiteArchives(stagingPath string) ([]string, error) {
 
 		targetRoot, err := s.siteRootPath(hostname)
 		if err != nil {
-			return nil, err
+			return restored, err
 		}
 		if err := os.MkdirAll(targetRoot, 0o755); err != nil {
-			return nil, fmt.Errorf("create site restore directory %q: %w", targetRoot, err)
+			return restored, fmt.Errorf("create site restore directory %q: %w", targetRoot, err)
 		}
 		if err := clearDirectoryContents(targetRoot, nil); err != nil {
-			return nil, err
+			return restored, err
 		}
 
 		sourceRoot := filepath.Join(sitesPath, hostname)
 		if err := copyTreeContents(sourceRoot, targetRoot); err != nil {
-			return nil, err
+			return restored, err
 		}
 		restored = append(restored, hostname)
 	}
@@ -1571,15 +1574,15 @@ func (s *Service) restoreDatabaseDumps(ctx context.Context, stagingPath string) 
 		databaseName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		dump, err := os.ReadFile(filepath.Join(databasesPath, entry.Name()))
 		if err != nil {
-			return nil, fmt.Errorf("read restore database dump %q: %w", entry.Name(), err)
+			return restored, fmt.Errorf("read restore database dump %q: %w", entry.Name(), err)
 		}
 		if err := s.mariaDB.RestoreDatabase(ctx, databaseName, dump); err != nil {
-			return nil, fmt.Errorf("restore mariadb database %q: %w", databaseName, err)
+			return restored, fmt.Errorf("restore mariadb database %q: %w", databaseName, err)
 		}
 		restored = append(restored, databaseName)
 	}
 	if err := s.restoreDatabaseAccess(ctx, restored); err != nil {
-		return nil, err
+		return restored, err
 	}
 
 	sort.Strings(restored)
