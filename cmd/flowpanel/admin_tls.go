@@ -26,6 +26,19 @@ func adminTLSEnabled(cfg config.Config) bool {
 	return strings.TrimSpace(cfg.AdminTLSCertFile) != ""
 }
 
+func adminTLSConfig(cfg config.Config) *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			certificate, err := tls.LoadX509KeyPair(cfg.AdminTLSCertFile, cfg.AdminTLSKeyFile)
+			if err != nil {
+				return nil, err
+			}
+			return &certificate, nil
+		},
+	}
+}
+
 func adminHTTPClient() *http.Client {
 	certPath := strings.TrimSpace(os.Getenv("FLOWPANEL_ADMIN_TLS_CERT_FILE"))
 	certPEM, err := os.ReadFile(certPath)

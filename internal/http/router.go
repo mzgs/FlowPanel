@@ -1313,43 +1313,49 @@ func findFlowPanelRoot() (string, error) {
 }
 
 func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.RestoreResult) error {
-	if !result.RestoredPanelDatabase {
-		return nil
-	}
-	if app.Alerts != nil {
-		if err := app.Alerts.Ensure(ctx); err != nil {
-			return fmt.Errorf("ensure alert storage: %w", err)
-		}
-	}
-
-	if app.Domains != nil {
-		if err := app.Domains.Load(ctx); err != nil {
-			return fmt.Errorf("reload domains: %w", err)
-		}
-	}
-
-	if app.Cron != nil {
-		snapshot := app.Cron.Snapshot()
-		if snapshot.Started {
-			if err := app.Cron.Stop(ctx); err != nil {
-				return fmt.Errorf("stop cron scheduler: %w", err)
+	if result.RestoredPanelDatabase {
+		if app.Alerts != nil {
+			if err := app.Alerts.Ensure(ctx); err != nil {
+				return fmt.Errorf("ensure alert storage: %w", err)
 			}
 		}
-		if err := app.Cron.Load(ctx); err != nil {
-			return fmt.Errorf("reload cron jobs: %w", err)
+
+		if app.Domains != nil {
+			if err := app.Domains.Load(ctx); err != nil {
+				return fmt.Errorf("reload domains: %w", err)
+			}
 		}
-		if snapshot.Started {
-			app.Cron.Start()
+
+		if app.Cron != nil {
+			snapshot := app.Cron.Snapshot()
+			if snapshot.Started {
+				if err := app.Cron.Stop(ctx); err != nil {
+					return fmt.Errorf("stop cron scheduler: %w", err)
+				}
+			}
+			if err := app.Cron.Load(ctx); err != nil {
+				return fmt.Errorf("reload cron jobs: %w", err)
+			}
+			if snapshot.Started {
+				app.Cron.Start()
+			}
 		}
 	}
 
-	if app.Caddy != nil && app.Domains != nil {
+	if app.Caddy != nil && (result.RestoredPanelFiles || result.RestoredAdminTLS) {
+		if err := app.Caddy.Stop(ctx); err != nil {
+			return fmt.Errorf("stop caddy runtime: %w", err)
+		}
+		if err := app.Caddy.Start(ctx); err != nil {
+			return fmt.Errorf("restart caddy runtime: %w", err)
+		}
+	}
+	if app.Caddy != nil && app.Domains != nil && (result.RestoredPanelDatabase || result.RestoredPanelFiles || result.RestoredAdminTLS) {
 		if err := syncDomainsWithCurrentSettings(ctx, app); err != nil {
 			return fmt.Errorf("sync caddy runtime: %w", err)
 		}
 	}
-
-	if app.PM2 != nil {
+	if result.RestoredPanelDatabase && app.PM2 != nil {
 		if _, err := app.PM2.Sync(ctx); err != nil {
 			return fmt.Errorf("sync pm2 processes: %w", err)
 		}

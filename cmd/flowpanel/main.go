@@ -1623,6 +1623,8 @@ func runBackupCreateCommand(input backup.CreateInput) error {
 		config.FlowPanelDataPath(),
 		config.BackupsPath(),
 		cfg.Database.Path,
+		cfg.AdminTLSCertFile,
+		cfg.AdminTLSKeyFile,
 		dbConn,
 		domainService,
 		mariadbManager,
@@ -1777,6 +1779,8 @@ func runServer() error {
 		config.FlowPanelDataPath(),
 		config.BackupsPath(),
 		cfg.Database.Path,
+		cfg.AdminTLSCertFile,
+		cfg.AdminTLSKeyFile,
 		dbConn,
 		domainService,
 		mariadbManager,
@@ -1911,6 +1915,9 @@ func runServer() error {
 		MaxHeaderBytes:    16 << 10,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	if adminTLSEnabled(cfg) {
+		server.TLSConfig = adminTLSConfig(cfg)
+	}
 
 	serverErrCh := make(chan error, 1)
 	go func() {
@@ -1918,7 +1925,7 @@ func runServer() error {
 		serve := server.ListenAndServe
 		if adminTLSEnabled(cfg) {
 			serve = func() error {
-				return server.ListenAndServeTLS(cfg.AdminTLSCertFile, cfg.AdminTLSKeyFile)
+				return server.ListenAndServeTLS("", "")
 			}
 		}
 		if err := serve(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
