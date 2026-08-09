@@ -80,6 +80,11 @@ export type BackupUploadProgress = {
   total: number;
 };
 
+export type BackupRestoreProgress = {
+  label: string;
+  percent: number;
+};
+
 export async function fetchBackups(): Promise<BackupsPayload> {
   const response = await fetch("/api/backups", {
     credentials: "include",
@@ -204,9 +209,10 @@ export async function deleteBackup(id: string, location: BackupRecord["location"
 export async function restoreBackup(
   id: string,
   location: BackupRecord["location"],
+  onProgress?: (progress: BackupRestoreProgress) => void,
 ): Promise<RestoreBackupResult> {
   const response = await fetch(
-    `/api/backups/${encodeURIComponent(id)}/restore?location=${encodeURIComponent(location)}`,
+    `/api/backups/${encodeURIComponent(id)}/restore-progress?location=${encodeURIComponent(location)}`,
     {
       method: "POST",
       credentials: "include",
@@ -217,8 +223,36 @@ export async function restoreBackup(
     throw await readBackupApiError(response, "restore backup");
   }
 
-  const payload = (await response.json()) as RestoreBackupPayload;
-  return payload.restore;
+  if (!response.body) {
+    throw new Error("Restore backup returned an empty response.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: RestoreBackupResult | undefined;
+  const consumeLine = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as RestoreBackupPayload & {
+      progress?: BackupRestoreProgress;
+      error?: string;
+    };
+    if (event.error) throw new Error(event.error);
+    if (event.progress) onProgress?.(event.progress);
+    if (event.restore) result = event.restore;
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    lines.forEach(consumeLine);
+    if (done) break;
+  }
+  consumeLine(buffer);
+  if (!result) throw new Error("Restore backup returned an invalid response.");
+  return result;
 }
 
 export function getBackupDownloadUrl(id: string, location: BackupRecord["location"]) {

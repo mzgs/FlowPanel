@@ -11,6 +11,7 @@ import {
   importBackup,
   restoreBackup,
   type BackupRecord,
+  type BackupRestoreProgress,
   type BackupUploadProgress,
   type CreateBackupInput,
   type ScheduledBackupRecord,
@@ -158,6 +159,32 @@ function BackupImportProgress({ progress }: { progress: BackupUploadProgress }) 
   );
 }
 
+function BackupRestoreProgressRow({ progress }: { progress: BackupRestoreProgress }) {
+  return (
+    <div className="flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
+      <span className="shrink-0 font-medium text-[var(--app-text)]">
+        {progress.label}
+      </span>
+      <div
+        role="progressbar"
+        aria-label="Backup restore progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress.percent}
+        className="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-[var(--app-surface-muted)]"
+      >
+        <div
+          className="h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-300"
+          style={{ width: `${progress.percent}%` }}
+        />
+      </div>
+      <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
+        {progress.percent}%
+      </span>
+    </div>
+  );
+}
+
 export function BackupsPage() {
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [backupDirectory, setBackupDirectory] = useState("");
@@ -184,6 +211,8 @@ export function BackupsPage() {
   const [restoringBackupKey, setRestoringBackupKey] = useState<string | null>(
     null,
   );
+  const [restoreProgress, setRestoreProgress] =
+    useState<BackupRestoreProgress | null>(null);
   const [restoredBackupKey, setRestoredBackupKey] = useState<string | null>(
     null,
   );
@@ -458,6 +487,7 @@ export function BackupsPage() {
     }
 
     setConfirmRestoreRecord(record);
+    setRestoreProgress(null);
   }
 
   async function confirmRestoreBackup() {
@@ -470,9 +500,14 @@ export function BackupsPage() {
 
     setRestoringBackupKey(backupKey);
     setRestoredBackupKey(null);
+    setRestoreProgress({ label: "Preparing restore…", percent: 0 });
 
     try {
-      const result = await restoreBackup(getBackupId(record), record.location);
+      const result = await restoreBackup(
+        getBackupId(record),
+        record.location,
+        setRestoreProgress,
+      );
       if ((result.warnings?.length ?? 0) === 0) {
         if (restoredTimeoutRef.current !== null) {
           window.clearTimeout(restoredTimeoutRef.current);
@@ -497,6 +532,7 @@ export function BackupsPage() {
       toast.error(getErrorMessage(error, "Failed to restore backup."));
     } finally {
       setRestoringBackupKey(null);
+      setRestoreProgress(null);
       setConfirmRestoreRecord((current) =>
         current && getBackupKey(current) === backupKey ? null : current,
       );
@@ -1105,7 +1141,11 @@ export function BackupsPage() {
           void confirmRestoreBackup();
         }}
         className="sm:max-w-md"
-      />
+      >
+        {restoreProgress ? (
+          <BackupRestoreProgressRow progress={restoreProgress} />
+        ) : null}
+      </ActionConfirmDialog>
 
       <ActionConfirmDialog
         open={confirmDeleteRecord !== null}

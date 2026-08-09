@@ -88,6 +88,15 @@ type RestoreResult struct {
 	Warnings              []string `json:"warnings,omitempty"`
 }
 
+type RestoreProgress struct {
+	Label   string `json:"label"`
+	Percent int    `json:"percent"`
+}
+
+type ProgressManager interface {
+	RestoreWithProgress(context.Context, string, string, func(RestoreProgress)) (RestoreResult, error)
+}
+
 type DownloadResult struct {
 	Name   string
 	Size   int64
@@ -544,17 +553,21 @@ func (s *Service) Import(_ context.Context, name string, archive io.Reader) (Rec
 }
 
 func (s *Service) Restore(ctx context.Context, id string, location string) (RestoreResult, error) {
+	return s.RestoreWithProgress(ctx, id, location, nil)
+}
+
+func (s *Service) RestoreWithProgress(ctx context.Context, id string, location string, report func(RestoreProgress)) (RestoreResult, error) {
 	switch normalizeLocation(location) {
 	case LocationLocal:
-		return s.restoreLocalBackup(ctx, id)
+		return s.restoreLocalBackup(ctx, id, report)
 	case LocationGoogleDrive:
-		return s.restoreGoogleDriveBackup(ctx, id)
+		return s.restoreGoogleDriveBackup(ctx, id, report)
 	default:
 		return RestoreResult{}, ErrInvalidLocation
 	}
 }
 
-func (s *Service) restoreLocalBackup(ctx context.Context, name string) (RestoreResult, error) {
+func (s *Service) restoreLocalBackup(ctx context.Context, name string, report func(RestoreProgress)) (RestoreResult, error) {
 	backupPath, err := s.resolveBackupPath(name)
 	if err != nil {
 		return RestoreResult{}, err
@@ -566,16 +579,18 @@ func (s *Service) restoreLocalBackup(ctx context.Context, name string) (RestoreR
 		return RestoreResult{}, fmt.Errorf("stat backup %q: %w", name, err)
 	}
 
-	return s.restoreArchive(ctx, backupPath)
+	return s.restoreArchive(ctx, backupPath, report)
 }
 
-func (s *Service) restoreArchive(ctx context.Context, backupPath string) (RestoreResult, error) {
+func (s *Service) restoreArchive(ctx context.Context, backupPath string, report func(RestoreProgress)) (RestoreResult, error) {
+	reportRestoreProgress(report, "Preparing backup…", 5)
 	stagingPath, err := os.MkdirTemp("", "flowpanel-restore-*")
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("create restore staging directory: %w", err)
 	}
 	defer os.RemoveAll(stagingPath)
 
+	reportRestoreProgress(report, "Extracting backup…", 15)
 	if err := extractBackupArchive(backupPath, stagingPath); err != nil {
 		return RestoreResult{}, err
 	}
@@ -595,6 +610,7 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 	}
 
 	if hasPanelEntries(stagingPath, snapshotRelPath) {
+		reportRestoreProgress(report, "Restoring panel files…", 30)
 		if err := s.restorePanelFiles(stagingPath, snapshotRelPath); err != nil {
 			recordFailure("panel_files", "Panel files may be only partially restored", err)
 		} else {
@@ -603,6 +619,7 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 	}
 
 	if snapshotStagingPath != "" {
+		reportRestoreProgress(report, "Restoring panel database…", 45)
 		if err := s.restoreSQLiteSnapshot(ctx, snapshotStagingPath); err != nil {
 			recordFailure("panel_data", "Panel data may be only partially restored", err)
 		} else {
@@ -610,18 +627,21 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 		}
 	}
 
+	reportRestoreProgress(report, "Restoring site files…", 60)
 	restoredSites, err := s.restoreSiteArchives(stagingPath)
 	result.RestoredSites = restoredSites
 	if err != nil {
 		recordFailure("sites", "Sites may be only partially restored", err)
 	}
 
+	reportRestoreProgress(report, "Restoring databases…", 75)
 	restoredDatabases, err := s.restoreDatabaseDumps(ctx, stagingPath)
 	result.RestoredDatabases = restoredDatabases
 	if err != nil {
 		recordFailure("databases", "Databases may be only partially restored", err)
 	}
 
+	reportRestoreProgress(report, "Restoring Docker data…", 88)
 	dockerContainers, err := readDockerContainerArchive(stagingPath)
 	if err != nil {
 		recordFailure("docker_containers", "Docker containers were not restored", err)
@@ -642,6 +662,12 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 	}
 
 	return result, nil
+}
+
+func reportRestoreProgress(report func(RestoreProgress), label string, percent int) {
+	if report != nil {
+		report(RestoreProgress{Label: label, Percent: percent})
+	}
 }
 
 func (r *RestoreResult) addWarning(message string) {
@@ -730,7 +756,8 @@ func (s *Service) DownloadPath(name string) (string, string, error) {
 	return backupPath, name, nil
 }
 
-func (s *Service) restoreGoogleDriveBackup(ctx context.Context, id string) (RestoreResult, error) {
+func (s *Service) restoreGoogleDriveBackup(ctx context.Context, id string, report func(RestoreProgress)) (RestoreResult, error) {
+	reportRestoreProgress(report, "Downloading backup…", 3)
 	download, err := s.openGoogleDriveDownload(ctx, id)
 	if err != nil {
 		return RestoreResult{}, err
@@ -756,7 +783,7 @@ func (s *Service) restoreGoogleDriveBackup(ctx context.Context, id string) (Rest
 		return RestoreResult{}, fmt.Errorf("close google drive restore archive: %w", err)
 	}
 
-	return s.restoreArchive(ctx, targetPath)
+	return s.restoreArchive(ctx, targetPath, report)
 }
 
 func (s *Service) deleteGoogleDriveBackup(ctx context.Context, id string) error {

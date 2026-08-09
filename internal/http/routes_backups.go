@@ -1,6 +1,8 @@
 package httpx
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -415,28 +417,77 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			} else {
 				writeBackupError(w, err)
 			}
-			a.app.Logger.Error("restore backup failed", zap.String("backup_name", name), zap.Error(err))
-			a.mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "failed", fmt.Sprintf("Failed to restore backup %q: %v", name, err))
+			a.recordBackupRestoreFailure(r.Context(), name, err)
 			return
 		}
 
-		if err := syncBackupRestoreState(r.Context(), a.app, result); err != nil {
-			a.app.Logger.Error("sync restored backup state failed", zap.String("backup_name", name), zap.Error(err))
-			result.Warnings = append(result.Warnings, fmt.Sprintf("Backup data was restored, but runtime state could not be fully reloaded: %v", err))
-		}
-		if len(result.RestoredContainers) > 0 {
-			if err := a.reconcileFirewall(r.Context()); err != nil {
-				a.app.Logger.Error("reconcile firewall after backup restore failed", zap.String("backup_name", name), zap.Error(err))
-				result.Warnings = append(result.Warnings, fmt.Sprintf("Docker containers were restored, but firewall ports could not be reconciled: %v", err))
-			}
-		}
-
-		detail := fmt.Sprintf("Restored backup %q.", name)
-		if len(result.Warnings) > 0 {
-			detail = fmt.Sprintf("Restored backup %q with %d warning(s).", name, len(result.Warnings))
-		}
-		a.mutationEvent(r.Context(), "backups", "restore", "backup", name, name, "succeeded", detail)
+		result = a.finalizeBackupRestore(r.Context(), name, result)
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"restore": result})
 	})
 	r.Method(stdhttp.MethodPost, "/backups/{backupName}/restore", backupsRestoreHandler)
+
+	backupsRestoreProgressHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		manager, ok := a.app.Backups.(backup.ProgressManager)
+		if !ok {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "backup restore progress is not available"})
+			return
+		}
+		name, err := decodeBackupNameParam(r)
+		if err != nil {
+			writeBackupError(w, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Accel-Buffering", "no")
+		encoder := json.NewEncoder(w)
+		flusher, _ := w.(stdhttp.Flusher)
+		emit := func(value any) {
+			_ = encoder.Encode(value)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		result, err := manager.RestoreWithProgress(r.Context(), name, readBackupLocation(r), func(progress backup.RestoreProgress) {
+			emit(map[string]any{"progress": progress})
+		})
+		if err != nil {
+			a.recordBackupRestoreFailure(r.Context(), name, err)
+			emit(map[string]any{"error": "Failed to restore backup."})
+			return
+		}
+
+		emit(map[string]any{"progress": backup.RestoreProgress{Label: "Finalizing restore…", Percent: 95}})
+		result = a.finalizeBackupRestore(r.Context(), name, result)
+		emit(map[string]any{
+			"progress": backup.RestoreProgress{Label: "Restore complete", Percent: 100},
+			"restore":  result,
+		})
+	})
+	r.Method(stdhttp.MethodPost, "/backups/{backupName}/restore-progress", backupsRestoreProgressHandler)
+}
+
+func (a *apiRoutes) recordBackupRestoreFailure(ctx context.Context, name string, err error) {
+	a.app.Logger.Error("restore backup failed", zap.String("backup_name", name), zap.Error(err))
+	a.mutationEvent(ctx, "backups", "restore", "backup", name, name, "failed", fmt.Sprintf("Failed to restore backup %q: %v", name, err))
+}
+
+func (a *apiRoutes) finalizeBackupRestore(ctx context.Context, name string, result backup.RestoreResult) backup.RestoreResult {
+	if err := syncBackupRestoreState(ctx, a.app, result); err != nil {
+		a.app.Logger.Error("sync restored backup state failed", zap.String("backup_name", name), zap.Error(err))
+		result.Warnings = append(result.Warnings, fmt.Sprintf("Backup data was restored, but runtime state could not be fully reloaded: %v", err))
+	}
+	if len(result.RestoredContainers) > 0 {
+		if err := a.reconcileFirewall(ctx); err != nil {
+			a.app.Logger.Error("reconcile firewall after backup restore failed", zap.String("backup_name", name), zap.Error(err))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Docker containers were restored, but firewall ports could not be reconciled: %v", err))
+		}
+	}
+	detail := fmt.Sprintf("Restored backup %q.", name)
+	if len(result.Warnings) > 0 {
+		detail = fmt.Sprintf("Restored backup %q with %d warning(s).", name, len(result.Warnings))
+	}
+	a.mutationEvent(ctx, "backups", "restore", "backup", name, name, "succeeded", detail)
+	return result
 }
