@@ -478,10 +478,10 @@ func (a *apiRoutes) finalizeBackupRestore(ctx context.Context, name string, resu
 		a.app.Logger.Error("sync restored backup state failed", zap.String("backup_name", name), zap.Error(err))
 		result.Warnings = append(result.Warnings, fmt.Sprintf("Backup data was restored, but runtime state could not be fully reloaded: %v", err))
 	}
-	if len(result.RestoredContainers) > 0 {
+	if result.RestoredPanelFiles || len(result.RestoredContainers) > 0 {
 		if err := a.reconcileFirewall(ctx); err != nil {
 			a.app.Logger.Error("reconcile firewall after backup restore failed", zap.String("backup_name", name), zap.Error(err))
-			result.Warnings = append(result.Warnings, fmt.Sprintf("Docker containers were restored, but firewall ports could not be reconciled: %v", err))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Backup data was restored, but firewall ports could not be reconciled: %v", err))
 		}
 	}
 	detail := fmt.Sprintf("Restored backup %q.", name)
