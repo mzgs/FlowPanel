@@ -1080,9 +1080,18 @@ function ContainerList({
                       </>
                     ) : (
                       <>
-                        <div className="truncate text-[15px] font-medium text-foreground">
+                        <button
+                          type="button"
+                          aria-expanded={expanded}
+                          aria-controls={logRegionID}
+                          title={`${expanded ? "Collapse" : "Expand"} logs for ${getContainerLabel(container)}`}
+                          onClick={() => {
+                            onToggleExpandedContainer(container);
+                          }}
+                          className="min-w-0 truncate text-left text-[15px] font-medium text-foreground hover:text-[var(--app-accent)]"
+                        >
                           {getContainerLabel(container)}
-                        </div>
+                        </button>
                         <Button
                           type="button"
                           variant="ghost"
