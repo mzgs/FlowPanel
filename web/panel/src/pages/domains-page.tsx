@@ -192,6 +192,28 @@ function getDomainAvatarPalette(hostname: string) {
   return domainAvatarPalettes[hash % domainAvatarPalettes.length];
 }
 
+function getDomainPort(kind: DomainKind, target: string) {
+  if (kind !== "Node.js" && kind !== "Python" && kind !== "Reverse proxy") {
+    return null;
+  }
+
+  const trimmed = target.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (!trimmed.includes("://")) {
+    return trimmed.match(/:(\d+)$/)?.[1] ?? null;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    return url.port || (url.protocol === "https:" ? "443" : "80");
+  } catch {
+    return trimmed.match(/:(\d+)$/)?.[1] ?? null;
+  }
+}
+
 function validateHostname(value: string) {
   if (!value) {
     return "Domain is required.";
@@ -969,6 +991,7 @@ export function DomainsPage() {
                         );
                         const backupCount =
                           siteBackups[domain.hostname]?.length ?? 0;
+                        const port = getDomainPort(domain.kind, domain.target);
 
                         return (
                           <TableRow
@@ -1037,7 +1060,14 @@ export function DomainsPage() {
                                 </div>
                               </div>
                             </TableCell>
-                            <TableCell>{domain.kind}</TableCell>
+                            <TableCell>
+                              {domain.kind}
+                              {port ? (
+                                <span className="ml-1 text-[12px] text-[var(--app-text-muted)]">
+                                  :{port}
+                                </span>
+                              ) : null}
+                            </TableCell>
                             <TableCell>
                               {backupsLoading ? (
                                 <span className="text-[13px] text-[var(--app-text-muted)]">
