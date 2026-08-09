@@ -519,9 +519,6 @@ func runDomainGitHubDeploy(
 	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "reset", "--hard", "origin/"+branch); err != nil {
 		return domainGitHubDeployResult{}, err
 	}
-	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "clean", "-fd"); err != nil {
-		return domainGitHubDeployResult{}, err
-	}
 	if err := runGitHubPostFetchScript(runCtx, targetPath, integration.PostFetchScript); err != nil {
 		return domainGitHubDeployResult{}, err
 	}
@@ -568,9 +565,6 @@ func initializeGitRepositoryInPlace(
 		return err
 	}
 	if _, err := runGitCommand(ctx, gitPath, targetPath, token, "reset", "--hard", "origin/"+branch); err != nil {
-		return err
-	}
-	if _, err := runGitCommand(ctx, gitPath, targetPath, token, "clean", "-fd"); err != nil {
 		return err
 	}
 	if err := runGitHubPostFetchScript(ctx, targetPath, postFetchScript); err != nil {
