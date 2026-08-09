@@ -400,9 +400,9 @@ function formatUptime(status: SystemStatus | null) {
 
 function DetailItem({ label, value, valueClassName = "" }: { label: string; value: string; valueClassName?: string }) {
   return (
-    <div className="flex min-w-0 items-baseline gap-2">
+    <div className="flex shrink-0 items-baseline gap-2 whitespace-nowrap">
       <div className="shrink-0 text-[13px] font-semibold tracking-tight text-[var(--app-text)]">{label}:</div>
-      <div className={`min-w-0 text-[13px] text-[var(--app-text-muted)] sm:text-[14px] ${valueClassName}`}>{value}</div>
+      <div className={`text-[13px] text-[var(--app-text-muted)] sm:text-[14px] ${valueClassName}`}>{value}</div>
     </div>
   );
 }
@@ -445,8 +445,8 @@ function SystemInfoCard({
 
   return (
       <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-2">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-8">
+        <div className="flex items-center justify-between gap-4 overflow-x-auto">
+          <div className="flex shrink-0 items-center gap-x-5">
             {details.map((detail) => (
               <DetailItem
                 key={detail.label}
