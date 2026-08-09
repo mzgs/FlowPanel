@@ -561,7 +561,7 @@ function LinuxToolsDialog({
     setHostname(tools.hostname || "");
     setDNSServers((tools.dns_servers || []).join("\n"));
     const currentSwap = tools.swap.devices.find((device) => device.type === "file") ?? tools.swap.devices[0];
-    setSwapSizeMB(currentSwap?.size_bytes ? String(Math.round(currentSwap.size_bytes / 1024 / 1024)) : "");
+    setSwapSizeMB(currentSwap?.size_bytes ? String(Math.round(currentSwap.size_bytes / 1024 / 1024)) : "1024");
   }, [tools]);
 
   async function runLinuxAction(actionKey: string, action: () => Promise<LinuxToolsSnapshot>, successMessage: string) {
@@ -583,7 +583,7 @@ function LinuxToolsDialog({
   const actionDisabled = !tools?.supported || Boolean(pendingAction);
   const swapSizeValue = Number.parseInt(swapSizeMB, 10);
   const activeSwap = tools?.swap.devices.find((device) => device.type === "file") ?? tools?.swap.devices[0];
-  const canResizeSwap = actionDisabled ? false : activeSwap?.type === "file";
+  const canSetSwap = !actionDisabled && (!activeSwap || activeSwap.type === "file");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -753,14 +753,14 @@ function LinuxToolsDialog({
                   </Table>
                 </div>
               ) : (
-                <EmptyState title="No active swap devices" description="Enable a swap file on the server to manage its size here." />
+                <EmptyState title="No active swap devices" description="Choose a size below to create and enable /swapfile." />
               )}
 
               <div className="grid gap-3 sm:grid-cols-[1fr_8rem_auto]">
                 <div className="space-y-1.5">
                   <Label>Current swap</Label>
                   <div className="flex h-9 items-center rounded-md border border-input px-3 font-mono text-sm text-muted-foreground">
-                    <span className="truncate">{formatValue(activeSwap?.filename)}</span>
+                    <span className="truncate">{activeSwap?.filename || "/swapfile (new)"}</span>
                   </div>
                 </div>
                 <div className="space-y-1.5">
@@ -777,18 +777,18 @@ function LinuxToolsDialog({
                 <div className="flex items-end">
                   <ActionButton
                     size="sm"
-                    disabled={!canResizeSwap || !Number.isFinite(swapSizeValue)}
+                    disabled={!canSetSwap || !Number.isFinite(swapSizeValue) || swapSizeValue < 64 || swapSizeValue > 1048576}
                     pending={pendingAction === "swap"}
                     icon={<Wrench className="h-4 w-4" />}
                     onClick={() =>
                       void runLinuxAction(
                         "swap",
                         () => resizeLinuxSwap(swapSizeValue),
-                        "Swap size updated.",
+                        activeSwap ? "Swap size updated." : "Swap file created and enabled.",
                       )
                     }
                   >
-                    Set Size
+                    {activeSwap ? "Set Size" : "Create Swap"}
                   </ActionButton>
                 </div>
               </div>

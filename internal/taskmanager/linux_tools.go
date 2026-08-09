@@ -16,7 +16,11 @@ import (
 	"time"
 )
 
-const linuxToolsActionTimeout = 2 * time.Minute
+const (
+	linuxToolsActionTimeout = 2 * time.Minute
+	defaultSwapFilePath     = "/swapfile"
+	linuxFstabPath          = "/etc/fstab"
+)
 
 var hostnameLabelPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 
@@ -130,23 +134,37 @@ func (s *Service) ResizeSwap(ctx context.Context, sizeMB int) error {
 		return fmt.Errorf("swap size must be between 64 MB and 1048576 MB")
 	}
 
-	device, err := currentSwapFile()
+	device, create, err := currentSwapFile()
 	if err != nil {
 		return err
 	}
 	path := device.Filename
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("inspect swap file %s: %w", path, err)
+	info, statErr := os.Stat(path)
+	if statErr != nil && (!create || !os.IsNotExist(statErr)) {
+		return fmt.Errorf("inspect swap file %s: %w", path, statErr)
 	}
+	if statErr == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("swap path %s is not a regular file", path)
+	}
+	created := create && os.IsNotExist(statErr)
 
-	if err := runLinuxToolCommand(ctx, "swapoff", path); err != nil {
-		return err
+	if !create {
+		if err := runLinuxToolCommand(ctx, "swapoff", path); err != nil {
+			return err
+		}
 	}
 	enabled := false
 	defer func() {
-		if !enabled {
-			_ = runLinuxToolCommand(context.Background(), "swapon", path)
+		if enabled {
+			return
 		}
+		if create {
+			if created {
+				_ = os.Remove(path)
+			}
+			return
+		}
+		_ = runLinuxToolCommand(context.Background(), "swapon", path)
 	}()
 
 	if err := allocateSwapFile(ctx, path, sizeMB); err != nil {
@@ -161,8 +179,42 @@ func (s *Service) ResizeSwap(ctx context.Context, sizeMB int) error {
 	if err := runLinuxToolCommand(ctx, "swapon", path); err != nil {
 		return err
 	}
+	if create {
+		if err := persistSwapFile(path); err != nil {
+			_ = runLinuxToolCommand(context.Background(), "swapoff", path)
+			return err
+		}
+	}
 	enabled = true
 
+	return nil
+}
+
+func persistSwapFile(path string) error {
+	content, err := os.ReadFile(linuxFstabPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", linuxFstabPath, err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && !strings.HasPrefix(fields[0], "#") && fields[0] == path && fields[2] == "swap" {
+			return nil
+		}
+	}
+
+	file, err := os.OpenFile(linuxFstabPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", linuxFstabPath, err)
+	}
+	defer file.Close()
+
+	prefix := ""
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		prefix = "\n"
+	}
+	if _, err := file.WriteString(prefix + path + " none swap sw 0 0\n"); err != nil {
+		return fmt.Errorf("update %s: %w", linuxFstabPath, err)
+	}
 	return nil
 }
 
@@ -382,24 +434,27 @@ func parseSwapDevices(path string) ([]SwapDevice, error) {
 	return devices, nil
 }
 
-func currentSwapFile() (SwapDevice, error) {
+func currentSwapFile() (SwapDevice, bool, error) {
 	devices, err := parseSwapDevices("/proc/swaps")
 	if err != nil {
-		return SwapDevice{}, err
+		return SwapDevice{}, false, err
 	}
 	for _, device := range devices {
 		if device.Type == "file" {
-			return device, nil
+			return device, false, nil
 		}
 	}
 	if len(devices) > 0 {
-		return SwapDevice{}, fmt.Errorf("active swap is not a file and cannot be resized from FlowPanel")
+		return SwapDevice{}, false, fmt.Errorf("active swap is not a file and cannot be resized from FlowPanel")
 	}
-	return SwapDevice{}, fmt.Errorf("no active swap file is available to resize")
+	return SwapDevice{Filename: defaultSwapFilePath, Type: "file"}, true, nil
 }
 
 func allocateSwapFile(ctx context.Context, path string, sizeMB int) error {
 	if _, err := exec.LookPath("fallocate"); err == nil {
+		if err := os.Truncate(path, 0); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("truncate swap file: %w", err)
+		}
 		if err := runLinuxToolCommand(ctx, "fallocate", "-l", fmt.Sprintf("%dM", sizeMB), path); err == nil {
 			return nil
 		}
