@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { LoaderCircle } from 'lucide-react'
 
 type ConfirmDialogProps = {
   open: boolean
@@ -68,6 +69,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
             onClick={handleConfirm}
             disabled={disabled || isLoading}
           >
+            {isLoading ? <LoaderCircle className='h-4 w-4 animate-spin' /> : null}
             {confirmText ?? 'Continue'}
           </Button>
         </DialogFooter>

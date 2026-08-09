@@ -206,6 +206,7 @@ export function DomainBackupRestoreDialog({
         confirmRestoreBackupName={confirmRestoreBackupName}
         setConfirmRestoreBackupName={setConfirmRestoreBackupName}
         onRestoreBackup={onRestoreBackup}
+        restoringBackupName={restoringBackupName}
         onDeleteBackup={onDeleteBackup}
         deletingBackupName={deletingBackupName}
         closeDeleteOnConfirm

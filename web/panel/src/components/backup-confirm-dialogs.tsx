@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 
 type BackupConfirmStateOptions = {
@@ -13,6 +13,7 @@ type BackupConfirmDialogsProps = {
   confirmRestoreBackupName: string | null;
   setConfirmRestoreBackupName: (name: string | null) => void;
   onRestoreBackup: (name: string) => void;
+  restoringBackupName: string | null;
   onDeleteBackup: (name: string) => void;
   deletingBackupName: string | null;
   closeDeleteOnConfirm?: boolean;
@@ -60,6 +61,7 @@ export function BackupConfirmDialogs({
   confirmRestoreBackupName,
   setConfirmRestoreBackupName,
   onRestoreBackup,
+  restoringBackupName,
   onDeleteBackup,
   deletingBackupName,
   closeDeleteOnConfirm = false,
@@ -67,12 +69,24 @@ export function BackupConfirmDialogs({
   restoreConfirmText = "Restore backup",
   getRestoreConfirmDescription,
 }: BackupConfirmDialogsProps) {
+  const restoreWasLoading = useRef(false);
+  const restoreIsLoading =
+    confirmRestoreBackupName !== null &&
+    restoringBackupName === confirmRestoreBackupName;
+
+  useEffect(() => {
+    if (restoreWasLoading.current && !restoreIsLoading) {
+      setConfirmRestoreBackupName(null);
+    }
+    restoreWasLoading.current = restoreIsLoading;
+  }, [restoreIsLoading, setConfirmRestoreBackupName]);
+
   return (
     <>
       <ActionConfirmDialog
         open={confirmRestoreBackupName !== null}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
+          if (!nextOpen && !restoreIsLoading) {
             setConfirmRestoreBackupName(null);
           }
         }}
@@ -84,13 +98,13 @@ export function BackupConfirmDialogs({
             : "Restore this backup?"
         }
         confirmText={restoreConfirmText}
+        isLoading={restoreIsLoading}
         handleConfirm={() => {
           if (confirmRestoreBackupName !== null) {
             onRestoreBackup(confirmRestoreBackupName);
-            setConfirmRestoreBackupName(null);
           }
         }}
-        className="sm:max-w-md"
+        className="sm:max-w-lg"
       />
       <ActionConfirmDialog
         open={confirmDeleteBackupName !== null}

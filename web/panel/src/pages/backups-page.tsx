@@ -1140,7 +1140,7 @@ export function BackupsPage() {
         handleConfirm={() => {
           void confirmRestoreBackup();
         }}
-        className="sm:max-w-md"
+        className="sm:max-w-lg"
       >
         {restoreProgress ? (
           <BackupRestoreProgressRow progress={restoreProgress} />
