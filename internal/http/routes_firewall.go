@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"flowpanel/internal/domain"
 	"flowpanel/internal/firewall"
 	"flowpanel/internal/settings"
 
@@ -135,7 +136,9 @@ func (a *apiRoutes) firewallConfig(ctx context.Context) (firewall.Config, error)
 	if err != nil {
 		return firewall.Config{}, err
 	}
-	return firewallConfigFromSettings(a.app.Config.AdminListenAddr, a.app.Config.PublicHTTPAddr, a.app.Config.PublicHTTPSAddr, record), nil
+	cfg := firewallConfigFromSettings(a.app.Config.AdminListenAddr, a.app.Config.PublicHTTPAddr, a.app.Config.PublicHTTPSAddr, record)
+	cfg.DomainPorts = domain.TargetPorts(a.app.Domains.List())
+	return cfg, nil
 }
 
 func firewallConfigFromSettings(adminAddr, httpAddr, httpsAddr string, record settings.Record) firewall.Config {

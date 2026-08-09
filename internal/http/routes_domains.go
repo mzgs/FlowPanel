@@ -1225,6 +1225,15 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			writeJSON(w, status, map[string]any{"error": message})
 			return
 		}
+		if err := a.reconcileFirewall(r.Context()); err != nil {
+			rollbackErr := a.rollbackCreatedDomain(r.Context(), record, artifacts)
+			if rollbackErr != nil {
+				a.app.Logger.Error("rollback created domain after firewall update failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
+			}
+			a.app.Logger.Error("open domain port failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "failed to open the domain port"})
+			return
+		}
 
 		a.mutationEvent(r.Context(), "domains", "create", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Created domain %q.", record.Hostname))
 		writeJSON(w, stdhttp.StatusCreated, map[string]any{"domain": record})
@@ -1290,6 +1299,15 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			writeJSON(w, status, map[string]any{"error": message})
 			return
 		}
+		if err := a.reconcileFirewall(r.Context()); err != nil {
+			rollbackErr := a.rollbackDomainUpdate(r.Context(), previous, record, artifacts, false, false)
+			if rollbackErr != nil {
+				a.app.Logger.Error("rollback updated domain after firewall update failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
+			}
+			a.app.Logger.Error("update domain port failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "failed to update the domain port"})
+			return
+		}
 
 		if err := reconcileUpdatedDomainRuntime(r.Context(), a.app.PM2, a.app.Domains.BasePath(), previous, record); err != nil {
 			rollbackErr := a.rollbackDomainUpdate(r.Context(), previous, record, artifacts, false, false)
@@ -1345,6 +1363,15 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			a.mutationEvent(r.Context(), "domains", "delete", "domain", record.ID, record.Hostname, "failed", eventErrorMessage("Deleted domain record but failed to republish routes.", err))
 			status, message := syncDomainsErrorResponse(err, "failed to delete domain")
 			writeJSON(w, status, map[string]any{"error": message})
+			return
+		}
+		if err := a.reconcileFirewall(r.Context()); err != nil {
+			rollbackErr := errors.Join(a.app.Domains.Restore(r.Context(), record), a.syncDomainsWithCaddy(r.Context()), a.reconcileFirewall(r.Context()))
+			if rollbackErr != nil {
+				a.app.Logger.Error("rollback deleted domain after firewall update failed", zap.String("domain_id", record.ID), zap.Error(rollbackErr))
+			}
+			a.app.Logger.Error("close domain port failed", zap.String("domain_id", record.ID), zap.String("hostname", record.Hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "failed to update the domain port"})
 			return
 		}
 
@@ -2200,7 +2227,7 @@ func (a *apiRoutes) rollbackCreatedDomain(ctx context.Context, record domain.Rec
 	if deleteErr == nil && !removed {
 		deleteErr = errors.New("created domain was missing during rollback")
 	}
-	errs := []error{deleteErr}
+	errs := []error{deleteErr, a.syncDomainsWithCaddy(ctx), a.reconcileFirewall(ctx)}
 	if a.app.FTPAccounts != nil {
 		errs = append(errs, a.app.FTPAccounts.DeleteDomain(ctx, record.ID))
 	}
@@ -2222,7 +2249,7 @@ func (a *apiRoutes) rollbackDomainUpdate(
 	if err := a.app.Domains.Restore(ctx, previous); err != nil {
 		return err
 	}
-	errs := []error{a.syncDomainsWithCaddy(ctx)}
+	errs := []error{a.syncDomainsWithCaddy(ctx), a.reconcileFirewall(ctx)}
 	if rollbackRuntime {
 		errs = append(errs, reconcileUpdatedDomainRuntime(ctx, a.app.PM2, a.app.Domains.BasePath(), current, previous))
 	}

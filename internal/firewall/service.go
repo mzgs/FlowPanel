@@ -28,6 +28,7 @@ type Config struct {
 	FTPEnabled      bool
 	FTPPort         int
 	FTPPassivePorts string
+	DomainPorts     []int
 }
 
 type Port struct {
@@ -378,6 +379,9 @@ func desiredPorts(ctx context.Context, cfg Config, custom []Port) []Port {
 		if start, end, ok := parsePortRange(cfg.FTPPassivePorts); ok {
 			ports = append(ports, Port{Port: start, EndPort: end, Protocol: "tcp", Source: "FTP passive"})
 		}
+	}
+	for _, port := range cfg.DomainPorts {
+		ports = append(ports, Port{Port: port, Protocol: "tcp", Source: "Domain"})
 	}
 	ports = append(ports, custom...)
 	ports = append(ports, dockerPublicPorts(ctx)...)

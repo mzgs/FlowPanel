@@ -281,6 +281,33 @@ func (s *Service) List() []Record {
 	return records
 }
 
+// TargetPort returns the explicit TCP port used by a domain upstream.
+func TargetPort(record Record) (int, bool) {
+	if !usesUpstreamTarget(record.Kind) {
+		return 0, false
+	}
+	target := strings.TrimSpace(record.Target)
+	if port, err := strconv.Atoi(target); err == nil {
+		return port, port >= 1 && port <= 65535
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Port() == "" {
+		return 0, false
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	return port, err == nil && port >= 1 && port <= 65535
+}
+
+func TargetPorts(records []Record) []int {
+	ports := make([]int, 0)
+	for _, record := range records {
+		if port, ok := TargetPort(record); ok {
+			ports = append(ports, port)
+		}
+	}
+	return ports
+}
+
 func (s *Service) Load(ctx context.Context) error {
 	if s.store == nil {
 		return nil

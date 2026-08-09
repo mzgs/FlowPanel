@@ -1897,6 +1897,7 @@ func runServer() error {
 		FTPEnabled:      settingsRecord.FTPEnabled,
 		FTPPort:         settingsRecord.FTPPort,
 		FTPPassivePorts: settingsRecord.FTPPassivePorts,
+		DomainPorts:     domain.TargetPorts(domainService.List()),
 	}); err != nil {
 		logger.Error("reconcile managed firewall at startup failed", zap.Error(err))
 	}
