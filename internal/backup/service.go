@@ -133,7 +133,7 @@ type DomainSource interface {
 type DatabaseSource interface {
 	ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error)
 	DumpDatabase(context.Context, string) ([]byte, error)
-	RestoreDatabase(context.Context, string, []byte) error
+	RestoreDatabase(context.Context, string, io.Reader) error
 	RestoreDatabaseAccess(context.Context, mariadb.DatabaseRecord) error
 }
 
@@ -770,7 +770,11 @@ func (s *Service) restoreGoogleDriveBackup(ctx context.Context, id string, repor
 	}
 	defer os.RemoveAll(stagingPath)
 
-	targetPath := filepath.Join(stagingPath, download.Name)
+	name := strings.TrimSpace(download.Name)
+	if name == "" || filepath.Base(name) != name || !strings.HasSuffix(strings.ToLower(name), backupExtension) {
+		return RestoreResult{}, ErrInvalidName
+	}
+	targetPath := filepath.Join(stagingPath, name)
 	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("create google drive restore archive: %w", err)
@@ -1322,12 +1326,25 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 		}
 
 		targetPath := filepath.Join(targetRoot, filepath.FromSlash(relativePath))
+		if err := ensureArchiveParentsAreDirectories(targetRoot, relativePath); err != nil {
+			return err
+		}
 		switch header.Typeflag {
 		case tar.TypeDir:
+			if info, err := os.Lstat(targetPath); err == nil && !info.IsDir() {
+				return fmt.Errorf("backup archive entry %q conflicts with an existing entry", header.Name)
+			} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("inspect restore directory %q: %w", relativePath, err)
+			}
 			if err := os.MkdirAll(targetPath, header.FileInfo().Mode().Perm()); err != nil {
 				return fmt.Errorf("create restore directory %q: %w", relativePath, err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
+			if _, err := os.Lstat(targetPath); err == nil {
+				return fmt.Errorf("backup archive contains duplicate entry %q", header.Name)
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("inspect restore file %q: %w", relativePath, err)
+			}
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				return fmt.Errorf("create restore parent directory %q: %w", relativePath, err)
 			}
@@ -1335,7 +1352,7 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 			if fileMode == 0 {
 				fileMode = 0o644
 			}
-			file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, fileMode)
+			file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, fileMode)
 			if err != nil {
 				return fmt.Errorf("create restore file %q: %w", relativePath, err)
 			}
@@ -1347,6 +1364,14 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 				return fmt.Errorf("close restore file %q: %w", relativePath, err)
 			}
 		case tar.TypeSymlink:
+			if !validArchiveSymlink(relativePath, header.Linkname) {
+				return fmt.Errorf("backup archive symlink %q escapes its restore scope", header.Name)
+			}
+			if _, err := os.Lstat(targetPath); err == nil {
+				return fmt.Errorf("backup archive contains duplicate entry %q", header.Name)
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("inspect restore symlink %q: %w", relativePath, err)
+			}
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				return fmt.Errorf("create restore symlink parent %q: %w", relativePath, err)
 			}
@@ -1357,6 +1382,46 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 			return fmt.Errorf("backup archive entry %q uses unsupported type", header.Name)
 		}
 	}
+}
+
+func ensureArchiveParentsAreDirectories(targetRoot, relativePath string) error {
+	current := targetRoot
+	for _, name := range strings.Split(filepath.Dir(filepath.FromSlash(relativePath)), string(filepath.Separator)) {
+		if name == "." || name == "" {
+			continue
+		}
+		current = filepath.Join(current, name)
+		info, err := os.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect restore parent %q: %w", relativePath, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("backup archive entry %q has an unsafe parent", relativePath)
+		}
+	}
+	return nil
+}
+
+func validArchiveSymlink(relativePath, linkName string) bool {
+	linkName = filepath.ToSlash(linkName)
+	if linkName == "" || path.IsAbs(linkName) {
+		return false
+	}
+	parts := strings.Split(relativePath, "/")
+	scope := "."
+	if len(parts) >= 2 && parts[0] == "sites" {
+		scope = path.Join(parts[0], parts[1])
+	} else if len(parts) > 0 && parts[0] == "docker_volumes" {
+		scope = parts[0]
+	}
+	resolved := path.Clean(path.Join(path.Dir(relativePath), linkName))
+	if scope == "." {
+		return resolved != ".." && !strings.HasPrefix(resolved, "../")
+	}
+	return resolved == scope || strings.HasPrefix(resolved, scope+"/")
 }
 
 func validateImportedArchive(archivePath string) error {
@@ -1391,6 +1456,9 @@ func validateImportedArchive(archivePath string) error {
 		switch header.Typeflag {
 		case tar.TypeDir, tar.TypeReg, tar.TypeRegA, tar.TypeSymlink:
 		default:
+			return ErrInvalidArchive
+		}
+		if header.Typeflag == tar.TypeSymlink && !validArchiveSymlink(relativePath, header.Linkname) {
 			return ErrInvalidArchive
 		}
 
@@ -1601,12 +1669,17 @@ func (s *Service) restoreDatabaseDumps(ctx context.Context, stagingPath string) 
 		}
 
 		databaseName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		dump, err := os.ReadFile(filepath.Join(databasesPath, entry.Name()))
+		dump, err := os.Open(filepath.Join(databasesPath, entry.Name()))
 		if err != nil {
-			return restored, fmt.Errorf("read restore database dump %q: %w", entry.Name(), err)
+			return restored, fmt.Errorf("open restore database dump %q: %w", entry.Name(), err)
 		}
-		if err := s.mariaDB.RestoreDatabase(ctx, databaseName, dump); err != nil {
-			return restored, fmt.Errorf("restore mariadb database %q: %w", databaseName, err)
+		restoreErr := s.mariaDB.RestoreDatabase(ctx, databaseName, dump)
+		closeErr := dump.Close()
+		if restoreErr != nil {
+			return restored, fmt.Errorf("restore mariadb database %q: %w", databaseName, restoreErr)
+		}
+		if closeErr != nil {
+			return restored, fmt.Errorf("close restore database dump %q: %w", entry.Name(), closeErr)
 		}
 		restored = append(restored, databaseName)
 	}

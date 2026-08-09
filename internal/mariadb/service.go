@@ -2,6 +2,7 @@ package mariadb
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -9,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -87,7 +89,7 @@ type Manager interface {
 	DumpAllDatabases(context.Context) ([]byte, error)
 	DumpAllDatabasesArchive(context.Context) ([]byte, error)
 	DumpDatabase(context.Context, string) ([]byte, error)
-	RestoreDatabase(context.Context, string, []byte) error
+	RestoreDatabase(context.Context, string, io.Reader) error
 	RestoreDatabaseAccess(context.Context, DatabaseRecord) error
 	CreateDatabase(context.Context, CreateDatabaseInput) (DatabaseRecord, error)
 	UpdateDatabase(context.Context, string, UpdateDatabaseInput) (DatabaseRecord, error)
@@ -707,7 +709,7 @@ func buildDumpArchive(entries []archiveEntry, createdAt time.Time) ([]byte, erro
 	return buffer.Bytes(), nil
 }
 
-func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump []byte) error {
+func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump io.Reader) error {
 	databaseName = strings.TrimSpace(databaseName)
 	if message := validateIdentifier(databaseName, "Database name"); message != "" {
 		return ValidationErrors{
@@ -719,17 +721,18 @@ func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump
 			"name": "System databases cannot be restored.",
 		}
 	}
-	if len(bytes.TrimSpace(dump)) == 0 {
+	if dump == nil {
 		return errors.New("database dump is empty")
 	}
-
-	if _, err := s.runSQL(ctx, fmt.Sprintf(
-		"CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
-		quoteIdentifier(databaseName),
-	)); err != nil {
-		return err
+	bufferedDump := bufio.NewReader(dump)
+	if _, err := bufferedDump.Peek(1); err != nil {
+		if errors.Is(err, io.EOF) {
+			return errors.New("database dump is empty")
+		}
+		return fmt.Errorf("read database dump: %w", err)
 	}
 
+	quotedDatabaseName := quoteIdentifier(databaseName)
 	clientPath, ok := lookupFirstCommand(clientBinaryCandidates...)
 	if !ok {
 		return errors.New("mariadb/mysql client is not installed")
@@ -738,12 +741,6 @@ func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump
 	runCtx := ctx
 	if runCtx == nil {
 		runCtx = context.Background()
-	}
-
-	if _, hasDeadline := runCtx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(runCtx, dumpCommandTimeout)
-		defer cancel()
 	}
 
 	config, err := s.resolveSQLClientConfig()
@@ -765,7 +762,12 @@ func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump
 	}
 
 	cmd := exec.CommandContext(runCtx, clientPath, args...)
-	cmd.Stdin = bytes.NewReader(dump)
+	cmd.Stdin = io.MultiReader(strings.NewReader(fmt.Sprintf(
+		"DROP DATABASE IF EXISTS %s; CREATE DATABASE %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; USE %s;\n",
+		quotedDatabaseName,
+		quotedDatabaseName,
+		quotedDatabaseName,
+	)), bufferedDump)
 	if config.password != "" {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.password)
 	}
