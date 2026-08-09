@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	ImagePullTimeout        = 5 * time.Minute
+	imagePullIdleTimeout    = 5 * time.Minute
 	restoreProgressInterval = 5 * time.Second
 )
 
@@ -166,17 +166,11 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string, repo
 		if report != nil {
 			report(progress)
 		}
-		pullCtx, cancel := context.WithTimeout(ctx, ImagePullTimeout)
-		_, pullErr := dockerOutputWithHeartbeat(pullCtx, func() {
+		_, pullErr := dockerOutputWithHeartbeat(ctx, imagePullIdleTimeout, func() {
 			if report != nil {
 				report(progress)
 			}
-		}, "pull", "--quiet", item.image)
-		timedOut := errors.Is(pullCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
-		cancel()
-		if timedOut {
-			return nil, fmt.Errorf("restore Docker image %q: pull timed out after %s", item.image, ImagePullTimeout)
-		}
+		}, "pull", item.image)
 		if pullErr != nil {
 			return nil, fmt.Errorf("restore Docker image %q: %w", item.image, pullErr)
 		}
@@ -450,36 +444,74 @@ func dockerOutput(ctx context.Context, args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return "", errors.New(message)
+		return "", dockerCommandError(stderr.String(), err)
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-func dockerOutputWithHeartbeat(ctx context.Context, heartbeat func(), args ...string) (string, error) {
-	type result struct {
-		output string
-		err    error
+type activityBuffer struct {
+	bytes.Buffer
+	activity chan<- struct{}
+}
+
+func (b *activityBuffer) Write(data []byte) (int, error) {
+	select {
+	case b.activity <- struct{}{}:
+	default:
 	}
+	return b.Buffer.Write(data)
+}
+
+func dockerOutputWithHeartbeat(ctx context.Context, idleTimeout time.Duration, heartbeat func(), args ...string) (string, error) {
+	type result struct {
+		err error
+	}
+	commandCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	activity := make(chan struct{}, 1)
+	stdout := activityBuffer{activity: activity}
+	stderr := activityBuffer{activity: activity}
+	cmd := exec.CommandContext(commandCtx, "docker", args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	done := make(chan result, 1)
 	go func() {
-		output, err := dockerOutput(ctx, args...)
-		done <- result{output: output, err: err}
+		done <- result{err: cmd.Run()}
 	}()
 
 	ticker := time.NewTicker(restoreProgressInterval)
 	defer ticker.Stop()
+	idleTimer := time.NewTimer(idleTimeout)
+	defer idleTimer.Stop()
 	for {
 		select {
 		case result := <-done:
-			return result.output, result.err
+			if result.err != nil {
+				return "", dockerCommandError(stderr.String(), result.err)
+			}
+			return strings.TrimSpace(stdout.String()), nil
+		case <-activity:
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(idleTimeout)
+		case <-idleTimer.C:
+			cancel()
+			<-done
+			return "", fmt.Errorf("Docker command produced no output for %s", idleTimeout)
 		case <-ticker.C:
 			heartbeat()
 		}
 	}
+}
+
+func dockerCommandError(stderr string, err error) error {
+	if message := strings.TrimSpace(stderr); message != "" {
+		return errors.New(message)
+	}
+	return err
 }
 
 func sortedKeys[T any](values map[string]T) []string {
