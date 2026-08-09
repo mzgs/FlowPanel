@@ -227,7 +227,6 @@ func (s *Service) Install(ctx context.Context) error {
 	)
 	return runCommands(ctx,
 		[]string{pm2Path, "install", "pm2-logrotate"},
-		[]string{pm2Path, "completion", "install"},
 		[]string{pm2Path, "set", "pm2-logrotate:max_size", pm2LogMaxSize},
 	)
 }
