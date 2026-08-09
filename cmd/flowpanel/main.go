@@ -80,6 +80,8 @@ const (
 	installedBinaryPath = "/usr/local/bin/flowpanel"
 	installerURL        = "https://raw.githubusercontent.com/mzgs/FlowPanel/main/install.sh"
 	macosLaunchdLabel   = "com.mzgs.flowpanel"
+	pm2StartupAttempts  = 3
+	pm2StartupTimeout   = 30 * time.Second
 )
 
 var version = "0.0.0"
@@ -1680,8 +1682,7 @@ func runServer() error {
 		zap.Bool("cron_enabled", cfg.Cron.Enabled),
 	)
 
-	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancelStartup()
+	startupCtx := context.Background()
 
 	dbConn, err := db.Open(startupCtx, cfg.Database.Path)
 	if err != nil {
@@ -1783,9 +1784,6 @@ func runServer() error {
 		googleDriveService,
 		pm2Manager,
 	)
-	if _, err := pm2Manager.Sync(startupCtx); err != nil {
-		logger.Error("sync pm2 processes failed", zap.Error(err))
-	}
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
 		cfg.AdminListenAddr,
@@ -1878,6 +1876,7 @@ func runServer() error {
 	if err != nil {
 		return fmt.Errorf("load persisted settings: %w", err)
 	}
+	syncPM2AtStartup(pm2Manager, logger)
 	if err := caddyRuntime.Sync(context.Background(), domainService.List(), settingsRecord.PanelURL); err != nil {
 		return fmt.Errorf("sync embedded caddy runtime: %w", err)
 	}
@@ -1967,4 +1966,25 @@ func runServer() error {
 	logger.Info("flowpanel stopped")
 
 	return nil
+}
+
+func syncPM2AtStartup(manager pm2.Manager, logger *zap.Logger) {
+	for attempt := 1; attempt <= pm2StartupAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), pm2StartupTimeout)
+		_, err := manager.Sync(ctx)
+		cancel()
+		if err == nil {
+			if attempt > 1 {
+				logger.Info("restored pm2 processes after retry", zap.Int("attempt", attempt))
+			}
+			return
+		}
+
+		if attempt == pm2StartupAttempts {
+			logger.Error("restore pm2 processes at startup failed", zap.Int("attempts", attempt), zap.Error(err))
+			return
+		}
+		logger.Warn("restore pm2 processes at startup failed; retrying", zap.Int("attempt", attempt), zap.Error(err))
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
 }
