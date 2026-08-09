@@ -160,7 +160,7 @@ type Settings struct {
 	DefaultSocketTimeout string `json:"default_socket_timeout,omitempty"`
 	ErrorReporting       string `json:"error_reporting,omitempty"`
 	DisplayErrors        string `json:"display_errors,omitempty"`
-	DisableFunctions     string `json:"disable_functions,omitempty"`
+	DisableFunctions     string `json:"disable_functions"`
 	FPMMaxChildren       string `json:"fpm_max_children,omitempty"`
 	FPMIdleTimeout       string `json:"fpm_idle_timeout,omitempty"`
 	FPMMaxRequests       string `json:"fpm_max_requests,omitempty"`
