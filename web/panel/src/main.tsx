@@ -15,6 +15,7 @@ import {
 } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { router } from "@/router";
+import { Toaster } from "sonner";
 
 if (typeof document !== "undefined") {
   document.documentElement.classList.add("dark");
@@ -34,6 +35,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
+      <Toaster position="bottom-right" richColors />
     </QueryClientProvider>
   </StrictMode>,
 );
