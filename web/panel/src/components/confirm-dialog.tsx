@@ -47,10 +47,10 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
         className={cn(className)}
         onEscapeKeyDown={(event) => event.preventDefault()}
       >
-        <DialogHeader className='text-start'>
+        <DialogHeader className='min-w-0 text-start'>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription asChild>
-            <div>{desc}</div>
+            <div className='min-w-0 [overflow-wrap:anywhere]'>{desc}</div>
           </DialogDescription>
         </DialogHeader>
         {children}
