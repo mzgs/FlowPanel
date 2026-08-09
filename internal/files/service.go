@@ -1299,6 +1299,12 @@ func extractTarStream(reader io.Reader, destinationPath string) error {
 }
 
 func extractZipArchive(reader *zip.Reader, destinationPath string) error {
+	type symlink struct {
+		path   string
+		target string
+	}
+
+	symlinks := make([]symlink, 0)
 	for _, file := range reader.File {
 		targetPath, err := resolveArchiveEntryTarget(destinationPath, file.Name)
 		if err != nil {
@@ -1310,7 +1316,24 @@ func extractZipArchive(reader *zip.Reader, destinationPath string) error {
 
 		mode := file.Mode()
 		if mode&os.ModeSymlink != 0 {
-			return ErrUnsupportedArchive
+			source, err := file.Open()
+			if err != nil {
+				return ErrInvalidArchive
+			}
+			linkTarget, readErr := io.ReadAll(io.LimitReader(source, 4097))
+			closeErr := source.Close()
+			if readErr != nil || closeErr != nil || len(linkTarget) == 0 || len(linkTarget) > 4096 {
+				return ErrInvalidArchive
+			}
+			if filepath.IsAbs(string(linkTarget)) {
+				return ErrInvalidArchive
+			}
+			resolvedTarget := filepath.Join(filepath.Dir(targetPath), filepath.FromSlash(string(linkTarget)))
+			if err := ensureWithinRoot(destinationPath, resolvedTarget); err != nil {
+				return ErrInvalidArchive
+			}
+			symlinks = append(symlinks, symlink{path: targetPath, target: string(linkTarget)})
+			continue
 		}
 
 		if file.FileInfo().IsDir() {
@@ -1332,6 +1355,16 @@ func extractZipArchive(reader *zip.Reader, destinationPath string) error {
 		}
 		if closeErr != nil {
 			return ErrInvalidArchive
+		}
+	}
+
+	// Create links only after regular entries so later writes cannot traverse them.
+	for _, link := range symlinks {
+		if err := os.MkdirAll(filepath.Dir(link.path), 0o755); err != nil {
+			return err
+		}
+		if err := os.Symlink(link.target, link.path); err != nil {
+			return err
 		}
 	}
 
