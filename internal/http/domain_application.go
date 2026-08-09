@@ -69,17 +69,26 @@ func (a *apiRoutes) ensureDomainApplicationBinary(ctx context.Context, record do
 	commandName, commandArgs := gitHubShellCommand(record.AppBuildCommand)
 	cmd := exec.CommandContext(runCtx, commandName, commandArgs...)
 	cmd.Dir = root
-	goCachePath := filepath.Join(config.CachePath(), "go")
-	goModuleCachePath := filepath.Join(goCachePath, "pkg", "mod")
-	goBuildCachePath := filepath.Join(goCachePath, "build")
-	if err := os.MkdirAll(goModuleCachePath, 0o755); err != nil {
-		return fmt.Errorf("create Go module cache: %w", err)
+	buildCachePath := filepath.Join(config.CachePath(), "applications")
+	env := os.Environ()
+	for key, path := range map[string]string{
+		"HOME":                 filepath.Join(buildCachePath, "home"),
+		"XDG_CACHE_HOME":       filepath.Join(buildCachePath, "cache"),
+		"GOPATH":               filepath.Join(buildCachePath, "go"),
+		"GOMODCACHE":           filepath.Join(buildCachePath, "go", "pkg", "mod"),
+		"GOCACHE":              filepath.Join(buildCachePath, "go-build"),
+		"CARGO_HOME":           filepath.Join(buildCachePath, "cargo"),
+		"ZIG_GLOBAL_CACHE_DIR": filepath.Join(buildCachePath, "zig"),
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			continue
+		}
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return fmt.Errorf("create application build cache %q: %w", path, err)
+		}
+		env = setCommandEnvironmentValue(env, key, path)
 	}
-	if err := os.MkdirAll(goBuildCachePath, 0o755); err != nil {
-		return fmt.Errorf("create Go build cache: %w", err)
-	}
-	cmd.Env = setCommandEnvironmentValue(os.Environ(), "GOMODCACHE", goModuleCachePath)
-	cmd.Env = setCommandEnvironmentValue(cmd.Env, "GOCACHE", goBuildCachePath)
+	cmd.Env = env
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
