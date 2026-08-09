@@ -1909,7 +1909,6 @@ func runServer() error {
 		Handler:           router,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    16 << 10,
-		ReadTimeout:       5 * time.Minute,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
