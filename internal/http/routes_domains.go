@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	stdhttp "net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -819,16 +820,23 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			return
 		}
 
-		result, err := runDomainGitHubDeploy(r.Context(), a.app.Domains.BasePath(), record, *record.GitHub, token)
+		actionCtx := backgroundRequestContext(r.Context())
+		result, err := runDomainGitHubDeploy(actionCtx, a.app.Domains.BasePath(), record, *record.GitHub, token)
 		if err != nil {
 			a.app.Logger.Error("github deploy failed", zap.String("hostname", hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "github_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Failed to deploy %q from GitHub.", record.Hostname))
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
-		if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+		if err := ensurePHPDocumentRootWorkerOwnership(actionCtx, a.app.PHP, a.app.Domains, record); err != nil {
 			a.app.Logger.Error("apply php worker ownership after github deploy failed", zap.String("hostname", hostname), zap.Error(err))
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "github deploy finished but php-fpm ownership could not be updated"})
+			return
+		}
+		if err := a.deployDomainApplication(actionCtx, record); err != nil {
+			a.app.Logger.Error("build and run application after github deploy failed", zap.String("hostname", hostname), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "github_deploy", "domain", record.ID, record.Hostname, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
 
@@ -907,7 +915,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				writeJSON(w, status, map[string]any{"error": message})
 				return
 			}
-		case domain.KindNodeJS, domain.KindPython:
+		case domain.KindNodeJS, domain.KindPython, domain.KindApplication:
 			if err := a.reconcileDomainRuntimeEnvironment(r.Context(), record); err != nil {
 				a.app.Logger.Error("reconcile domain runtime environment failed", zap.String("hostname", hostname), zap.Error(err))
 				a.mutationEvent(r.Context(), "domains", "update_environment", "domain", record.ID, record.Hostname, "failed", err.Error())
@@ -967,7 +975,14 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 
 		actionCtx := backgroundRequestContext(r.Context())
 		runtimeLabel := domainRuntimeLabel(record.Kind)
-		if record.Kind == domain.KindPython {
+		if record.Kind == domain.KindApplication {
+			if err := a.ensureDomainApplicationBinary(actionCtx, record); err != nil {
+				a.app.Logger.Error("build domain application binary failed", zap.String("hostname", record.Hostname), zap.Error(err))
+				a.mutationEvent(actionCtx, "domains", "start_runtime", "domain", record.ID, record.Hostname, "failed", err.Error())
+				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+				return
+			}
+		} else if record.Kind == domain.KindPython {
 			if err := ensureDomainPythonEnvironment(actionCtx, a.app.Domains, record); err != nil {
 				a.app.Logger.Error("prepare domain python environment failed", zap.String("hostname", record.Hostname), zap.Error(err))
 				a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
@@ -1015,7 +1030,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 				ScriptPath:       runtimeConfig.ScriptPath,
 				WorkingDirectory: runtimeConfig.WorkingDirectory,
 				Interpreter:      runtimeConfig.InterpreterPath,
-				Environment:      domain.EnvironmentMap(record),
+				Environment:      domainRuntimeEnvironment(record),
 			}); err != nil {
 				a.app.Logger.Error("create domain nodejs pm2 process failed", zap.String("hostname", record.Hostname), zap.String("script_path", runtimeConfig.ScriptPath), zap.String("working_directory", runtimeConfig.WorkingDirectory), zap.String("interpreter", runtimeConfig.InterpreterPath), zap.Error(err))
 				a.mutationEvent(actionCtx, "domains", "start_nodejs", "domain", record.ID, record.Hostname, "failed", err.Error())
@@ -1186,7 +1201,6 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to set php-fpm ownership on the document root"})
 			return
 		}
-
 		if a.app.FTPAccounts != nil {
 			if err := a.app.FTPAccounts.ReconcileDomain(r.Context(), record); err != nil {
 				rollbackErr := a.rollbackCreatedDomain(r.Context(), record, artifacts)
@@ -1560,16 +1574,23 @@ func (a *apiRoutes) githubWebhookHandler() stdhttp.Handler {
 			return
 		}
 
-		result, err := runDomainGitHubDeploy(r.Context(), a.app.Domains.BasePath(), record, *record.GitHub, token)
+		actionCtx := backgroundRequestContext(r.Context())
+		result, err := runDomainGitHubDeploy(actionCtx, a.app.Domains.BasePath(), record, *record.GitHub, token)
 		if err != nil {
 			a.app.Logger.Error("github webhook deploy failed", zap.String("hostname", hostname), zap.Error(err))
 			a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", fmt.Sprintf("Push webhook deployment failed for %q.", record.Hostname))
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
-		if err := ensurePHPDocumentRootWorkerOwnership(r.Context(), a.app.PHP, a.app.Domains, record); err != nil {
+		if err := ensurePHPDocumentRootWorkerOwnership(actionCtx, a.app.PHP, a.app.Domains, record); err != nil {
 			a.app.Logger.Error("apply php worker ownership after github webhook deploy failed", zap.String("hostname", hostname), zap.Error(err))
 			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "github deploy finished but php-fpm ownership could not be updated"})
+			return
+		}
+		if err := a.deployDomainApplication(actionCtx, record); err != nil {
+			a.app.Logger.Error("build and run application after github webhook deploy failed", zap.String("hostname", hostname), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "github_webhook_deploy", "domain", record.ID, record.Hostname, "failed", err.Error())
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
 
@@ -1641,13 +1662,13 @@ func loadDomainNodeJSStatus(
 
 	status := domainNodeJSStatusResponse{
 		Supported:  supportsDomainRuntime(record.Kind),
-		Configured: strings.TrimSpace(record.NodeJSScript) != "",
+		Configured: record.Kind == domain.KindApplication || strings.TrimSpace(record.NodeJSScript) != "",
 		ScriptPath: strings.TrimSpace(record.NodeJSScript),
 		Process:    nil,
 	}
 	runtimeLabel := domainRuntimeLabel(record.Kind)
 	if !status.Supported {
-		status.Message = "Runtime controls are available only for Node.js and Python domains."
+		status.Message = "Runtime controls are available only for Node.js, Python, and application domains."
 		return record, status, nil
 	}
 
@@ -1657,7 +1678,7 @@ func loadDomainNodeJSStatus(
 	}
 	status.WorkingDirectory = workingDirectory
 	if !status.Configured {
-		status.Message = "Script path is not configured for this domain."
+		status.Message = "Runtime entry point is not configured for this domain."
 		return record, status, nil
 	}
 
@@ -1808,6 +1829,11 @@ func reconcileUpdatedDomainRuntime(ctx context.Context, pm2Manager pm2.Manager, 
 		_, rollbackErr := createDomainRuntimeProcess(ctx, pm2Manager, previous, previousConfig)
 		return errors.Join(err, rollbackErr)
 	}
+	if current.Kind == domain.KindApplication {
+		if _, statErr := os.Stat(currentConfig.ScriptPath); errors.Is(statErr, os.ErrNotExist) {
+			return nil
+		}
+	}
 	if _, err = createDomainRuntimeProcess(ctx, pm2Manager, current, currentConfig); err == nil {
 		return nil
 	}
@@ -1821,20 +1847,23 @@ func createDomainRuntimeProcess(ctx context.Context, manager pm2.Manager, record
 		ScriptPath:       config.ScriptPath,
 		WorkingDirectory: config.WorkingDirectory,
 		Interpreter:      config.InterpreterPath,
-		Environment:      domain.EnvironmentMap(record),
+		Environment:      domainRuntimeEnvironment(record),
 	})
 }
 
 func supportsDomainRuntime(kind domain.Kind) bool {
-	return kind == domain.KindNodeJS || kind == domain.KindPython
+	return kind == domain.KindNodeJS || kind == domain.KindPython || kind == domain.KindApplication
 }
 
 func domainRuntimeLabel(kind domain.Kind) string {
-	if kind == domain.KindPython {
+	switch kind {
+	case domain.KindPython:
 		return "Python"
+	case domain.KindApplication:
+		return "App"
+	default:
+		return "Node.js"
 	}
-
-	return "Node.js"
 }
 
 func resolveDomainRuntimeProcessConfig(basePath string, record domain.Record) (domainRuntimeProcessConfig, error) {
@@ -1843,7 +1872,12 @@ func resolveDomainRuntimeProcessConfig(basePath string, record domain.Record) (d
 		return domainRuntimeProcessConfig{}, fmt.Errorf("resolve domain nodejs root: %w", err)
 	}
 
-	scriptPath, err := domain.ResolveNodeJSScriptPath(basePath, record)
+	var scriptPath string
+	if record.Kind == domain.KindApplication {
+		scriptPath, err = domain.ResolveAppBinaryPath(basePath, record)
+	} else {
+		scriptPath, err = domain.ResolveNodeJSScriptPath(basePath, record)
+	}
 	if err != nil {
 		return domainRuntimeProcessConfig{}, err
 	}
@@ -1851,6 +1885,10 @@ func resolveDomainRuntimeProcessConfig(basePath string, record domain.Record) (d
 	config := domainRuntimeProcessConfig{
 		ScriptPath:       scriptPath,
 		WorkingDirectory: workingDirectory,
+	}
+	if record.Kind == domain.KindApplication {
+		config.InterpreterPath = "none"
+		return config, nil
 	}
 	if record.Kind != domain.KindPython {
 		return config, nil
@@ -1905,12 +1943,28 @@ func (a *apiRoutes) reconcileDomainRuntimeEnvironment(ctx context.Context, recor
 		ScriptPath:       runtimeConfig.ScriptPath,
 		WorkingDirectory: runtimeConfig.WorkingDirectory,
 		Interpreter:      runtimeConfig.InterpreterPath,
-		Environment:      domain.EnvironmentMap(record),
+		Environment:      domainRuntimeEnvironment(record),
 	}); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func domainRuntimeEnvironment(record domain.Record) map[string]string {
+	values := domain.EnvironmentMap(record)
+	if record.Kind != domain.KindApplication {
+		return values
+	}
+	if values == nil {
+		values = map[string]string{}
+	}
+	if _, exists := values["PORT"]; !exists {
+		if target, err := url.Parse(record.Target); err == nil {
+			values["PORT"] = target.Port()
+		}
+	}
+	return values
 }
 
 func detectDomainPythonRuntimeVersion(ctx context.Context, interpreterPath string) string {

@@ -5,6 +5,7 @@ import {
   ExternalLink,
   FolderOpen,
   LoaderCircle,
+  Package,
   Pencil,
   Plus,
   Trash2,
@@ -45,6 +46,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Table,
@@ -68,6 +70,8 @@ type FormState = {
   kind: DomainKind;
   target: string;
   nodeJSScriptPath: string;
+  appBuildCommand: string;
+  appBinaryPath: string;
   cacheEnabled: boolean;
 };
 
@@ -76,6 +80,8 @@ type FormErrors = {
   kind?: string;
   target?: string;
   nodejs_script_path?: string;
+  app_build_command?: string;
+  app_binary_path?: string;
 };
 
 type FormMode = "create" | "edit";
@@ -85,6 +91,7 @@ const domainKinds: DomainKind[] = [
   "Php site",
   "Node.js",
   "Python",
+  "App",
   "Reverse proxy",
 ];
 
@@ -93,12 +100,14 @@ const initialFormState: FormState = {
   kind: "Php site",
   target: "",
   nodeJSScriptPath: "",
+  appBuildCommand: "go build -trimpath -o .flowpanel/app .",
+  appBinaryPath: ".flowpanel/app",
   cacheEnabled: false,
 };
 
 function getDefaultTarget(kind: DomainKind) {
-  if (kind === "Node.js" || kind === "Python") {
-    return kind === "Python" ? "8000" : "3000";
+  if (kind === "Node.js" || kind === "Python" || kind === "App") {
+    return kind === "Python" ? "8000" : kind === "App" ? "8080" : "3000";
   }
 
   return kind === "Reverse proxy" ? "http://127.0.0.1:8080" : "";
@@ -166,6 +175,13 @@ const kindConfig: Record<
     helpText:
       "FlowPanel proxies this domain to `127.0.0.1` on the port you set here.",
   },
+  App: {
+    icon: Package,
+    targetLabel: "Port",
+    targetPlaceholder: "8080",
+    helpText:
+      "FlowPanel sets PORT, runs your build command after each GitHub update, then starts the executable with PM2.",
+  },
   "Reverse proxy": {
     imageSrc: "/application-icons/proxy_server.png",
     targetLabel: "Upstream URL",
@@ -191,7 +207,12 @@ function getDomainAvatarPalette(hostname: string) {
 }
 
 function getDomainPort(kind: DomainKind, target: string) {
-  if (kind !== "Node.js" && kind !== "Python" && kind !== "Reverse proxy") {
+  if (
+    kind !== "Node.js" &&
+    kind !== "Python" &&
+    kind !== "App" &&
+    kind !== "Reverse proxy"
+  ) {
     return null;
   }
 
@@ -251,7 +272,7 @@ function getDuplicateHostnameError(
 function validateTarget(kind: DomainKind, value: string) {
   const trimmed = value.trim();
 
-  if (kind === "Node.js" || kind === "Python") {
+  if (kind === "Node.js" || kind === "Python" || kind === "App") {
     if (!trimmed) {
       return "Port is required.";
     }
@@ -304,6 +325,10 @@ function isRuntimeDomainKind(kind: DomainKind) {
   return kind === "Node.js" || kind === "Python";
 }
 
+function isManagedAppKind(kind: DomainKind) {
+  return isRuntimeDomainKind(kind) || kind === "App";
+}
+
 function validateNodeJSScriptPath(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -318,6 +343,26 @@ function validateNodeJSScriptPath(value: string) {
     return "Enter a path relative to the domain root.";
   }
 
+  return undefined;
+}
+
+function validateAppBuildCommand(value: string) {
+  return value.trim() ? undefined : "Build command is required.";
+}
+
+function validateAppBinaryPath(value: string) {
+  const normalized = value.trim().replace(/\\/g, "/");
+  if (!normalized) {
+    return "Executable path is required.";
+  }
+  if (
+    normalized.startsWith("/") ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
+    return "Enter an executable path inside the domain root.";
+  }
   return undefined;
 }
 
@@ -340,7 +385,7 @@ function getNodeJSPort(value: string) {
 }
 
 function getFormTargetValue(kind: DomainKind, target: string) {
-  return isRuntimeDomainKind(kind) ? getNodeJSPort(target) : target;
+  return isManagedAppKind(kind) ? getNodeJSPort(target) : target;
 }
 
 function getFormScriptPathValue(kind: DomainKind, scriptPath?: string) {
@@ -520,6 +565,10 @@ export function DomainsPage() {
         domain.kind,
         domain.nodejs_script_path,
       ),
+      appBuildCommand:
+        domain.app_build_command?.trim() ||
+        "go build -trimpath -o .flowpanel/app .",
+      appBinaryPath: domain.app_binary_path?.trim() || ".flowpanel/app",
       cacheEnabled: domain.cache_enabled,
     });
     setErrors({});
@@ -538,6 +587,19 @@ export function DomainsPage() {
     setFormOpen(false);
   }
 
+  function applyAppBuildExample(appBuildCommand: string, appBinaryPath: string) {
+    setForm((current) => ({
+      ...current,
+      appBuildCommand,
+      appBinaryPath,
+    }));
+    setErrors((current) => ({
+      ...current,
+      app_build_command: undefined,
+      app_binary_path: undefined,
+    }));
+  }
+
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
       closeForm();
@@ -554,6 +616,8 @@ export function DomainsPage() {
     const hostname = normalizeHostname(form.hostname);
     const target = form.target.trim();
     const nodeJSScriptPath = form.nodeJSScriptPath.trim();
+    const appBuildCommand = form.appBuildCommand.trim();
+    const appBinaryPath = form.appBinaryPath.trim();
     const nextErrors: FormErrors = {
       hostname: validateHostname(hostname),
       target: isSiteBackedKind(form.kind)
@@ -563,6 +627,12 @@ export function DomainsPage() {
         isRuntimeDomainKind(form.kind)
           ? validateNodeJSScriptPath(nodeJSScriptPath)
           : undefined,
+      app_build_command:
+        form.kind === "App"
+          ? validateAppBuildCommand(appBuildCommand)
+          : undefined,
+      app_binary_path:
+        form.kind === "App" ? validateAppBinaryPath(appBinaryPath) : undefined,
     };
 
     if (
@@ -573,7 +643,13 @@ export function DomainsPage() {
     }
 
     setErrors(nextErrors);
-    if (nextErrors.hostname || nextErrors.target || nextErrors.nodejs_script_path) {
+    if (
+      nextErrors.hostname ||
+      nextErrors.target ||
+      nextErrors.nodejs_script_path ||
+      nextErrors.app_build_command ||
+      nextErrors.app_binary_path
+    ) {
       return;
     }
 
@@ -587,6 +663,8 @@ export function DomainsPage() {
         target: isSiteBackedKind(form.kind) ? "" : target,
         nodejs_script_path:
           isRuntimeDomainKind(form.kind) ? nodeJSScriptPath : undefined,
+        app_build_command: form.kind === "App" ? appBuildCommand : undefined,
+        app_binary_path: form.kind === "App" ? appBinaryPath : undefined,
         cache_enabled: form.cacheEnabled,
       };
 
@@ -615,6 +693,8 @@ export function DomainsPage() {
           kind: domainError.fieldErrors.kind,
           target: domainError.fieldErrors.target,
           nodejs_script_path: domainError.fieldErrors.nodejs_script_path,
+          app_build_command: domainError.fieldErrors.app_build_command,
+          app_binary_path: domainError.fieldErrors.app_binary_path,
         });
       }
 
@@ -1310,7 +1390,7 @@ export function DomainsPage() {
               <div
                 role="group"
                 aria-label="Domain type"
-                className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
               >
                 {domainKinds.map((kind) => {
                   const isActive = form.kind === kind;
@@ -1332,12 +1412,22 @@ export function DomainsPage() {
                             current.kind === kind
                               ? current.nodeJSScriptPath
                               : getDefaultScriptPath(kind),
+                          appBuildCommand:
+                            current.kind === kind
+                              ? current.appBuildCommand
+                              : "go build -trimpath -o .flowpanel/app .",
+                          appBinaryPath:
+                            current.kind === kind
+                              ? current.appBinaryPath
+                              : ".flowpanel/app",
                         }));
                         setErrors((current) => ({
                           ...current,
                           kind: undefined,
                           target: undefined,
                           nodejs_script_path: undefined,
+                          app_build_command: undefined,
+                          app_binary_path: undefined,
                         }));
                       }}
                       aria-pressed={isActive}
@@ -1461,6 +1551,118 @@ export function DomainsPage() {
                       : "Use a path relative to the domain root, for example `bin/www` or `dist/index.js`."}
                   </p>
                 )}
+              </div>
+            ) : null}
+
+            {form.kind === "App" ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] font-medium text-[var(--app-text)]">
+                    Build configuration
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-xs"
+                      onClick={() =>
+                        applyAppBuildExample(
+                          "go build -trimpath -o .flowpanel/app .",
+                          ".flowpanel/app",
+                        )
+                      }
+                    >
+                      Go example
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-xs"
+                      onClick={() =>
+                        applyAppBuildExample(
+                          "cargo build --release",
+                          "target/release/my-app",
+                        )
+                      }
+                    >
+                      Rust example
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="domain-app-build-command" className="text-[13px] font-medium text-[var(--app-text)]">
+                    Build command
+                  </label>
+                <Textarea
+                  id="domain-app-build-command"
+                  value={form.appBuildCommand}
+                  onChange={(event) => {
+                    setForm((current) => ({
+                      ...current,
+                      appBuildCommand: event.target.value,
+                    }));
+                    if (errors.app_build_command) {
+                      setErrors((current) => ({
+                        ...current,
+                        app_build_command: undefined,
+                      }));
+                    }
+                  }}
+                  placeholder="cargo build --release"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-invalid={errors.app_build_command ? "true" : "false"}
+                  className={
+                    errors.app_build_command
+                      ? "min-h-20 resize-y border-[var(--app-danger)] font-mono text-xs"
+                      : "min-h-20 resize-y font-mono text-xs"
+                  }
+                />
+                <p
+                  className={cn(
+                    "text-[12px]",
+                    errors.app_build_command
+                      ? "text-[var(--app-danger)]"
+                      : "text-[var(--app-text-muted)]",
+                  )}
+                >
+                  {errors.app_build_command || "Runs from the repository root after every fetch. The compiler must be installed on the server."}
+                </p>
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="domain-app-binary-path" className="text-[13px] font-medium text-[var(--app-text)]">
+                    Executable path
+                  </label>
+                  <Input
+                    id="domain-app-binary-path"
+                    value={form.appBinaryPath}
+                    onChange={(event) => {
+                      setForm((current) => ({
+                        ...current,
+                        appBinaryPath: event.target.value,
+                      }));
+                      if (errors.app_binary_path) {
+                        setErrors((current) => ({
+                          ...current,
+                          app_binary_path: undefined,
+                        }));
+                      }
+                    }}
+                    placeholder="target/release/my-app"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={errors.app_binary_path ? "true" : "false"}
+                    className={cn(
+                      "font-mono text-xs",
+                      errors.app_binary_path && "border-[var(--app-danger)]",
+                    )}
+                  />
+                  <p className={cn("text-[12px]", errors.app_binary_path ? "text-[var(--app-danger)]" : "text-[var(--app-text-muted)]")}>
+                    {errors.app_binary_path || "Path created by the build command, relative to the repository root."}
+                  </p>
+                </div>
               </div>
             ) : null}
 

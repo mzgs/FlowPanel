@@ -1,3 +1,4 @@
+import type { DomainKind } from "@/api/domains";
 import { FieldError } from "@/components/field-error";
 import { LoaderCircle, RefreshCw, Trash2 } from "@/components/icons/lucide-icons";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ type DomainGitHubDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   hostname: string;
+  kind: DomainKind;
   repositoryUrl: string;
   autoDeployOnPush: boolean;
   postFetchScript: string;
@@ -41,6 +43,7 @@ export function DomainGitHubDialog({
   open,
   onOpenChange,
   hostname,
+  kind,
   repositoryUrl,
   autoDeployOnPush,
   postFetchScript,
@@ -67,8 +70,9 @@ export function DomainGitHubDialog({
         <DialogHeader>
           <DialogTitle>{hostname} GitHub</DialogTitle>
           <DialogDescription>
-            Connect a repository, optionally deploy on push, and trigger a manual update when
-            needed.
+            {kind === "App"
+              ? "Connect a repository and FlowPanel will build, run, and restart the compiled application on each deployment."
+              : "Connect a repository, optionally deploy on push, and trigger a manual update when needed."}
           </DialogDescription>
         </DialogHeader>
 
@@ -117,14 +121,19 @@ export function DomainGitHubDialog({
               id="github_post_fetch_script"
               value={postFetchScript}
               onChange={(event) => onPostFetchScriptChange(event.target.value)}
-              placeholder="composer install --no-dev"
+              placeholder={
+                kind === "App"
+                  ? "Optional commands before the application build"
+                  : "composer install --no-dev"
+              }
               className="min-h-28 resize-y"
               spellCheck={false}
               aria-invalid={fieldErrors.post_fetch_script ? true : undefined}
             />
             <p className="text-xs leading-5 text-[var(--app-text-muted)]">
-              Runs inside the domain target directory after FlowPanel fetches and resets the
-              repository.
+              Runs inside the domain target directory after FlowPanel fetches
+              and resets the repository
+              {kind === "App" ? ", before the automatic application build." : "."}
             </p>
             <FieldError message={fieldErrors.post_fetch_script} />
           </div>

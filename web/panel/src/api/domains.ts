@@ -7,6 +7,7 @@ export type DomainKind =
   | "Php site"
   | "Node.js"
   | "Python"
+  | "App"
   | "Reverse proxy";
 
 export type EnvironmentVariable = {
@@ -20,6 +21,8 @@ export type DomainRecord = {
   kind: DomainKind;
   target: string;
   nodejs_script_path?: string;
+  app_build_command?: string;
+  app_binary_path?: string;
   php_version?: string;
   php_settings: PHPSettings;
   environment_variables: EnvironmentVariable[];
@@ -101,6 +104,8 @@ export type CreateDomainInput = {
   kind: DomainKind;
   target?: string;
   nodejs_script_path?: string;
+  app_build_command?: string;
+  app_binary_path?: string;
   cache_enabled: boolean;
 };
 
@@ -109,6 +114,8 @@ export type UpdateDomainInput = {
   kind: DomainKind;
   target?: string;
   nodejs_script_path?: string;
+  app_build_command?: string;
+  app_binary_path?: string;
   cache_enabled: boolean;
 };
 

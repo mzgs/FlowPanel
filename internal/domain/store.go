@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS domains (
     kind TEXT NOT NULL,
     target TEXT NOT NULL,
     nodejs_script_path TEXT NOT NULL DEFAULT '',
+    app_build_command TEXT NOT NULL DEFAULT '',
+    app_binary_path TEXT NOT NULL DEFAULT '',
     php_version TEXT NOT NULL DEFAULT '',
     php_settings TEXT NOT NULL DEFAULT '',
     environment_variables TEXT NOT NULL DEFAULT '',
@@ -78,6 +80,12 @@ CREATE TABLE IF NOT EXISTS domain_github_integrations (
 	if err := ensureDomainStoreColumn(ctx, s.db, "domains", "environment_variables", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := ensureDomainStoreColumn(ctx, s.db, "domains", "app_build_command", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureDomainStoreColumn(ctx, s.db, "domains", "app_binary_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return ensureDomainStoreColumn(ctx, s.db, "domains", "protection_config", "TEXT NOT NULL DEFAULT ''")
 }
 
@@ -87,7 +95,7 @@ func (s *Store) List(ctx context.Context) ([]Record, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, hostname, kind, target, nodejs_script_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at
+SELECT id, hostname, kind, target, nodejs_script_path, app_build_command, app_binary_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at
 FROM domains
 ORDER BY created_at DESC, id DESC
 `)
@@ -110,12 +118,14 @@ ORDER BY created_at DESC, id DESC
 			createdAtUnix   int64
 		)
 
-		if err := rows.Scan(&record.ID, &record.Hostname, &kind, &record.Target, &nodeJSScript, &phpVersion, &phpSettingsJSON, &environmentJSON, &cacheEnabledInt, &protectionJSON, &createdAtUnix); err != nil {
+		if err := rows.Scan(&record.ID, &record.Hostname, &kind, &record.Target, &nodeJSScript, &record.AppBuildCommand, &record.AppBinaryPath, &phpVersion, &phpSettingsJSON, &environmentJSON, &cacheEnabledInt, &protectionJSON, &createdAtUnix); err != nil {
 			return nil, fmt.Errorf("scan domain row: %w", err)
 		}
 
 		record.Kind, record.Target = normalizeKindAndTarget(Kind(kind), record.Target)
 		record.NodeJSScript = normalizeNodeJSScriptForKind(record.Kind, nodeJSScript)
+		record.AppBuildCommand = normalizeAppBuildCommandForKind(record.Kind, record.AppBuildCommand)
+		record.AppBinaryPath = normalizeAppBinaryPathForKind(record.Kind, record.AppBinaryPath)
 		record.PHPVersion = strings.TrimSpace(phpVersion)
 		record.CacheEnabled = cacheEnabledInt != 0
 		if message := validateKind(record.Kind); message != "" {
@@ -148,9 +158,9 @@ func (s *Store) Insert(ctx context.Context, record Record) error {
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO domains (id, hostname, kind, target, nodejs_script_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, record.ID, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano())
+INSERT INTO domains (id, hostname, kind, target, nodejs_script_path, app_build_command, app_binary_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, record.ID, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.AppBuildCommand, record.AppBinaryPath, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano())
 	if err == nil {
 		return nil
 	}
@@ -221,9 +231,9 @@ func (s *Store) Update(ctx context.Context, record Record) error {
 
 	result, err := s.db.ExecContext(ctx, `
 UPDATE domains
-SET hostname = ?, kind = ?, target = ?, nodejs_script_path = ?, php_version = ?, php_settings = ?, environment_variables = ?, cache_enabled = ?, protection_config = ?, created_at = ?
+SET hostname = ?, kind = ?, target = ?, nodejs_script_path = ?, app_build_command = ?, app_binary_path = ?, php_version = ?, php_settings = ?, environment_variables = ?, cache_enabled = ?, protection_config = ?, created_at = ?
 WHERE id = ?
-`, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano(), record.ID)
+`, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.AppBuildCommand, record.AppBinaryPath, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano(), record.ID)
 	if err == nil {
 		rowsAffected, rowsErr := result.RowsAffected()
 		if rowsErr != nil {
@@ -327,20 +337,22 @@ func (s *Store) Restore(ctx context.Context, record Record) error {
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO domains (id, hostname, kind, target, nodejs_script_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO domains (id, hostname, kind, target, nodejs_script_path, app_build_command, app_binary_path, php_version, php_settings, environment_variables, cache_enabled, protection_config, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     hostname = excluded.hostname,
     kind = excluded.kind,
     target = excluded.target,
     nodejs_script_path = excluded.nodejs_script_path,
+    app_build_command = excluded.app_build_command,
+    app_binary_path = excluded.app_binary_path,
     php_version = excluded.php_version,
     php_settings = excluded.php_settings,
     environment_variables = excluded.environment_variables,
     cache_enabled = excluded.cache_enabled,
     protection_config = excluded.protection_config,
     created_at = excluded.created_at
-`, record.ID, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano())
+`, record.ID, record.Hostname, string(record.Kind), record.Target, record.NodeJSScript, record.AppBuildCommand, record.AppBinaryPath, record.PHPVersion, encodePHPSettings(record), encodeEnvironmentVariables(record), boolToInt(record.CacheEnabled), encodeProtectionConfig(record), record.CreatedAt.UTC().UnixNano())
 	if err != nil {
 		return fmt.Errorf("restore domain %q: %w", record.ID, err)
 	}

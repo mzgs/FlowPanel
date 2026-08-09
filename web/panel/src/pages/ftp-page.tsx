@@ -74,6 +74,7 @@ const supportedDomainKinds = new Set([
   "Php site",
   "Node.js",
   "Python",
+  "App",
 ]);
 const tableHeaderCellClass = "h-9 px-3 text-left text-[13px] font-semibold text-[var(--app-text-muted)]";
 const tableBodyCellClass = "px-3 py-[5px] align-middle text-[14px] text-[var(--app-text)]";

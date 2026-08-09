@@ -47,6 +47,7 @@ const (
 	KindPHP          Kind = "Php site"
 	KindNodeJS       Kind = "Node.js"
 	KindPython       Kind = "Python"
+	KindApplication  Kind = "App"
 	KindReverseProxy Kind = "Reverse proxy"
 )
 
@@ -56,6 +57,8 @@ type Record struct {
 	Kind                 Kind                  `json:"kind"`
 	Target               string                `json:"target"`
 	NodeJSScript         string                `json:"nodejs_script_path,omitempty"`
+	AppBuildCommand      string                `json:"app_build_command,omitempty"`
+	AppBinaryPath        string                `json:"app_binary_path,omitempty"`
 	PHPVersion           string                `json:"php_version,omitempty"`
 	PHPSettings          phpenv.Settings       `json:"php_settings"`
 	EnvironmentVariables []EnvironmentVariable `json:"environment_variables,omitempty"`
@@ -89,19 +92,23 @@ type LogPaths struct {
 }
 
 type CreateInput struct {
-	Hostname     string `json:"hostname"`
-	Kind         Kind   `json:"kind"`
-	Target       string `json:"target"`
-	NodeJSScript string `json:"nodejs_script_path"`
-	CacheEnabled bool   `json:"cache_enabled"`
+	Hostname        string `json:"hostname"`
+	Kind            Kind   `json:"kind"`
+	Target          string `json:"target"`
+	NodeJSScript    string `json:"nodejs_script_path"`
+	AppBuildCommand string `json:"app_build_command"`
+	AppBinaryPath   string `json:"app_binary_path"`
+	CacheEnabled    bool   `json:"cache_enabled"`
 }
 
 type UpdateInput struct {
-	Hostname     string `json:"hostname"`
-	Kind         Kind   `json:"kind"`
-	Target       string `json:"target"`
-	NodeJSScript string `json:"nodejs_script_path"`
-	CacheEnabled bool   `json:"cache_enabled"`
+	Hostname        string `json:"hostname"`
+	Kind            Kind   `json:"kind"`
+	Target          string `json:"target"`
+	NodeJSScript    string `json:"nodejs_script_path"`
+	AppBuildCommand string `json:"app_build_command"`
+	AppBinaryPath   string `json:"app_binary_path"`
+	CacheEnabled    bool   `json:"cache_enabled"`
 }
 
 type UpdatePHPInput struct {
@@ -191,7 +198,7 @@ func defaultSitesBasePath() string {
 
 func SupportsManagedDocumentRoot(kind Kind) bool {
 	switch kind {
-	case KindStaticSite, KindPHP, KindNodeJS, KindPython, KindReverseProxy:
+	case KindStaticSite, KindPHP, KindNodeJS, KindPython, KindApplication, KindReverseProxy:
 		return true
 	default:
 		return false
@@ -200,7 +207,7 @@ func SupportsManagedDocumentRoot(kind Kind) bool {
 
 func usesUpstreamTarget(kind Kind) bool {
 	switch kind {
-	case KindNodeJS, KindPython, KindReverseProxy:
+	case KindNodeJS, KindPython, KindApplication, KindReverseProxy:
 		return true
 	default:
 		return false
@@ -327,7 +334,7 @@ func (s *Service) Delete(ctx context.Context, id string) (Record, bool, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, CreateArtifacts, error) {
-	hostname, kind, target, nodeJSScript, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target, input.NodeJSScript)
+	hostname, kind, target, nodeJSScript, appBuildCommand, appBinaryPath, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target, input.NodeJSScript, input.AppBuildCommand, input.AppBinaryPath)
 	if err != nil {
 		return Record{}, CreateArtifacts{}, err
 	}
@@ -349,13 +356,15 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, Create
 	}
 
 	record := Record{
-		ID:           fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano()),
-		Hostname:     hostname,
-		Kind:         kind,
-		Target:       resolvedTarget,
-		NodeJSScript: nodeJSScript,
-		CacheEnabled: input.CacheEnabled,
-		CreatedAt:    time.Now().UTC(),
+		ID:              fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano()),
+		Hostname:        hostname,
+		Kind:            kind,
+		Target:          resolvedTarget,
+		NodeJSScript:    nodeJSScript,
+		AppBuildCommand: appBuildCommand,
+		AppBinaryPath:   appBinaryPath,
+		CacheEnabled:    input.CacheEnabled,
+		CreatedAt:       time.Now().UTC(),
 	}
 	if kind == KindPHP {
 		record.PHPSettings = phpenv.DefaultDomainSettings()
@@ -374,7 +383,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, Create
 }
 
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Record, Record, CreateArtifacts, error) {
-	hostname, kind, target, nodeJSScript, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target, input.NodeJSScript)
+	hostname, kind, target, nodeJSScript, appBuildCommand, appBinaryPath, err := normalizeAndValidateInput(input.Hostname, input.Kind, input.Target, input.NodeJSScript, input.AppBuildCommand, input.AppBinaryPath)
 	if err != nil {
 		return Record{}, Record{}, CreateArtifacts{}, err
 	}
@@ -404,6 +413,8 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Rec
 	updated.Kind = kind
 	updated.Target = resolvedTarget
 	updated.NodeJSScript = nodeJSScript
+	updated.AppBuildCommand = appBuildCommand
+	updated.AppBinaryPath = appBinaryPath
 	updated.CacheEnabled = input.CacheEnabled
 	updated.Protection = NormalizeProtectionConfig(updated.Protection)
 	updated = s.withTransientFields(updated)
@@ -425,6 +436,8 @@ func (s *Service) Restore(ctx context.Context, record Record) error {
 
 	record.Kind, record.Target = normalizeKindAndTarget(record.Kind, record.Target)
 	record.NodeJSScript = normalizeNodeJSScriptForKind(record.Kind, record.NodeJSScript)
+	record.AppBuildCommand = normalizeAppBuildCommandForKind(record.Kind, record.AppBuildCommand)
+	record.AppBinaryPath = normalizeAppBinaryPathForKind(record.Kind, record.AppBinaryPath)
 	record.EnvironmentVariables = normalizeEnvironmentVariables(record.EnvironmentVariables)
 	record.Protection = NormalizeProtectionConfig(record.Protection)
 	record = s.withTransientFields(record)
@@ -462,7 +475,7 @@ func normalizeHostname(value string) string {
 
 func validateKind(kind Kind) string {
 	switch kind {
-	case KindStaticSite, KindPHP, KindNodeJS, KindPython, KindReverseProxy:
+	case KindStaticSite, KindPHP, KindNodeJS, KindPython, KindApplication, KindReverseProxy:
 		return ""
 	default:
 		return "Select a valid domain type."
@@ -470,7 +483,7 @@ func validateKind(kind Kind) string {
 }
 
 func SupportsEnvironmentVariables(kind Kind) bool {
-	return kind == KindPHP || kind == KindNodeJS || kind == KindPython
+	return kind == KindPHP || kind == KindNodeJS || kind == KindPython || kind == KindApplication
 }
 
 func validateHostname(value string) string {
@@ -514,7 +527,7 @@ func validateTarget(kind Kind, value string) string {
 	}
 
 	switch kind {
-	case KindNodeJS, KindPython:
+	case KindNodeJS, KindPython, KindApplication:
 		if _, err := normalizeNodeJSTarget(trimmed); err != nil {
 			return err.Error()
 		}
@@ -534,13 +547,15 @@ func validateTarget(kind Kind, value string) string {
 	return ""
 }
 
-func normalizeAndValidateInput(hostname string, kind Kind, target string, nodeJSScript string) (string, Kind, string, string, error) {
+func normalizeAndValidateInput(hostname string, kind Kind, target, nodeJSScript, appBuildCommand, appBinaryPath string) (string, Kind, string, string, string, string, error) {
 	normalizedHostname := normalizeHostname(hostname)
 	normalizedKind, trimmedTarget := normalizeKindAndTarget(kind, target)
 	normalizedNodeJSScript := normalizeNodeJSScriptForKind(normalizedKind, nodeJSScript)
 	if normalizedNodeJSScript == "" {
 		normalizedNodeJSScript = defaultNodeJSScriptForKind(normalizedKind)
 	}
+	normalizedAppBuildCommand := normalizeAppBuildCommandForKind(normalizedKind, appBuildCommand)
+	normalizedAppBinaryPath := normalizeAppBinaryPathForKind(normalizedKind, appBinaryPath)
 
 	validation := ValidationErrors{}
 
@@ -562,12 +577,20 @@ func normalizeAndValidateInput(hostname string, kind Kind, target string, nodeJS
 			validation["nodejs_script_path"] = message
 		}
 	}
-
-	if len(validation) > 0 {
-		return "", "", "", "", validation
+	if normalizedKind == KindApplication {
+		if normalizedAppBuildCommand == "" {
+			validation["app_build_command"] = "Build command is required."
+		}
+		if message := validateAppBinaryPath(appBinaryPath); message != "" {
+			validation["app_binary_path"] = message
+		}
 	}
 
-	return normalizedHostname, normalizedKind, trimmedTarget, normalizedNodeJSScript, nil
+	if len(validation) > 0 {
+		return "", "", "", "", "", "", validation
+	}
+
+	return normalizedHostname, normalizedKind, trimmedTarget, normalizedNodeJSScript, normalizedAppBuildCommand, normalizedAppBinaryPath, nil
 }
 
 func (s *Service) findRecordLocked(id string) (int, Record, bool) {
@@ -830,7 +853,7 @@ func (s *Service) deriveTarget(hostname string, kind Kind, target string) (strin
 			return "", err
 		}
 		return siteRoot, nil
-	case KindNodeJS, KindPython, KindReverseProxy:
+	case KindNodeJS, KindPython, KindApplication, KindReverseProxy:
 		return target, nil
 	default:
 		return "", fmt.Errorf("unsupported domain kind %q", kind)
@@ -859,7 +882,7 @@ func inspectCreateArtifacts(basePath, hostname string, kind Kind) CreateArtifact
 
 func normalizeKindAndTarget(kind Kind, target string) (Kind, string) {
 	trimmedTarget := strings.TrimSpace(target)
-	if usesScriptPath(kind) {
+	if usesScriptPath(kind) || kind == KindApplication {
 		if normalizedTarget, err := normalizeNodeJSTarget(trimmedTarget); err == nil {
 			return kind, normalizedTarget
 		}
@@ -913,6 +936,59 @@ func normalizeNodeJSScript(value string) string {
 	}
 
 	return normalized
+}
+
+func normalizeAppBuildCommandForKind(kind Kind, value string) string {
+	if kind != KindApplication {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func normalizeAppBinaryPathForKind(kind Kind, value string) string {
+	if kind != KindApplication {
+		return ""
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(trimmed))
+}
+
+func validateAppBinaryPath(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "Executable path is required."
+	}
+	normalized := filepath.ToSlash(filepath.Clean(trimmed))
+	if normalized == "." || normalized == ".." || strings.HasPrefix(normalized, "../") || strings.HasPrefix(normalized, "/") {
+		return "Enter an executable path inside the domain root."
+	}
+	return ""
+}
+
+func ResolveAppBinaryPath(basePath string, record Record) (string, error) {
+	if record.Kind != KindApplication {
+		return "", fmt.Errorf("unsupported domain kind %q", record.Kind)
+	}
+	binaryPath := normalizeAppBinaryPathForKind(record.Kind, record.AppBinaryPath)
+	if message := validateAppBinaryPath(binaryPath); message != "" {
+		return "", errors.New(message)
+	}
+	documentRoot, err := ResolveDocumentRoot(basePath, record)
+	if err != nil {
+		return "", err
+	}
+	resolved := filepath.Clean(filepath.Join(documentRoot, filepath.FromSlash(binaryPath)))
+	relativePath, err := filepath.Rel(documentRoot, resolved)
+	if err != nil {
+		return "", err
+	}
+	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return "", errors.New("executable path must stay inside the domain root")
+	}
+	return resolved, nil
 }
 
 func normalizeNodeJSTarget(target string) (string, error) {
@@ -1048,7 +1124,7 @@ func normalizeEnvironmentVariables(values []EnvironmentVariable) []EnvironmentVa
 func validateEnvironmentVariables(kind Kind, values []EnvironmentVariable) ValidationErrors {
 	validation := ValidationErrors{}
 	if !SupportsEnvironmentVariables(kind) {
-		validation["kind"] = "Environment variables are available only for PHP, Node.js, and Python domains."
+		validation["kind"] = "Environment variables are available only for PHP, Node.js, Python, and application domains."
 		return validation
 	}
 	if len(values) > maxEnvironmentVariables {

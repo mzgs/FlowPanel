@@ -622,17 +622,22 @@ function mergeWordPressSectionDetails(
 }
 
 function isRuntimeDomainKind(kind: DomainRecord["kind"] | undefined | null) {
-  return kind === "Node.js" || kind === "Python";
+  return kind === "Node.js" || kind === "Python" || kind === "App";
 }
 
 function supportsEnvironmentVariables(
   kind: DomainRecord["kind"] | undefined | null,
 ) {
-  return kind === "Php site" || kind === "Node.js" || kind === "Python";
+  return (
+    kind === "Php site" ||
+    kind === "Node.js" ||
+    kind === "Python" ||
+    kind === "App"
+  );
 }
 
 function getRuntimeDomainLabel(kind: DomainRecord["kind"] | undefined | null) {
-  return kind === "Python" ? "Python" : "Node.js";
+  return kind === "Python" ? "Python" : kind === "App" ? "App" : "Node.js";
 }
 
 function getComposerManifestPath(path: string | null) {
@@ -1936,14 +1941,20 @@ export function DomainDetailPage() {
       }
 
       const result = await deployDomainGitHubIntegration(activeDomain.hostname);
+      if (activeDomain.kind === "App") {
+        setNodeJSStatus(await fetchDomainNodeJSStatus(activeDomain.hostname));
+        setNodeJSError(null);
+      }
       setPreviewRefreshing(true);
       setPreviewError(false);
       setPreviewErrorMessage(null);
       setPreviewRefreshToken(Date.now());
       const feedback =
-        result.action === "updated"
-          ? `Updated the local repository for ${activeDomain.hostname}.`
-          : `Initialized the local repository for ${activeDomain.hostname}.`;
+        activeDomain.kind === "App"
+          ? `Built and deployed the application for ${activeDomain.hostname}.`
+          : result.action === "updated"
+            ? `Updated the local repository for ${activeDomain.hostname}.`
+            : `Initialized the local repository for ${activeDomain.hostname}.`;
       setGitHubFeedback(feedback);
       toast.success(feedback);
     } catch (error) {
@@ -2149,6 +2160,8 @@ export function DomainDetailPage() {
         kind: domain.kind,
         target: domain.target,
         nodejs_script_path: domain.nodejs_script_path,
+        app_build_command: domain.app_build_command,
+        app_binary_path: domain.app_binary_path,
         cache_enabled: !domain.cache_enabled,
       });
       syncDomainRecord(updatedDomain);
@@ -2568,7 +2581,19 @@ export function DomainDetailPage() {
                           : documentRootDisplayPath,
                       ],
                       ...(domain && isRuntimeDomainKind(domain.kind)
-                        ? [["Script path", domain.nodejs_script_path]]
+                        ? [
+                            [
+                              domain.kind === "App"
+                                ? "Build command"
+                                : "Script path",
+                              domain.kind === "App"
+                                ? domain.app_build_command
+                                : domain.nodejs_script_path,
+                            ],
+                          ]
+                        : []),
+                      ...(domain?.kind === "App"
+                        ? [["Executable path", domain.app_binary_path]]
                         : []),
                     ],
                   ],
@@ -2850,6 +2875,7 @@ export function DomainDetailPage() {
         open={githubDialogOpen && domain !== null}
         onOpenChange={setGitHubDialogOpen}
         hostname={domain?.hostname ?? hostname}
+        kind={domain?.kind ?? "Static site"}
         repositoryUrl={githubForm.repositoryUrl}
         autoDeployOnPush={githubForm.autoDeployOnPush}
         postFetchScript={githubForm.postFetchScript}
@@ -3389,14 +3415,20 @@ export function DomainDetailPage() {
                       </div>
                       <div className="inline-flex min-w-0 flex-1 items-baseline gap-1.5">
                         <span className="shrink-0 text-[var(--app-text-muted)]">
-                          Script path
+                          {domain?.kind === "App" ? "Binary" : "Script path"}
                         </span>
                         <span
                           className="truncate font-mono text-[var(--app-text)]"
-                          title={nodeJSStatus?.script_path || domain.nodejs_script_path || "-"}
+                          title={
+                            nodeJSStatus?.script_path ||
+                            (domain.kind === "App"
+                              ? domain.app_binary_path
+                              : domain.nodejs_script_path) ||
+                            "-"
+                          }
                         >
                           {nodeJSStatus?.script_path ||
-                            domain.nodejs_script_path ||
+                            (domain.kind === "App" ? domain.app_binary_path : domain.nodejs_script_path) ||
                             "-"}
                         </span>
                       </div>
