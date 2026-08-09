@@ -31,7 +31,6 @@ const (
 	dockerSearchCommandTimeout = 10 * time.Second
 	dockerActionCommandTimeout = 30 * time.Second
 	dockerCreateCommandTimeout = 2 * time.Minute
-	dockerPullCommandTimeout   = 5 * time.Minute
 	dockerExportCommandTimeout = 2 * time.Minute
 	dockerSearchResultLimit    = 100
 	dockerSearchCandidatePages = 2
@@ -1522,7 +1521,7 @@ func pullDockerImage(ctx context.Context, image string) error {
 		return errors.New("Docker is not installed on this server.")
 	}
 
-	commandCtx, cancel := context.WithTimeout(ctx, dockerPullCommandTimeout)
+	commandCtx, cancel := context.WithTimeout(ctx, dockercontainer.ImagePullTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "pull", image)

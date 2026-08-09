@@ -12,6 +12,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+)
+
+const (
+	ImagePullTimeout        = 5 * time.Minute
+	restoreProgressInterval = 5 * time.Second
 )
 
 type Record struct {
@@ -91,6 +97,14 @@ type RestartPolicy struct {
 	MaximumRetryCount int    `json:"MaximumRetryCount"`
 }
 
+type RestoreProgress struct {
+	Container string
+	Image     string
+	Current   int
+	Total     int
+	Pulling   bool
+}
+
 func Snapshot(ctx context.Context) ([]Record, error) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return nil, nil
@@ -115,7 +129,7 @@ func Snapshot(ctx context.Context) ([]Record, error) {
 	return records, nil
 }
 
-func Restore(ctx context.Context, records []Record, managedDataRoot string) ([]string, error) {
+func Restore(ctx context.Context, records []Record, managedDataRoot string, report func(RestoreProgress)) ([]string, error) {
 	if len(records) == 0 {
 		return []string{}, nil
 	}
@@ -123,39 +137,78 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string) ([]s
 		return nil, errors.New("Docker is not installed on this server")
 	}
 
-	restored := make([]string, 0, len(records))
+	type restoreRecord struct {
+		record Record
+		name   string
+		image  string
+	}
+	prepared := make([]restoreRecord, 0, len(records))
 	for _, record := range records {
-		name := strings.TrimPrefix(strings.TrimSpace(record.Name), "/")
-		image := strings.TrimSpace(record.Config.Image)
-		if name == "" || image == "" {
-			return restored, errors.New("Docker backup contains an invalid container definition")
+		item := restoreRecord{
+			record: record,
+			name:   strings.TrimPrefix(strings.TrimSpace(record.Name), "/"),
+			image:  strings.TrimSpace(record.Config.Image),
 		}
-		if _, err := dockerOutput(ctx, "image", "inspect", image); err != nil {
-			if _, pullErr := dockerOutput(ctx, "pull", image); pullErr != nil {
-				return restored, fmt.Errorf("restore Docker image %q: %w", image, pullErr)
+		if item.name == "" || item.image == "" {
+			return nil, errors.New("Docker backup contains an invalid container definition")
+		}
+		prepared = append(prepared, item)
+	}
+
+	progressFor := func(index int, item restoreRecord, pulling bool) RestoreProgress {
+		return RestoreProgress{Container: item.name, Image: item.image, Current: index + 1, Total: len(prepared), Pulling: pulling}
+	}
+	for index, item := range prepared {
+		if _, err := dockerOutput(ctx, "image", "inspect", item.image); err == nil {
+			continue
+		}
+		progress := progressFor(index, item, true)
+		if report != nil {
+			report(progress)
+		}
+		pullCtx, cancel := context.WithTimeout(ctx, ImagePullTimeout)
+		_, pullErr := dockerOutputWithHeartbeat(pullCtx, func() {
+			if report != nil {
+				report(progress)
 			}
+		}, "pull", "--quiet", item.image)
+		timedOut := errors.Is(pullCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+		cancel()
+		if timedOut {
+			return nil, fmt.Errorf("restore Docker image %q: pull timed out after %s", item.image, ImagePullTimeout)
 		}
-		if network := strings.TrimSpace(record.HostConfig.NetworkMode); isCustomNetwork(network) {
+		if pullErr != nil {
+			return nil, fmt.Errorf("restore Docker image %q: %w", item.image, pullErr)
+		}
+	}
+
+	restored := make([]string, 0, len(prepared))
+	for index, item := range prepared {
+		progress := progressFor(index, item, false)
+		if report != nil {
+			report(progress)
+		}
+		if network := strings.TrimSpace(item.record.HostConfig.NetworkMode); isCustomNetwork(network) {
 			if _, err := dockerOutput(ctx, "network", "inspect", network); err != nil {
 				if _, createErr := dockerOutput(ctx, "network", "create", network); createErr != nil {
 					return restored, fmt.Errorf("restore Docker network %q: %w", network, createErr)
 				}
 			}
 		}
-		_, _ = dockerOutput(ctx, "rm", "-f", name)
-		containerID, err := dockerOutput(ctx, CreateArgs(record)...)
+		_, _ = dockerOutput(ctx, "rm", "-f", item.name)
+		containerID, err := dockerOutput(ctx, CreateArgs(item.record)...)
 		if err != nil {
-			return restored, fmt.Errorf("restore Docker container %q: %w", name, err)
+			return restored, fmt.Errorf("restore Docker container %q: %w", item.name, err)
 		}
-		if err := PrepareManagedVolumePermissions(ctx, record, managedDataRoot); err != nil {
-			return restored, fmt.Errorf("prepare restored Docker container %q data: %w", name, err)
+		if err := PrepareManagedVolumePermissions(ctx, item.record, managedDataRoot); err != nil {
+			return restored, fmt.Errorf("prepare restored Docker container %q data: %w", item.name, err)
 		}
-		if record.State.Running {
+		if item.record.State.Running {
 			if _, err := dockerOutput(ctx, "start", strings.TrimSpace(containerID)); err != nil {
-				return restored, fmt.Errorf("start restored Docker container %q: %w", name, err)
+				return restored, fmt.Errorf("start restored Docker container %q: %w", item.name, err)
 			}
 		}
-		restored = append(restored, name)
+		restored = append(restored, item.name)
 	}
 	return restored, nil
 }
@@ -404,6 +457,29 @@ func dockerOutput(ctx context.Context, args ...string) (string, error) {
 		return "", errors.New(message)
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+func dockerOutputWithHeartbeat(ctx context.Context, heartbeat func(), args ...string) (string, error) {
+	type result struct {
+		output string
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		output, err := dockerOutput(ctx, args...)
+		done <- result{output: output, err: err}
+	}()
+
+	ticker := time.NewTicker(restoreProgressInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case result := <-done:
+			return result.output, result.err
+		case <-ticker.C:
+			heartbeat()
+		}
+	}
 }
 
 func sortedKeys[T any](values map[string]T) []string {

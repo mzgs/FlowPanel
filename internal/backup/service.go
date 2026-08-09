@@ -656,7 +656,20 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string, report 
 		recordFailure("docker_data", "Docker data and containers were not restored", err)
 		return result, nil
 	}
-	result.RestoredContainers, err = dockercontainer.Restore(ctx, dockerContainers, s.dockerDataPath())
+	result.RestoredContainers, err = dockercontainer.Restore(ctx, dockerContainers, s.dockerDataPath(), func(progress dockercontainer.RestoreProgress) {
+		percent := 92
+		if progress.Pulling {
+			percent = 89
+		}
+		if progress.Total > 0 {
+			percent += (progress.Current - 1) * 2 / progress.Total
+		}
+		label := fmt.Sprintf("Restoring Docker container %s (%d/%d)…", progress.Container, progress.Current, progress.Total)
+		if progress.Pulling {
+			label = fmt.Sprintf("Pulling Docker image %s (%d/%d)…", progress.Image, progress.Current, progress.Total)
+		}
+		reportRestoreProgress(report, label, percent)
+	})
 	if err != nil {
 		recordFailure("docker_containers", "Some Docker containers were not restored", err)
 	}
