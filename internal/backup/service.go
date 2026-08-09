@@ -581,9 +581,9 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 	}
 
 	result := RestoreResult{}
-	partialFailure := func(scope string, err error) (RestoreResult, error) {
-		result.addWarning(fmt.Sprintf("%s may be only partially restored: %v", scope, err))
-		return result, nil
+	recordFailure := func(scope, warning string, err error) {
+		s.logger.Error("restore backup scope failed", zap.String("scope", scope), zap.Error(err))
+		result.addWarning(fmt.Sprintf("%s: %v", warning, err))
 	}
 	snapshotRelPath := databaseArchivePath(s.dataPath, s.databasePath)
 	snapshotStagingPath := ""
@@ -596,47 +596,49 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string) (Restor
 
 	if hasPanelEntries(stagingPath, snapshotRelPath) {
 		if err := s.restorePanelFiles(stagingPath, snapshotRelPath); err != nil {
-			return partialFailure("Panel files", err)
+			recordFailure("panel_files", "Panel files may be only partially restored", err)
+		} else {
+			result.RestoredPanelFiles = true
 		}
-		result.RestoredPanelFiles = true
 	}
 
 	if snapshotStagingPath != "" {
 		if err := s.restoreSQLiteSnapshot(ctx, snapshotStagingPath); err != nil {
-			return partialFailure("Panel data", err)
+			recordFailure("panel_data", "Panel data may be only partially restored", err)
+		} else {
+			result.RestoredPanelDatabase = true
 		}
-		result.RestoredPanelDatabase = true
 	}
 
 	restoredSites, err := s.restoreSiteArchives(stagingPath)
 	result.RestoredSites = restoredSites
 	if err != nil {
-		return partialFailure("Sites", err)
+		recordFailure("sites", "Sites may be only partially restored", err)
 	}
 
 	restoredDatabases, err := s.restoreDatabaseDumps(ctx, stagingPath)
 	result.RestoredDatabases = restoredDatabases
 	if err != nil {
-		return partialFailure("Databases", err)
+		recordFailure("databases", "Databases may be only partially restored", err)
 	}
 
 	dockerContainers, err := readDockerContainerArchive(stagingPath)
 	if err != nil {
-		result.addWarning(fmt.Sprintf("Docker containers were not restored: %v", err))
+		recordFailure("docker_containers", "Docker containers were not restored", err)
 		return result, nil
 	}
 	if err := dockercontainer.Stop(ctx, dockerContainers); err != nil {
-		result.addWarning(fmt.Sprintf("Docker containers were not restored: %v", err))
+		recordFailure("docker_containers", "Docker containers were not restored", err)
 		return result, nil
 	}
 	result.RestoredDockerData, err = s.restoreDockerData(stagingPath)
 	if err != nil {
-		result.addWarning(fmt.Sprintf("Docker data and containers were not restored: %v", err))
+		recordFailure("docker_data", "Docker data and containers were not restored", err)
 		return result, nil
 	}
 	result.RestoredContainers, err = dockercontainer.Restore(ctx, dockerContainers, s.dockerDataPath())
 	if err != nil {
-		result.addWarning(fmt.Sprintf("Some Docker containers were not restored: %v", err))
+		recordFailure("docker_containers", "Some Docker containers were not restored", err)
 	}
 
 	return result, nil
