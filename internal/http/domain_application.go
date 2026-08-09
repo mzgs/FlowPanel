@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"flowpanel/internal/config"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/pm2"
 )
@@ -68,7 +69,17 @@ func (a *apiRoutes) ensureDomainApplicationBinary(ctx context.Context, record do
 	commandName, commandArgs := gitHubShellCommand(record.AppBuildCommand)
 	cmd := exec.CommandContext(runCtx, commandName, commandArgs...)
 	cmd.Dir = root
-	cmd.Env = os.Environ()
+	goCachePath := filepath.Join(config.CachePath(), "go")
+	goModuleCachePath := filepath.Join(goCachePath, "pkg", "mod")
+	goBuildCachePath := filepath.Join(goCachePath, "build")
+	if err := os.MkdirAll(goModuleCachePath, 0o755); err != nil {
+		return fmt.Errorf("create Go module cache: %w", err)
+	}
+	if err := os.MkdirAll(goBuildCachePath, 0o755); err != nil {
+		return fmt.Errorf("create Go build cache: %w", err)
+	}
+	cmd.Env = setCommandEnvironmentValue(os.Environ(), "GOMODCACHE", goModuleCachePath)
+	cmd.Env = setCommandEnvironmentValue(cmd.Env, "GOCACHE", goBuildCachePath)
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
