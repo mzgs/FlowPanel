@@ -405,6 +405,23 @@ func (s *Service) sync(ctx context.Context, pm2Path string) ([]Process, error) {
 	}
 
 	missing := missingDefinitions(storedDefinitions, inspected)
+	stale := make(map[string]int)
+	for _, definition := range missing {
+		if definitionScriptAvailable(definition) {
+			continue
+		}
+
+		stale[definitionKey(definition)]++
+		s.logger.Warn("discarding stale PM2 process definition",
+			zap.String("name", strings.TrimSpace(definition.Name)),
+			zap.String("script_path", strings.TrimSpace(definition.ScriptPath)),
+		)
+	}
+	if len(stale) > 0 {
+		storedDefinitions = removeDefinitionCounts(storedDefinitions, stale)
+		missing = missingDefinitions(storedDefinitions, inspected)
+	}
+
 	for _, definition := range missing {
 		if err := s.createMissingProcess(ctx, pm2Path, definition); err != nil {
 			label := strings.TrimSpace(definition.Name)
@@ -418,16 +435,47 @@ func (s *Service) sync(ctx context.Context, pm2Path string) ([]Process, error) {
 		}
 	}
 
-	if len(storedDefinitions) > 0 && len(missing) > 0 {
-		processes, err := s.refresh(ctx, pm2Path, nil)
+	if len(missing) > 0 {
+		inspected, err = s.inspectProcesses(ctx, pm2Path)
 		if err != nil {
 			return nil, err
 		}
-
+		processes, err := s.persistDefinitions(ctx, storedDefinitions, inspected, nil)
+		if err != nil {
+			return nil, err
+		}
 		return processes, s.saveProcessSnapshot(ctx, pm2Path)
 	}
 
 	return s.persistDefinitions(ctx, storedDefinitions, inspected, nil)
+}
+
+func definitionScriptAvailable(definition Definition) bool {
+	scriptPath := strings.TrimSpace(definition.ScriptPath)
+	if scriptPath == "" {
+		return false
+	}
+	if !filepath.IsAbs(scriptPath) {
+		if workingDirectory := strings.TrimSpace(definition.WorkingDirectory); workingDirectory != "" {
+			scriptPath = filepath.Join(workingDirectory, scriptPath)
+		}
+	}
+
+	_, err := os.Stat(scriptPath)
+	return err == nil || !errors.Is(err, os.ErrNotExist)
+}
+
+func removeDefinitionCounts(definitions []Definition, counts map[string]int) []Definition {
+	filtered := make([]Definition, 0, len(definitions))
+	for _, definition := range definitions {
+		key := definitionKey(definition)
+		if counts[key] > 0 {
+			counts[key]--
+			continue
+		}
+		filtered = append(filtered, definition)
+	}
+	return filtered
 }
 
 func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
