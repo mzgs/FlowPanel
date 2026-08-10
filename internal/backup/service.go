@@ -29,13 +29,15 @@ import (
 )
 
 const (
-	backupExtension     = ".tar.gz"
-	LocationLocal       = "local"
-	LocationGoogleDrive = "google_drive"
-	maxManifestSize     = 1 << 20
-	adminTLSArchiveDir  = "admin_tls"
-	adminTLSCertArchive = adminTLSArchiveDir + "/certificate.pem"
-	adminTLSKeyArchive  = adminTLSArchiveDir + "/private.key"
+	backupExtension       = ".tar.gz"
+	LocationLocal         = "local"
+	LocationGoogleDrive   = "google_drive"
+	maxManifestSize       = 1 << 20
+	adminTLSArchiveDir    = "admin_tls"
+	adminTLSCertArchive   = adminTLSArchiveDir + "/certificate.pem"
+	adminTLSKeyArchive    = adminTLSArchiveDir + "/private.key"
+	panelConfigArchiveDir = "panel_config"
+	panelEnvArchive       = panelConfigArchiveDir + "/flowpanel.env"
 )
 
 var (
@@ -44,6 +46,7 @@ var (
 	ErrAlreadyExists   = errors.New("backup already exists")
 	ErrInvalidArchive  = errors.New("invalid backup archive")
 	ErrInvalidLocation = errors.New("invalid backup location")
+	ErrOperationActive = errors.New("a backup or restore operation is already running")
 )
 
 const backupFormat = "flowpanel-backup-v1"
@@ -83,14 +86,15 @@ func (v ValidationErrors) Error() string {
 }
 
 type RestoreResult struct {
-	RestoredPanelFiles    bool     `json:"restored_panel_files"`
-	RestoredPanelDatabase bool     `json:"restored_panel_database"`
-	RestoredAdminTLS      bool     `json:"restored_admin_tls"`
-	RestoredDockerData    bool     `json:"restored_docker_data"`
-	RestoredContainers    []string `json:"restored_docker_containers,omitempty"`
-	RestoredSites         []string `json:"restored_sites,omitempty"`
-	RestoredDatabases     []string `json:"restored_databases,omitempty"`
-	Warnings              []string `json:"warnings,omitempty"`
+	RestoredPanelFiles       bool     `json:"restored_panel_files"`
+	RestoredPanelDatabase    bool     `json:"restored_panel_database"`
+	RestoredPanelEnvironment bool     `json:"restored_panel_environment"`
+	RestoredAdminTLS         bool     `json:"restored_admin_tls"`
+	RestoredDockerData       bool     `json:"restored_docker_data"`
+	RestoredContainers       []string `json:"restored_docker_containers,omitempty"`
+	RestoredSites            []string `json:"restored_sites,omitempty"`
+	RestoredDatabases        []string `json:"restored_databases,omitempty"`
+	Warnings                 []string `json:"warnings,omitempty"`
 }
 
 type RestoreProgress struct {
@@ -139,6 +143,7 @@ type Service struct {
 	databasePath  string
 	adminCertPath string
 	adminKeyPath  string
+	panelEnvPath  string
 	db            *sql.DB
 	store         *Store
 	domains       DomainSource
@@ -146,6 +151,13 @@ type Service struct {
 	settings      *settings.Service
 	googleDrive   *googledrive.Service
 	pm2           PM2Syncer
+}
+
+func (s *Service) SetPanelEnvironmentPath(value string) {
+	s.panelEnvPath = filepath.Clean(strings.TrimSpace(value))
+	if s.panelEnvPath == "." {
+		s.panelEnvPath = ""
+	}
 }
 
 type manifest struct {
@@ -171,6 +183,11 @@ type DatabaseSource interface {
 
 type PM2Syncer interface {
 	Sync(context.Context) ([]pm2.Process, error)
+}
+
+type siteBackupQuiescer interface {
+	PauseForBackup(context.Context) ([]int, error)
+	ResumeAfterBackup(context.Context, []int) error
 }
 
 type siteArchive struct {
@@ -295,6 +312,12 @@ func (s *Service) listLocalBackups() ([]Record, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
+	operationLock, err := s.acquireOperationLock()
+	if err != nil {
+		return Record{}, err
+	}
+	defer operationLock.Close()
+
 	input.Location = normalizeLocation(input.Location)
 	input.SiteHostnames = normalizeSiteHostnames(input.SiteHostnames)
 	input.DatabaseNames = normalizeDatabaseNames(input.DatabaseNames)
@@ -352,6 +375,8 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		adminCert        []byte
 		adminKey         []byte
 		includeAdminTLS  bool
+		panelEnvironment []byte
+		includePanelEnv  bool
 		sites            []siteArchive
 		databaseDumps    []databaseDump
 		dockerContainers []dockercontainer.Record
@@ -362,6 +387,10 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 			return Record{}, err
 		}
 		adminCert, adminKey, includeAdminTLS, err = s.readAdminTLSFiles()
+		if err != nil {
+			return Record{}, err
+		}
+		panelEnvironment, includePanelEnv, err = s.readPanelEnvironmentFile()
 		if err != nil {
 			return Record{}, err
 		}
@@ -410,6 +439,9 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		)
 		if includeAdminTLS {
 			contents = append(contents, "configured admin TLS certificate and private key")
+		}
+		if includePanelEnv {
+			contents = append(contents, "FlowPanel installer environment configuration")
 		}
 	}
 	if input.IncludeDockerData {
@@ -461,20 +493,22 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 				return Record{}, err
 			}
 		}
+		if includePanelEnv {
+			if err := writeTarBytesMode(tarWriter, panelEnvArchive, panelEnvironment, createdAt, 0o600); err != nil {
+				_ = tarWriter.Close()
+				_ = gzipWriter.Close()
+				return Record{}, err
+			}
+		}
 	}
 	if input.IncludeDockerData {
-		if err := s.writeDockerDataArchive(tarWriter); err != nil {
-			_ = tarWriter.Close()
-			_ = gzipWriter.Close()
-			return Record{}, err
-		}
-		if err := writeDockerContainerArchive(tarWriter, dockerContainers, createdAt); err != nil {
+		if err := s.writeDockerArchive(ctx, tarWriter, dockerContainers, createdAt); err != nil {
 			_ = tarWriter.Close()
 			_ = gzipWriter.Close()
 			return Record{}, err
 		}
 	}
-	if err := writeSiteArchives(tarWriter, sites); err != nil {
+	if err := s.writeSiteArchives(ctx, tarWriter, sites); err != nil {
 		_ = tarWriter.Close()
 		_ = gzipWriter.Close()
 		return Record{}, err
@@ -631,6 +665,12 @@ func (s *Service) Preflight(ctx context.Context, id string, location string) (Re
 }
 
 func (s *Service) RestoreWithProgress(ctx context.Context, id string, location string, report func(RestoreProgress)) (RestoreResult, error) {
+	operationLock, err := s.acquireOperationLock()
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	defer operationLock.Close()
+
 	switch normalizeLocation(location) {
 	case LocationLocal:
 		return s.restoreLocalBackup(ctx, id, report)
@@ -671,8 +711,14 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string, report 
 
 	result := RestoreResult{}
 	recordFailure := func(scope, warning string, err error) {
-		s.logger.Error("restore backup scope failed", zap.String("scope", scope), zap.Error(err))
-		result.addWarning(fmt.Sprintf("%s: %v", warning, err))
+		errorsToRecord := []error{err}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			errorsToRecord = joined.Unwrap()
+		}
+		for _, restoreErr := range errorsToRecord {
+			s.logger.Error("restore backup scope failed", zap.String("scope", scope), zap.Error(restoreErr))
+			result.addWarning(fmt.Sprintf("%s: %v", warning, restoreErr))
+		}
 	}
 	snapshotRelPath := databaseArchivePath(s.dataPath, s.databasePath)
 	snapshotStagingPath := ""
@@ -696,6 +742,12 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string, report 
 		recordFailure("admin_tls", "Admin TLS certificate and key were not restored", err)
 	} else {
 		result.RestoredAdminTLS = restored
+	}
+	if restored, err := s.restorePanelEnvironment(stagingPath); err != nil {
+		recordFailure("panel_environment", "FlowPanel environment configuration was not restored", err)
+	} else if restored {
+		result.RestoredPanelEnvironment = true
+		result.addWarning("FlowPanel environment configuration was restored. Restart the FlowPanel service to apply it.")
 	}
 
 	if snapshotStagingPath != "" {
@@ -723,20 +775,23 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string, report 
 
 	reportRestoreProgress(report, "Restoring Docker data…", 88)
 	dockerContainers, err := readDockerContainerArchive(stagingPath)
+	dockerReady := true
 	if err != nil {
 		recordFailure("docker_containers", "Docker containers were not restored", err)
-		return result, nil
-	}
-	if err := dockercontainer.Stop(ctx, dockerContainers); err != nil {
+		dockerReady = false
+	} else if err := dockercontainer.Stop(ctx, dockerContainers); err != nil {
 		recordFailure("docker_containers", "Docker containers were not restored", err)
-		return result, nil
+		dockerReady = false
 	}
-	result.RestoredDockerData, err = s.restoreDockerData(stagingPath)
-	if err != nil {
-		recordFailure("docker_data", "Docker data and containers were not restored", err)
-		return result, nil
+	if dockerReady {
+		result.RestoredDockerData, err = s.restoreDockerData(stagingPath)
+		if err != nil {
+			recordFailure("docker_data", "Docker data and containers were not restored", err)
+		}
+	} else {
+		dockerContainers = nil
 	}
-	result.RestoredContainers, err = dockercontainer.Restore(ctx, dockerContainers, s.dockerDataPath(), func(progress dockercontainer.RestoreProgress) {
+	restoredContainers, err := dockercontainer.Restore(ctx, dockerContainers, s.dockerDataPath(), func(progress dockercontainer.RestoreProgress) {
 		percent := 92
 		if progress.Pulling {
 			percent = 89
@@ -750,6 +805,7 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string, report 
 		}
 		reportRestoreProgress(report, label, percent)
 	})
+	result.RestoredContainers = restoredContainers
 	if err != nil {
 		recordFailure("docker_containers", "Some Docker containers were not restored", err)
 	}
@@ -1331,6 +1387,20 @@ func (s *Service) readAdminTLSFiles() ([]byte, []byte, bool, error) {
 	return cert, key, true, nil
 }
 
+func (s *Service) readPanelEnvironmentFile() ([]byte, bool, error) {
+	if s.panelEnvPath == "" {
+		return nil, false, nil
+	}
+	payload, err := os.ReadFile(s.panelEnvPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read FlowPanel environment file: %w", err)
+	}
+	return payload, true, nil
+}
+
 func (s *Service) writeDockerDataArchive(tarWriter *tar.Writer) error {
 	root := s.dockerDataPath()
 	if root == "" {
@@ -1363,7 +1433,54 @@ func (s *Service) writeDockerDataArchive(tarWriter *tar.Writer) error {
 	})
 }
 
-func writeSiteArchives(tarWriter *tar.Writer, sites []siteArchive) error {
+func (s *Service) writeDockerArchive(ctx context.Context, tarWriter *tar.Writer, records []dockercontainer.Record, modTime time.Time) error {
+	if err := dockercontainer.Stop(ctx, records); err != nil {
+		resumeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		return errors.Join(fmt.Errorf("stop Docker containers for backup: %w", err), dockercontainer.Start(resumeCtx, records))
+	}
+
+	writeErr := s.writeDockerDataArchive(tarWriter)
+	if writeErr == nil {
+		writeErr = writeDockerContainerArchive(tarWriter, records, modTime)
+	}
+	resumeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	resumeErr := dockercontainer.Start(resumeCtx, records)
+	if writeErr != nil {
+		writeErr = fmt.Errorf("archive Docker data: %w", writeErr)
+	}
+	if resumeErr != nil {
+		resumeErr = fmt.Errorf("restart Docker containers after backup: %w", resumeErr)
+	}
+	return errors.Join(writeErr, resumeErr)
+}
+
+func (s *Service) writeSiteArchives(ctx context.Context, tarWriter *tar.Writer, sites []siteArchive) error {
+	quiescer, canQuiesce := s.pm2.(siteBackupQuiescer)
+	var paused []int
+	if canQuiesce && len(sites) > 0 {
+		var err error
+		paused, err = quiescer.PauseForBackup(ctx)
+		if err != nil {
+			return fmt.Errorf("pause site processes for backup: %w", err)
+		}
+	}
+
+	writeErr := writeSiteArchiveEntries(tarWriter, sites)
+	if len(paused) == 0 {
+		return writeErr
+	}
+	resumeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	resumeErr := quiescer.ResumeAfterBackup(resumeCtx, paused)
+	if resumeErr != nil {
+		resumeErr = fmt.Errorf("resume site processes after backup: %w", resumeErr)
+	}
+	return errors.Join(writeErr, resumeErr)
+}
+
+func writeSiteArchiveEntries(tarWriter *tar.Writer, sites []siteArchive) error {
 	for _, site := range sites {
 		err := filepath.WalkDir(site.RootPath, func(currentPath string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -1376,7 +1493,7 @@ func writeSiteArchives(tarWriter *tar.Writer, sites []siteArchive) error {
 			}
 
 			if samePath(currentPath, site.RootPath) {
-				return nil
+				return writeTarEntry(tarWriter, currentPath, filepath.Join("sites", site.Hostname), info)
 			}
 
 			relPath, err := filepath.Rel(site.RootPath, currentPath)
@@ -1709,7 +1826,7 @@ func hasPanelEntries(stagingPath, snapshotRelPath string) bool {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "manifest.json" || name == adminTLSArchiveDir || name == "docker" || name == "docker_volumes" || name == "sites" || name == "databases" {
+		if name == "manifest.json" || name == adminTLSArchiveDir || name == panelConfigArchiveDir || name == "docker" || name == "docker_volumes" || name == "sites" || name == "databases" {
 			continue
 		}
 		if snapshotRelPath != "" && filepath.Clean(filepath.FromSlash(snapshotRelPath)) == name {
@@ -1756,13 +1873,13 @@ func (s *Service) restorePanelFiles(stagingPath, snapshotRelPath string) error {
 			return fmt.Errorf("resolve restore path %q: %w", currentPath, err)
 		}
 		relativePath = filepath.ToSlash(relativePath)
-		if relativePath == "manifest.json" || relativePath == adminTLSArchiveDir || relativePath == "docker" || relativePath == "docker_volumes" || relativePath == "sites" || relativePath == "databases" {
+		if relativePath == "manifest.json" || relativePath == adminTLSArchiveDir || relativePath == panelConfigArchiveDir || relativePath == "docker" || relativePath == "docker_volumes" || relativePath == "sites" || relativePath == "databases" {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if strings.HasPrefix(relativePath, adminTLSArchiveDir+"/") || strings.HasPrefix(relativePath, "docker/") || strings.HasPrefix(relativePath, "docker_volumes/") || strings.HasPrefix(relativePath, "sites/") || strings.HasPrefix(relativePath, "databases/") {
+		if strings.HasPrefix(relativePath, adminTLSArchiveDir+"/") || strings.HasPrefix(relativePath, panelConfigArchiveDir+"/") || strings.HasPrefix(relativePath, "docker/") || strings.HasPrefix(relativePath, "docker_volumes/") || strings.HasPrefix(relativePath, "sites/") || strings.HasPrefix(relativePath, "databases/") {
 			if entry.IsDir() && (relativePath == "sites" || relativePath == "databases") {
 				return filepath.SkipDir
 			}
@@ -1807,6 +1924,23 @@ func (s *Service) restoreAdminTLS(stagingPath string) (bool, error) {
 	return true, nil
 }
 
+func (s *Service) restorePanelEnvironment(stagingPath string) (bool, error) {
+	payload, err := os.ReadFile(filepath.Join(stagingPath, filepath.FromSlash(panelEnvArchive)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read FlowPanel environment backup: %w", err)
+	}
+	if s.panelEnvPath == "" {
+		return false, fmt.Errorf("FlowPanel environment path is not configured")
+	}
+	if err := writeFileAtomic(s.panelEnvPath, payload, 0o600); err != nil {
+		return false, fmt.Errorf("restore FlowPanel environment file: %w", err)
+	}
+	return true, nil
+}
+
 func (s *Service) restoreDockerData(stagingPath string) (bool, error) {
 	sourceRoot := filepath.Join(stagingPath, "docker_volumes")
 	info, err := os.Stat(sourceRoot)
@@ -1847,6 +1981,7 @@ func (s *Service) restoreSiteArchives(stagingPath string) ([]string, error) {
 	}
 
 	restored := make([]string, 0, len(entries))
+	var restoreErrors []error
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -1859,24 +1994,28 @@ func (s *Service) restoreSiteArchives(stagingPath string) ([]string, error) {
 
 		targetRoot, err := s.siteRootPath(hostname)
 		if err != nil {
-			return restored, err
+			restoreErrors = append(restoreErrors, fmt.Errorf("restore site %q: %w", hostname, err))
+			continue
 		}
 		if err := os.MkdirAll(targetRoot, 0o755); err != nil {
-			return restored, fmt.Errorf("create site restore directory %q: %w", targetRoot, err)
+			restoreErrors = append(restoreErrors, fmt.Errorf("create site restore directory %q: %w", targetRoot, err))
+			continue
 		}
 		if err := clearDirectoryContents(targetRoot, nil); err != nil {
-			return restored, err
+			restoreErrors = append(restoreErrors, fmt.Errorf("clear site restore directory %q: %w", targetRoot, err))
+			continue
 		}
 
 		sourceRoot := filepath.Join(sitesPath, hostname)
 		if err := copyTreeContents(sourceRoot, targetRoot); err != nil {
-			return restored, err
+			restoreErrors = append(restoreErrors, fmt.Errorf("copy site restore directory %q: %w", targetRoot, err))
+			continue
 		}
 		restored = append(restored, hostname)
 	}
 
 	sort.Strings(restored)
-	return restored, nil
+	return restored, errors.Join(restoreErrors...)
 }
 
 func (s *Service) restoreDatabaseDumps(ctx context.Context, stagingPath string) ([]string, error) {
@@ -1893,6 +2032,7 @@ func (s *Service) restoreDatabaseDumps(ctx context.Context, stagingPath string) 
 	}
 
 	restored := make([]string, 0, len(entries))
+	var restoreErrors []error
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".sql") {
 			continue
@@ -1901,24 +2041,27 @@ func (s *Service) restoreDatabaseDumps(ctx context.Context, stagingPath string) 
 		databaseName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		dump, err := os.Open(filepath.Join(databasesPath, entry.Name()))
 		if err != nil {
-			return restored, fmt.Errorf("open restore database dump %q: %w", entry.Name(), err)
+			restoreErrors = append(restoreErrors, fmt.Errorf("open restore database dump %q: %w", entry.Name(), err))
+			continue
 		}
 		restoreErr := s.mariaDB.RestoreDatabase(ctx, databaseName, dump)
 		closeErr := dump.Close()
 		if restoreErr != nil {
-			return restored, fmt.Errorf("restore mariadb database %q: %w", databaseName, restoreErr)
+			restoreErrors = append(restoreErrors, fmt.Errorf("restore mariadb database %q: %w", databaseName, restoreErr))
+			continue
 		}
 		if closeErr != nil {
-			return restored, fmt.Errorf("close restore database dump %q: %w", entry.Name(), closeErr)
+			restoreErrors = append(restoreErrors, fmt.Errorf("close restore database dump %q: %w", entry.Name(), closeErr))
+			continue
 		}
 		restored = append(restored, databaseName)
 	}
 	if err := s.restoreDatabaseAccess(ctx, restored); err != nil {
-		return restored, err
+		restoreErrors = append(restoreErrors, err)
 	}
 
 	sort.Strings(restored)
-	return restored, nil
+	return restored, errors.Join(restoreErrors...)
 }
 
 func (s *Service) restoreDatabaseAccess(ctx context.Context, restored []string) error {
@@ -1933,15 +2076,16 @@ func (s *Service) restoreDatabaseAccess(ctx context.Context, restored []string) 
 	for _, name := range restored {
 		restoredSet[name] = struct{}{}
 	}
+	var accessErrors []error
 	for _, record := range records {
 		if _, ok := restoredSet[record.Name]; !ok || record.Username == "" || record.Password == "" {
 			continue
 		}
 		if err := s.mariaDB.RestoreDatabaseAccess(ctx, record); err != nil {
-			return err
+			accessErrors = append(accessErrors, fmt.Errorf("restore access for database %q: %w", record.Name, err))
 		}
 	}
-	return nil
+	return errors.Join(accessErrors...)
 }
 
 func (s *Service) siteRootPath(hostname string) (string, error) {
@@ -2165,23 +2309,24 @@ func clearDirectoryContents(root string, preserved map[string]struct{}) error {
 		return fmt.Errorf("read directory %q: %w", root, err)
 	}
 
+	var clearErrors []error
 	for _, entry := range entries {
 		currentPath := filepath.Join(root, entry.Name())
 		if shouldPreservePath(currentPath, preserved) {
 			if entry.IsDir() {
 				if err := clearDirectoryContents(currentPath, preserved); err != nil {
-					return err
+					clearErrors = append(clearErrors, err)
 				}
 			}
 			continue
 		}
 
 		if err := os.RemoveAll(currentPath); err != nil {
-			return fmt.Errorf("remove %q: %w", currentPath, err)
+			clearErrors = append(clearErrors, fmt.Errorf("remove %q: %w", currentPath, err))
 		}
 	}
 
-	return nil
+	return errors.Join(clearErrors...)
 }
 
 func shouldPreservePath(targetPath string, preserved map[string]struct{}) bool {
@@ -2204,9 +2349,14 @@ func shouldPreservePath(targetPath string, preserved map[string]struct{}) bool {
 }
 
 func copyTreeContents(sourceRoot, targetRoot string) error {
-	return filepath.WalkDir(sourceRoot, func(currentPath string, _ fs.DirEntry, walkErr error) error {
+	var copyErrors []error
+	walkErr := filepath.WalkDir(sourceRoot, func(currentPath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return fmt.Errorf("walk restore source: %w", walkErr)
+			copyErrors = append(copyErrors, fmt.Errorf("walk restore source %q: %w", currentPath, walkErr))
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if samePath(currentPath, sourceRoot) {
 			return nil
@@ -2214,11 +2364,19 @@ func copyTreeContents(sourceRoot, targetRoot string) error {
 
 		relativePath, err := filepath.Rel(sourceRoot, currentPath)
 		if err != nil {
-			return fmt.Errorf("resolve restore source path %q: %w", currentPath, err)
+			copyErrors = append(copyErrors, fmt.Errorf("resolve restore source path %q: %w", currentPath, err))
+			return nil
 		}
 		targetPath := filepath.Join(targetRoot, relativePath)
-		return copyPath(currentPath, targetPath)
+		if err := copyPath(currentPath, targetPath); err != nil {
+			copyErrors = append(copyErrors, err)
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+		}
+		return nil
 	})
+	return errors.Join(walkErr, errors.Join(copyErrors...))
 }
 
 func copyPath(sourcePath, targetPath string) error {

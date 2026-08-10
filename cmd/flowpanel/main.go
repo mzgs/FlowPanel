@@ -1632,6 +1632,7 @@ func runBackupCreateCommand(input backup.CreateInput) error {
 		googleDriveService,
 		pm2Manager,
 	)
+	backupService.SetPanelEnvironmentPath(installerEnvFilePath())
 
 	record, err := backupService.Create(ctx, input)
 	if err != nil {
@@ -1788,6 +1789,7 @@ func runServer() error {
 		googleDriveService,
 		pm2Manager,
 	)
+	backupService.SetPanelEnvironmentPath(installerEnvFilePath())
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
 		cfg.AdminListenAddr,

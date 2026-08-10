@@ -1205,7 +1205,7 @@ export function BackupsPage() {
         title="Restore backup"
         desc={
           confirmRestoreRecord
-            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel and admin TLS files, Docker data, site files, and databases, restarts Caddy, and recreates Docker containers with their saved environment variable values.`
+            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel files, FlowPanel environment configuration, admin TLS files, Docker data, site files, and databases, restarts Caddy, and recreates Docker containers with their saved environment variable values.`
             : "Restore this backup?"
         }
         confirmText={

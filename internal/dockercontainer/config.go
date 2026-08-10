@@ -143,6 +143,7 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string, repo
 		image  string
 	}
 	prepared := make([]restoreRecord, 0, len(records))
+	var restoreErrors []error
 	for _, record := range records {
 		item := restoreRecord{
 			record: record,
@@ -150,7 +151,8 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string, repo
 			image:  strings.TrimSpace(record.Config.Image),
 		}
 		if item.name == "" || item.image == "" {
-			return nil, errors.New("Docker backup contains an invalid container definition")
+			restoreErrors = append(restoreErrors, errors.New("Docker backup contains an invalid container definition"))
+			continue
 		}
 		prepared = append(prepared, item)
 	}
@@ -158,8 +160,10 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string, repo
 	progressFor := func(index int, item restoreRecord, pulling bool) RestoreProgress {
 		return RestoreProgress{Container: item.name, Image: item.image, Current: index + 1, Total: len(prepared), Pulling: pulling}
 	}
+	available := make([]restoreRecord, 0, len(prepared))
 	for index, item := range prepared {
 		if _, err := dockerOutput(ctx, "image", "inspect", item.image); err == nil {
+			available = append(available, item)
 			continue
 		}
 		progress := progressFor(index, item, true)
@@ -172,12 +176,14 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string, repo
 			}
 		}, "pull", item.image)
 		if pullErr != nil {
-			return nil, fmt.Errorf("restore Docker image %q: %w", item.image, pullErr)
+			restoreErrors = append(restoreErrors, fmt.Errorf("restore Docker image %q: %w", item.image, pullErr))
+			continue
 		}
+		available = append(available, item)
 	}
 
-	restored := make([]string, 0, len(prepared))
-	for index, item := range prepared {
+	restored := make([]string, 0, len(available))
+	for index, item := range available {
 		progress := progressFor(index, item, false)
 		if report != nil {
 			report(progress)
@@ -185,26 +191,30 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string, repo
 		if network := strings.TrimSpace(item.record.HostConfig.NetworkMode); isCustomNetwork(network) {
 			if _, err := dockerOutput(ctx, "network", "inspect", network); err != nil {
 				if _, createErr := dockerOutput(ctx, "network", "create", network); createErr != nil {
-					return restored, fmt.Errorf("restore Docker network %q: %w", network, createErr)
+					restoreErrors = append(restoreErrors, fmt.Errorf("restore Docker network %q: %w", network, createErr))
+					continue
 				}
 			}
 		}
 		_, _ = dockerOutput(ctx, "rm", "-f", item.name)
 		containerID, err := dockerOutput(ctx, CreateArgs(item.record)...)
 		if err != nil {
-			return restored, fmt.Errorf("restore Docker container %q: %w", item.name, err)
+			restoreErrors = append(restoreErrors, fmt.Errorf("restore Docker container %q: %w", item.name, err))
+			continue
 		}
 		if err := PrepareManagedVolumePermissions(ctx, item.record, managedDataRoot); err != nil {
-			return restored, fmt.Errorf("prepare restored Docker container %q data: %w", item.name, err)
+			restoreErrors = append(restoreErrors, fmt.Errorf("prepare restored Docker container %q data: %w", item.name, err))
+			continue
 		}
 		if item.record.State.Running {
 			if _, err := dockerOutput(ctx, "start", strings.TrimSpace(containerID)); err != nil {
-				return restored, fmt.Errorf("start restored Docker container %q: %w", item.name, err)
+				restoreErrors = append(restoreErrors, fmt.Errorf("start restored Docker container %q: %w", item.name, err))
+				continue
 			}
 		}
 		restored = append(restored, item.name)
 	}
-	return restored, nil
+	return restored, errors.Join(restoreErrors...)
 }
 
 func PrepareManagedVolumePermissions(ctx context.Context, record Record, root string) error {
@@ -283,19 +293,45 @@ func Stop(ctx context.Context, records []Record) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return errors.New("Docker is not installed on this server")
 	}
+	var stopErrors []error
 	for _, record := range records {
 		name := strings.TrimPrefix(strings.TrimSpace(record.Name), "/")
 		if name == "" {
-			return errors.New("Docker backup contains an invalid container definition")
+			stopErrors = append(stopErrors, errors.New("Docker backup contains an invalid container definition"))
+			continue
 		}
 		if _, err := dockerOutput(ctx, "container", "inspect", name); err != nil {
 			continue
 		}
 		if _, err := dockerOutput(ctx, "stop", name); err != nil {
-			return fmt.Errorf("stop Docker container %q before restore: %w", name, err)
+			stopErrors = append(stopErrors, fmt.Errorf("stop Docker container %q: %w", name, err))
 		}
 	}
-	return nil
+	return errors.Join(stopErrors...)
+}
+
+func Start(ctx context.Context, records []Record) error {
+	if len(records) == 0 {
+		return nil
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		return errors.New("Docker is not installed on this server")
+	}
+	var startErrors []error
+	for _, record := range records {
+		if !record.State.Running {
+			continue
+		}
+		name := strings.TrimPrefix(strings.TrimSpace(record.Name), "/")
+		if name == "" {
+			startErrors = append(startErrors, errors.New("Docker backup contains an invalid container definition"))
+			continue
+		}
+		if _, err := dockerOutput(ctx, "start", name); err != nil {
+			startErrors = append(startErrors, fmt.Errorf("restart Docker container %q after backup: %w", name, err))
+		}
+	}
+	return errors.Join(startErrors...)
 }
 
 func CreateArgs(record Record) []string {

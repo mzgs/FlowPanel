@@ -107,6 +107,8 @@ func writeBackupError(w stdhttp.ResponseWriter, err error) {
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid backup archive"})
 	case errors.Is(err, backup.ErrAlreadyExists):
 		writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "backup already exists"})
+	case errors.Is(err, backup.ErrOperationActive):
+		writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})
 	case errors.Is(err, backup.ErrInvalidLocation):
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid backup location"})
 	default:
