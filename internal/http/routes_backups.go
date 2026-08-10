@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"flowpanel/internal/alerts"
 	"flowpanel/internal/backup"
@@ -18,6 +19,53 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
+
+type backupCreateJob struct {
+	ID        string         `json:"id"`
+	Done      bool           `json:"done"`
+	Backup    *backup.Record `json:"backup,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	createdAt time.Time
+}
+
+func (a *apiRoutes) beginBackupCreate() (backupCreateJob, bool) {
+	a.backupCreateMu.Lock()
+	defer a.backupCreateMu.Unlock()
+	if a.backupCreateRunning {
+		return backupCreateJob{}, false
+	}
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for id, job := range a.backupCreateJobs {
+		if job.Done && job.createdAt.Before(cutoff) {
+			delete(a.backupCreateJobs, id)
+		}
+	}
+	job := backupCreateJob{ID: strconv.FormatInt(time.Now().UnixNano(), 36), createdAt: time.Now()}
+	a.backupCreateJobs[job.ID] = job
+	a.backupCreateRunning = true
+	return job, true
+}
+
+func (a *apiRoutes) finishBackupCreate(id string, record backup.Record, err error) {
+	a.backupCreateMu.Lock()
+	job := a.backupCreateJobs[id]
+	job.Done = true
+	if err != nil {
+		job.Error = err.Error()
+	} else {
+		job.Backup = &record
+	}
+	a.backupCreateJobs[id] = job
+	a.backupCreateRunning = false
+	a.backupCreateMu.Unlock()
+}
+
+func (a *apiRoutes) backupCreateJob(id string) (backupCreateJob, bool) {
+	a.backupCreateMu.Lock()
+	defer a.backupCreateMu.Unlock()
+	job, ok := a.backupCreateJobs[id]
+	return job, ok
+}
 
 func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 	backupsListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -85,25 +133,37 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		input.DatabaseNames = payload.DatabaseNames
 		input.Location = payload.Location
 
-		record, err := a.app.Backups.Create(r.Context(), input)
-		if err != nil {
-			var validation backup.ValidationErrors
-			if errors.As(err, &validation) {
-				writeValidationFailed(w, map[string]string(validation))
-				return
-			}
-			a.app.Logger.Error("create backup failed", zap.Error(err))
-			a.mutationEvent(r.Context(), "backups", "create", "backup", "backup", "FlowPanel backup", "failed", "Failed to create a backup archive.")
-			a.triggerAlert(r.Context(), alerts.TriggerInput{Key: "backup:manual", Severity: "critical", Title: "Backup failed", Message: err.Error()})
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": err.Error()})
+		job, started := a.beginBackupCreate()
+		if !started {
+			writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "a backup is already being created"})
 			return
 		}
-
-		a.mutationEvent(r.Context(), "backups", "create", "backup", record.Name, record.Name, "succeeded", fmt.Sprintf("Created backup %q.", record.Name))
-		a.resolveAlert(r.Context(), "backup:manual")
-		writeJSON(w, stdhttp.StatusCreated, map[string]any{"backup": record})
+		go func() {
+			jobCtx := context.Background()
+			record, err := a.app.Backups.Create(jobCtx, input)
+			if err != nil {
+				a.app.Logger.Error("create backup failed", zap.Error(err))
+				a.mutationEvent(jobCtx, "backups", "create", "backup", "backup", "FlowPanel backup", "failed", fmt.Sprintf("Failed to create a backup archive: %v", err))
+				a.triggerAlert(jobCtx, alerts.TriggerInput{Key: "backup:manual", Severity: "critical", Title: "Backup failed", Message: err.Error()})
+			} else {
+				a.mutationEvent(jobCtx, "backups", "create", "backup", record.Name, record.Name, "succeeded", fmt.Sprintf("Created backup %q.", record.Name))
+				a.resolveAlert(jobCtx, "backup:manual")
+			}
+			a.finishBackupCreate(job.ID, record, err)
+		}()
+		writeJSON(w, stdhttp.StatusAccepted, map[string]any{"job": job})
 	})
 	r.Method(stdhttp.MethodPost, "/backups", backupsCreateHandler)
+
+	backupsCreateJobHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		job, ok := a.backupCreateJob(strings.TrimSpace(chi.URLParam(r, "jobID")))
+		if !ok {
+			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "backup creation job not found"})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"job": job})
+	})
+	r.Method(stdhttp.MethodGet, "/backups/create-jobs/{jobID}", backupsCreateJobHandler)
 
 	backupsScheduleListHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app.Cron == nil {
@@ -410,18 +470,25 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			return
 		}
 		location := readBackupLocation(r)
-		result, err := a.app.Backups.Restore(r.Context(), name, location)
+		if !a.beginBackupRestore() {
+			writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "a backup restore is already running"})
+			return
+		}
+		defer a.endBackupRestore()
+
+		restoreCtx := backgroundRequestContext(r.Context())
+		result, err := a.app.Backups.Restore(restoreCtx, name, location)
 		if err != nil {
 			if errors.Is(err, backup.ErrInvalidLocation) {
 				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid backup location"})
 			} else {
 				writeBackupError(w, err)
 			}
-			a.recordBackupRestoreFailure(r.Context(), name, err)
+			a.recordBackupRestoreFailure(restoreCtx, name, err)
 			return
 		}
 
-		result = a.finalizeBackupRestore(r.Context(), name, result)
+		result = a.finalizeBackupRestore(restoreCtx, name, result)
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"restore": result})
 	})
 	r.Method(stdhttp.MethodPost, "/backups/{backupName}/restore", backupsRestoreHandler)
@@ -437,6 +504,11 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			writeBackupError(w, err)
 			return
 		}
+		if !a.beginBackupRestore() {
+			writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "a backup restore is already running"})
+			return
+		}
+		location := readBackupLocation(r)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -449,21 +521,51 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 				flusher.Flush()
 			}
 		}
-		result, err := manager.RestoreWithProgress(r.Context(), name, readBackupLocation(r), func(progress backup.RestoreProgress) {
-			emit(map[string]any{"progress": progress})
-		})
-		if err != nil {
-			a.recordBackupRestoreFailure(r.Context(), name, err)
-			emit(map[string]any{"error": "Failed to restore backup."})
-			return
+		type restoreOutcome struct {
+			result backup.RestoreResult
+			err    error
 		}
+		progress := make(chan backup.RestoreProgress, 16)
+		outcome := make(chan restoreOutcome, 1)
+		go func() {
+			defer a.endBackupRestore()
+			restoreCtx := context.Background()
+			result, err := manager.RestoreWithProgress(restoreCtx, name, location, func(update backup.RestoreProgress) {
+				select {
+				case progress <- update:
+				default:
+				}
+			})
+			if err != nil {
+				a.recordBackupRestoreFailure(restoreCtx, name, err)
+				outcome <- restoreOutcome{err: err}
+				return
+			}
+			select {
+			case progress <- backup.RestoreProgress{Label: "Finalizing restore…", Percent: 95}:
+			default:
+			}
+			outcome <- restoreOutcome{result: a.finalizeBackupRestore(restoreCtx, name, result)}
+		}()
 
-		emit(map[string]any{"progress": backup.RestoreProgress{Label: "Finalizing restore…", Percent: 95}})
-		result = a.finalizeBackupRestore(r.Context(), name, result)
-		emit(map[string]any{
-			"progress": backup.RestoreProgress{Label: "Restore complete", Percent: 100},
-			"restore":  result,
-		})
+		for {
+			select {
+			case update := <-progress:
+				emit(map[string]any{"progress": update})
+			case completed := <-outcome:
+				if completed.err != nil {
+					emit(map[string]any{"error": "Failed to restore backup."})
+					return
+				}
+				emit(map[string]any{
+					"progress": backup.RestoreProgress{Label: "Restore complete", Percent: 100},
+					"restore":  completed.result,
+				})
+				return
+			case <-r.Context().Done():
+				return
+			}
+		}
 	})
 	r.Method(stdhttp.MethodPost, "/backups/{backupName}/restore-progress", backupsRestoreProgressHandler)
 }

@@ -64,6 +64,15 @@ type BackupPayload = {
   backup: BackupRecord;
 };
 
+type BackupCreateJobPayload = {
+  job: {
+    id: string;
+    done: boolean;
+    backup?: BackupRecord;
+    error?: string;
+  };
+};
+
 type ScheduledBackupPayload = {
   schedule: ScheduledBackupRecord;
 };
@@ -86,6 +95,32 @@ export type BackupRestoreProgress = {
   percent: number;
 };
 
+export type BackupBackgroundActivities = {
+  create?: { id: string };
+  restore?: { id: string; progress: BackupRestoreProgress };
+};
+
+let backgroundActivities: BackupBackgroundActivities = {};
+const backgroundActivityListeners = new Set<() => void>();
+
+function setBackgroundActivity(
+  kind: keyof BackupBackgroundActivities,
+  activity: BackupBackgroundActivities[typeof kind],
+) {
+  backgroundActivities = { ...backgroundActivities, [kind]: activity };
+  if (!activity) delete backgroundActivities[kind];
+  backgroundActivityListeners.forEach((listener) => listener());
+}
+
+export function subscribeBackupBackgroundActivities(listener: () => void) {
+  backgroundActivityListeners.add(listener);
+  return () => backgroundActivityListeners.delete(listener);
+}
+
+export function getBackupBackgroundActivities() {
+  return backgroundActivities;
+}
+
 export async function fetchBackups(): Promise<BackupsPayload> {
   const response = await fetch("/api/backups", {
     credentials: "include",
@@ -99,6 +134,9 @@ export async function fetchBackups(): Promise<BackupsPayload> {
 }
 
 export async function createBackup(input: CreateBackupInput): Promise<BackupRecord> {
+  if (backgroundActivities.create) {
+    throw new Error("A backup is already being created.");
+  }
   const response = await fetch("/api/backups", {
     method: "POST",
     credentials: "include",
@@ -112,8 +150,33 @@ export async function createBackup(input: CreateBackupInput): Promise<BackupReco
     throw await readBackupApiError(response, "create backup");
   }
 
-  const payload = (await response.json()) as BackupPayload;
-  return payload.backup;
+  const payload = (await response.json()) as Partial<BackupPayload> &
+    BackupCreateJobPayload;
+  if (payload.backup) return payload.backup;
+  if (!payload.job?.id) throw new Error("Create backup returned an invalid response.");
+
+  const activity = { id: payload.job.id };
+  setBackgroundActivity("create", activity);
+  try {
+    while (true) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      const statusResponse = await fetch(
+        `/api/backups/create-jobs/${encodeURIComponent(payload.job.id)}`,
+        { credentials: "include" },
+      );
+      if (!statusResponse.ok) {
+        throw await readBackupApiError(statusResponse, "check backup creation");
+      }
+      const status = (await statusResponse.json()) as BackupCreateJobPayload;
+      if (status.job.error) throw new Error(status.job.error);
+      if (status.job.backup) return status.job.backup;
+      if (status.job.done) throw new Error("Backup creation finished without an archive.");
+    }
+  } finally {
+    if (getBackupBackgroundActivities().create?.id === activity.id) {
+      setBackgroundActivity("create", undefined);
+    }
+  }
 }
 
 export async function fetchScheduledBackups(): Promise<ScheduledBackupsPayload> {
@@ -212,48 +275,66 @@ export async function restoreBackup(
   location: BackupRecord["location"],
   onProgress?: (progress: BackupRestoreProgress) => void,
 ): Promise<RestoreBackupResult> {
-  const response = await fetch(
-    `/api/backups/${encodeURIComponent(id)}/restore-progress?location=${encodeURIComponent(location)}`,
-    {
-      method: "POST",
-      credentials: "include",
-    },
-  );
-
-  if (!response.ok) {
-    throw await readBackupApiError(response, "restore backup");
+  if (backgroundActivities.restore) {
+    throw new Error("A backup restore is already running.");
   }
-
-  if (!response.body) {
-    throw new Error("Restore backup returned an empty response.");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let result: RestoreBackupResult | undefined;
-  const consumeLine = (line: string) => {
-    if (!line.trim()) return;
-    const event = JSON.parse(line) as RestoreBackupPayload & {
-      progress?: BackupRestoreProgress;
-      error?: string;
-    };
-    if (event.error) throw new Error(event.error);
-    if (event.progress) onProgress?.(event.progress);
-    if (event.restore) result = event.restore;
+  const activityId = `${location}:${id}:${Date.now()}`;
+  const reportProgress = (progress: BackupRestoreProgress) => {
+    setBackgroundActivity("restore", { id: activityId, progress });
+    onProgress?.(progress);
   };
+  reportProgress({ label: "Preparing restore…", percent: 0 });
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    lines.forEach(consumeLine);
-    if (done) break;
+  try {
+    const response = await fetch(
+      `/api/backups/${encodeURIComponent(id)}/restore-progress?location=${encodeURIComponent(location)}`,
+      {
+        method: "POST",
+        credentials: "include",
+      },
+    );
+
+    if (!response.ok) {
+      throw await readBackupApiError(response, "restore backup");
+    }
+
+    if (!response.body) {
+      throw new Error("Restore backup returned an empty response.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result: RestoreBackupResult | undefined;
+    const consumeLine = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as RestoreBackupPayload & {
+        progress?: BackupRestoreProgress;
+        error?: string;
+      };
+      if (event.error) throw new Error(event.error);
+      if (event.progress) reportProgress(event.progress);
+      if (event.restore) result = event.restore;
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      lines.forEach(consumeLine);
+      if (done) break;
+    }
+    consumeLine(buffer);
+    if (!result) {
+      throw new Error("Restore backup returned an invalid response.");
+    }
+    return result;
+  } finally {
+    if (getBackupBackgroundActivities().restore?.id === activityId) {
+      setBackgroundActivity("restore", undefined);
+    }
   }
-  consumeLine(buffer);
-  if (!result) throw new Error("Restore backup returned an invalid response.");
-  return result;
 }
 
 export function getBackupDownloadUrl(id: string, location: BackupRecord["location"]) {

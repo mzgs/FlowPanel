@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   createScheduledBackup,
   createBackup,
@@ -7,9 +7,11 @@ import {
   deleteBackup,
   fetchBackups,
   fetchScheduledBackups,
+  getBackupBackgroundActivities,
   getBackupDownloadUrl,
   importBackup,
   restoreBackup,
+  subscribeBackupBackgroundActivities,
   type BackupRecord,
   type BackupRestoreProgress,
   type BackupUploadProgress,
@@ -161,7 +163,7 @@ function BackupImportProgress({ progress }: { progress: BackupUploadProgress }) 
 
 function BackupRestoreProgressRow({ progress }: { progress: BackupRestoreProgress }) {
   return (
-    <div className="flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
+    <div className="mb-3 flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
       <span className="shrink-0 font-medium text-[var(--app-text)]">
         {progress.label}
       </span>
@@ -181,6 +183,25 @@ function BackupRestoreProgressRow({ progress }: { progress: BackupRestoreProgres
       <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
         {progress.percent}%
       </span>
+    </div>
+  );
+}
+
+function BackupCreateProgressRow() {
+  return (
+    <div className="mb-3 flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
+      <span className="shrink-0 font-medium text-[var(--app-text)]">
+        Creating backup…
+      </span>
+      <div
+        role="progressbar"
+        aria-label="Backup creation progress"
+        aria-valuetext="Creating backup"
+        className="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-[var(--app-surface-muted)]"
+      >
+        <div className="h-full w-full animate-pulse rounded-full bg-[var(--app-accent)]" />
+      </div>
+      <span className="shrink-0 text-[var(--app-text-muted)]">Working</span>
     </div>
   );
 }
@@ -238,6 +259,17 @@ export function BackupsPage() {
   const [schedulerStarted, setSchedulerStarted] = useState(false);
   const restoredTimeoutRef = useRef<number | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const backgroundActivities = useSyncExternalStore(
+    subscribeBackupBackgroundActivities,
+    getBackupBackgroundActivities,
+    getBackupBackgroundActivities,
+  );
+  const previousBackgroundActivitiesRef = useRef(backgroundActivities);
+  const creatingActive = creating || Boolean(backgroundActivities.create);
+  const restoringActive =
+    restoringBackupKey !== null || Boolean(backgroundActivities.restore);
+  const visibleRestoreProgress =
+    restoreProgress ?? backgroundActivities.restore?.progress ?? null;
 
   const hasSelectedScope =
     scope.include_panel_data ||
@@ -285,6 +317,17 @@ export function BackupsPage() {
   useEffect(() => {
     void loadBackups();
   }, []);
+
+  useEffect(() => {
+    const previous = previousBackgroundActivitiesRef.current;
+    if (
+      (previous.create && !backgroundActivities.create) ||
+      (previous.restore && !backgroundActivities.restore)
+    ) {
+      void loadBackups();
+    }
+    previousBackgroundActivitiesRef.current = backgroundActivities;
+  }, [backgroundActivities]);
 
   useEffect(() => {
     let active = true;
@@ -351,6 +394,7 @@ export function BackupsPage() {
 
     setCreateDialogError(null);
     setCreating(true);
+    setCreateDialogOpen(false);
 
     try {
       const record = await createBackup(scope);
@@ -362,14 +406,13 @@ export function BackupsPage() {
       ]);
       setLoadError(null);
       setCreateDialogError(null);
-      setCreateDialogOpen(false);
       toast.success(
         record.location === "google_drive"
           ? `Uploaded backup ${record.name} to Google Drive.`
           : `Created backup ${record.name}.`,
       );
     } catch (error) {
-      setCreateDialogError(getErrorMessage(error, "Failed to create backup."));
+      toast.error(getErrorMessage(error, "Failed to create backup."));
     } finally {
       setCreating(false);
     }
@@ -482,7 +525,7 @@ export function BackupsPage() {
   }
 
   function handleRestoreBackup(record: BackupRecord) {
-    if (restoringBackupKey !== null || deletingBackupKey !== null) {
+    if (creatingActive || restoringActive || deletingBackupKey !== null) {
       return;
     }
 
@@ -501,6 +544,7 @@ export function BackupsPage() {
     setRestoringBackupKey(backupKey);
     setRestoredBackupKey(null);
     setRestoreProgress({ label: "Preparing restore…", percent: 0 });
+    setConfirmRestoreRecord(null);
 
     try {
       const result = await restoreBackup(
@@ -533,9 +577,6 @@ export function BackupsPage() {
     } finally {
       setRestoringBackupKey(null);
       setRestoreProgress(null);
-      setConfirmRestoreRecord((current) =>
-        current && getBackupKey(current) === backupKey ? null : current,
-      );
     }
   }
 
@@ -593,7 +634,7 @@ export function BackupsPage() {
               type="button"
               variant="outline"
               onClick={handleOpenImportDialog}
-              disabled={importing}
+              disabled={importing || creatingActive || restoringActive}
               className={toolbarButtonClassName}
             >
               {importing ? (
@@ -607,6 +648,7 @@ export function BackupsPage() {
               type="button"
               variant="outline"
               onClick={() => setScheduleDialogOpen(true)}
+              disabled={creatingActive || restoringActive}
               className={toolbarButtonClassName}
             >
               <Clock className="h-4 w-4" />
@@ -615,6 +657,7 @@ export function BackupsPage() {
             <Button
               type="button"
               onClick={() => setCreateDialogOpen(true)}
+              disabled={creatingActive || restoringActive}
               className={toolbarPrimaryButtonClassName}
             >
               <HardDrive className="h-4 w-4" />
@@ -837,16 +880,16 @@ export function BackupsPage() {
               type="button"
               variant="outline"
               onClick={() => setCreateDialogOpen(false)}
-              disabled={creating}
+              disabled={creatingActive}
             >
               Cancel
             </Button>
             <Button
               type="button"
               onClick={() => void handleCreateBackup()}
-              disabled={creating || !hasSelectedScope || !canUseCreateLocation}
+              disabled={creatingActive || !hasSelectedScope || !canUseCreateLocation}
             >
-              {creating ? (
+              {creatingActive ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : (
                 <HardDrive className="h-4 w-4" />
@@ -1122,7 +1165,7 @@ export function BackupsPage() {
       <ActionConfirmDialog
         open={confirmRestoreRecord !== null}
         onOpenChange={(open) => {
-          if (!open && restoringBackupKey === null) {
+          if (!open) {
             setConfirmRestoreRecord(null);
           }
         }}
@@ -1133,19 +1176,11 @@ export function BackupsPage() {
             : "Restore this backup?"
         }
         confirmText="Restore backup"
-        isLoading={
-          confirmRestoreRecord !== null &&
-          restoringBackupKey === getBackupKey(confirmRestoreRecord)
-        }
         handleConfirm={() => {
           void confirmRestoreBackup();
         }}
         className="sm:max-w-2xl"
-      >
-        {restoreProgress ? (
-          <BackupRestoreProgressRow progress={restoreProgress} />
-        ) : null}
-      </ActionConfirmDialog>
+      />
 
       <ActionConfirmDialog
         open={confirmDeleteRecord !== null}
@@ -1198,6 +1233,10 @@ export function BackupsPage() {
       />
 
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
+        {creatingActive ? <BackupCreateProgressRow /> : null}
+        {visibleRestoreProgress ? (
+          <BackupRestoreProgressRow progress={visibleRestoreProgress} />
+        ) : null}
         {importProgress ? (
           <BackupImportProgress progress={importProgress} />
         ) : null}
@@ -1265,7 +1304,7 @@ export function BackupsPage() {
                             variant="outline"
                             size="icon"
                             onClick={() => handleRestoreBackup(backup)}
-                            disabled={restoring || deleting}
+                            disabled={creatingActive || restoringActive || deleting}
                             className={tableActionButtonClassName}
                             aria-label={`Restore ${backup.name}`}
                             title={`Restore ${backup.name}`}

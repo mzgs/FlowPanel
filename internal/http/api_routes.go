@@ -27,15 +27,37 @@ import (
 type apiRoutes struct {
 	app                     *app.App
 	runtimeActions          *runtimeActionTracker
+	backupCreateMu          sync.Mutex
+	backupCreateRunning     bool
+	backupCreateJobs        map[string]backupCreateJob
+	backupRestoreMu         sync.Mutex
+	backupRestoreRunning    bool
 	githubWebhookMu         sync.Mutex
 	githubWebhookDeliveries map[string]time.Time
 	githubWebhooksInFlight  map[string]struct{}
+}
+
+func (a *apiRoutes) beginBackupRestore() bool {
+	a.backupRestoreMu.Lock()
+	defer a.backupRestoreMu.Unlock()
+	if a.backupRestoreRunning {
+		return false
+	}
+	a.backupRestoreRunning = true
+	return true
+}
+
+func (a *apiRoutes) endBackupRestore() {
+	a.backupRestoreMu.Lock()
+	a.backupRestoreRunning = false
+	a.backupRestoreMu.Unlock()
 }
 
 func newAPIRoutes(app *app.App) *apiRoutes {
 	return &apiRoutes{
 		app:                     app,
 		runtimeActions:          newRuntimeActionTracker(),
+		backupCreateJobs:        make(map[string]backupCreateJob),
 		githubWebhookDeliveries: make(map[string]time.Time),
 		githubWebhooksInFlight:  make(map[string]struct{}),
 	}
