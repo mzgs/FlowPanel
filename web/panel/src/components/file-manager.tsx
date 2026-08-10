@@ -8,6 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   ArrowUp,
   Clipboard,
@@ -88,13 +89,7 @@ import { cn, getErrorMessage } from "@/lib/utils";
 type ViewMode = "list" | "grid";
 type DialogMode = "folder" | "file" | "rename" | null;
 type ClipboardMode = "copy" | "move" | null;
-type FlashTone = "success" | "error";
 type UploadProgressState = FileUploadProgress & { fileCount: number };
-
-type FlashMessage = {
-  tone: FlashTone;
-  text: string;
-};
 
 type MarqueeState = {
   active: boolean;
@@ -300,21 +295,6 @@ function isValidPermissionValue(value: string) {
   return /^[0-7]{3,4}$/.test(value.trim());
 }
 
-function FlashBanner({ flash }: { flash: FlashMessage }) {
-  return (
-    <div
-      className={cn(
-        "rounded-[12px] border px-4 py-3 text-[13px]",
-        flash.tone === "success"
-          ? "border-[var(--app-ok)]/30 bg-[var(--app-ok-soft)] text-[var(--app-text)]"
-          : "border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] text-[var(--app-text)]",
-      )}
-    >
-      {flash.text}
-    </div>
-  );
-}
-
 function UploadProgressBanner({ progress }: { progress: UploadProgressState }) {
   const percent =
     progress.total > 0 ? Math.min(100, Math.floor((progress.loaded / progress.total) * 100)) : 0;
@@ -406,7 +386,6 @@ export function FileManager({
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [dialogValue, setDialogValue] = useState("");
   const [confirmDeletePaths, setConfirmDeletePaths] = useState<string[]>([]);
-  const [flash, setFlash] = useState<FlashMessage | null>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
   const [clipboardMode, setClipboardMode] = useState<ClipboardMode>(null);
   const [clipboardPaths, setClipboardPaths] = useState<string[]>([]);
@@ -444,15 +423,6 @@ export function FileManager({
     const timer = window.setTimeout(() => void loadFileEditor(), 300);
     return () => window.clearTimeout(timer);
   }, []);
-
-  useEffect(() => {
-    if (!flash || flash.tone === "error") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => setFlash(null), 3000);
-    return () => window.clearTimeout(timer);
-  }, [flash]);
 
   const listingQuery = useQuery({
     queryKey: ["files", currentPath],
@@ -608,7 +578,7 @@ export function FileManager({
       if (meta && event.key.toLowerCase() === "c" && selectedPaths.length > 0) {
         setClipboardMode("copy");
         setClipboardPaths(selectedPaths);
-        setFlash({ tone: "success", text: `Copied ${selectedPaths.length} item(s) to the panel clipboard.` });
+        toast.success(`Copied ${selectedPaths.length} item(s) to the panel clipboard.`);
         event.preventDefault();
         return;
       }
@@ -616,7 +586,7 @@ export function FileManager({
       if (meta && event.key.toLowerCase() === "x" && selectedPaths.length > 0) {
         setClipboardMode("move");
         setClipboardPaths(selectedPaths);
-        setFlash({ tone: "success", text: `Cut ${selectedPaths.length} item(s).` });
+        toast.success(`Cut ${selectedPaths.length} item(s).`);
         event.preventDefault();
         return;
       }
@@ -712,10 +682,10 @@ export function FileManager({
       await invalidateCurrentListing();
       setDialogMode(null);
       setDialogValue("");
-      setFlash({ tone: "success", text: "Folder created." });
+      toast.success("Folder created.");
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to create folder.") });
+      toast.error(getErrorMessage(error, "Failed to create folder."));
     },
   });
 
@@ -725,10 +695,10 @@ export function FileManager({
       await invalidateCurrentListing();
       setDialogMode(null);
       setDialogValue("");
-      setFlash({ tone: "success", text: "File created." });
+      toast.success("File created.");
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to create file.") });
+      toast.error(getErrorMessage(error, "Failed to create file."));
     },
   });
 
@@ -740,10 +710,10 @@ export function FileManager({
       setAnchorPath(nextPath);
       setDialogMode(null);
       setDialogValue("");
-      setFlash({ tone: "success", text: "Entry renamed." });
+      toast.success("Entry renamed.");
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to rename entry.") });
+      toast.error(getErrorMessage(error, "Failed to rename entry."));
     },
   });
 
@@ -759,7 +729,7 @@ export function FileManager({
       setAnchorPath(null);
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to delete selection.") });
+      toast.error(getErrorMessage(error, "Failed to delete selection."));
     },
     onSettled: () => {
       setConfirmDeletePaths([]);
@@ -769,7 +739,6 @@ export function FileManager({
   const uploadMutation = useMutation({
     mutationFn: ({ path, files }: { path: string; files: File[] }) => {
       const fileCount = files.length;
-      setFlash(null);
       setUploadProgress({
         loaded: 0,
         total: files.reduce((total, file) => total + file.size, 0),
@@ -781,10 +750,10 @@ export function FileManager({
       await invalidateCurrentListing();
       setDropTargetPath(null);
       setRootDropActive(false);
-      setFlash({ tone: "success", text: "Upload complete." });
+      toast.success("Upload complete.");
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to upload files.") });
+      toast.error(getErrorMessage(error, "Failed to upload files."));
     },
     onSettled: () => setUploadProgress(null),
   });
@@ -796,10 +765,10 @@ export function FileManager({
       await invalidateCurrentListing();
       setSelectedPaths([archivePath]);
       setAnchorPath(archivePath);
-      setFlash({ tone: "success", text: "Archive created." });
+      toast.success("Archive created.");
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to create archive.") });
+      toast.error(getErrorMessage(error, "Failed to create archive."));
     },
   });
 
@@ -807,10 +776,10 @@ export function FileManager({
     mutationFn: (path: string) => extractArchive(path),
     onSuccess: async () => {
       await invalidateCurrentListing();
-      setFlash({ tone: "success", text: "Archive extracted." });
+      toast.success("Archive extracted.");
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to extract archive.") });
+      toast.error(getErrorMessage(error, "Failed to extract archive."));
     },
   });
 
@@ -824,13 +793,10 @@ export function FileManager({
       setAnchorPath(null);
       setClipboardMode(null);
       setClipboardPaths([]);
-      setFlash({
-        tone: "success",
-        text: variables.mode === "copy" ? "Selection copied." : "Selection moved.",
-      });
+      toast.success(variables.mode === "copy" ? "Selection copied." : "Selection moved.");
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to transfer selection.") });
+      toast.error(getErrorMessage(error, "Failed to transfer selection."));
     },
   });
 
@@ -841,13 +807,12 @@ export function FileManager({
       setPermissionTarget(null);
       setPermissionValue("");
       setPermissionRecursive(false);
-      setFlash({
-        tone: "success",
-        text: variables.recursive ? "Permissions updated recursively." : "Permissions updated.",
-      });
+      toast.success(
+        variables.recursive ? "Permissions updated recursively." : "Permissions updated.",
+      );
     },
     onError: (error) => {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to update permissions.") });
+      toast.error(getErrorMessage(error, "Failed to update permissions."));
     },
   });
 
@@ -956,7 +921,7 @@ export function FileManager({
     }
 
     if (item.type === "symlink") {
-      setFlash({ tone: "error", text: "Symlinks are not supported in the panel." });
+      toast.error("Symlinks are not supported in the panel.");
       return;
     }
 
@@ -981,7 +946,7 @@ export function FileManager({
       setEditorMeta({ size: file.size, modifiedAt: file.modified_at });
     } catch (error) {
       setEditorOpen(false);
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to open file.") });
+      toast.error(getErrorMessage(error, "Failed to open file."));
     } finally {
       setEditorBusy(false);
     }
@@ -998,9 +963,9 @@ export function FileManager({
       await saveFileContent({ path: editorPath, content: editorContent });
       setEditorOriginalContent(editorContent);
       await invalidateCurrentListing();
-      setFlash({ tone: "success", text: "File saved." });
+      toast.success("File saved.");
     } catch (error) {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to save file.") });
+      toast.error(getErrorMessage(error, "Failed to save file."));
     } finally {
       setEditorBusy(false);
     }
@@ -1027,9 +992,9 @@ export function FileManager({
         selectedItems.length === 1 && selectedItem
           ? await downloadEntry(selectedItem.path)
           : await downloadEntries(selectedItems.map((item) => item.path));
-      setFlash({ tone: "success", text: `${fileName} download started.` });
+      toast.success(`${fileName} download started.`);
     } catch (error) {
-      setFlash({ tone: "error", text: getErrorMessage(error, "Failed to download selection.") });
+      toast.error(getErrorMessage(error, "Failed to download selection."));
     }
   }
 
@@ -1065,7 +1030,7 @@ export function FileManager({
   function openPermissionsDialog(item: FileEntry) {
     closeContextMenu();
     if (item.type === "symlink") {
-      setFlash({ tone: "error", text: "Symlinks are not supported in the panel." });
+      toast.error("Symlinks are not supported in the panel.");
       return;
     }
 
@@ -1146,10 +1111,9 @@ export function FileManager({
 
     setClipboardMode(mode);
     setClipboardPaths(selectedPaths);
-    setFlash({
-      tone: "success",
-      text: mode === "copy" ? `Copied ${selectedPaths.length} item(s).` : `Cut ${selectedPaths.length} item(s).`,
-    });
+    toast.success(
+      mode === "copy" ? `Copied ${selectedPaths.length} item(s).` : `Cut ${selectedPaths.length} item(s).`,
+    );
   }
 
   async function pasteInto(targetPath: string) {
@@ -1272,7 +1236,7 @@ export function FileManager({
       }
       transferMutation.mutate({ mode: "move", paths, target: path });
     } catch {
-      setFlash({ tone: "error", text: "Invalid drag payload." });
+      toast.error("Invalid drag payload.");
     }
   }
 
@@ -1483,7 +1447,6 @@ export function FileManager({
       </DropdownMenu>
       <div className="px-4 pb-6 pt-4 sm:px-6 lg:px-8">
         <div className="space-y-4">
-          {flash ? <FlashBanner flash={flash} /> : null}
           {uploadProgress ? <UploadProgressBanner progress={uploadProgress} /> : null}
 
           <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
