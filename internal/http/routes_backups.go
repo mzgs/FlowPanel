@@ -486,7 +486,7 @@ func (a *apiRoutes) finalizeBackupRestore(ctx context.Context, name string, resu
 	}
 	detail := fmt.Sprintf("Restored backup %q.", name)
 	if len(result.Warnings) > 0 {
-		detail = fmt.Sprintf("Restored backup %q with %d warning(s).", name, len(result.Warnings))
+		detail = fmt.Sprintf("Restored backup %q with %d warning(s):\n- %s", name, len(result.Warnings), strings.Join(result.Warnings, "\n- "))
 	}
 	a.mutationEvent(ctx, "backups", "restore", "backup", name, name, "succeeded", detail)
 	return result
