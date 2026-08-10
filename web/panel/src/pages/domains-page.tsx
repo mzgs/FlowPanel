@@ -95,13 +95,16 @@ const domainKinds: DomainKind[] = [
   "Reverse proxy",
 ];
 
+const defaultAppBuildCommand = "go build -trimpath -o go-app .";
+const defaultAppBinaryPath = "go-app";
+
 const initialFormState: FormState = {
   hostname: "",
   kind: "Php site",
   target: "",
   nodeJSScriptPath: "",
-  appBuildCommand: "go build -trimpath -o .flowpanel/app .",
-  appBinaryPath: ".flowpanel/app",
+  appBuildCommand: defaultAppBuildCommand,
+  appBinaryPath: defaultAppBinaryPath,
   cacheEnabled: false,
 };
 
@@ -566,9 +569,8 @@ export function DomainsPage() {
         domain.nodejs_script_path,
       ),
       appBuildCommand:
-        domain.app_build_command?.trim() ||
-        "go build -trimpath -o .flowpanel/app .",
-      appBinaryPath: domain.app_binary_path?.trim() || ".flowpanel/app",
+        domain.app_build_command?.trim() || defaultAppBuildCommand,
+      appBinaryPath: domain.app_binary_path?.trim() || defaultAppBinaryPath,
       cacheEnabled: domain.cache_enabled,
     });
     setErrors({});
@@ -1415,11 +1417,11 @@ export function DomainsPage() {
                           appBuildCommand:
                             current.kind === kind
                               ? current.appBuildCommand
-                              : "go build -trimpath -o .flowpanel/app .",
+                              : defaultAppBuildCommand,
                           appBinaryPath:
                             current.kind === kind
                               ? current.appBinaryPath
-                              : ".flowpanel/app",
+                              : defaultAppBinaryPath,
                         }));
                         setErrors((current) => ({
                           ...current,
@@ -1568,8 +1570,8 @@ export function DomainsPage() {
                       className="h-7 px-2 text-xs"
                       onClick={() =>
                         applyAppBuildExample(
-                          "go build -trimpath -o .flowpanel/app .",
-                          ".flowpanel/app",
+                          defaultAppBuildCommand,
+                          defaultAppBinaryPath,
                         )
                       }
                     >
