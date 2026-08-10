@@ -61,6 +61,7 @@ import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { LoaderCircle, Trash2, Database, PlayerPlayFilled, PlayerStop, RefreshCw, World } from "@/components/icons/lucide-icons";
 import { PM2ProcessList } from "@/components/pm2-process-list";
 import { appendSystemStatusSample, type SystemStatusSample } from "@/components/system-metrics-card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SystemStatusCard, type OperationalHealth } from "@/components/system-status-card";
@@ -405,13 +406,6 @@ function DetailItem({ label, value, valueClassName = "" }: { label: string; valu
       <div className={`text-[13px] text-[var(--app-text-muted)] sm:text-[14px] ${valueClassName}`}>{value}</div>
     </div>
   );
-}
-
-function formatPM2Meta(status: PM2Status | null, processes: PM2Process[]) {
-  const toolchain = status?.binary_path?.trim() || "pm2";
-  const countLabel = `${processes.length} ${processes.length === 1 ? "process" : "processes"}`;
-
-  return { countLabel, toolchain };
 }
 
 function SystemInfoCard({
@@ -1211,7 +1205,7 @@ export function DashboardPage() {
 
   const hasTotals = siteCount !== null || databaseCount !== null;
   const showOverview = Boolean(systemStatus || hasTotals);
-  const pm2Meta = formatPM2Meta(pm2Status, pm2Processes);
+  const pm2ProcessCountLabel = `${pm2Processes.length} ${pm2Processes.length === 1 ? "process" : "processes"}`;
   const pm2DeleteDialogTitle = pm2DeleteCandidate ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`}` : "Delete PM2 process";
   const pm2DeleteDialogDescription = pm2DeleteCandidate
     ? `Delete ${pm2DeleteCandidate.name || `process ${pm2DeleteCandidate.id}`} from PM2? The process will be removed from the runtime list and must be created again to restore it.`
@@ -1219,12 +1213,9 @@ export function DashboardPage() {
   const pm2ProcessesSection = pm2Status?.installed === false ? null : (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
       <div className="min-w-0">
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
           <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">PM2 processes</div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--app-text-muted)]">
-            <span className="font-mono">{pm2Meta.toolchain}</span>
-            {pm2Status?.installed ? <span>{pm2Meta.countLabel}</span> : null}
-          </div>
+          {pm2Status?.installed ? <Badge variant="secondary">{pm2ProcessCountLabel}</Badge> : null}
         </div>
       </div>
 
