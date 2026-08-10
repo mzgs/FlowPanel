@@ -54,18 +54,24 @@ func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": "failed to load domain preview"})
 		}
 		proxy.ModifyResponse = func(response *stdhttp.Response) error {
+			rewriteDomainPreviewResponseCookies(response, hostname, prefix)
 			return rewriteDomainPreviewResponse(response, hostname, prefix)
 		}
 
 		originalDirector := proxy.Director
 		proxy.Director = func(request *stdhttp.Request) {
+			hasOrigin := strings.TrimSpace(request.Header.Get("Origin")) != ""
 			originalDirector(request)
 			request.Host = hostname
 			request.URL.Path = path
 			request.URL.RawPath = ""
 			request.Header.Del("Authorization")
-			request.Header.Del("Cookie")
-			request.Header.Del("Origin")
+			rewriteDomainPreviewRequestCookies(request, hostname)
+			if hasOrigin {
+				request.Header.Set("Origin", target.Scheme+"://"+hostname)
+			} else {
+				request.Header.Del("Origin")
+			}
 			request.Header.Del("Referer")
 			request.Header.Del("Accept-Encoding")
 		}
@@ -120,6 +126,18 @@ func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
 	})
 }
 
+func validDomainPreviewRequest(app *app.App, r *stdhttp.Request) bool {
+	if app == nil || r == nil || !strings.HasPrefix(r.URL.Path, domainPreviewPrefix) {
+		return false
+	}
+	hostname, remainder, found := strings.Cut(strings.TrimPrefix(r.URL.Path, domainPreviewPrefix), "/")
+	if !found {
+		return false
+	}
+	token, _, found := strings.Cut(remainder, "/")
+	return found && validDomainPreviewToken(token, strings.ToLower(strings.TrimSpace(hostname)), app.Config.Session.Secret, time.Now())
+}
+
 func newDomainPreviewToken(hostname, secret string, expiresAt time.Time) string {
 	expires := strconv.FormatInt(expiresAt.Unix(), 10)
 	signature := hmac.New(sha256.New, []byte(secret))
@@ -142,7 +160,6 @@ func errorsIsRuntimeNotStarted(err error) bool {
 }
 
 func rewriteDomainPreviewResponse(response *stdhttp.Response, hostname, prefix string) error {
-	response.Header.Del("Set-Cookie")
 	response.Header.Set("Cache-Control", "no-store")
 	response.Header.Set("Content-Security-Policy", "sandbox allow-forms allow-scripts; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src * data: blob:; img-src * data: blob:; media-src * data: blob:; style-src * 'unsafe-inline'; frame-ancestors 'self';")
 	response.Header.Set("X-Frame-Options", "SAMEORIGIN")
@@ -174,6 +191,38 @@ func rewriteDomainPreviewResponse(response *stdhttp.Response, hostname, prefix s
 	response.Header.Set("Content-Length", fmt.Sprintf("%d", len(rewritten)))
 	response.Header.Del("Content-Encoding")
 	return nil
+}
+
+func domainPreviewCookiePrefix(hostname string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(hostname))))
+	return fmt.Sprintf("__fp_preview_%x_", sum[:8])
+}
+
+func rewriteDomainPreviewRequestCookies(request *stdhttp.Request, hostname string) {
+	prefix := domainPreviewCookiePrefix(hostname)
+	cookies := request.Cookies()
+	request.Header.Del("Cookie")
+	for _, cookie := range cookies {
+		if strings.HasPrefix(cookie.Name, prefix) {
+			cookie.Name = strings.TrimPrefix(cookie.Name, prefix)
+			request.AddCookie(cookie)
+		}
+	}
+}
+
+func rewriteDomainPreviewResponseCookies(response *stdhttp.Response, hostname, pathPrefix string) {
+	if len(response.Header.Values("Set-Cookie")) == 0 {
+		return
+	}
+	cookies := response.Cookies()
+	response.Header.Del("Set-Cookie")
+	namePrefix := domainPreviewCookiePrefix(hostname)
+	for _, cookie := range cookies {
+		cookie.Name = namePrefix + cookie.Name
+		cookie.Domain = ""
+		cookie.Path = pathPrefix + "/" + strings.TrimPrefix(cookie.Path, "/")
+		response.Header.Add("Set-Cookie", cookie.String())
+	}
 }
 
 type domainPreviewReadCloser struct {

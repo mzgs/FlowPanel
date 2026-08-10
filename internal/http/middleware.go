@@ -52,7 +52,8 @@ func SecurityHeaders(next stdhttp.Handler) stdhttp.Handler {
 func SameOriginProtection(app *app.App) func(stdhttp.Handler) stdhttp.Handler {
 	return func(next stdhttp.Handler) stdhttp.Handler {
 		return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-			if isSafeRequestMethod(r.Method) || requestHasTrustedOrigin(app, r) {
+			if isSafeRequestMethod(r.Method) || requestHasTrustedOrigin(app, r) ||
+				(requestHasOpaqueOrigin(r) && validDomainPreviewRequest(app, r)) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -60,6 +61,10 @@ func SameOriginProtection(app *app.App) func(stdhttp.Handler) stdhttp.Handler {
 			writeJSON(w, stdhttp.StatusForbidden, map[string]any{"error": "request origin is not trusted"})
 		})
 	}
+}
+
+func requestHasOpaqueOrigin(r *stdhttp.Request) bool {
+	return r != nil && strings.EqualFold(strings.TrimSpace(r.Header.Get("Origin")), "null")
 }
 
 func isSafeRequestMethod(method string) bool {
