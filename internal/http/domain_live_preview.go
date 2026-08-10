@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +37,15 @@ var (
 
 func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
 	serve := func(w stdhttp.ResponseWriter, r *stdhttp.Request, hostname, prefix, path string) {
+		opaqueOrigin := requestHasOpaqueOrigin(r)
+		if opaqueOrigin && r.Method == stdhttp.MethodOptions {
+			setDomainPreviewCORSHeaders(w.Header())
+			w.Header().Set("Access-Control-Allow-Headers", r.Header.Get("Access-Control-Request-Headers"))
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.WriteHeader(stdhttp.StatusNoContent)
+			return
+		}
+
 		previewAddress, err := app.Caddy.PreviewAddress()
 		if err != nil {
 			status := stdhttp.StatusBadGateway
@@ -54,6 +64,9 @@ func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": "failed to load domain preview"})
 		}
 		proxy.ModifyResponse = func(response *stdhttp.Response) error {
+			if opaqueOrigin {
+				setDomainPreviewCORSHeaders(response.Header)
+			}
 			rewriteDomainPreviewResponseCookies(response, hostname, prefix)
 			return rewriteDomainPreviewResponse(response, hostname, prefix)
 		}
@@ -124,6 +137,12 @@ func newDomainLivePreviewHandler(app *app.App) stdhttp.Handler {
 		}
 		serve(w, r, hostname, prefix, "/"+path)
 	})
+}
+
+func setDomainPreviewCORSHeaders(header stdhttp.Header) {
+	header.Set("Access-Control-Allow-Origin", "null")
+	header.Set("Access-Control-Allow-Credentials", "true")
+	header.Add("Vary", "Origin")
 }
 
 func validDomainPreviewRequest(app *app.App, r *stdhttp.Request) bool {
@@ -253,7 +272,7 @@ func rewriteDomainPreviewBody(body, hostname, prefix string, html, css bool) str
 			}
 			return value[:quoteIndex+1] + prefix + value[quoteIndex+1:]
 		})
-		base := `<base href="` + prefix + `/">`
+		base := `<base href="` + prefix + `/">` + domainPreviewRuntimeScript(prefix)
 		lower := strings.ToLower(body)
 		if index := strings.Index(lower, "<head>"); index >= 0 {
 			body = body[:index+len("<head>")] + base + body[index+len("<head>"):]
@@ -275,6 +294,11 @@ func rewriteDomainPreviewBody(body, hostname, prefix string, html, css bool) str
 		})
 	}
 	return body
+}
+
+func domainPreviewRuntimeScript(prefix string) string {
+	encodedPrefix, _ := json.Marshal(prefix)
+	return `<script>(function(){const p=` + string(encodedPrefix) + `;function r(v){try{const u=new URL(String(v),location.href);if((u.protocol==="http:"||u.protocol==="https:"||u.protocol==="ws:"||u.protocol==="wss:")&&u.host===location.host&&u.pathname!==p&&!u.pathname.startsWith(p+"/"))u.pathname=p+(u.pathname.startsWith("/")?u.pathname:"/"+u.pathname);return u.href}catch{return v}}const o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u,...a){return o.call(this,m,r(u),...a)};if(window.fetch){const f=window.fetch;window.fetch=function(i,n){return f.call(this,i instanceof Request?new Request(r(i.url),i):r(i),n)}}if(window.EventSource){const E=window.EventSource;window.EventSource=function(u,c){return new E(r(u),c)};window.EventSource.prototype=E.prototype;Object.setPrototypeOf(window.EventSource,E)}if(window.WebSocket){const W=window.WebSocket;window.WebSocket=function(u,p){return p===undefined?new W(r(u)):new W(r(u),p)};window.WebSocket.prototype=W.prototype;Object.setPrototypeOf(window.WebSocket,W)}})();</script>`
 }
 
 func rewriteDomainPreviewLocation(location, hostname, prefix string) string {
