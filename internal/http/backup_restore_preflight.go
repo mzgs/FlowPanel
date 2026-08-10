@@ -33,7 +33,17 @@ func inspectRestorePreflight(ctx context.Context, application *app.App, source b
 		CanPrepare:   true,
 	}
 	for _, requirement := range source.Requirements {
-		result.Requirements = append(result.Requirements, inspectRestoreRequirement(ctx, application, requirement))
+		status := inspectRestoreRequirement(ctx, application, requirement)
+		duplicate := false
+		for _, current := range result.Requirements {
+			if current.Kind == status.Kind && current.Version == status.Version {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			result.Requirements = append(result.Requirements, status)
+		}
 	}
 	for i, status := range result.Requirements {
 		if status.Kind == backup.RequirementPM2 && status.State == "unavailable" && requirementWillBePrepared(result.Requirements, backup.RequirementNodeJS) {

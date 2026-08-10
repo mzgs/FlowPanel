@@ -623,25 +623,11 @@ func (s *Service) Preflight(ctx context.Context, id string, location string) (Re
 	}
 	defer download.Reader.Close()
 
-	snapshot, err := readBackupManifest(download.Reader)
+	snapshot, err := readBackupManifest(download.Reader, false)
 	if err != nil {
 		return RestorePreflight{}, err
 	}
-	requirements := append([]RestoreRequirement(nil), snapshot.Requirements...)
-	if len(snapshot.Databases) > 0 {
-		requirements = append(requirements, RestoreRequirement{Kind: RequirementMariaDB})
-	}
-	for _, content := range snapshot.Contents {
-		if strings.Contains(strings.ToLower(content), "docker") {
-			requirements = append(requirements, RestoreRequirement{Kind: RequirementDocker})
-		}
-	}
-
-	result := RestorePreflight{Requirements: normalizeRestoreRequirements(requirements)}
-	if len(snapshot.Sites) > 0 && len(snapshot.Requirements) == 0 {
-		result.Warnings = append(result.Warnings, "This older backup does not include site runtime metadata; site files will still be restored.")
-	}
-	return result, nil
+	return RestorePreflight{Requirements: normalizeRestoreRequirements(snapshot.Requirements)}, nil
 }
 
 func (s *Service) RestoreWithProgress(ctx context.Context, id string, location string, report func(RestoreProgress)) (RestoreResult, error) {
@@ -818,8 +804,16 @@ func (s *Service) backupRequirements(ctx context.Context, input CreateInput, sit
 				RestoreRequirement{Kind: RequirementPM2},
 			)
 		case domain.KindPython:
-			requirements = append(requirements, RestoreRequirement{Kind: RequirementPython})
+			requirements = append(requirements,
+				RestoreRequirement{Kind: RequirementNodeJS},
+				RestoreRequirement{Kind: RequirementPM2},
+				RestoreRequirement{Kind: RequirementPython},
+			)
 		case domain.KindApplication:
+			requirements = append(requirements,
+				RestoreRequirement{Kind: RequirementNodeJS},
+				RestoreRequirement{Kind: RequirementPM2},
+			)
 			if strings.Contains(strings.ToLower(strings.Join(strings.Fields(record.AppBuildCommand), " ")), "go build") {
 				requirements = append(requirements, RestoreRequirement{Kind: RequirementGolang})
 			}
@@ -1635,11 +1629,11 @@ func validateImportedArchive(archivePath string) error {
 		return fmt.Errorf("open backup archive: %w", err)
 	}
 	defer file.Close()
-	_, err = readBackupManifest(file)
+	_, err = readBackupManifest(file, true)
 	return err
 }
 
-func readBackupManifest(reader io.Reader) (manifest, error) {
+func readBackupManifest(reader io.Reader, validateAll bool) (manifest, error) {
 	gzipReader, err := gzip.NewReader(reader)
 	if err != nil {
 		return manifest{}, ErrInvalidArchive
@@ -1695,6 +1689,9 @@ func readBackupManifest(reader io.Reader) (manifest, error) {
 		}
 
 		manifestFound = true
+		if !validateAll {
+			return snapshot, nil
+		}
 	}
 
 	if !manifestFound {
