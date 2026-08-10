@@ -100,6 +100,7 @@ type RestoreProgress struct {
 
 const (
 	RequirementDocker  = "docker"
+	RequirementGolang  = "golang"
 	RequirementMariaDB = "mariadb"
 	RequirementNodeJS  = "nodejs"
 	RequirementPHP     = "php"
@@ -818,6 +819,10 @@ func (s *Service) backupRequirements(ctx context.Context, input CreateInput, sit
 			)
 		case domain.KindPython:
 			requirements = append(requirements, RestoreRequirement{Kind: RequirementPython})
+		case domain.KindApplication:
+			if strings.Contains(strings.ToLower(strings.Join(strings.Fields(record.AppBuildCommand), " ")), "go build") {
+				requirements = append(requirements, RestoreRequirement{Kind: RequirementGolang})
+			}
 		}
 	}
 	return normalizeRestoreRequirements(requirements)

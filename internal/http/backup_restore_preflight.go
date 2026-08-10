@@ -60,6 +60,10 @@ func inspectRestoreRequirement(ctx context.Context, application *app.App, requir
 		status.Name = "Docker"
 		current := application.Docker.Status(ctx)
 		return runtimeRequirementStatus(status, current.Installed, current.ServiceRunning, current.InstallAvailable, current.StartAvailable)
+	case backup.RequirementGolang:
+		status.Name = "Go"
+		current := application.Golang.Status(ctx)
+		return runtimeRequirementStatus(status, current.Installed, true, current.InstallAvailable, false)
 	case backup.RequirementMariaDB:
 		status.Name = "MariaDB"
 		current := application.MariaDB.Status(ctx)
@@ -131,7 +135,7 @@ func runtimeRequirementStatus(status restoreRequirementStatus, installed, runnin
 }
 
 func prepareRestoreRequirements(ctx context.Context, application *app.App, source backup.RestorePreflight, report func(backup.RestoreProgress)) error {
-	for _, kind := range []string{backup.RequirementMariaDB, backup.RequirementDocker, backup.RequirementPHP, backup.RequirementNodeJS, backup.RequirementPM2, backup.RequirementPython} {
+	for _, kind := range []string{backup.RequirementMariaDB, backup.RequirementDocker, backup.RequirementPHP, backup.RequirementGolang, backup.RequirementNodeJS, backup.RequirementPM2, backup.RequirementPython} {
 		for _, requirement := range source.Requirements {
 			if requirement.Kind != kind {
 				continue
@@ -173,6 +177,8 @@ func applyRestoreRequirement(ctx context.Context, application *app.App, requirem
 		return application.MariaDB.Start(ctx)
 	case backup.RequirementNodeJS:
 		return application.NodeJS.Install(ctx)
+	case backup.RequirementGolang:
+		return application.Golang.Install(ctx)
 	case backup.RequirementPHP:
 		if action == "install" {
 			if err := application.PHP.InstallVersion(ctx, requirement.Version); err != nil {
