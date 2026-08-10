@@ -95,6 +95,22 @@ export type BackupRestoreProgress = {
   percent: number;
 };
 
+export type BackupRestoreRequirement = {
+  kind: string;
+  name: string;
+  version?: string;
+  state: "ready" | "install" | "start" | "unavailable";
+  message: string;
+  install_available: boolean;
+};
+
+export type BackupRestorePreflight = {
+  requirements: BackupRestoreRequirement[];
+  warnings?: string[];
+  changes_required: boolean;
+  can_prepare: boolean;
+};
+
 export type BackupBackgroundActivities = {
   create?: { id: string };
   restore?: { id: string; progress: BackupRestoreProgress };
@@ -287,7 +303,7 @@ export async function restoreBackup(
 
   try {
     const response = await fetch(
-      `/api/backups/${encodeURIComponent(id)}/restore-progress?location=${encodeURIComponent(location)}`,
+      `/api/backups/${encodeURIComponent(id)}/restore-progress?location=${encodeURIComponent(location)}&install_missing=true`,
       {
         method: "POST",
         credentials: "include",
@@ -335,6 +351,21 @@ export async function restoreBackup(
       setBackgroundActivity("restore", undefined);
     }
   }
+}
+
+export async function fetchBackupRestorePreflight(
+  id: string,
+  location: BackupRecord["location"],
+): Promise<BackupRestorePreflight> {
+  const response = await fetch(
+    `/api/backups/${encodeURIComponent(id)}/restore-preflight?location=${encodeURIComponent(location)}`,
+    { credentials: "include" },
+  );
+  if (!response.ok) {
+    throw await readBackupApiError(response, "inspect backup restore");
+  }
+  const payload = (await response.json()) as { preflight: BackupRestorePreflight };
+  return payload.preflight;
 }
 
 export function getBackupDownloadUrl(id: string, location: BackupRecord["location"]) {

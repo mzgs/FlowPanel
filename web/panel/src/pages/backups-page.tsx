@@ -5,6 +5,7 @@ import {
   createBackup,
   deleteScheduledBackup,
   deleteBackup,
+  fetchBackupRestorePreflight,
   fetchBackups,
   fetchScheduledBackups,
   getBackupBackgroundActivities,
@@ -13,6 +14,7 @@ import {
   restoreBackup,
   subscribeBackupBackgroundActivities,
   type BackupRecord,
+  type BackupRestorePreflight,
   type BackupRestoreProgress,
   type BackupUploadProgress,
   type CreateBackupInput,
@@ -229,6 +231,10 @@ export function BackupsPage() {
     useState<ScheduledBackupRecord | null>(null);
   const [confirmRestoreRecord, setConfirmRestoreRecord] =
     useState<BackupRecord | null>(null);
+  const [restorePreflight, setRestorePreflight] =
+    useState<BackupRestorePreflight | null>(null);
+  const [restorePreflightLoading, setRestorePreflightLoading] = useState(false);
+  const [restorePreflightError, setRestorePreflightError] = useState<string | null>(null);
   const [restoringBackupKey, setRestoringBackupKey] = useState<string | null>(
     null,
   );
@@ -258,6 +264,7 @@ export function BackupsPage() {
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [schedulerStarted, setSchedulerStarted] = useState(false);
   const restoredTimeoutRef = useRef<number | null>(null);
+  const restorePreflightRequestRef = useRef(0);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const backgroundActivities = useSyncExternalStore(
     subscribeBackupBackgroundActivities,
@@ -524,13 +531,36 @@ export function BackupsPage() {
     }
   }
 
-  function handleRestoreBackup(record: BackupRecord) {
+  async function handleRestoreBackup(record: BackupRecord) {
     if (creatingActive || restoringActive || deletingBackupKey !== null) {
       return;
     }
 
     setConfirmRestoreRecord(record);
     setRestoreProgress(null);
+    setRestorePreflight(null);
+    setRestorePreflightError(null);
+    setRestorePreflightLoading(true);
+    const requestID = ++restorePreflightRequestRef.current;
+    try {
+      const preflight = await fetchBackupRestorePreflight(
+        getBackupId(record),
+        record.location,
+      );
+      if (restorePreflightRequestRef.current === requestID) {
+        setRestorePreflight(preflight);
+      }
+    } catch (error) {
+      if (restorePreflightRequestRef.current === requestID) {
+        setRestorePreflightError(
+          getErrorMessage(error, "Failed to inspect restore prerequisites."),
+        );
+      }
+    } finally {
+      if (restorePreflightRequestRef.current === requestID) {
+        setRestorePreflightLoading(false);
+      }
+    }
   }
 
   async function confirmRestoreBackup() {
@@ -1166,7 +1196,10 @@ export function BackupsPage() {
         open={confirmRestoreRecord !== null}
         onOpenChange={(open) => {
           if (!open) {
+            restorePreflightRequestRef.current += 1;
             setConfirmRestoreRecord(null);
+            setRestorePreflight(null);
+            setRestorePreflightError(null);
           }
         }}
         title="Restore backup"
@@ -1175,12 +1208,71 @@ export function BackupsPage() {
             ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel and admin TLS files, Docker data, site files, and databases, restarts Caddy, and recreates Docker containers with their saved environment variable values.`
             : "Restore this backup?"
         }
-        confirmText="Restore backup"
+        confirmText={
+          restorePreflight?.changes_required
+            ? "Install and restore"
+            : "Restore backup"
+        }
+        disabled={
+          restorePreflightLoading ||
+          restorePreflightError !== null ||
+          !restorePreflight?.can_prepare
+        }
         handleConfirm={() => {
           void confirmRestoreBackup();
         }}
         className="sm:max-w-2xl"
-      />
+      >
+        <div className="overflow-hidden rounded-lg border border-[var(--app-border)] text-sm">
+          <div className="border-b border-[var(--app-border)] bg-muted/30 px-3 py-2 font-medium text-foreground">
+            Restore prerequisites
+          </div>
+          {restorePreflightLoading ? (
+            <div className="flex items-center gap-2 px-3 py-3 text-muted-foreground">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              Inspecting backup…
+            </div>
+          ) : restorePreflightError ? (
+            <div className="px-3 py-3 text-[var(--app-danger)]">
+              {restorePreflightError}
+            </div>
+          ) : restorePreflight?.requirements.length ? (
+            <div className="divide-y divide-[var(--app-border)]">
+              {restorePreflight.requirements.map((requirement) => (
+                <div
+                  key={`${requirement.kind}:${requirement.version ?? ""}`}
+                  className="flex items-center justify-between gap-3 px-3 py-2"
+                >
+                  <span className="font-medium text-foreground">
+                    {requirement.name}
+                    {requirement.version ? ` ${requirement.version}` : ""}
+                  </span>
+                  <span
+                    className={
+                      requirement.state === "unavailable"
+                        ? "text-[var(--app-danger)]"
+                        : requirement.state === "ready"
+                          ? "text-muted-foreground"
+                          : "text-foreground"
+                    }
+                  >
+                    {requirement.message}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="px-3 py-3 text-muted-foreground">
+              No additional applications are required.
+            </div>
+          )}
+        </div>
+        {restorePreflight?.warnings?.map((warning) => (
+          <p key={warning} className="text-sm text-muted-foreground">
+            {warning}
+          </p>
+        ))}
+      </ActionConfirmDialog>
 
       <ActionConfirmDialog
         open={confirmDeleteRecord !== null}
@@ -1303,7 +1395,7 @@ export function BackupsPage() {
                             type="button"
                             variant="outline"
                             size="icon"
-                            onClick={() => handleRestoreBackup(backup)}
+                            onClick={() => void handleRestoreBackup(backup)}
                             disabled={creatingActive || restoringActive || deleting}
                             className={tableActionButtonClassName}
                             aria-label={`Restore ${backup.name}`}

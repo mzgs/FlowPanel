@@ -458,6 +458,26 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 	})
 	r.Method(stdhttp.MethodGet, "/backups/{backupName}/download", backupsDownloadHandler)
 
+	backupsRestorePreflightHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		manager, ok := a.app.Backups.(backup.PreflightManager)
+		if !ok {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "backup restore preflight is not available"})
+			return
+		}
+		name, err := decodeBackupNameParam(r)
+		if err != nil {
+			writeBackupError(w, err)
+			return
+		}
+		preflight, err := manager.Preflight(r.Context(), name, readBackupLocation(r))
+		if err != nil {
+			writeBackupError(w, err)
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"preflight": inspectRestorePreflight(r.Context(), a.app, preflight)})
+	})
+	r.Method(stdhttp.MethodGet, "/backups/{backupName}/restore-preflight", backupsRestorePreflightHandler)
+
 	backupsRestoreHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app.Backups == nil {
 			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "backup service is not configured"})
@@ -477,6 +497,25 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		defer a.endBackupRestore()
 
 		restoreCtx := backgroundRequestContext(r.Context())
+		if manager, ok := a.app.Backups.(backup.PreflightManager); ok {
+			preflight, preflightErr := manager.Preflight(restoreCtx, name, location)
+			if preflightErr != nil {
+				a.recordBackupRestoreFailure(restoreCtx, name, preflightErr)
+				writeBackupError(w, preflightErr)
+				return
+			}
+			status := inspectRestorePreflight(restoreCtx, a.app, preflight)
+			if status.ChangesRequired && r.URL.Query().Get("install_missing") != "true" {
+				a.recordBackupRestoreFailure(restoreCtx, name, errors.New("restore prerequisites require approval"))
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "restore prerequisites require approval", "preflight": status})
+				return
+			}
+			if err := prepareRestoreRequirements(restoreCtx, a.app, preflight, func(backup.RestoreProgress) {}); err != nil {
+				a.recordBackupRestoreFailure(restoreCtx, name, err)
+				writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": err.Error()})
+				return
+			}
+		}
 		result, err := a.app.Backups.Restore(restoreCtx, name, location)
 		if err != nil {
 			if errors.Is(err, backup.ErrInvalidLocation) {
@@ -509,6 +548,7 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			return
 		}
 		location := readBackupLocation(r)
+		installMissing := r.URL.Query().Get("install_missing") == "true"
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -530,6 +570,31 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		go func() {
 			defer a.endBackupRestore()
 			restoreCtx := context.Background()
+			fail := func(err error) {
+				a.recordBackupRestoreFailure(restoreCtx, name, err)
+				outcome <- restoreOutcome{err: err}
+			}
+			if preflightManager, ok := a.app.Backups.(backup.PreflightManager); ok {
+				preflight, err := preflightManager.Preflight(restoreCtx, name, location)
+				if err != nil {
+					fail(err)
+					return
+				}
+				status := inspectRestorePreflight(restoreCtx, a.app, preflight)
+				if status.ChangesRequired && !installMissing {
+					fail(errors.New("restore prerequisites require approval"))
+					return
+				}
+				if err := prepareRestoreRequirements(restoreCtx, a.app, preflight, func(update backup.RestoreProgress) {
+					select {
+					case progress <- update:
+					default:
+					}
+				}); err != nil {
+					fail(err)
+					return
+				}
+			}
 			result, err := manager.RestoreWithProgress(restoreCtx, name, location, func(update backup.RestoreProgress) {
 				select {
 				case progress <- update:
@@ -537,8 +602,7 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 				}
 			})
 			if err != nil {
-				a.recordBackupRestoreFailure(restoreCtx, name, err)
-				outcome <- restoreOutcome{err: err}
+				fail(err)
 				return
 			}
 			select {
@@ -554,7 +618,7 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 				emit(map[string]any{"progress": update})
 			case completed := <-outcome:
 				if completed.err != nil {
-					emit(map[string]any{"error": "Failed to restore backup."})
+					emit(map[string]any{"error": completed.err.Error()})
 					return
 				}
 				emit(map[string]any{

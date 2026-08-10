@@ -98,8 +98,31 @@ type RestoreProgress struct {
 	Percent int    `json:"percent"`
 }
 
+const (
+	RequirementDocker  = "docker"
+	RequirementMariaDB = "mariadb"
+	RequirementNodeJS  = "nodejs"
+	RequirementPHP     = "php"
+	RequirementPM2     = "pm2"
+	RequirementPython  = "python"
+)
+
+type RestoreRequirement struct {
+	Kind    string `json:"kind"`
+	Version string `json:"version,omitempty"`
+}
+
+type RestorePreflight struct {
+	Requirements []RestoreRequirement `json:"requirements,omitempty"`
+	Warnings     []string             `json:"warnings,omitempty"`
+}
+
 type ProgressManager interface {
 	RestoreWithProgress(context.Context, string, string, func(RestoreProgress)) (RestoreResult, error)
+}
+
+type PreflightManager interface {
+	Preflight(context.Context, string, string) (RestorePreflight, error)
 }
 
 type DownloadResult struct {
@@ -125,11 +148,12 @@ type Service struct {
 }
 
 type manifest struct {
-	Format    string    `json:"format"`
-	CreatedAt time.Time `json:"created_at"`
-	Contents  []string  `json:"contents"`
-	Sites     []string  `json:"sites,omitempty"`
-	Databases []string  `json:"databases,omitempty"`
+	Format       string               `json:"format"`
+	CreatedAt    time.Time            `json:"created_at"`
+	Contents     []string             `json:"contents"`
+	Sites        []string             `json:"sites,omitempty"`
+	Databases    []string             `json:"databases,omitempty"`
+	Requirements []RestoreRequirement `json:"requirements,omitempty"`
 }
 
 type DomainSource interface {
@@ -396,13 +420,15 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 	if len(databaseDumps) > 0 {
 		contents = append(contents, "sql dumps for managed mariadb databases")
 	}
+	requirements := s.backupRequirements(ctx, input, sites)
 
 	manifestPayload, err := json.MarshalIndent(manifest{
-		Format:    backupFormat,
-		CreatedAt: createdAt,
-		Contents:  contents,
-		Sites:     siteHostnames(sites),
-		Databases: databaseDumpNames(databaseDumps),
+		Format:       backupFormat,
+		CreatedAt:    createdAt,
+		Contents:     contents,
+		Sites:        siteHostnames(sites),
+		Databases:    databaseDumpNames(databaseDumps),
+		Requirements: requirements,
 	}, "", "  ")
 	if err != nil {
 		_ = tarWriter.Close()
@@ -589,6 +615,34 @@ func (s *Service) Restore(ctx context.Context, id string, location string) (Rest
 	return s.RestoreWithProgress(ctx, id, location, nil)
 }
 
+func (s *Service) Preflight(ctx context.Context, id string, location string) (RestorePreflight, error) {
+	download, err := s.OpenDownload(ctx, id, location)
+	if err != nil {
+		return RestorePreflight{}, err
+	}
+	defer download.Reader.Close()
+
+	snapshot, err := readBackupManifest(download.Reader)
+	if err != nil {
+		return RestorePreflight{}, err
+	}
+	requirements := append([]RestoreRequirement(nil), snapshot.Requirements...)
+	if len(snapshot.Databases) > 0 {
+		requirements = append(requirements, RestoreRequirement{Kind: RequirementMariaDB})
+	}
+	for _, content := range snapshot.Contents {
+		if strings.Contains(strings.ToLower(content), "docker") {
+			requirements = append(requirements, RestoreRequirement{Kind: RequirementDocker})
+		}
+	}
+
+	result := RestorePreflight{Requirements: normalizeRestoreRequirements(requirements)}
+	if len(snapshot.Sites) > 0 && len(snapshot.Requirements) == 0 {
+		result.Warnings = append(result.Warnings, "This older backup does not include site runtime metadata; site files will still be restored.")
+	}
+	return result, nil
+}
+
 func (s *Service) RestoreWithProgress(ctx context.Context, id string, location string, report func(RestoreProgress)) (RestoreResult, error) {
 	switch normalizeLocation(location) {
 	case LocationLocal:
@@ -720,6 +774,78 @@ func reportRestoreProgress(report func(RestoreProgress), label string, percent i
 	if report != nil {
 		report(RestoreProgress{Label: label, Percent: percent})
 	}
+}
+
+func (s *Service) backupRequirements(ctx context.Context, input CreateInput, sites []siteArchive) []RestoreRequirement {
+	requirements := make([]RestoreRequirement, 0, 6)
+	if input.IncludeDockerData {
+		requirements = append(requirements, RestoreRequirement{Kind: RequirementDocker})
+	}
+	if input.IncludeDatabases {
+		requirements = append(requirements, RestoreRequirement{Kind: RequirementMariaDB})
+	}
+
+	includedSites := make(map[string]struct{}, len(sites))
+	for _, site := range sites {
+		includedSites[site.Hostname] = struct{}{}
+	}
+	defaultPHPVersion := ""
+	if s.settings != nil {
+		if record, err := s.settings.Get(ctx); err == nil {
+			defaultPHPVersion = record.DefaultPHPVersion
+		}
+	}
+	if s.domains == nil {
+		return normalizeRestoreRequirements(requirements)
+	}
+	for _, record := range s.domains.List() {
+		if !input.IncludePanelData {
+			if _, ok := includedSites[record.Hostname]; !ok {
+				continue
+			}
+		}
+		switch record.Kind {
+		case domain.KindPHP:
+			version := strings.TrimSpace(record.PHPVersion)
+			if version == "" {
+				version = defaultPHPVersion
+			}
+			requirements = append(requirements, RestoreRequirement{Kind: RequirementPHP, Version: version})
+		case domain.KindNodeJS:
+			requirements = append(requirements,
+				RestoreRequirement{Kind: RequirementNodeJS},
+				RestoreRequirement{Kind: RequirementPM2},
+			)
+		case domain.KindPython:
+			requirements = append(requirements, RestoreRequirement{Kind: RequirementPython})
+		}
+	}
+	return normalizeRestoreRequirements(requirements)
+}
+
+func normalizeRestoreRequirements(requirements []RestoreRequirement) []RestoreRequirement {
+	seen := make(map[string]struct{}, len(requirements))
+	result := make([]RestoreRequirement, 0, len(requirements))
+	for _, requirement := range requirements {
+		requirement.Kind = strings.TrimSpace(strings.ToLower(requirement.Kind))
+		requirement.Version = strings.TrimSpace(requirement.Version)
+		if requirement.Kind == "" {
+			continue
+		}
+		key := requirement.Kind + "\x00" + requirement.Version
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, requirement)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Kind == result[j].Kind {
+			return result[i].Version < result[j].Version
+		}
+		return result[i].Kind < result[j].Kind
+	})
+	return result
 }
 
 func (r *RestoreResult) addWarning(message string) {
@@ -1504,14 +1630,19 @@ func validateImportedArchive(archivePath string) error {
 		return fmt.Errorf("open backup archive: %w", err)
 	}
 	defer file.Close()
+	_, err = readBackupManifest(file)
+	return err
+}
 
-	gzipReader, err := gzip.NewReader(file)
+func readBackupManifest(reader io.Reader) (manifest, error) {
+	gzipReader, err := gzip.NewReader(reader)
 	if err != nil {
-		return ErrInvalidArchive
+		return manifest{}, ErrInvalidArchive
 	}
 	defer gzipReader.Close()
 
 	tarReader := tar.NewReader(gzipReader)
+	var snapshot manifest
 	manifestFound := false
 	for {
 		header, err := tarReader.Next()
@@ -1519,54 +1650,53 @@ func validateImportedArchive(archivePath string) error {
 			break
 		}
 		if err != nil {
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 
 		relativePath, ok := sanitizeArchivePath(header.Name)
 		if !ok {
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 
 		switch header.Typeflag {
 		case tar.TypeDir, tar.TypeReg, tar.TypeRegA, tar.TypeSymlink:
 		default:
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 		if header.Typeflag == tar.TypeSymlink && !validArchiveSymlink(relativePath, header.Linkname) {
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 
 		if relativePath != "manifest.json" {
 			continue
 		}
 		if manifestFound || header.Typeflag == tar.TypeDir || header.Size < 0 || header.Size > maxManifestSize {
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 
 		manifestPayload, err := io.ReadAll(io.LimitReader(tarReader, maxManifestSize+1))
 		if err != nil {
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 		if int64(len(manifestPayload)) != header.Size {
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 
-		var snapshot manifest
 		if err := json.Unmarshal(manifestPayload, &snapshot); err != nil {
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 		if snapshot.Format != backupFormat {
-			return ErrInvalidArchive
+			return manifest{}, ErrInvalidArchive
 		}
 
 		manifestFound = true
 	}
 
 	if !manifestFound {
-		return ErrInvalidArchive
+		return manifest{}, ErrInvalidArchive
 	}
 
-	return nil
+	return snapshot, nil
 }
 
 func hasPanelEntries(stagingPath, snapshotRelPath string) bool {
