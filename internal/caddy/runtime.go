@@ -485,20 +485,25 @@ func (r *Runtime) resolvePHPRouteConfig(ctx context.Context, records []domain.Re
 
 	poolInputs := make([]phpenv.DomainPoolInput, 0, len(records))
 	for _, record := range records {
-		if record.Kind != domain.KindPHP || strings.TrimSpace(record.PHPSettings.FPMMaxChildren) == "" {
+		if record.Kind != domain.KindPHP {
+			continue
+		}
+		environment := domain.EnvironmentMap(record)
+		hasDomainSettings := strings.TrimSpace(record.PHPSettings.FPMMaxChildren) != ""
+		if !hasDomainSettings && len(environment) == 0 {
 			continue
 		}
 		version := strings.TrimSpace(record.PHPVersion)
 		if version == "" {
 			version = strings.TrimSpace(config.defaultVersion)
 		}
-		hasDomainSettings := strings.TrimSpace(record.PHPSettings.FPMMaxChildren) != ""
 		poolInputs = append(poolInputs, phpenv.DomainPoolInput{
 			DomainID:     record.ID,
 			Hostname:     record.Hostname,
 			Version:      version,
 			DocumentRoot: record.Target,
 			Settings:     mergePHPSettings(r.php.StatusForVersion(ctx, version).Settings, record.PHPSettings, hasDomainSettings),
+			Environment:  environment,
 		})
 	}
 	pools, err := r.php.ReconcileDomainPools(ctx, poolInputs)

@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -65,6 +66,9 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 	}()
 
 	for _, input := range inputs {
+		if err := validateDomainPoolEnvironment(input.Environment); err != nil {
+			return nil, fmt.Errorf("validate PHP environment for %q: %w", input.Hostname, err)
+		}
 		version := NormalizeVersion(input.Version)
 		if version == "" {
 			return nil, fmt.Errorf("resolve PHP version for %q", input.Hostname)
@@ -147,7 +151,7 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 	}
 
 	for version, config := range changedVersions {
-		if output, _, err := executil.RunCombined(exec.CommandContext(ctx, config.status.FPMPath, "-tt"), executil.DefaultOutputLimit); err != nil {
+		if output, _, err := executil.RunCombined(exec.CommandContext(ctx, config.status.FPMPath, "-t"), executil.DefaultOutputLimit); err != nil {
 			return nil, fmt.Errorf("validate PHP %s pools: %w: %s", version, err, strings.TrimSpace(string(output)))
 		}
 		if config.status.ServiceRunning {
@@ -327,7 +331,7 @@ func renderDomainPool(input DomainPoolInput, pool DomainPool) string {
 	maxChildren := firstNonEmpty(strings.TrimSpace(settings.FPMMaxChildren), "3")
 	idleTimeout := firstNonEmpty(strings.TrimSpace(settings.FPMIdleTimeout), "30s")
 	maxRequests := firstNonEmpty(strings.TrimSpace(settings.FPMMaxRequests), "500")
-	return fmt.Sprintf(`; Managed by FlowPanel. Manual edits may be overwritten.
+	config := fmt.Sprintf(`; Managed by FlowPanel. Manual edits may be overwritten.
 [%s]
 user = %s
 group = %s
@@ -345,6 +349,40 @@ clear_env = no
 security.limit_extensions = .php .phar
 php_admin_value[disable_functions] = %s
 `, pool.User, pool.User, pool.Group, pool.ListenAddress, pool.User, pool.Group, maxChildren, idleTimeout, maxRequests, input.DocumentRoot, settings.DisableFunctions)
+	return config + renderDomainPoolEnvironment(input.Environment)
+}
+
+func renderDomainPoolEnvironment(environment map[string]string) string {
+	keys := make([]string, 0, len(environment))
+	for key := range environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var config strings.Builder
+	for _, key := range keys {
+		value := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`).Replace(environment[key])
+		fmt.Fprintf(&config, "env[%s] = \"%s\"\n", key, value)
+	}
+	return config.String()
+}
+
+func validateDomainPoolEnvironment(environment map[string]string) error {
+	for key, value := range environment {
+		if key == "" {
+			return fmt.Errorf("variable name is empty")
+		}
+		for index, character := range key {
+			valid := character == '_' || character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || index > 0 && character >= '0' && character <= '9'
+			if !valid {
+				return fmt.Errorf("invalid variable name %q", key)
+			}
+		}
+		if strings.ContainsAny(value, "\x00\r\n") {
+			return fmt.Errorf("variable %q contains an unsupported control character", key)
+		}
+	}
+	return nil
 }
 
 func snapshotDomainPoolFile(path string, snapshots map[string]domainPoolFileSnapshot) error {

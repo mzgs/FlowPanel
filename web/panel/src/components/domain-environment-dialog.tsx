@@ -31,7 +31,7 @@ type DomainEnvironmentDialogProps = {
 
 function getEnvironmentDescription(kind: DomainKind) {
   if (kind === "Php site") {
-    return "Variables are passed through Caddy to PHP-FPM and apply after save. Values are stored in plain text.";
+    return "Variables are added to the domain PHP-FPM pool and passed through Caddy, so PHP child processes also receive them after save. Values are stored in plain text.";
   }
   return "Variables are stored in plain text. Running runtimes are recreated after save so the new values apply immediately.";
 }

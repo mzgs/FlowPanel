@@ -74,6 +74,7 @@ type DomainPoolInput struct {
 	Version      string
 	DocumentRoot string
 	Settings     Settings
+	Environment  map[string]string
 }
 
 type DomainPool struct {
