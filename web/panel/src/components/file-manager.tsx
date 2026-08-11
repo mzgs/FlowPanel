@@ -82,14 +82,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { formatBytes, formatDateTime } from "@/lib/format";
+import { formatBytes, formatDateTime, formatUploadTimeRemaining } from "@/lib/format";
 import { consumePendingFilesPath } from "@/lib/files-navigation";
 import { cn, getErrorMessage } from "@/lib/utils";
 
 type ViewMode = "list" | "grid";
 type DialogMode = "folder" | "file" | "rename" | null;
 type ClipboardMode = "copy" | "move" | null;
-type UploadProgressState = FileUploadProgress & { fileCount: number };
+type UploadProgressState = FileUploadProgress & { fileCount: number; startedAt: number };
 
 type MarqueeState = {
   active: boolean;
@@ -299,6 +299,11 @@ function UploadProgressBanner({ progress }: { progress: UploadProgressState }) {
   const percent =
     progress.total > 0 ? Math.min(100, Math.floor((progress.loaded / progress.total) * 100)) : 0;
   const finishing = percent === 100;
+  const timeRemaining = formatUploadTimeRemaining(
+    progress.loaded,
+    progress.total,
+    progress.startedAt,
+  );
 
   return (
     <div className="flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
@@ -322,7 +327,7 @@ function UploadProgressBanner({ progress }: { progress: UploadProgressState }) {
       </div>
       <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
         {progress.total > 0
-          ? `${formatBytes(Math.min(progress.loaded, progress.total))} / ${formatBytes(progress.total)} · ${percent}%`
+          ? `${formatBytes(Math.min(progress.loaded, progress.total))} / ${formatBytes(progress.total)} · ${percent}%${finishing ? "" : ` · ${timeRemaining ?? "Estimating…"}`}`
           : formatBytes(progress.loaded)}
       </span>
     </div>
@@ -739,12 +744,16 @@ export function FileManager({
   const uploadMutation = useMutation({
     mutationFn: ({ path, files }: { path: string; files: File[] }) => {
       const fileCount = files.length;
+      const startedAt = Date.now();
       setUploadProgress({
         loaded: 0,
         total: files.reduce((total, file) => total + file.size, 0),
         fileCount,
+        startedAt,
       });
-      return uploadFiles(path, files, (progress) => setUploadProgress({ ...progress, fileCount }));
+      return uploadFiles(path, files, (progress) =>
+        setUploadProgress({ ...progress, fileCount, startedAt }),
+      );
     },
     onSuccess: async () => {
       await invalidateCurrentListing();

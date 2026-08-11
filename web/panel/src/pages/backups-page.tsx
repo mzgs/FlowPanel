@@ -63,7 +63,7 @@ import {
   tableDangerActionButtonClassName,
   tableStateCellClassName,
 } from "@/components/ui/table";
-import { formatBytes, formatDateTime } from "@/lib/format";
+import { formatBytes, formatDateTime, formatUploadTimeRemaining } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -95,6 +95,7 @@ const initialScheduleForm: ScheduleFormState = {
 };
 const backupArchiveExtension = ".tar.gz";
 const maxBackupUploadBytes = 8 * 1024 * 1024 * 1024;
+type BackupImportProgressState = BackupUploadProgress & { startedAt: number };
 
 function isBackupArchiveFileName(name: string) {
   const normalizedName = name.trim().toLowerCase();
@@ -131,11 +132,16 @@ function getBackupKey(record: BackupRecord) {
   return `${record.location}:${getBackupId(record)}`;
 }
 
-function BackupImportProgress({ progress }: { progress: BackupUploadProgress }) {
+function BackupImportProgress({ progress }: { progress: BackupImportProgressState }) {
   const percent =
     progress.total > 0
       ? Math.min(100, Math.floor((progress.loaded / progress.total) * 100))
       : 0;
+  const timeRemaining = formatUploadTimeRemaining(
+    progress.loaded,
+    progress.total,
+    progress.startedAt,
+  );
 
   return (
     <div className="mb-3 flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
@@ -157,7 +163,7 @@ function BackupImportProgress({ progress }: { progress: BackupUploadProgress }) 
       </div>
       <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
         {progress.total > 0
-          ? `${formatBytes(Math.min(progress.loaded, progress.total))} / ${formatBytes(progress.total)} · ${percent}%`
+          ? `${formatBytes(Math.min(progress.loaded, progress.total))} / ${formatBytes(progress.total)} · ${percent}%${percent === 100 ? "" : ` · ${timeRemaining ?? "Estimating…"}`}`
           : formatBytes(progress.loaded)}
       </span>
     </div>
@@ -253,7 +259,7 @@ export function BackupsPage() {
   );
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] =
-    useState<BackupUploadProgress | null>(null);
+    useState<BackupImportProgressState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [scheduledLoadError, setScheduledLoadError] = useState<string | null>(
     null,
@@ -641,10 +647,13 @@ export function BackupsPage() {
     }
 
     setImporting(true);
-    setImportProgress({ loaded: 0, total: file.size });
+    const startedAt = Date.now();
+    setImportProgress({ loaded: 0, total: file.size, startedAt });
 
     try {
-      const record = await importBackup(file, setImportProgress);
+      const record = await importBackup(file, (progress) =>
+        setImportProgress({ ...progress, startedAt }),
+      );
       setBackups((current) => [
         record,
         ...current.filter(

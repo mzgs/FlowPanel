@@ -20,3 +20,28 @@ export function formatBytes(value: number) {
 
   return `${size >= 10 || exponent === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[exponent]}`;
 }
+
+export function formatUploadTimeRemaining(
+  loaded: number,
+  total: number,
+  startedAt: number,
+) {
+  const elapsedSeconds = (Date.now() - startedAt) / 1000;
+  if (loaded <= 0 || total <= loaded || elapsedSeconds < 1) {
+    return null;
+  }
+
+  const seconds = Math.ceil((total - loaded) / (loaded / elapsedSeconds));
+  if (!Number.isFinite(seconds)) {
+    return null;
+  }
+  if (seconds < 60) {
+    return `${seconds}s left`;
+  }
+  if (seconds < 3600) {
+    return `${Math.ceil(seconds / 60)}m left`;
+  }
+
+  const hours = Math.floor(seconds / 3600);
+  return `${hours}h ${Math.ceil((seconds % 3600) / 60)}m left`;
+}
