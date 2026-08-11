@@ -19,7 +19,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   CircleCheck,
   Copy,
+  ExternalLink,
   GoogleDrive,
+  Info,
   LoaderCircle,
   RefreshCw,
   ShieldCheck,
@@ -33,6 +35,14 @@ import { NotificationSettings } from "@/components/notification-settings";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -58,6 +68,10 @@ const initialForm: SettingsFormState = {
   ftp_passive_ports: "",
 };
 const googleDrivePopupMessageType = "flowpanel-google-drive-oauth";
+const googleCloudProjectURL = "https://console.cloud.google.com/projectcreate";
+const googleDriveAPIURL = "https://console.cloud.google.com/apis/library/drive.googleapis.com";
+const googleAuthOverviewURL = "https://console.cloud.google.com/auth/overview";
+const googleAuthClientsURL = "https://console.cloud.google.com/auth/clients";
 
 function toFormState(settings: PanelSettings): SettingsFormState {
   return {
@@ -95,6 +109,7 @@ export function SettingsPage() {
   const [connectingGoogleDrive, setConnectingGoogleDrive] = useState(false);
   const [disconnectingGoogleDrive, setDisconnectingGoogleDrive] =
     useState(false);
+  const [googleDriveHelpOpen, setGoogleDriveHelpOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const googleDriveCredentialsInputRef = useRef<HTMLInputElement | null>(null);
@@ -554,6 +569,15 @@ export function SettingsPage() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="text-sm font-semibold text-[var(--app-text)]">Google Drive</h2>
+                    <button
+                      type="button"
+                      onClick={() => setGoogleDriveHelpOpen(true)}
+                      className="inline-flex size-6 items-center justify-center rounded-md text-[var(--app-text-muted)] transition-colors hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                      aria-label="How to get Google Drive credentials"
+                      title="How to get Google Drive credentials"
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
                     <Badge variant={googleDriveConnected ? "default" : "secondary"}>
                       {googleDriveConnected ? "Connected" : googleDriveReady ? "Ready to connect" : "Setup required"}
                     </Badge>
@@ -594,6 +618,12 @@ export function SettingsPage() {
               </div>
 
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
+                <Button type="button" variant="outline" asChild>
+                  <a href={googleCloudProjectURL} target="_blank" rel="noreferrer">
+                    Create Google project
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </Button>
                 <input
                   ref={googleDriveCredentialsInputRef}
                   type="file"
@@ -662,6 +692,85 @@ export function SettingsPage() {
             </div>
           </section>
         ) : null}
+
+        <Dialog open={googleDriveHelpOpen} onOpenChange={setGoogleDriveHelpOpen}>
+          <DialogContent className="sm:max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Get Google Drive credentials</DialogTitle>
+              <DialogDescription>
+                Create a Google OAuth web client, then upload its JSON credentials file to FlowPanel.
+              </DialogDescription>
+            </DialogHeader>
+
+            <ol className="space-y-3 text-[13px] leading-5 text-[var(--app-text-muted)]">
+              <li className="grid grid-cols-[1.5rem_1fr] gap-2">
+                <span className="font-semibold text-[var(--app-text)]">1.</span>
+                <span>
+                  <a className="font-medium text-primary hover:underline" href={googleCloudProjectURL} target="_blank" rel="noreferrer">
+                    Create a Google Cloud project
+                  </a>{" "}
+                  or select an existing one.
+                </span>
+              </li>
+              <li className="grid grid-cols-[1.5rem_1fr] gap-2">
+                <span className="font-semibold text-[var(--app-text)]">2.</span>
+                <span>
+                  In that project, enable the{" "}
+                  <a className="font-medium text-primary hover:underline" href={googleDriveAPIURL} target="_blank" rel="noreferrer">
+                    Google Drive API
+                  </a>.
+                </span>
+              </li>
+              <li className="grid grid-cols-[1.5rem_1fr] gap-2">
+                <span className="font-semibold text-[var(--app-text)]">3.</span>
+                <span>
+                  Open the{" "}
+                  <a className="font-medium text-primary hover:underline" href={googleAuthOverviewURL} target="_blank" rel="noreferrer">
+                    Google Auth Platform
+                  </a>{" "}
+                  and configure Branding and Audience. Under Data Access, add the <span className="font-mono text-[11px] text-[var(--app-text)]">drive.file</span> and <span className="font-mono text-[11px] text-[var(--app-text)]">userinfo.email</span> scopes. For an External app in testing, add the Google account that will store backups as a test user.
+                </span>
+              </li>
+              <li className="grid grid-cols-[1.5rem_1fr] gap-2">
+                <span className="font-semibold text-[var(--app-text)]">4.</span>
+                <span>
+                  Go to{" "}
+                  <a className="font-medium text-primary hover:underline" href={googleAuthClientsURL} target="_blank" rel="noreferrer">
+                    Clients
+                  </a>, choose <span className="font-medium text-[var(--app-text)]">Create client</span>, and select <span className="font-medium text-[var(--app-text)]">Web application</span>.
+                </span>
+              </li>
+              <li className="grid grid-cols-[1.5rem_1fr] gap-2">
+                <span className="font-semibold text-[var(--app-text)]">5.</span>
+                <div className="min-w-0 space-y-2">
+                  <p>Add this exact value under Authorized redirect URIs:</p>
+                  <div className="flex gap-2">
+                    <Input value={googleDriveRedirectURL} readOnly spellCheck={false} className="h-8 min-w-0 font-mono text-xs" aria-label="Google Drive authorized redirect URI" />
+                    <Button type="button" variant="outline" size="icon" className="size-8 shrink-0" onClick={() => void copyGoogleDriveRedirectURL()} aria-label="Copy redirect URI">
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </li>
+              <li className="grid grid-cols-[1.5rem_1fr] gap-2">
+                <span className="font-semibold text-[var(--app-text)]">6.</span>
+                <span>Create the client and immediately download its JSON credentials file. Keep it private, then close this guide and choose <span className="font-medium text-[var(--app-text)]">Upload credentials</span>.</span>
+              </li>
+            </ol>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setGoogleDriveHelpOpen(false)}>
+                Close
+              </Button>
+              <Button type="button" asChild>
+                <a href={googleCloudProjectURL} target="_blank" rel="noreferrer">
+                  Create project
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {!loading && !loadError ? <NotificationSettings /> : null}
       </div>
