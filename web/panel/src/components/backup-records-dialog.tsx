@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import {
   Download,
   HardDrive,
   LoaderCircle,
   RotateCcw,
   Trash2,
+  Upload,
 } from "@/components/icons/lucide-icons";
 import { getBackupDownloadUrl, type BackupRecord } from "@/api/backups";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
@@ -13,7 +14,7 @@ import {
   useBackupConfirmState,
 } from "@/components/backup-confirm-dialogs";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -53,6 +54,8 @@ type BackupRecordsDialogProps = {
   createDisabled: boolean;
   createBusy: boolean;
   createDone: boolean;
+  onUploadRestore?: (file: File) => void;
+  uploadBusy?: boolean;
   onRestoreBackup: (name: string) => void;
   restoringBackupName: string | null;
   restoredBackupName: string | null;
@@ -203,6 +206,8 @@ export function BackupRecordsDialog({
   createDisabled,
   createBusy,
   createDone,
+  onUploadRestore,
+  uploadBusy = false,
   onRestoreBackup,
   restoringBackupName,
   restoredBackupName,
@@ -212,6 +217,7 @@ export function BackupRecordsDialog({
   onDeleteBackup,
   deletingBackupName,
 }: BackupRecordsDialogProps) {
+  const uploadInputId = useId();
   const backupNames = useMemo(
     () => new Set(backups.map((backup) => backup.name)),
     [backups],
@@ -240,7 +246,36 @@ export function BackupRecordsDialog({
                 busy={createBusy}
                 done={createDone}
               />
+              {onUploadRestore ? (
+                <Button type="button" size="sm" variant="outline" asChild disabled={uploadBusy}>
+                  <label htmlFor={uploadInputId} className="cursor-pointer">
+                    {uploadBusy ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="h-4 w-4" />
+                    )}
+                    {uploadBusy ? "Restoring..." : "Upload & restore"}
+                    <input
+                      id={uploadInputId}
+                      type="file"
+                      accept=".sql,.zip,.tar.gz,.tgz,application/sql,application/zip,application/gzip"
+                      className="sr-only"
+                      disabled={uploadBusy}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (file) onUploadRestore(file);
+                      }}
+                    />
+                  </label>
+                </Button>
+              ) : null}
             </div>
+            {onUploadRestore ? (
+              <DialogDescription>
+                Upload a .sql, .zip, or .tar.gz file to replace the current database contents.
+              </DialogDescription>
+            ) : null}
           </DialogHeader>
           <BackupRecordsTable
             backups={backups}

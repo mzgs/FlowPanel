@@ -387,6 +387,7 @@ func (a *apiRoutes) registerMariaDBRoutes(r chi.Router) {
 		stdhttp.ServeContent(w, r, fileName, time.Now().UTC(), bytes.NewReader(dump))
 	})
 	r.Method(stdhttp.MethodGet, "/mariadb/databases/{databaseName}/backup", mariaDBDatabaseBackupHandler)
+	a.registerMariaDBDatabaseRestoreRoute(r)
 
 	mariaDBDatabaseCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app.MariaDB == nil {

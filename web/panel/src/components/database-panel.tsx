@@ -13,6 +13,7 @@ import {
   fetchMariaDBDatabases,
   fetchMariaDBRootPassword,
   fetchMariaDBStatus,
+  restoreMariaDBDatabaseBackup,
   updateMariaDBRootPassword,
   updateMariaDBDatabase,
   type CreateMariaDBDatabaseInput,
@@ -267,6 +268,8 @@ export function DatabasePanel({
   const [deletingBackupName, setDeletingBackupName] = useState<string | null>(null);
   const [restoringBackupName, setRestoringBackupName] = useState<string | null>(null);
   const [restoredBackupName, setRestoredBackupName] = useState<string | null>(null);
+  const [pendingRestoreFile, setPendingRestoreFile] = useState<File | null>(null);
+  const [uploadingRestoreFile, setUploadingRestoreFile] = useState(false);
   const [createdBackupName, setCreatedBackupName] = useState<string | null>(null);
   const [rootPasswordOpen, setRootPasswordOpen] = useState(false);
   const [rootPassword, setRootPassword] = useState<string>("");
@@ -771,6 +774,26 @@ export function DatabasePanel({
     }
   }
 
+  async function handleUploadRestore() {
+    if (!backupDialogDatabase || !pendingRestoreFile) {
+      return;
+    }
+
+    const databaseName = backupDialogDatabase.name;
+    const fileName = pendingRestoreFile.name;
+    setUploadingRestoreFile(true);
+    try {
+      await restoreMariaDBDatabaseBackup(databaseName, pendingRestoreFile);
+      await reloadDatabases();
+      setPendingRestoreFile(null);
+      toast.success(`Restored ${databaseName} from ${fileName}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to restore ${databaseName}.`));
+    } finally {
+      setUploadingRestoreFile(false);
+    }
+  }
+
   function handleTogglePasswordVisibility(database: MariaDBDatabase) {
     const key = getDatabasePasswordKey(database);
     setVisiblePasswords((current) => ({
@@ -806,8 +829,9 @@ export function DatabasePanel({
       <BackupRecordsDialog
         open={backupDialogDatabase !== null}
         onOpenChange={(open) => {
-          if (!open) {
+          if (!open && !uploadingRestoreFile) {
             setBackupDialogDatabase(null);
+            setPendingRestoreFile(null);
           }
         }}
         title={
@@ -822,6 +846,8 @@ export function DatabasePanel({
         createDisabled={backupDialogDatabase === null || creatingBackupName !== null}
         createBusy={backupDialogCreating}
         createDone={backupDialogCreated}
+        onUploadRestore={setPendingRestoreFile}
+        uploadBusy={uploadingRestoreFile}
         onRestoreBackup={(name) => {
           void handleRestoreBackup(name);
         }}
@@ -836,6 +862,24 @@ export function DatabasePanel({
           void handleDeleteBackup(name);
         }}
         deletingBackupName={deletingBackupName}
+      />
+      <ActionConfirmDialog
+        open={pendingRestoreFile !== null}
+        onOpenChange={(open) => {
+          if (!open && !uploadingRestoreFile) setPendingRestoreFile(null);
+        }}
+        title="Restore uploaded backup"
+        desc={
+          backupDialogDatabase && pendingRestoreFile
+            ? `Restore ${backupDialogDatabase.name} from "${pendingRestoreFile.name}"? This replaces all contents in the current database.`
+            : "Restore this uploaded backup to the current database?"
+        }
+        confirmText="Upload & restore"
+        isLoading={uploadingRestoreFile}
+        handleConfirm={() => {
+          void handleUploadRestore();
+        }}
+        className="sm:max-w-md"
       />
       <ActionConfirmDialog
         open={deleteDatabaseCandidate !== null}

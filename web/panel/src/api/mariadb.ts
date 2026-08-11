@@ -200,6 +200,21 @@ export async function downloadMariaDBDatabaseBackup(name: string): Promise<strin
   return fileName;
 }
 
+export async function restoreMariaDBDatabaseBackup(name: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.append("backup", file);
+
+  const response = await fetch(`/api/mariadb/databases/${encodeURIComponent(name)}/restore`, {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+
+  if (!response.ok) {
+    throw await readMariaDBApiError(response, "restore database");
+  }
+}
+
 export async function downloadMariaDBAllDatabasesBackup(): Promise<string> {
   const response = await fetch("/api/mariadb/backup", {
     credentials: "include",
