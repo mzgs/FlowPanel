@@ -434,6 +434,7 @@ export function BackupsPage() {
       );
     } catch (error) {
       toast.error(getErrorMessage(error, "Failed to create backup."));
+      await loadBackups();
     } finally {
       setCreating(false);
     }

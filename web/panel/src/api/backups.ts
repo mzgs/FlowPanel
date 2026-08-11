@@ -178,13 +178,26 @@ export async function createBackup(input: CreateBackupInput): Promise<BackupReco
 
   const activity = { id: payload.job.id, progress: payload.job.progress };
   setBackgroundActivity("create", activity);
+  let failedPolls = 0;
   try {
     while (true) {
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
-      const statusResponse = await fetch(
-        `/api/backups/create-jobs/${encodeURIComponent(payload.job.id)}`,
-        { credentials: "include" },
-      );
+      let statusResponse: Response;
+      try {
+        statusResponse = await fetch(
+          `/api/backups/create-jobs/${encodeURIComponent(payload.job.id)}`,
+          { credentials: "include" },
+        );
+        failedPolls = 0;
+      } catch {
+        failedPolls += 1;
+        if (failedPolls < 30) continue;
+
+        const progress = getBackupBackgroundActivities().create?.progress;
+        throw new Error(
+          `Lost connection to FlowPanel${progress ? ` while ${progress.label.toLowerCase()} (${progress.percent}%)` : " while creating the backup"}. The server may have stopped or restarted; check the Activity page or server log for the underlying error.`,
+        );
+      }
       if (!statusResponse.ok) {
         throw await readBackupApiError(statusResponse, "check backup creation");
       }

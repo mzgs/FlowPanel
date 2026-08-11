@@ -8,6 +8,7 @@ import (
 	"io"
 	stdhttp "net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -156,6 +157,15 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			jobCtx := context.Background()
 			var record backup.Record
 			var err error
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					err = fmt.Errorf("backup creation panicked: %v", recovered)
+					a.app.Logger.Error("create backup panicked", zap.Any("panic", recovered), zap.ByteString("stack", debug.Stack()))
+					a.mutationEvent(jobCtx, "backups", "create", "backup", "backup", "FlowPanel backup", "failed", fmt.Sprintf("Failed to create a backup archive: %v", err))
+					a.triggerAlert(jobCtx, alerts.TriggerInput{Key: "backup:manual", Severity: "critical", Title: "Backup failed", Message: err.Error()})
+					a.finishBackupCreate(job.ID, backup.Record{}, err)
+				}
+			}()
 			if manager, ok := a.app.Backups.(backup.CreateProgressManager); ok {
 				record, err = manager.CreateWithProgress(jobCtx, input, func(progress backup.CreateProgress) {
 					a.updateBackupCreate(job.ID, progress)
