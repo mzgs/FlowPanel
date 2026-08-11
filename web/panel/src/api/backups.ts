@@ -31,8 +31,6 @@ export type CreateBackupInput = {
 export type RestoreBackupResult = {
   restored_panel_files: boolean;
   restored_panel_database: boolean;
-  restored_panel_environment: boolean;
-  restored_admin_tls: boolean;
   restored_docker_data: boolean;
   restored_docker_containers?: string[];
   restored_sites?: string[];

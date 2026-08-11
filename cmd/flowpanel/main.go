@@ -1623,8 +1623,6 @@ func runBackupCreateCommand(input backup.CreateInput) error {
 		config.FlowPanelDataPath(),
 		config.BackupsPath(),
 		cfg.Database.Path,
-		cfg.AdminTLSCertFile,
-		cfg.AdminTLSKeyFile,
 		dbConn,
 		domainService,
 		mariadbManager,
@@ -1632,8 +1630,6 @@ func runBackupCreateCommand(input backup.CreateInput) error {
 		googleDriveService,
 		pm2Manager,
 	)
-	backupService.SetPanelEnvironmentPath(installerEnvFilePath())
-
 	record, err := backupService.Create(ctx, input)
 	if err != nil {
 		var validation backup.ValidationErrors
@@ -1780,8 +1776,6 @@ func runServer() error {
 		config.FlowPanelDataPath(),
 		config.BackupsPath(),
 		cfg.Database.Path,
-		cfg.AdminTLSCertFile,
-		cfg.AdminTLSKeyFile,
 		dbConn,
 		domainService,
 		mariadbManager,
@@ -1789,7 +1783,6 @@ func runServer() error {
 		googleDriveService,
 		pm2Manager,
 	)
-	backupService.SetPanelEnvironmentPath(installerEnvFilePath())
 	caddyRuntime := caddy.NewRuntime(
 		logger.Named("caddy"),
 		cfg.AdminListenAddr,

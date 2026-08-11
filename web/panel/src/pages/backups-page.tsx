@@ -1071,8 +1071,8 @@ export function BackupsPage() {
                     Panel data
                   </Label>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Includes FlowPanel settings, runtime secrets, admin TLS
-                    files, and the panel database.
+                    Includes FlowPanel settings, runtime secrets, and the panel
+                    database. Server environment and TLS files are excluded.
                   </p>
                 </div>
               </label>
@@ -1205,7 +1205,7 @@ export function BackupsPage() {
         title="Restore backup"
         desc={
           confirmRestoreRecord
-            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel files, FlowPanel environment configuration, admin TLS files, Docker data, site files, and databases, restarts Caddy, and recreates Docker containers with their saved environment variable values.`
+            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel files, Docker data, site files, and databases, restarts Caddy, and recreates Docker containers with their saved environment variable values. The destination FlowPanel environment configuration and admin TLS files are preserved.`
             : "Restore this backup?"
         }
         confirmText={

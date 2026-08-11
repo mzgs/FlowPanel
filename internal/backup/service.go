@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -29,15 +28,12 @@ import (
 )
 
 const (
-	backupExtension       = ".tar.gz"
-	LocationLocal         = "local"
-	LocationGoogleDrive   = "google_drive"
-	maxManifestSize       = 1 << 20
-	adminTLSArchiveDir    = "admin_tls"
-	adminTLSCertArchive   = adminTLSArchiveDir + "/certificate.pem"
-	adminTLSKeyArchive    = adminTLSArchiveDir + "/private.key"
-	panelConfigArchiveDir = "panel_config"
-	panelEnvArchive       = panelConfigArchiveDir + "/flowpanel.env"
+	backupExtension             = ".tar.gz"
+	LocationLocal               = "local"
+	LocationGoogleDrive         = "google_drive"
+	maxManifestSize             = 1 << 20
+	legacyAdminTLSArchiveDir    = "admin_tls"
+	legacyPanelConfigArchiveDir = "panel_config"
 )
 
 var (
@@ -86,15 +82,13 @@ func (v ValidationErrors) Error() string {
 }
 
 type RestoreResult struct {
-	RestoredPanelFiles       bool     `json:"restored_panel_files"`
-	RestoredPanelDatabase    bool     `json:"restored_panel_database"`
-	RestoredPanelEnvironment bool     `json:"restored_panel_environment"`
-	RestoredAdminTLS         bool     `json:"restored_admin_tls"`
-	RestoredDockerData       bool     `json:"restored_docker_data"`
-	RestoredContainers       []string `json:"restored_docker_containers,omitempty"`
-	RestoredSites            []string `json:"restored_sites,omitempty"`
-	RestoredDatabases        []string `json:"restored_databases,omitempty"`
-	Warnings                 []string `json:"warnings,omitempty"`
+	RestoredPanelFiles    bool     `json:"restored_panel_files"`
+	RestoredPanelDatabase bool     `json:"restored_panel_database"`
+	RestoredDockerData    bool     `json:"restored_docker_data"`
+	RestoredContainers    []string `json:"restored_docker_containers,omitempty"`
+	RestoredSites         []string `json:"restored_sites,omitempty"`
+	RestoredDatabases     []string `json:"restored_databases,omitempty"`
+	Warnings              []string `json:"warnings,omitempty"`
 }
 
 type RestoreProgress struct {
@@ -137,27 +131,17 @@ type DownloadResult struct {
 }
 
 type Service struct {
-	logger        *zap.Logger
-	dataPath      string
-	backupPath    string
-	databasePath  string
-	adminCertPath string
-	adminKeyPath  string
-	panelEnvPath  string
-	db            *sql.DB
-	store         *Store
-	domains       DomainSource
-	mariaDB       DatabaseSource
-	settings      *settings.Service
-	googleDrive   *googledrive.Service
-	pm2           PM2Syncer
-}
-
-func (s *Service) SetPanelEnvironmentPath(value string) {
-	s.panelEnvPath = filepath.Clean(strings.TrimSpace(value))
-	if s.panelEnvPath == "." {
-		s.panelEnvPath = ""
-	}
+	logger       *zap.Logger
+	dataPath     string
+	backupPath   string
+	databasePath string
+	db           *sql.DB
+	store        *Store
+	domains      DomainSource
+	mariaDB      DatabaseSource
+	settings     *settings.Service
+	googleDrive  *googledrive.Service
+	pm2          PM2Syncer
 }
 
 type manifest struct {
@@ -200,8 +184,6 @@ func NewService(
 	dataPath string,
 	backupPath string,
 	databasePath string,
-	adminCertPath string,
-	adminKeyPath string,
 	db *sql.DB,
 	domains DomainSource,
 	mariaDB DatabaseSource,
@@ -223,19 +205,17 @@ func NewService(
 	}
 
 	return &Service{
-		logger:        logger,
-		dataPath:      dataPath,
-		backupPath:    backupPath,
-		databasePath:  filepath.Clean(strings.TrimSpace(databasePath)),
-		adminCertPath: strings.TrimSpace(adminCertPath),
-		adminKeyPath:  strings.TrimSpace(adminKeyPath),
-		db:            db,
-		store:         NewStore(db),
-		domains:       domains,
-		mariaDB:       mariaDB,
-		settings:      settingsService,
-		googleDrive:   googleDriveService,
-		pm2:           pm2Syncer,
+		logger:       logger,
+		dataPath:     dataPath,
+		backupPath:   backupPath,
+		databasePath: filepath.Clean(strings.TrimSpace(databasePath)),
+		db:           db,
+		store:        NewStore(db),
+		domains:      domains,
+		mariaDB:      mariaDB,
+		settings:     settingsService,
+		googleDrive:  googleDriveService,
+		pm2:          pm2Syncer,
 	}
 }
 
@@ -372,25 +352,12 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 	var (
 		snapshotPath     string
 		snapshotRelPath  string
-		adminCert        []byte
-		adminKey         []byte
-		includeAdminTLS  bool
-		panelEnvironment []byte
-		includePanelEnv  bool
 		sites            []siteArchive
 		databaseDumps    []databaseDump
 		dockerContainers []dockercontainer.Record
 	)
 	if input.IncludePanelData {
 		snapshotPath, snapshotRelPath, err = s.createDatabaseSnapshot(ctx, stagingPath)
-		if err != nil {
-			return Record{}, err
-		}
-		adminCert, adminKey, includeAdminTLS, err = s.readAdminTLSFiles()
-		if err != nil {
-			return Record{}, err
-		}
-		panelEnvironment, includePanelEnv, err = s.readPanelEnvironmentFile()
 		if err != nil {
 			return Record{}, err
 		}
@@ -437,12 +404,6 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 			"sqlite database snapshot",
 			"panel-managed runtime secrets",
 		)
-		if includeAdminTLS {
-			contents = append(contents, "configured admin TLS certificate and private key")
-		}
-		if includePanelEnv {
-			contents = append(contents, "FlowPanel installer environment configuration")
-		}
 	}
 	if input.IncludeDockerData {
 		contents = append(contents, "flowpanel-managed docker volume data and container definitions, including environment variable values")
@@ -480,25 +441,6 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 			_ = tarWriter.Close()
 			_ = gzipWriter.Close()
 			return Record{}, err
-		}
-		if includeAdminTLS {
-			if err := writeTarBytesMode(tarWriter, adminTLSCertArchive, adminCert, createdAt, 0o644); err != nil {
-				_ = tarWriter.Close()
-				_ = gzipWriter.Close()
-				return Record{}, err
-			}
-			if err := writeTarBytesMode(tarWriter, adminTLSKeyArchive, adminKey, createdAt, 0o600); err != nil {
-				_ = tarWriter.Close()
-				_ = gzipWriter.Close()
-				return Record{}, err
-			}
-		}
-		if includePanelEnv {
-			if err := writeTarBytesMode(tarWriter, panelEnvArchive, panelEnvironment, createdAt, 0o600); err != nil {
-				_ = tarWriter.Close()
-				_ = gzipWriter.Close()
-				return Record{}, err
-			}
 		}
 	}
 	if input.IncludeDockerData {
@@ -736,18 +678,6 @@ func (s *Service) restoreArchive(ctx context.Context, backupPath string, report 
 		} else {
 			result.RestoredPanelFiles = true
 		}
-	}
-
-	if restored, err := s.restoreAdminTLS(stagingPath); err != nil {
-		recordFailure("admin_tls", "Admin TLS certificate and key were not restored", err)
-	} else {
-		result.RestoredAdminTLS = restored
-	}
-	if restored, err := s.restorePanelEnvironment(stagingPath); err != nil {
-		recordFailure("panel_environment", "FlowPanel environment configuration was not restored", err)
-	} else if restored {
-		result.RestoredPanelEnvironment = true
-		result.addWarning("FlowPanel environment configuration was restored. Restart the FlowPanel service to apply it.")
 	}
 
 	if snapshotStagingPath != "" {
@@ -1369,38 +1299,6 @@ func (s *Service) writeDataArchive(tarWriter *tar.Writer, snapshotPath, snapshot
 	return writeSnapshot()
 }
 
-func (s *Service) readAdminTLSFiles() ([]byte, []byte, bool, error) {
-	if s.adminCertPath == "" && s.adminKeyPath == "" {
-		return nil, nil, false, nil
-	}
-	if s.adminCertPath == "" || s.adminKeyPath == "" {
-		return nil, nil, false, fmt.Errorf("admin TLS certificate and key paths must both be configured")
-	}
-	cert, err := os.ReadFile(s.adminCertPath)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("read admin TLS certificate: %w", err)
-	}
-	key, err := os.ReadFile(s.adminKeyPath)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("read admin TLS private key: %w", err)
-	}
-	return cert, key, true, nil
-}
-
-func (s *Service) readPanelEnvironmentFile() ([]byte, bool, error) {
-	if s.panelEnvPath == "" {
-		return nil, false, nil
-	}
-	payload, err := os.ReadFile(s.panelEnvPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("read FlowPanel environment file: %w", err)
-	}
-	return payload, true, nil
-}
-
 func (s *Service) writeDockerDataArchive(tarWriter *tar.Writer) error {
 	root := s.dockerDataPath()
 	if root == "" {
@@ -1826,7 +1724,7 @@ func hasPanelEntries(stagingPath, snapshotRelPath string) bool {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "manifest.json" || name == adminTLSArchiveDir || name == panelConfigArchiveDir || name == "docker" || name == "docker_volumes" || name == "sites" || name == "databases" {
+		if name == "manifest.json" || name == legacyAdminTLSArchiveDir || name == legacyPanelConfigArchiveDir || name == "docker" || name == "docker_volumes" || name == "sites" || name == "databases" {
 			continue
 		}
 		if snapshotRelPath != "" && filepath.Clean(filepath.FromSlash(snapshotRelPath)) == name {
@@ -1873,13 +1771,13 @@ func (s *Service) restorePanelFiles(stagingPath, snapshotRelPath string) error {
 			return fmt.Errorf("resolve restore path %q: %w", currentPath, err)
 		}
 		relativePath = filepath.ToSlash(relativePath)
-		if relativePath == "manifest.json" || relativePath == adminTLSArchiveDir || relativePath == panelConfigArchiveDir || relativePath == "docker" || relativePath == "docker_volumes" || relativePath == "sites" || relativePath == "databases" {
+		if relativePath == "manifest.json" || relativePath == legacyAdminTLSArchiveDir || relativePath == legacyPanelConfigArchiveDir || relativePath == "docker" || relativePath == "docker_volumes" || relativePath == "sites" || relativePath == "databases" {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if strings.HasPrefix(relativePath, adminTLSArchiveDir+"/") || strings.HasPrefix(relativePath, panelConfigArchiveDir+"/") || strings.HasPrefix(relativePath, "docker/") || strings.HasPrefix(relativePath, "docker_volumes/") || strings.HasPrefix(relativePath, "sites/") || strings.HasPrefix(relativePath, "databases/") {
+		if strings.HasPrefix(relativePath, legacyAdminTLSArchiveDir+"/") || strings.HasPrefix(relativePath, legacyPanelConfigArchiveDir+"/") || strings.HasPrefix(relativePath, "docker/") || strings.HasPrefix(relativePath, "docker_volumes/") || strings.HasPrefix(relativePath, "sites/") || strings.HasPrefix(relativePath, "databases/") {
 			if entry.IsDir() && (relativePath == "sites" || relativePath == "databases") {
 				return filepath.SkipDir
 			}
@@ -1898,47 +1796,6 @@ func (s *Service) restorePanelFiles(stagingPath, snapshotRelPath string) error {
 		}
 		return copyPath(currentPath, targetPath)
 	})
-}
-
-func (s *Service) restoreAdminTLS(stagingPath string) (bool, error) {
-	cert, certErr := os.ReadFile(filepath.Join(stagingPath, filepath.FromSlash(adminTLSCertArchive)))
-	key, keyErr := os.ReadFile(filepath.Join(stagingPath, filepath.FromSlash(adminTLSKeyArchive)))
-	if errors.Is(certErr, fs.ErrNotExist) && errors.Is(keyErr, fs.ErrNotExist) {
-		return false, nil
-	}
-	if certErr != nil || keyErr != nil {
-		return false, fmt.Errorf("read admin TLS backup: %w", errors.Join(certErr, keyErr))
-	}
-	if s.adminCertPath == "" || s.adminKeyPath == "" {
-		return false, fmt.Errorf("admin TLS certificate and key paths are not configured")
-	}
-	if _, err := tls.X509KeyPair(cert, key); err != nil {
-		return false, fmt.Errorf("validate admin TLS certificate and key: %w", err)
-	}
-	if err := writeFileAtomic(s.adminKeyPath, key, 0o600); err != nil {
-		return false, fmt.Errorf("restore admin TLS private key: %w", err)
-	}
-	if err := writeFileAtomic(s.adminCertPath, cert, 0o644); err != nil {
-		return false, fmt.Errorf("restore admin TLS certificate: %w", err)
-	}
-	return true, nil
-}
-
-func (s *Service) restorePanelEnvironment(stagingPath string) (bool, error) {
-	payload, err := os.ReadFile(filepath.Join(stagingPath, filepath.FromSlash(panelEnvArchive)))
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read FlowPanel environment backup: %w", err)
-	}
-	if s.panelEnvPath == "" {
-		return false, fmt.Errorf("FlowPanel environment path is not configured")
-	}
-	if err := writeFileAtomic(s.panelEnvPath, payload, 0o600); err != nil {
-		return false, fmt.Errorf("restore FlowPanel environment file: %w", err)
-	}
-	return true, nil
 }
 
 func (s *Service) restoreDockerData(stagingPath string) (bool, error) {
@@ -2429,31 +2286,6 @@ func copyPath(sourcePath, targetPath string) error {
 	}
 
 	return nil
-}
-
-func writeFileAtomic(targetPath string, content []byte, mode fs.FileMode) error {
-	directory := filepath.Dir(targetPath)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(directory, ".flowpanel-restore-*")
-	if err != nil {
-		return err
-	}
-	tempPath := file.Name()
-	defer os.Remove(tempPath)
-	if err := file.Chmod(mode); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.Write(content); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, targetPath)
 }
 
 func sanitizeArchivePath(value string) (string, bool) {

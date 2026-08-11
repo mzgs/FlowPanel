@@ -1340,7 +1340,7 @@ func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.Res
 		}
 	}
 
-	if app.Caddy != nil && (result.RestoredPanelFiles || result.RestoredAdminTLS) {
+	if app.Caddy != nil && result.RestoredPanelFiles {
 		if err := app.Caddy.Stop(ctx); err != nil {
 			return fmt.Errorf("stop caddy runtime: %w", err)
 		}
@@ -1348,7 +1348,7 @@ func syncBackupRestoreState(ctx context.Context, app *app.App, result backup.Res
 			return fmt.Errorf("restart caddy runtime: %w", err)
 		}
 	}
-	if app.Caddy != nil && app.Domains != nil && (result.RestoredPanelDatabase || result.RestoredPanelFiles || result.RestoredAdminTLS) {
+	if app.Caddy != nil && app.Domains != nil && (result.RestoredPanelDatabase || result.RestoredPanelFiles) {
 		if err := syncDomainsWithCurrentSettings(ctx, app); err != nil {
 			return fmt.Errorf("sync caddy runtime: %w", err)
 		}
