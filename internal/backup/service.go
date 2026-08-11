@@ -96,6 +96,11 @@ type RestoreProgress struct {
 	Percent int    `json:"percent"`
 }
 
+type CreateProgress struct {
+	Label   string `json:"label"`
+	Percent int    `json:"percent"`
+}
+
 const (
 	RequirementDocker  = "docker"
 	RequirementGolang  = "golang"
@@ -118,6 +123,10 @@ type RestorePreflight struct {
 
 type ProgressManager interface {
 	RestoreWithProgress(context.Context, string, string, func(RestoreProgress)) (RestoreResult, error)
+}
+
+type CreateProgressManager interface {
+	CreateWithProgress(context.Context, CreateInput, func(CreateProgress)) (Record, error)
 }
 
 type PreflightManager interface {
@@ -292,6 +301,16 @@ func (s *Service) listLocalBackups() ([]Record, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
+	return s.CreateWithProgress(ctx, input, func(CreateProgress) {})
+}
+
+func (s *Service) CreateWithProgress(ctx context.Context, input CreateInput, report func(CreateProgress)) (Record, error) {
+	update := func(label string, percent int) {
+		if report != nil {
+			report(CreateProgress{Label: label, Percent: percent})
+		}
+	}
+	update("Preparing backup…", 2)
 	operationLock, err := s.acquireOperationLock()
 	if err != nil {
 		return Record{}, err
@@ -325,24 +344,26 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error)
 	}
 
 	if input.IncludePanelData && s.pm2 != nil {
+		update("Syncing panel processes…", 6)
 		if _, err := s.pm2.Sync(ctx); err != nil {
 			return Record{}, fmt.Errorf("sync pm2 processes: %w", err)
 		}
 	}
 
 	if input.Location == LocationGoogleDrive {
-		return s.createGoogleDriveBackup(ctx, input, refreshToken)
+		return s.createGoogleDriveBackup(ctx, input, refreshToken, update)
 	}
 
 	createdAt := time.Now().UTC()
 	name := fmt.Sprintf("%s-%s%s", backupNamePrefix(input), createdAt.Format("20060102-150405"), backupExtension)
 	targetPath := filepath.Join(s.backupPath, name)
-	return s.createLocalArchive(ctx, input, name, targetPath, createdAt)
+	return s.createLocalArchive(ctx, input, name, targetPath, createdAt, update)
 }
 
-func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, name string, targetPath string, createdAt time.Time) (Record, error) {
+func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, name string, targetPath string, createdAt time.Time, update func(string, int)) (Record, error) {
 	tempTargetPath := targetPath + ".tmp"
 
+	update("Preparing backup files…", 10)
 	stagingPath, err := os.MkdirTemp("", "flowpanel-backup-*")
 	if err != nil {
 		return Record{}, fmt.Errorf("create backup staging directory: %w", err)
@@ -357,30 +378,35 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		dockerContainers []dockercontainer.Record
 	)
 	if input.IncludePanelData {
+		update("Snapshotting panel data…", 18)
 		snapshotPath, snapshotRelPath, err = s.createDatabaseSnapshot(ctx, stagingPath)
 		if err != nil {
 			return Record{}, err
 		}
 	}
 	if input.IncludeSites {
+		update("Collecting site files…", 25)
 		sites, err = s.collectSites(input.SiteHostnames)
 		if err != nil {
 			return Record{}, err
 		}
 	}
 	if input.IncludeDatabases {
+		update("Dumping databases…", 35)
 		databaseDumps, err = s.collectDatabaseDumps(ctx, input.DatabaseNames)
 		if err != nil {
 			return Record{}, err
 		}
 	}
 	if input.IncludeDockerData {
+		update("Snapshotting Docker containers…", 45)
 		dockerContainers, err = dockercontainer.Snapshot(ctx)
 		if err != nil {
 			return Record{}, fmt.Errorf("snapshot Docker containers: %w", err)
 		}
 	}
 
+	update("Creating archive…", 52)
 	file, err := os.OpenFile(tempTargetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return Record{}, fmt.Errorf("create backup archive: %w", err)
@@ -437,6 +463,7 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 	}
 
 	if input.IncludePanelData {
+		update("Archiving panel data…", 60)
 		if err := s.writeDataArchive(tarWriter, snapshotPath, snapshotRelPath); err != nil {
 			_ = tarWriter.Close()
 			_ = gzipWriter.Close()
@@ -444,16 +471,23 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		}
 	}
 	if input.IncludeDockerData {
+		update("Archiving Docker data…", 70)
 		if err := s.writeDockerArchive(ctx, tarWriter, dockerContainers, createdAt); err != nil {
 			_ = tarWriter.Close()
 			_ = gzipWriter.Close()
 			return Record{}, err
 		}
 	}
+	if len(sites) > 0 {
+		update("Archiving site files…", 80)
+	}
 	if err := s.writeSiteArchives(ctx, tarWriter, sites); err != nil {
 		_ = tarWriter.Close()
 		_ = gzipWriter.Close()
 		return Record{}, err
+	}
+	if len(databaseDumps) > 0 {
+		update("Archiving database dumps…", 90)
 	}
 	if err := writeDatabaseDumps(tarWriter, databaseDumps, createdAt); err != nil {
 		_ = tarWriter.Close()
@@ -461,6 +495,7 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		return Record{}, err
 	}
 
+	update("Finalizing archive…", 96)
 	if err := tarWriter.Close(); err != nil {
 		_ = gzipWriter.Close()
 		return Record{}, fmt.Errorf("close backup tar stream: %w", err)
@@ -486,10 +521,11 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		zap.Int64("size", info.Size()),
 	)
 
+	update("Backup complete", 100)
 	return localRecord(name, info.Size(), info.ModTime().UTC()), nil
 }
 
-func (s *Service) createGoogleDriveBackup(ctx context.Context, input CreateInput, refreshToken string) (Record, error) {
+func (s *Service) createGoogleDriveBackup(ctx context.Context, input CreateInput, refreshToken string, update func(string, int)) (Record, error) {
 	stagingPath, err := os.MkdirTemp("", "flowpanel-drive-backup-*")
 	if err != nil {
 		return Record{}, fmt.Errorf("create google drive backup staging directory: %w", err)
@@ -499,7 +535,9 @@ func (s *Service) createGoogleDriveBackup(ctx context.Context, input CreateInput
 	createdAt := time.Now().UTC()
 	name := fmt.Sprintf("%s-%s%s", backupNamePrefix(input), createdAt.Format("20060102-150405"), backupExtension)
 	targetPath := filepath.Join(stagingPath, name)
-	if _, err := s.createLocalArchive(ctx, input, name, targetPath, createdAt); err != nil {
+	if _, err := s.createLocalArchive(ctx, input, name, targetPath, createdAt, func(label string, percent int) {
+		update(label, percent*85/100)
+	}); err != nil {
 		return Record{}, err
 	}
 
@@ -509,6 +547,7 @@ func (s *Service) createGoogleDriveBackup(ctx context.Context, input CreateInput
 	}
 	defer archive.Close()
 
+	update("Uploading to Google Drive…", 88)
 	uploaded, err := s.googleDrive.UploadBackup(ctx, refreshToken, name, archive)
 	if err != nil {
 		return Record{}, err
@@ -531,6 +570,7 @@ func (s *Service) createGoogleDriveBackup(ctx context.Context, input CreateInput
 		return Record{}, err
 	}
 
+	update("Backup complete", 100)
 	return record, nil
 }
 

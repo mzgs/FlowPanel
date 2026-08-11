@@ -13,6 +13,7 @@ import {
   importBackup,
   restoreBackup,
   subscribeBackupBackgroundActivities,
+  type BackupCreateProgress,
   type BackupRecord,
   type BackupRestorePreflight,
   type BackupRestoreProgress,
@@ -189,21 +190,28 @@ function BackupRestoreProgressRow({ progress }: { progress: BackupRestoreProgres
   );
 }
 
-function BackupCreateProgressRow() {
+function BackupCreateProgressRow({ progress }: { progress: BackupCreateProgress }) {
   return (
     <div className="mb-3 flex h-10 items-center gap-3 rounded-[10px] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[12px]">
       <span className="shrink-0 font-medium text-[var(--app-text)]">
-        Creating backup…
+        {progress.label}
       </span>
       <div
         role="progressbar"
         aria-label="Backup creation progress"
-        aria-valuetext="Creating backup"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress.percent}
         className="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-[var(--app-surface-muted)]"
       >
-        <div className="h-full w-full animate-pulse rounded-full bg-[var(--app-accent)]" />
+        <div
+          className="h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-300"
+          style={{ width: `${progress.percent}%` }}
+        />
       </div>
-      <span className="shrink-0 text-[var(--app-text-muted)]">Working</span>
+      <span className="shrink-0 tabular-nums text-[var(--app-text-muted)]">
+        {progress.percent}%
+      </span>
     </div>
   );
 }
@@ -1205,7 +1213,7 @@ export function BackupsPage() {
         title="Restore backup"
         desc={
           confirmRestoreRecord
-            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel files, Docker data, site files, and databases, restarts Caddy, and recreates Docker containers with their saved environment variable values. The destination FlowPanel environment configuration and admin TLS files are preserved.`
+            ? `Restore backup "${confirmRestoreRecord.name}"? This overwrites matching panel files, Docker data, site files, and databases, restarts Caddy, and recreates Docker containers with their saved environment variable values.`
             : "Restore this backup?"
         }
         confirmText={
@@ -1325,7 +1333,16 @@ export function BackupsPage() {
       />
 
       <div className="px-4 pb-6 sm:px-6 lg:px-8">
-        {creatingActive ? <BackupCreateProgressRow /> : null}
+        {creatingActive ? (
+          <BackupCreateProgressRow
+            progress={
+              backgroundActivities.create?.progress ?? {
+                label: "Starting backup…",
+                percent: 0,
+              }
+            }
+          />
+        ) : null}
         {visibleRestoreProgress ? (
           <BackupRestoreProgressRow progress={visibleRestoreProgress} />
         ) : null}

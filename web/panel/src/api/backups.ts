@@ -67,6 +67,7 @@ type BackupCreateJobPayload = {
   job: {
     id: string;
     done: boolean;
+    progress: BackupCreateProgress;
     backup?: BackupRecord;
     error?: string;
   };
@@ -94,6 +95,11 @@ export type BackupRestoreProgress = {
   percent: number;
 };
 
+export type BackupCreateProgress = {
+  label: string;
+  percent: number;
+};
+
 export type BackupRestoreRequirement = {
   kind: string;
   name: string;
@@ -111,7 +117,7 @@ export type BackupRestorePreflight = {
 };
 
 export type BackupBackgroundActivities = {
-  create?: { id: string };
+  create?: { id: string; progress: BackupCreateProgress };
   restore?: { id: string; progress: BackupRestoreProgress };
 };
 
@@ -170,7 +176,7 @@ export async function createBackup(input: CreateBackupInput): Promise<BackupReco
   if (payload.backup) return payload.backup;
   if (!payload.job?.id) throw new Error("Create backup returned an invalid response.");
 
-  const activity = { id: payload.job.id };
+  const activity = { id: payload.job.id, progress: payload.job.progress };
   setBackgroundActivity("create", activity);
   try {
     while (true) {
@@ -183,6 +189,10 @@ export async function createBackup(input: CreateBackupInput): Promise<BackupReco
         throw await readBackupApiError(statusResponse, "check backup creation");
       }
       const status = (await statusResponse.json()) as BackupCreateJobPayload;
+      setBackgroundActivity("create", {
+        id: status.job.id,
+        progress: status.job.progress,
+      });
       if (status.job.error) throw new Error(status.job.error);
       if (status.job.backup) return status.job.backup;
       if (status.job.done) throw new Error("Backup creation finished without an archive.");

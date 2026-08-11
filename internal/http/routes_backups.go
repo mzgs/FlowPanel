@@ -21,10 +21,11 @@ import (
 )
 
 type backupCreateJob struct {
-	ID        string         `json:"id"`
-	Done      bool           `json:"done"`
-	Backup    *backup.Record `json:"backup,omitempty"`
-	Error     string         `json:"error,omitempty"`
+	ID        string                `json:"id"`
+	Done      bool                  `json:"done"`
+	Backup    *backup.Record        `json:"backup,omitempty"`
+	Error     string                `json:"error,omitempty"`
+	Progress  backup.CreateProgress `json:"progress"`
 	createdAt time.Time
 }
 
@@ -40,10 +41,22 @@ func (a *apiRoutes) beginBackupCreate() (backupCreateJob, bool) {
 			delete(a.backupCreateJobs, id)
 		}
 	}
-	job := backupCreateJob{ID: strconv.FormatInt(time.Now().UnixNano(), 36), createdAt: time.Now()}
+	job := backupCreateJob{
+		ID:        strconv.FormatInt(time.Now().UnixNano(), 36),
+		Progress:  backup.CreateProgress{Label: "Starting backup…", Percent: 0},
+		createdAt: time.Now(),
+	}
 	a.backupCreateJobs[job.ID] = job
 	a.backupCreateRunning = true
 	return job, true
+}
+
+func (a *apiRoutes) updateBackupCreate(id string, progress backup.CreateProgress) {
+	a.backupCreateMu.Lock()
+	job := a.backupCreateJobs[id]
+	job.Progress = progress
+	a.backupCreateJobs[id] = job
+	a.backupCreateMu.Unlock()
 }
 
 func (a *apiRoutes) finishBackupCreate(id string, record backup.Record, err error) {
@@ -54,6 +67,7 @@ func (a *apiRoutes) finishBackupCreate(id string, record backup.Record, err erro
 		job.Error = err.Error()
 	} else {
 		job.Backup = &record
+		job.Progress = backup.CreateProgress{Label: "Backup complete", Percent: 100}
 	}
 	a.backupCreateJobs[id] = job
 	a.backupCreateRunning = false
@@ -140,7 +154,15 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		}
 		go func() {
 			jobCtx := context.Background()
-			record, err := a.app.Backups.Create(jobCtx, input)
+			var record backup.Record
+			var err error
+			if manager, ok := a.app.Backups.(backup.CreateProgressManager); ok {
+				record, err = manager.CreateWithProgress(jobCtx, input, func(progress backup.CreateProgress) {
+					a.updateBackupCreate(job.ID, progress)
+				})
+			} else {
+				record, err = a.app.Backups.Create(jobCtx, input)
+			}
 			if err != nil {
 				a.app.Logger.Error("create backup failed", zap.Error(err))
 				a.mutationEvent(jobCtx, "backups", "create", "backup", "backup", "FlowPanel backup", "failed", fmt.Sprintf("Failed to create a backup archive: %v", err))
