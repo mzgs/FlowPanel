@@ -15,6 +15,7 @@ import (
 	"time"
 
 	flowcron "flowpanel/internal/cron"
+	"flowpanel/internal/executil"
 
 	robfigcron "github.com/robfig/cron/v3"
 	"github.com/shirou/gopsutil/v4/host"
@@ -604,19 +605,21 @@ func runManagedCommand(ctx context.Context, name string, args ...string) error {
 
 func runCommand(ctx context.Context, name string, args ...string) (string, error) {
 	command := exec.CommandContext(ctx, name, args...)
-	output, err := command.CombinedOutput()
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	command.Stdout, command.Stderr = output, output
+	err := command.Run()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
 	if err != nil {
-		message := strings.TrimSpace(string(output))
+		message := strings.TrimSpace(output.String())
 		if message == "" {
 			message = err.Error()
 		}
 		return "", fmt.Errorf("%s %s: %s", filepath.Base(name), strings.Join(args, " "), message)
 	}
 
-	return string(output), nil
+	return output.String(), nil
 }
 
 func splitFieldsN(value string, limit int) []string {

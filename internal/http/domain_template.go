@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"flowpanel/internal/domain"
+	"flowpanel/internal/executil"
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
@@ -689,9 +689,8 @@ func runTemplateCommand(
 			}
 		}
 
-		var output bytes.Buffer
-		cmd.Stdout = &output
-		cmd.Stderr = &output
+		output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+		cmd.Stdout, cmd.Stderr = output, output
 
 		err := cmd.Run()
 		return executedAsWorker, strings.TrimSpace(output.String()), err

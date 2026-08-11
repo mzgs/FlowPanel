@@ -23,6 +23,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 
 	"flowpanel/internal/config"
+	"flowpanel/internal/executil"
 )
 
 const (
@@ -420,9 +421,9 @@ func runPreviewCommand(ctx context.Context, name string, args ...string) (string
 	}
 
 	cmd := exec.CommandContext(runCtx, name, args...)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	err := cmd.Run()
 	combinedOutput := strings.TrimSpace(output.String())

@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"flowpanel/internal/domain"
+	"flowpanel/internal/executil"
 )
 
 const domainPythonRequirementsInstallTimeout = 15 * time.Minute
@@ -209,9 +209,8 @@ func runDomainPythonCommand(
 	cmd.Dir = targetPath
 	cmd.Env = os.Environ()
 
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = output, output
 
 	if err := cmd.Run(); err != nil {
 		message := strings.TrimSpace(output.String())

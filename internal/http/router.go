@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -29,6 +28,7 @@ import (
 	"flowpanel/internal/caddy"
 	flowcron "flowpanel/internal/cron"
 	eventlog "flowpanel/internal/events"
+	"flowpanel/internal/executil"
 	"flowpanel/internal/ftp"
 	"flowpanel/internal/googledrive"
 	"flowpanel/internal/phpmyadmin"
@@ -73,9 +73,9 @@ var runPHPInfoCommand = func(ctx context.Context, phpPath string) ([]byte, error
 	}
 
 	cmd := exec.CommandContext(ctx, phpPath, "-S", address, "-t", tempDir)
-	var serverLog bytes.Buffer
-	cmd.Stdout = &serverLog
-	cmd.Stderr = &serverLog
+	serverLog := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout = serverLog
+	cmd.Stderr = serverLog
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -108,9 +108,12 @@ var runPHPInfoCommand = func(ctx context.Context, phpPath string) ([]byte, error
 		response, err := client.Do(req)
 		if err == nil {
 			defer response.Body.Close()
-			body, readErr := io.ReadAll(response.Body)
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 4<<20+1))
 			if readErr != nil {
 				return nil, readErr
+			}
+			if len(body) > 4<<20 {
+				return nil, errors.New("php info response exceeded the 4 MB limit")
 			}
 			if response.StatusCode != stdhttp.StatusOK {
 				return nil, fmt.Errorf("php info server returned status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
@@ -140,7 +143,7 @@ var runPHPInfoCommand = func(ctx context.Context, phpPath string) ([]byte, error
 }
 
 var runPHPFPMInfoCommand = func(ctx context.Context, fpmPath string) ([]byte, error) {
-	output, err := exec.CommandContext(ctx, fpmPath, "-i").CombinedOutput()
+	output, _, err := executil.RunCombined(exec.CommandContext(ctx, fpmPath, "-i"), 4<<20)
 	if err != nil {
 		return nil, fmt.Errorf("inspect php-fpm: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -396,7 +399,11 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			}
 
 			r.Body = stdhttp.MaxBytesReader(w, r.Body, 2<<20)
-			if err := r.ParseMultipartForm(2 << 20); err != nil {
+			parseErr := r.ParseMultipartForm(1 << 20)
+			if r.MultipartForm != nil {
+				defer r.MultipartForm.RemoveAll()
+			}
+			if parseErr != nil {
 				writeJSON(w, stdhttp.StatusBadRequest, map[string]any{
 					"error": "upload a valid Google OAuth credentials JSON file",
 				})

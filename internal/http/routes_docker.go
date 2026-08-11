@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flowpanel/internal/config"
 	"flowpanel/internal/dockercontainer"
+	"flowpanel/internal/executil"
 	"fmt"
 	"io"
 	stdhttp "net/http"
@@ -678,8 +679,8 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 			return
 		}
 
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
+		stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+		cmd.Stderr = stderr
 
 		if err := cmd.Start(); err != nil {
 			downloadErr := formatDockerCommandError(stderr.String(), err)
@@ -697,6 +698,24 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 		if err := cmd.Wait(); err != nil {
 			a.app.Logger.Error("docker export failed", zap.String("container_id", containerID), zap.Error(formatDockerCommandError(stderr.String(), err)))
 		}
+	})
+	snapshotContainerPreflightHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.Docker == nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "docker runtime is not configured"})
+			return
+		}
+		containerID := strings.TrimSpace(chi.URLParam(r, "containerID"))
+		if containerID == "" {
+			writeValidationFailed(w, map[string]string{"container_id": "Container ID is required."})
+			return
+		}
+		commandCtx, cancel := context.WithTimeout(r.Context(), dockerListCommandTimeout)
+		defer cancel()
+		if _, err := inspectDockerContainer(commandCtx, containerID); err != nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+		w.WriteHeader(stdhttp.StatusNoContent)
 	})
 
 	containerLogsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -869,6 +888,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/recreate", recreateContainerHandler)
 	r.Method(stdhttp.MethodPost, "/docker/containers/{containerID}/save-image", saveContainerImageHandler)
 	r.Method(stdhttp.MethodGet, "/docker/containers/{containerID}/snapshot", snapshotContainerHandler)
+	r.Method(stdhttp.MethodHead, "/docker/containers/{containerID}/snapshot", snapshotContainerPreflightHandler)
 	r.Method(stdhttp.MethodGet, "/docker/images", imagesHandler)
 	r.Method(stdhttp.MethodHead, "/docker/images", imagesHandler)
 	r.Method(stdhttp.MethodPost, "/docker/images/pull", pullImageHandler)
@@ -894,10 +914,9 @@ func listDockerContainersByArgs(ctx context.Context, args ...string) ([]dockerCo
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", args...)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -948,10 +967,9 @@ func listDockerImages(ctx context.Context) ([]dockerImageListItem, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "image", "ls", "--format", "{{json .}}")
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1013,10 +1031,9 @@ func dockerContainerLogs(ctx context.Context, containerID, since string) (string
 	args = append(args, containerID)
 
 	cmd := exec.CommandContext(commandCtx, "docker", args...)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1327,10 +1344,9 @@ func searchDockerHubImages(ctx context.Context, query string, limit int) ([]dock
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "search", "--limit", strconv.Itoa(limit), "--format", "{{json .}}", query)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1462,10 +1478,9 @@ func createDockerContainer(ctx context.Context, image string) (dockerContainerLi
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "create", "--pull", "missing", "-q", image)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1526,8 +1541,8 @@ func pullDockerImage(ctx context.Context, image string) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "pull", image)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1560,8 +1575,8 @@ func renameDockerContainer(ctx context.Context, containerID, name string) (docke
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "rename", containerID, name)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1582,8 +1597,8 @@ func deleteDockerContainer(ctx context.Context, containerID string) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "rm", "--force", containerID)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1612,8 +1627,8 @@ func deleteDockerImage(ctx context.Context, image string) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "image", "rm", image)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1652,10 +1667,9 @@ func recreateDockerContainerWithConfig(
 	}
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -1687,8 +1701,8 @@ func saveDockerContainerImage(ctx context.Context, containerID, image string) er
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", "commit", containerID, image)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1709,8 +1723,8 @@ func runDockerContainerAction(ctx context.Context, containerID, action string) (
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, "docker", action, containerID)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -1770,10 +1784,9 @@ func dockerContainerStartError(ctx context.Context, containerID string, state do
 
 func inspectDockerContainer(ctx context.Context, containerID string) (dockerContainerListItem, error) {
 	cmd := exec.CommandContext(ctx, "docker", "ps", "--all", "--filter", "id="+containerID, "--format", "{{json .}}")
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		return dockerContainerListItem{}, formatDockerCommandError(stderr.String(), err)
@@ -1809,10 +1822,9 @@ func inspectDockerContainer(ctx context.Context, containerID string) (dockerCont
 
 func inspectDockerContainerConfig(ctx context.Context, containerID string) (dockerInspectRecord, error) {
 	cmd := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", containerID)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		return dockerInspectRecord{}, formatDockerCommandError(stderr.String(), err)
@@ -1831,10 +1843,9 @@ func inspectDockerContainerConfig(ctx context.Context, containerID string) (dock
 
 func dockerContainerStats(ctx context.Context, containerID string) (dockerStatsRecord, error) {
 	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{json .}}", containerID)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

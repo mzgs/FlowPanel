@@ -1665,6 +1665,11 @@ func runServer() error {
 		_ = logger.Sync()
 		_ = logWriter.Close()
 	}()
+	if removed, cleanupErr := config.CleanupStaleTemporaryPaths(); cleanupErr != nil {
+		logger.Warn("clean stale temporary paths failed", zap.Error(cleanupErr))
+	} else if removed > 0 {
+		logger.Info("removed stale temporary paths", zap.Int("count", removed))
+	}
 
 	pid := os.Getpid()
 	if err := writePanelPID(); err != nil {

@@ -1,11 +1,11 @@
 package httpx
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	stdhttp "net/http"
 	"os"
 	"os/exec"
@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"flowpanel/internal/executil"
 
 	"go.uber.org/zap"
 )
@@ -73,7 +75,7 @@ func inspectPanelUpdate(ctx context.Context, currentVersion string) (panelUpdate
 	var release struct {
 		TagName string `json:"tag_name"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&release); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&release); err != nil {
 		return status, fmt.Errorf("parse latest panel release: %w", err)
 	}
 
@@ -104,9 +106,8 @@ func startPanelUpdate(logger *zap.Logger, targetVersion string) error {
 		return fmt.Errorf("panel update is not supported on %s", runtime.GOOS)
 	}
 
-	var output bytes.Buffer
-	command.Stdout = &output
-	command.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	command.Stdout, command.Stderr = output, output
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("start panel update: %w", err)
 	}

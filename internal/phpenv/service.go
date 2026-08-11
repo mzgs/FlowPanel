@@ -1,7 +1,6 @@
 package phpenv
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"flowpanel/internal/executil"
 
 	"go.uber.org/zap"
 )
@@ -1167,9 +1168,9 @@ func runCommandWithOptions(ctx context.Context, dir string, env []string, name s
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	err := cmd.Run()
 	combinedOutput := strings.TrimSpace(output.String())

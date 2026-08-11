@@ -383,9 +383,13 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			return
 		}
 		r.Body = stdhttp.MaxBytesReader(w, r.Body, maxFileUploadBytes)
-		if err := r.ParseMultipartForm(multipartFormMemoryMax); err != nil {
+		parseErr := r.ParseMultipartForm(multipartFormMemoryMax)
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+		if parseErr != nil {
 			var maxBytesError *stdhttp.MaxBytesError
-			if errors.As(err, &maxBytesError) {
+			if errors.As(parseErr, &maxBytesError) {
 				writeJSON(w, stdhttp.StatusRequestEntityTooLarge, map[string]any{"error": "upload exceeds the 8 GB limit"})
 				return
 			}

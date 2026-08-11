@@ -174,29 +174,15 @@ export async function fetchMariaDBDatabases(): Promise<MariaDBDatabasesPayload> 
 }
 
 export async function downloadMariaDBDatabaseBackup(name: string): Promise<string> {
-  const response = await fetch(`/api/mariadb/databases/${encodeURIComponent(name)}/backup`, {
-    credentials: "include",
-  });
+  const url = `/api/mariadb/databases/${encodeURIComponent(name)}/backup`;
+  const response = await fetch(url, { method: "HEAD", credentials: "include" });
 
   if (!response.ok) {
     throw await readMariaDBApiError(response, "back up database");
   }
 
-  const blob = await response.blob();
-  const downloadUrl = window.URL.createObjectURL(blob);
-  const fileName = getDownloadFilename(response.headers.get("Content-Disposition"), name);
-  const anchor = document.createElement("a");
-
-  anchor.href = downloadUrl;
-  anchor.download = fileName;
-  anchor.style.display = "none";
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => {
-    window.URL.revokeObjectURL(downloadUrl);
-  }, 0);
-
+  const fileName = `${name}.sql`;
+  triggerDirectDownload(url, fileName);
   return fileName;
 }
 
@@ -216,33 +202,27 @@ export async function restoreMariaDBDatabaseBackup(name: string, file: File): Pr
 }
 
 export async function downloadMariaDBAllDatabasesBackup(): Promise<string> {
-  const response = await fetch("/api/mariadb/backup", {
-    credentials: "include",
-  });
+  const url = "/api/mariadb/backup";
+  const response = await fetch(url, { method: "HEAD", credentials: "include" });
 
   if (!response.ok) {
     throw await readMariaDBApiError(response, "back up mariadb");
   }
 
-  const blob = await response.blob();
-  const downloadUrl = window.URL.createObjectURL(blob);
-  const fileName = getDownloadFilename(
-    response.headers.get("Content-Disposition"),
-    "mariadb-all-databases.tar.gz",
-  );
+  const fileName = "mariadb-all-databases.zip";
+  triggerDirectDownload(url, fileName);
+  return fileName;
+}
+
+function triggerDirectDownload(url: string, fileName: string) {
   const anchor = document.createElement("a");
 
-  anchor.href = downloadUrl;
+  anchor.href = url;
   anchor.download = fileName;
   anchor.style.display = "none";
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => {
-    window.URL.revokeObjectURL(downloadUrl);
-  }, 0);
-
-  return fileName;
 }
 
 export async function createMariaDBDatabase(
@@ -304,23 +284,6 @@ export async function deleteMariaDBDatabase(
   if (!response.ok) {
     throw await readMariaDBApiError(response, "delete database");
   }
-}
-
-function getDownloadFilename(contentDisposition: string | null, name: string) {
-  if (contentDisposition) {
-    const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-    if (encodedMatch?.[1]) {
-      return decodeURIComponent(encodedMatch[1]);
-    }
-
-    const plainMatch = contentDisposition.match(/filename="([^"]+)"|filename=([^;]+)/i);
-    const value = plainMatch?.[1] ?? plainMatch?.[2];
-    if (value) {
-      return value.trim();
-    }
-  }
-
-  return name.includes(".") ? name : `${name}.sql`;
 }
 
 async function readMariaDBApiError(

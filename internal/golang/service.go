@@ -2,7 +2,6 @@ package golang
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -17,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"flowpanel/internal/executil"
 
 	"go.uber.org/zap"
 )
@@ -335,7 +336,7 @@ func latestLinuxArchiveURL(ctx context.Context) (string, string, error) {
 	}
 
 	var releases []releaseListEntry
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&releases); err != nil {
 		return "", "", fmt.Errorf("decode go release metadata: %w", err)
 	}
 
@@ -570,9 +571,9 @@ func runCommand(ctx context.Context, name string, args ...string) (string, error
 	}
 
 	cmd := exec.CommandContext(runCtx, name, args...)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	err := cmd.Run()
 	combinedOutput := strings.TrimSpace(output.String())

@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -343,24 +342,21 @@ func (a *apiRoutes) registerMariaDBRoutes(r chi.Router) {
 			return
 		}
 
-		dump, err := a.app.MariaDB.DumpAllDatabasesArchive(r.Context())
-		if err != nil {
-			var validation mariadb.ValidationErrors
-			if errors.As(err, &validation) {
-				writeValidationFailed(w, map[string]string(validation))
-				return
-			}
-			a.app.Logger.Error("dump mariadb databases archive failed", zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to back up databases"})
-			return
-		}
-
-		fileName := fmt.Sprintf("mariadb-all-databases-%s.tar.gz", time.Now().UTC().Format("20060102-150405"))
+		fileName := fmt.Sprintf("mariadb-all-databases-%s.zip", time.Now().UTC().Format("20060102-150405"))
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
-		w.Header().Set("Content-Type", "application/gzip")
-		stdhttp.ServeContent(w, r, fileName, time.Now().UTC(), bytes.NewReader(dump))
+		w.Header().Set("Content-Type", "application/zip")
+		if err := a.app.MariaDB.DumpAllDatabasesArchiveTo(r.Context(), w); err != nil {
+			a.app.Logger.Error("stream mariadb databases archive failed", zap.Error(err))
+		}
 	})
 	r.Method(stdhttp.MethodGet, "/mariadb/backup", mariaDBBackupHandler)
+	r.Method(stdhttp.MethodHead, "/mariadb/backup", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.MariaDB == nil || !a.app.MariaDB.Status(r.Context()).Ready {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "mariadb is not ready"})
+			return
+		}
+		w.WriteHeader(stdhttp.StatusNoContent)
+	}))
 
 	mariaDBDatabaseBackupHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if a.app.MariaDB == nil {
@@ -369,24 +365,33 @@ func (a *apiRoutes) registerMariaDBRoutes(r chi.Router) {
 		}
 
 		databaseName := chi.URLParam(r, "databaseName")
-		dump, err := a.app.MariaDB.DumpDatabase(r.Context(), databaseName)
-		if err != nil {
-			var validation mariadb.ValidationErrors
-			if errors.As(err, &validation) {
-				writeValidationFailed(w, map[string]string(validation))
-				return
-			}
-			a.app.Logger.Error("dump mariadb database failed", zap.String("database_name", databaseName), zap.Error(err))
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to back up database"})
-			return
-		}
-
 		fileName := fmt.Sprintf("%s-%s.sql", strings.TrimSpace(databaseName), time.Now().UTC().Format("20060102-150405"))
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
 		w.Header().Set("Content-Type", "application/sql; charset=utf-8")
-		stdhttp.ServeContent(w, r, fileName, time.Now().UTC(), bytes.NewReader(dump))
+		if err := a.app.MariaDB.DumpDatabaseTo(r.Context(), databaseName, w); err != nil {
+			a.app.Logger.Error("stream mariadb database failed", zap.String("database_name", databaseName), zap.Error(err))
+		}
 	})
 	r.Method(stdhttp.MethodGet, "/mariadb/databases/{databaseName}/backup", mariaDBDatabaseBackupHandler)
+	r.Method(stdhttp.MethodHead, "/mariadb/databases/{databaseName}/backup", stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if a.app.MariaDB == nil || !a.app.MariaDB.Status(r.Context()).Ready {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": "mariadb is not ready"})
+			return
+		}
+		databaseName := strings.TrimSpace(chi.URLParam(r, "databaseName"))
+		records, err := a.app.MariaDB.ListDatabases(r.Context())
+		if err != nil {
+			writeJSON(w, stdhttp.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+		for _, record := range records {
+			if record.Name == databaseName {
+				w.WriteHeader(stdhttp.StatusNoContent)
+				return
+			}
+		}
+		writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "database not found"})
+	}))
 	a.registerMariaDBDatabaseRestoreRoute(r)
 
 	mariaDBDatabaseCreateHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -1027,7 +1032,11 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 		}
 
 		r.Body = stdhttp.MaxBytesReader(w, r.Body, 64<<20)
-		if err := r.ParseMultipartForm(64 << 20); err != nil {
+		parseErr := r.ParseMultipartForm(8 << 20)
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+		if parseErr != nil {
 			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "upload a valid theme zip file"})
 			return
 		}

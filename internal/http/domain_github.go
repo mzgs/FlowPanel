@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"flowpanel/internal/domain"
+	"flowpanel/internal/executil"
 	"flowpanel/internal/settings"
 )
 
@@ -171,7 +172,7 @@ func loadGitHubRepositoryMetadata(
 	}
 
 	var metadata gitHubRepositoryMetadata
-	if err := json.NewDecoder(response.Body).Decode(&metadata); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&metadata); err != nil {
 		return gitHubRepositoryMetadata{}, fmt.Errorf("decode repository metadata: %w", err)
 	}
 	if strings.TrimSpace(metadata.CloneURL) == "" || strings.TrimSpace(metadata.DefaultBranch) == "" {
@@ -237,7 +238,7 @@ func upsertGitHubWebhook(
 	}
 
 	var webhook gitHubWebhookResponse
-	if err := json.NewDecoder(response.Body).Decode(&webhook); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&webhook); err != nil {
 		return 0, fmt.Errorf("decode webhook response: %w", err)
 	}
 	if webhook.ID <= 0 {
@@ -265,7 +266,7 @@ func findGitHubWebhookIDByURL(
 	}
 
 	var hooks []gitHubWebhookRecord
-	if err := json.NewDecoder(response.Body).Decode(&hooks); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&hooks); err != nil {
 		return 0, fmt.Errorf("decode webhook list: %w", err)
 	}
 
@@ -352,7 +353,7 @@ func readGitHubAPIError(response *stdhttp.Response, action string) error {
 			Message  string `json:"message"`
 		} `json:"errors"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err == nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&payload); err == nil {
 		if strings.TrimSpace(payload.Message) != "" {
 			message = payload.Message
 		}
@@ -585,9 +586,9 @@ func runGitHubPostFetchScript(ctx context.Context, targetPath string, script str
 	cmd.Dir = targetPath
 	cmd.Env = composerCommandEnvironment()
 
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	if err := cmd.Run(); err != nil {
 		message := strings.TrimSpace(output.String())
@@ -652,9 +653,9 @@ func runGitCommand(
 		defer cleanup()
 	}
 
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	if err := cmd.Run(); err != nil {
 		message := strings.TrimSpace(output.String())

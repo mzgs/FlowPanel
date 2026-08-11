@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 
 	"flowpanel/internal/config"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/executil"
 	"flowpanel/internal/pm2"
 )
 
@@ -89,9 +89,9 @@ func (a *apiRoutes) ensureDomainApplicationBinary(ctx context.Context, record do
 		env = setCommandEnvironmentValue(env, key, path)
 	}
 	cmd.Env = env
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout = output
+	cmd.Stderr = output
 	if err := cmd.Run(); err != nil {
 		message := strings.TrimSpace(output.String())
 		switch {

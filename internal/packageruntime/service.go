@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"flowpanel/internal/executil"
+
 	"go.uber.org/zap"
 )
 
@@ -800,7 +802,7 @@ func inspectCheckUpdate(ctx context.Context, packageManagerPath string, packageN
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, packageManagerPath, args...)
-	output, err := cmd.CombinedOutput()
+	output, _, err := executil.RunCombined(cmd, executil.DefaultOutputLimit)
 	if commandCtx.Err() != nil {
 		return "", commandCtx.Err()
 	}
@@ -831,7 +833,7 @@ func inspectPacmanUpdate(ctx context.Context, pacmanPath, packageName string) (s
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, pacmanPath, "-Qu", packageName)
-	output, err := cmd.CombinedOutput()
+	output, _, err := executil.RunCombined(cmd, executil.DefaultOutputLimit)
 	if commandCtx.Err() != nil {
 		return "", commandCtx.Err()
 	}
@@ -857,7 +859,7 @@ func runInspectCommand(ctx context.Context, name string, args ...string) (string
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, name, args...)
-	output, err := cmd.CombinedOutput()
+	output, _, err := executil.RunCombined(cmd, executil.DefaultOutputLimit)
 	if commandCtx.Err() != nil {
 		return "", commandCtx.Err()
 	}
@@ -879,7 +881,7 @@ func runCommands(ctx context.Context, commands ...[]string) error {
 		}
 
 		cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-		output, err := cmd.CombinedOutput()
+		output, _, err := executil.RunCombined(cmd, executil.DefaultOutputLimit)
 		if err != nil {
 			message := strings.TrimSpace(string(output))
 			if message == "" {
@@ -1149,7 +1151,7 @@ func inspectYTDLPUpdate(ctx context.Context) (string, error) {
 	var payload struct {
 		TagName string `json:"tag_name"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&payload); err != nil {
 		return "", fmt.Errorf("parse latest yt-dlp release: %w", err)
 	}
 	latestVersion := strings.TrimPrefix(strings.TrimSpace(payload.TagName), "v")

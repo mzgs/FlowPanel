@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -20,9 +21,17 @@ import (
 	"unicode/utf8"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/shirou/gopsutil/v4/disk"
 )
 
-const maxEditableFileSize int64 = 1 << 20
+const (
+	maxEditableFileSize     int64  = 1 << 20
+	maxArchiveExpandedSize  uint64 = 32 << 30
+	maxArchiveEntries              = 100_000
+	maxZipDirectorySize     uint64 = 64 << 20
+	archiveDiskReserveBytes uint64 = 512 << 20
+	staleDownloadArchiveAge        = 24 * time.Hour
+)
 
 var (
 	ErrNotFound             = errors.New("file not found")
@@ -30,6 +39,8 @@ var (
 	ErrUnsupportedEntry     = errors.New("unsupported file type")
 	ErrUnsupportedArchive   = errors.New("unsupported archive")
 	ErrInvalidArchive       = errors.New("invalid archive")
+	ErrArchiveTooLarge      = errors.New("archive expands beyond the 32 GB or 100,000 entry limit")
+	ErrInsufficientStorage  = errors.New("not enough free storage to extract archive")
 	ErrInvalidArchiveTarget = errors.New("archive destination is inside a selected directory")
 	ErrFileExpected         = errors.New("file expected")
 	ErrDirectoryExpected    = errors.New("directory expected")
@@ -82,6 +93,7 @@ type Service struct {
 }
 
 func NewService(rootPath string) (*Service, error) {
+	cleanupStaleDownloadArchives()
 	rootPath = strings.TrimSpace(rootPath)
 	if rootPath == "" {
 		return nil, fmt.Errorf("%w: root path is required", ErrInvalidPath)
@@ -388,28 +400,28 @@ func (s *Service) SetPermissions(relPath string, permissions string, recursive b
 		return os.Chmod(absolutePath, mode)
 	}
 
-	paths := make([]string, 0, 16)
-	if err := filepath.WalkDir(absolutePath, func(currentPath string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
+	return chmodTree(absolutePath, mode)
+}
 
-		paths = append(paths, currentPath)
-		return nil
-	}); err != nil {
+func chmodTree(currentPath string, mode fs.FileMode) error {
+	entries, err := os.ReadDir(currentPath)
+	if err != nil {
 		return err
 	}
-
-	for index := len(paths) - 1; index >= 0; index-- {
-		if err := os.Chmod(paths[index], mode); err != nil {
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		entryPath := filepath.Join(currentPath, entry.Name())
+		if entry.IsDir() {
+			if err := chmodTree(entryPath, mode); err != nil {
+				return err
+			}
+		} else if err := os.Chmod(entryPath, mode); err != nil {
 			return err
 		}
 	}
-
-	return nil
+	return os.Chmod(currentPath, mode)
 }
 
 func (s *Service) Upload(relPath string, headers []*multipart.FileHeader) ([]string, error) {
@@ -688,7 +700,14 @@ func createDirectoryArchive(absolutePath, normalizedPath, rootName string) (stri
 		}
 	}()
 
-	gzipWriter := gzip.NewWriter(file)
+	archiveWriter := io.Writer(file)
+	if usage, err := disk.Usage(filepath.Dir(archivePath)); err == nil {
+		if usage.Free <= archiveDiskReserveBytes {
+			return "", "", ErrInsufficientStorage
+		}
+		archiveWriter = &archiveReserveWriter{writer: file, remaining: usage.Free - archiveDiskReserveBytes}
+	}
+	gzipWriter := gzip.NewWriter(archiveWriter)
 	tarWriter := tar.NewWriter(gzipWriter)
 
 	rootParent := filepath.Dir(absolutePath)
@@ -729,6 +748,37 @@ func createDirectoryArchive(absolutePath, normalizedPath, rootName string) (stri
 	success = true
 
 	return archivePath, archiveBaseName + ".tar.gz", nil
+}
+
+type archiveReserveWriter struct {
+	writer    io.Writer
+	remaining uint64
+}
+
+func (w *archiveReserveWriter) Write(payload []byte) (int, error) {
+	if uint64(len(payload)) > w.remaining {
+		return 0, ErrInsufficientStorage
+	}
+	written, err := w.writer.Write(payload)
+	w.remaining -= uint64(written)
+	return written, err
+}
+
+func cleanupStaleDownloadArchives() {
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleDownloadArchiveAge)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "flowpanel-download-") || !strings.HasSuffix(entry.Name(), ".tar.gz") {
+			continue
+		}
+		info, err := entry.Info()
+		if err == nil && info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(os.TempDir(), entry.Name()))
+		}
+	}
 }
 
 func writeSelectionArchive(writer io.Writer, sources []downloadSource, archiveRoot string, rootPath string) error {
@@ -1073,19 +1123,27 @@ func copyUploadedFile(targetPath string, header *multipart.FileHeader) error {
 	defer func() {
 		_ = source.Close()
 	}()
+	if usage, err := disk.Usage(filepath.Dir(targetPath)); err == nil && (usage.Free <= archiveDiskReserveBytes || uint64(header.Size) > usage.Free-archiveDiskReserveBytes) {
+		return fmt.Errorf("%w: upload needs %d bytes but only %d bytes are free", ErrInsufficientStorage, header.Size, usage.Free)
+	}
 
 	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
+	success := false
 	defer func() {
 		_ = target.Close()
+		if !success {
+			_ = os.Remove(targetPath)
+		}
 	}()
 
 	if _, err := io.Copy(target, source); err != nil {
 		return err
 	}
 
+	success = true
 	return nil
 }
 
@@ -1157,14 +1215,19 @@ func copyFile(sourcePath string, destinationPath string, mode fs.FileMode) error
 	if err != nil {
 		return err
 	}
+	success := false
 	defer func() {
 		_ = destinationFile.Close()
+		if !success {
+			_ = os.Remove(destinationPath)
+		}
 	}()
 
 	if _, err := io.Copy(destinationFile, sourceFile); err != nil {
 		return err
 	}
 
+	success = true
 	return nil
 }
 
@@ -1195,6 +1258,13 @@ func nextAvailableArchivePath(directoryPath string, baseName string) (string, st
 }
 
 func extractArchiveToDirectory(archivePath string, archiveName string, destinationPath string) error {
+	expansionLimit := maxArchiveExpandedSize
+	if usage, err := disk.Usage(destinationPath); err == nil {
+		if usage.Free <= archiveDiskReserveBytes {
+			return fmt.Errorf("%w: only %d bytes are free", ErrInsufficientStorage, usage.Free)
+		}
+		expansionLimit = min(expansionLimit, usage.Free-archiveDiskReserveBytes)
+	}
 	switch detectArchiveFormat(archiveName) {
 	case "tar.gz":
 		file, err := os.Open(archivePath)
@@ -1209,7 +1279,7 @@ func extractArchiveToDirectory(archivePath string, archiveName string, destinati
 		}
 		defer gzipReader.Close()
 
-		return extractTarStream(gzipReader, destinationPath)
+		return extractTarStream(gzipReader, destinationPath, expansionLimit)
 	case "tar.zst":
 		file, err := os.Open(archivePath)
 		if err != nil {
@@ -1223,7 +1293,7 @@ func extractArchiveToDirectory(archivePath string, archiveName string, destinati
 		}
 		defer zstdReader.Close()
 
-		return extractTarStream(zstdReader, destinationPath)
+		return extractTarStream(zstdReader, destinationPath, expansionLimit)
 	case "tar":
 		file, err := os.Open(archivePath)
 		if err != nil {
@@ -1231,18 +1301,65 @@ func extractArchiveToDirectory(archivePath string, archiveName string, destinati
 		}
 		defer file.Close()
 
-		return extractTarStream(file, destinationPath)
+		return extractTarStream(file, destinationPath, expansionLimit)
 	case "zip":
+		entryCount, directorySize, err := inspectZipDirectory(archivePath)
+		if err != nil {
+			return err
+		}
+		if entryCount > maxArchiveEntries || directorySize > maxZipDirectorySize {
+			return ErrArchiveTooLarge
+		}
 		reader, err := zip.OpenReader(archivePath)
 		if err != nil {
 			return ErrInvalidArchive
 		}
 		defer reader.Close()
 
-		return extractZipArchive(&reader.Reader, destinationPath)
+		return extractZipArchive(&reader.Reader, destinationPath, expansionLimit)
 	default:
 		return ErrUnsupportedArchive
 	}
+}
+
+func inspectZipDirectory(archivePath string) (uint64, uint64, error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return 0, 0, err
+	}
+	tailSize := min(info.Size(), int64(65_557))
+	tail := make([]byte, tailSize)
+	if _, err := file.ReadAt(tail, info.Size()-tailSize); err != nil && !errors.Is(err, io.EOF) {
+		return 0, 0, ErrInvalidArchive
+	}
+	endIndex := bytes.LastIndex(tail, []byte{'P', 'K', 5, 6})
+	if endIndex < 0 || len(tail)-endIndex < 22 {
+		return 0, 0, ErrInvalidArchive
+	}
+	commentSize := int(binary.LittleEndian.Uint16(tail[endIndex+20 : endIndex+22]))
+	if endIndex+22+commentSize != len(tail) {
+		return 0, 0, ErrInvalidArchive
+	}
+	entries := uint64(binary.LittleEndian.Uint16(tail[endIndex+10 : endIndex+12]))
+	directorySize := uint64(binary.LittleEndian.Uint32(tail[endIndex+12 : endIndex+16]))
+	if entries != 0xffff && directorySize != 0xffffffff {
+		return entries, directorySize, nil
+	}
+	locatorIndex := bytes.LastIndex(tail[:endIndex], []byte{'P', 'K', 6, 7})
+	if locatorIndex < 0 || len(tail)-locatorIndex < 20 {
+		return 0, 0, ErrInvalidArchive
+	}
+	recordOffset := int64(binary.LittleEndian.Uint64(tail[locatorIndex+8 : locatorIndex+16]))
+	record := make([]byte, 56)
+	if _, err := file.ReadAt(record, recordOffset); err != nil || !bytes.Equal(record[:4], []byte{'P', 'K', 6, 6}) {
+		return 0, 0, ErrInvalidArchive
+	}
+	return binary.LittleEndian.Uint64(record[32:40]), binary.LittleEndian.Uint64(record[40:48]), nil
 }
 
 func detectArchiveFormat(fileName string) string {
@@ -1261,8 +1378,10 @@ func detectArchiveFormat(fileName string) string {
 	}
 }
 
-func extractTarStream(reader io.Reader, destinationPath string) error {
+func extractTarStream(reader io.Reader, destinationPath string, expansionLimit uint64) error {
 	tarReader := tar.NewReader(reader)
+	var entryCount int
+	var expandedSize uint64
 
 	for {
 		header, err := tarReader.Next()
@@ -1272,6 +1391,11 @@ func extractTarStream(reader io.Reader, destinationPath string) error {
 		if err != nil {
 			return ErrInvalidArchive
 		}
+		entryCount++
+		if header.Size < 0 || entryCount > maxArchiveEntries || uint64(header.Size) > expansionLimit-expandedSize {
+			return ErrArchiveTooLarge
+		}
+		expandedSize += uint64(header.Size)
 
 		targetPath, err := resolveArchiveEntryTarget(destinationPath, header.Name)
 		if err != nil {
@@ -1298,10 +1422,21 @@ func extractTarStream(reader io.Reader, destinationPath string) error {
 	}
 }
 
-func extractZipArchive(reader *zip.Reader, destinationPath string) error {
+func extractZipArchive(reader *zip.Reader, destinationPath string, expansionLimit uint64) error {
 	type symlink struct {
 		path   string
 		target string
+	}
+
+	if len(reader.File) > maxArchiveEntries {
+		return ErrArchiveTooLarge
+	}
+	var expandedSize uint64
+	for _, file := range reader.File {
+		if file.UncompressedSize64 > expansionLimit-expandedSize {
+			return ErrArchiveTooLarge
+		}
+		expandedSize += file.UncompressedSize64
 	}
 
 	symlinks := make([]symlink, 0)

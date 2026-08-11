@@ -479,15 +479,22 @@ export async function recreateDockerContainer(containerID: string): Promise<Dock
 }
 
 export async function downloadDockerContainerSnapshot(containerID: string): Promise<string> {
-  const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/snapshot`, {
-    credentials: "include",
-  });
+  const url = `/api/docker/containers/${encodeURIComponent(containerID)}/snapshot`;
+  const response = await fetch(url, { method: "HEAD", credentials: "include" });
 
   if (!response.ok) {
     throw await parseDockerError(response);
   }
 
-  return triggerDockerDownload(response, `${containerID}.tar`);
+  const fileName = `${containerID}.tar`;
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  return fileName;
 }
 
 export async function saveDockerContainerAsImage(containerID: string, image: string): Promise<void> {
@@ -524,41 +531,4 @@ export async function stopDockerContainer(containerID: string): Promise<DockerCo
 
 export async function restartDockerContainer(containerID: string): Promise<DockerContainer> {
   return runDockerContainerAction(containerID, "restart");
-}
-
-async function triggerDockerDownload(response: Response, fallbackName: string): Promise<string> {
-  const blob = await response.blob();
-  const downloadURL = window.URL.createObjectURL(blob);
-  const fileName = getDockerDownloadFilename(response.headers.get("Content-Disposition"), fallbackName);
-  const anchor = document.createElement("a");
-
-  anchor.href = downloadURL;
-  anchor.download = fileName;
-  anchor.style.display = "none";
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-
-  window.setTimeout(() => {
-    window.URL.revokeObjectURL(downloadURL);
-  }, 0);
-
-  return fileName;
-}
-
-function getDockerDownloadFilename(contentDisposition: string | null, fallbackName: string): string {
-  if (contentDisposition) {
-    const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-    if (encodedMatch?.[1]) {
-      return decodeURIComponent(encodedMatch[1]);
-    }
-
-    const plainMatch = contentDisposition.match(/filename=\"([^\"]+)\"|filename=([^;]+)/i);
-    const value = plainMatch?.[1] ?? plainMatch?.[2];
-    if (value) {
-      return value.trim();
-    }
-  }
-
-  return fallbackName;
 }

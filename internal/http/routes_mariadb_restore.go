@@ -45,19 +45,19 @@ func (a *apiRoutes) registerMariaDBDatabaseRestoreRoute(r chi.Router) {
 		}
 
 		r.Body = stdhttp.MaxBytesReader(w, r.Body, maxFileUploadBytes)
-		if err := r.ParseMultipartForm(multipartFormMemoryMax); err != nil {
+		parseErr := r.ParseMultipartForm(multipartFormMemoryMax)
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+		if parseErr != nil {
 			var maxBytesError *stdhttp.MaxBytesError
-			if errors.As(err, &maxBytesError) {
+			if errors.As(parseErr, &maxBytesError) {
 				writeJSON(w, stdhttp.StatusRequestEntityTooLarge, map[string]any{"error": "upload exceeds the 8 GB limit"})
 				return
 			}
 			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid database backup upload"})
 			return
 		}
-		if r.MultipartForm != nil {
-			defer r.MultipartForm.RemoveAll()
-		}
-
 		file, header, err := r.FormFile("backup")
 		if err != nil {
 			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "upload one .sql, .zip, or .tar.gz file in the backup field"})
@@ -94,6 +94,10 @@ func restoreUploadedDatabase(ctx context.Context, manager mariadb.Manager, datab
 	case strings.HasSuffix(lowerName, ".sql"):
 		return manager.RestoreDatabase(ctx, databaseName, file)
 	case strings.HasSuffix(lowerName, ".zip"):
+		entryCount, directorySize, err := inspectZipReaderDirectory(file, size)
+		if err != nil || entryCount > maxDatabaseRestoreArchiveFiles || directorySize > dockerVolumeDirectoryMaxSize {
+			return databaseRestoreUploadError("ZIP archive directory exceeds safety limits")
+		}
 		reader, err := zip.NewReader(file, size)
 		if err != nil {
 			return databaseRestoreUploadError("uploaded file is not a valid ZIP archive")
@@ -171,6 +175,7 @@ func tarGzipSQLNames(file multipart.File) ([]string, error) {
 	var names []string
 	tarReader := tar.NewReader(gzipReader)
 	entryCount := 0
+	metadataSize := 0
 	for {
 		header, err := tarReader.Next()
 		if errors.Is(err, io.EOF) {
@@ -180,7 +185,8 @@ func tarGzipSQLNames(file multipart.File) ([]string, error) {
 			return nil, databaseRestoreUploadError("uploaded file is not a valid TAR.GZ archive")
 		}
 		entryCount++
-		if entryCount > maxDatabaseRestoreArchiveFiles {
+		metadataSize += len(header.Name)
+		if entryCount > maxDatabaseRestoreArchiveFiles || len(header.Name) > 4096 || metadataSize > dockerVolumeDirectoryMaxSize {
 			return nil, databaseRestoreUploadError("TAR.GZ archive contains too many files")
 		}
 		if header.FileInfo().Mode().IsRegular() && strings.HasSuffix(strings.ToLower(header.Name), ".sql") {

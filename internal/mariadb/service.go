@@ -1,10 +1,8 @@
 package mariadb
 
 import (
-	"archive/tar"
+	"archive/zip"
 	"bufio"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -14,7 +12,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -24,6 +21,7 @@ import (
 	"time"
 
 	"flowpanel/internal/config"
+	"flowpanel/internal/executil"
 
 	"go.uber.org/zap"
 )
@@ -86,9 +84,8 @@ type Manager interface {
 	RootPassword(context.Context) (string, bool, error)
 	SetRootPassword(context.Context, string) error
 	ListDatabases(context.Context) ([]DatabaseRecord, error)
-	DumpAllDatabases(context.Context) ([]byte, error)
-	DumpAllDatabasesArchive(context.Context) ([]byte, error)
-	DumpDatabase(context.Context, string) ([]byte, error)
+	DumpAllDatabasesArchiveTo(context.Context, io.Writer) error
+	DumpDatabaseTo(context.Context, string, io.Writer) error
 	RestoreDatabase(context.Context, string, io.Reader) error
 	RestoreDatabaseAccess(context.Context, DatabaseRecord) error
 	CreateDatabase(context.Context, CreateDatabaseInput) (DatabaseRecord, error)
@@ -173,11 +170,6 @@ type actionPlan struct {
 	startCmds      [][]string
 	stopCmds       [][]string
 	restartCmds    [][]string
-}
-
-type archiveEntry struct {
-	name    string
-	content []byte
 }
 
 func NewService(logger *zap.Logger, store *Store) *Service {
@@ -516,14 +508,6 @@ func (s *Service) CreateDatabase(ctx context.Context, input CreateDatabaseInput)
 	return record, nil
 }
 
-func (s *Service) DumpDatabase(ctx context.Context, databaseName string) ([]byte, error) {
-	var output bytes.Buffer
-	if err := s.DumpDatabaseTo(ctx, databaseName, &output); err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
-}
-
 func (s *Service) DumpDatabaseTo(ctx context.Context, databaseName string, output io.Writer) error {
 	databaseName = strings.TrimSpace(databaseName)
 	if message := validateIdentifier(databaseName, "Database name"); message != "" {
@@ -540,39 +524,29 @@ func (s *Service) DumpDatabaseTo(ctx context.Context, databaseName string, outpu
 	return s.runDumpTo(ctx, output, "--databases", databaseName)
 }
 
-func (s *Service) DumpAllDatabases(ctx context.Context) ([]byte, error) {
+func (s *Service) DumpAllDatabasesArchiveTo(ctx context.Context, output io.Writer) error {
 	databaseNames, err := s.listDumpableDatabases(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	return s.dumpDatabases(ctx, databaseNames)
-}
-
-func (s *Service) DumpAllDatabasesArchive(ctx context.Context) ([]byte, error) {
-	databaseNames, err := s.listDumpableDatabases(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	entries := make([]archiveEntry, 0, len(databaseNames))
+	archive := zip.NewWriter(output)
 	for _, databaseName := range databaseNames {
-		dump, err := s.DumpDatabase(ctx, databaseName)
+		header := &zip.FileHeader{Name: databaseName + ".sql", Method: zip.Deflate}
+		header.SetMode(0o600)
+		entry, err := archive.CreateHeader(header)
 		if err != nil {
-			return nil, err
+			_ = archive.Close()
+			return fmt.Errorf("create database archive entry for %q: %w", databaseName, err)
 		}
-
-		entries = append(entries, archiveEntry{
-			name:    path.Join(databaseName + ".sql"),
-			content: dump,
-		})
+		if err := s.DumpDatabaseTo(ctx, databaseName, entry); err != nil {
+			_ = archive.Close()
+			return err
+		}
 	}
-
-	if len(entries) == 0 {
-		return nil, errors.New("no databases available to export")
+	if err := archive.Close(); err != nil {
+		return fmt.Errorf("close database ZIP archive: %w", err)
 	}
-
-	return buildDumpArchive(entries, time.Now().UTC())
+	return nil
 }
 
 func (s *Service) listDumpableDatabases(ctx context.Context) ([]string, error) {
@@ -600,21 +574,6 @@ func (s *Service) listDumpableDatabases(ctx context.Context) ([]string, error) {
 	}
 
 	return databaseNames, nil
-}
-
-func (s *Service) dumpDatabases(ctx context.Context, databaseNames []string) ([]byte, error) {
-	args := []string{"--databases"}
-	args = append(args, databaseNames...)
-
-	return s.runDump(ctx, args...)
-}
-
-func (s *Service) runDump(ctx context.Context, dumpArgs ...string) ([]byte, error) {
-	var output bytes.Buffer
-	if err := s.runDumpTo(ctx, &output, dumpArgs...); err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
 }
 
 func (s *Service) runDumpTo(ctx context.Context, output io.Writer, dumpArgs ...string) error {
@@ -663,9 +622,9 @@ func (s *Service) runDumpTo(ctx context.Context, output io.Writer, dumpArgs ...s
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.password)
 	}
 
-	var stderr bytes.Buffer
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
 	cmd.Stdout = output
-	cmd.Stderr = &stderr
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
@@ -684,41 +643,6 @@ func (s *Service) runDumpTo(ctx context.Context, output io.Writer, dumpArgs ...s
 	}
 
 	return nil
-}
-
-func buildDumpArchive(entries []archiveEntry, createdAt time.Time) ([]byte, error) {
-	var buffer bytes.Buffer
-	gzipWriter := gzip.NewWriter(&buffer)
-	tarWriter := tar.NewWriter(gzipWriter)
-
-	for _, entry := range entries {
-		header := &tar.Header{
-			Name:    entry.name,
-			Mode:    0o644,
-			Size:    int64(len(entry.content)),
-			ModTime: createdAt,
-		}
-		if err := tarWriter.WriteHeader(header); err != nil {
-			_ = tarWriter.Close()
-			_ = gzipWriter.Close()
-			return nil, fmt.Errorf("write archive header for %s: %w", entry.name, err)
-		}
-		if _, err := tarWriter.Write(entry.content); err != nil {
-			_ = tarWriter.Close()
-			_ = gzipWriter.Close()
-			return nil, fmt.Errorf("write archive entry for %s: %w", entry.name, err)
-		}
-	}
-
-	if err := tarWriter.Close(); err != nil {
-		_ = gzipWriter.Close()
-		return nil, fmt.Errorf("close dump archive: %w", err)
-	}
-	if err := gzipWriter.Close(); err != nil {
-		return nil, fmt.Errorf("finalize dump archive: %w", err)
-	}
-
-	return buffer.Bytes(), nil
 }
 
 func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump io.Reader) error {
@@ -784,9 +708,8 @@ func (s *Service) RestoreDatabase(ctx context.Context, databaseName string, dump
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.password)
 	}
 
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = output, output
 
 	err = cmd.Run()
 	combinedOutput := strings.TrimSpace(output.String())
@@ -1014,12 +937,14 @@ func (s *Service) runSQL(ctx context.Context, query string) (string, error) {
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.password)
 	}
 
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = output, output
 
 	err = cmd.Run()
 	combinedOutput := strings.TrimSpace(output.String())
+	if err == nil && output.Truncated() {
+		return combinedOutput, errors.New("mariadb client output exceeded the 1 MB limit")
+	}
 	if err == nil {
 		return combinedOutput, nil
 	}
@@ -1771,9 +1696,8 @@ func runCommand(ctx context.Context, name string, args ...string) (string, error
 	}
 
 	cmd := exec.CommandContext(runCtx, name, args...)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = output, output
 
 	err := cmd.Run()
 	combinedOutput := strings.TrimSpace(output.String())

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"flowpanel/internal/executil"
+
 	robfigcron "github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
@@ -30,6 +32,7 @@ var (
 const (
 	maxExecutionLogsPerJob = 10
 	maxExecutionOutputSize = 8000
+	cronExecutionTimeout   = time.Hour
 )
 
 type Record struct {
@@ -455,11 +458,15 @@ func (s *Scheduler) executeJob(job Record) {
 	)
 
 	commandName, commandArgs := shellCommand(job.Command)
-	cmd := exec.Command(commandName, commandArgs...)
-	output, err := cmd.CombinedOutput()
+	commandCtx, cancel := context.WithTimeout(context.Background(), cronExecutionTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(commandCtx, commandName, commandArgs...)
+	output := executil.NewTailBuffer(64 << 10)
+	cmd.Stdout, cmd.Stderr = output, output
+	err := cmd.Run()
 	finishedAt := time.Now()
 	duration := time.Since(startedAt)
-	trimmedOutput := strings.TrimSpace(string(output))
+	trimmedOutput := strings.TrimSpace(output.String())
 	execution := ExecutionLog{
 		ID:         fmt.Sprintf("cron-run-%d", finishedAt.UnixNano()),
 		JobID:      job.ID,
@@ -469,7 +476,10 @@ func (s *Scheduler) executeJob(job Record) {
 		Output:     truncate(trimmedOutput, maxExecutionOutputSize),
 	}
 
-	if err != nil {
+	if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+		execution.Status = "failed"
+		execution.Error = fmt.Sprintf("command exceeded the %s execution limit", cronExecutionTimeout)
+	} else if err != nil {
 		execution.Status = "failed"
 		execution.Error = err.Error()
 	} else {

@@ -1,7 +1,6 @@
 package dockercontainer
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"flowpanel/internal/executil"
 )
 
 const (
@@ -477,8 +478,9 @@ func CreateArgs(record Record) []string {
 
 func dockerOutput(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil {
 		return "", dockerCommandError(stderr.String(), err)
 	}
@@ -486,7 +488,7 @@ func dockerOutput(ctx context.Context, args ...string) (string, error) {
 }
 
 type activityBuffer struct {
-	bytes.Buffer
+	output   *executil.TailBuffer
 	activity chan<- struct{}
 }
 
@@ -495,8 +497,10 @@ func (b *activityBuffer) Write(data []byte) (int, error) {
 	case b.activity <- struct{}{}:
 	default:
 	}
-	return b.Buffer.Write(data)
+	return b.output.Write(data)
 }
+
+func (b *activityBuffer) String() string { return b.output.String() }
 
 func dockerOutputWithHeartbeat(ctx context.Context, idleTimeout time.Duration, heartbeat func(), args ...string) (string, error) {
 	type result struct {
@@ -505,8 +509,8 @@ func dockerOutputWithHeartbeat(ctx context.Context, idleTimeout time.Duration, h
 	commandCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	activity := make(chan struct{}, 1)
-	stdout := activityBuffer{activity: activity}
-	stderr := activityBuffer{activity: activity}
+	stdout := activityBuffer{output: executil.NewTailBuffer(executil.DefaultOutputLimit), activity: activity}
+	stderr := activityBuffer{output: executil.NewTailBuffer(executil.DefaultOutputLimit), activity: activity}
 	cmd := exec.CommandContext(commandCtx, "docker", args...)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	done := make(chan result, 1)

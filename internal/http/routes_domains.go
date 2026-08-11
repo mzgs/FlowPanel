@@ -22,6 +22,7 @@ import (
 
 	"flowpanel/internal/caddy"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/executil"
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/ftp"
 	"flowpanel/internal/mariadb"
@@ -2010,7 +2011,7 @@ func detectDomainPythonRuntimeVersion(ctx context.Context, interpreterPath strin
 		return ""
 	}
 
-	output, err := exec.CommandContext(runCtx, candidate, "--version").CombinedOutput()
+	output, _, err := executil.RunCombined(exec.CommandContext(runCtx, candidate, "--version"), executil.DefaultOutputLimit)
 	if err != nil && len(output) == 0 {
 		return ""
 	}

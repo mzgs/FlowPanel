@@ -116,7 +116,7 @@ export function MariaDBSettingsDialog({
               <div className="space-y-1">
                 <div className="text-sm font-medium text-[var(--app-text)]">All databases</div>
                 <p className="text-xs text-[var(--app-text-muted)]">
-                  Download one `.tar.gz` archive with individual SQL dumps for each non-system database.
+                  Download one `.zip` archive with individual SQL dumps for each non-system database.
                 </p>
               </div>
               <Button

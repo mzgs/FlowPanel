@@ -24,6 +24,7 @@ import (
 	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
 
+	"github.com/shirou/gopsutil/v4/disk"
 	"go.uber.org/zap"
 )
 
@@ -32,6 +33,8 @@ const (
 	LocationLocal               = "local"
 	LocationGoogleDrive         = "google_drive"
 	maxManifestSize             = 1 << 20
+	maxRestoreArchiveEntries    = 1_000_000
+	restoreDiskReserveBytes     = 512 << 20
 	legacyAdminTLSArchiveDir    = "admin_tls"
 	legacyPanelConfigArchiveDir = "panel_config"
 )
@@ -169,13 +172,9 @@ type DomainSource interface {
 
 type DatabaseSource interface {
 	ListDatabases(context.Context) ([]mariadb.DatabaseRecord, error)
-	DumpDatabase(context.Context, string) ([]byte, error)
+	DumpDatabaseTo(context.Context, string, io.Writer) error
 	RestoreDatabase(context.Context, string, io.Reader) error
 	RestoreDatabaseAccess(context.Context, mariadb.DatabaseRecord) error
-}
-
-type databaseStreamSource interface {
-	DumpDatabaseTo(context.Context, string, io.Writer) error
 }
 
 type PM2Syncer interface {
@@ -334,7 +333,31 @@ func (s *Service) removeIncompleteLocalBackups() error {
 		}
 		s.logger.Info("removed incomplete backup", zap.String("path", entryPath))
 	}
+	tempEntries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		return errors.Join(cleanupErr, fmt.Errorf("read temporary directory for backup cleanup: %w", err))
+	}
+	for _, entry := range tempEntries {
+		if !entry.IsDir() || !hasAnyPrefix(entry.Name(), "flowpanel-backup-", "flowpanel-drive-backup-", "flowpanel-drive-restore-", "flowpanel-restore-") {
+			continue
+		}
+		entryPath := filepath.Join(os.TempDir(), entry.Name())
+		if err := os.RemoveAll(entryPath); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove incomplete backup staging directory %q: %w", entry.Name(), err))
+			continue
+		}
+		s.logger.Info("removed incomplete backup staging directory", zap.String("path", entryPath))
+	}
 	return cleanupErr
+}
+
+func hasAnyPrefix(value string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
@@ -460,7 +483,14 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		}
 	}()
 
-	gzipWriter := gzip.NewWriter(file)
+	archiveWriter := io.Writer(file)
+	if usage, err := disk.Usage(filepath.Dir(targetPath)); err == nil {
+		if usage.Free <= restoreDiskReserveBytes {
+			return Record{}, fmt.Errorf("not enough storage to create backup: only %d bytes are free", usage.Free)
+		}
+		archiveWriter = &storageReserveWriter{writer: file, remaining: usage.Free - restoreDiskReserveBytes}
+	}
+	gzipWriter := gzip.NewWriter(archiveWriter)
 	tarWriter := tar.NewWriter(gzipWriter)
 
 	contents := make([]string, 0, 6)
@@ -563,6 +593,20 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 
 	update("Backup complete", 100)
 	return localRecord(name, info.Size(), info.ModTime().UTC()), nil
+}
+
+type storageReserveWriter struct {
+	writer    io.Writer
+	remaining uint64
+}
+
+func (w *storageReserveWriter) Write(payload []byte) (int, error) {
+	if uint64(len(payload)) > w.remaining {
+		return 0, errors.New("not enough storage to finish backup while preserving the 512 MB system reserve")
+	}
+	written, err := w.writer.Write(payload)
+	w.remaining -= uint64(written)
+	return written, err
 }
 
 func (s *Service) createGoogleDriveBackup(ctx context.Context, input CreateInput, refreshToken string, update func(string, int)) (Record, error) {
@@ -1305,15 +1349,15 @@ func (s *Service) collectDatabaseDumps(ctx context.Context, names []string, stag
 		if err != nil {
 			return nil, fmt.Errorf("create staging file for mariadb database %q: %w", record.Name, err)
 		}
-		if source, ok := s.mariaDB.(databaseStreamSource); ok {
-			err = source.DumpDatabaseTo(ctx, record.Name, file)
-		} else {
-			var content []byte
-			content, err = s.mariaDB.DumpDatabase(ctx, record.Name)
-			if err == nil {
-				_, err = file.Write(content)
+		dumpWriter := io.Writer(file)
+		if usage, usageErr := disk.Usage(stagingPath); usageErr == nil {
+			if usage.Free <= restoreDiskReserveBytes {
+				_ = file.Close()
+				return nil, fmt.Errorf("not enough storage to dump mariadb database %q: only %d bytes are free", record.Name, usage.Free)
 			}
+			dumpWriter = &storageReserveWriter{writer: file, remaining: usage.Free - restoreDiskReserveBytes}
 		}
+		err = s.mariaDB.DumpDatabaseTo(ctx, record.Name, dumpWriter)
 		closeErr := file.Close()
 		if err != nil {
 			return nil, fmt.Errorf("dump mariadb database %q: %w", record.Name, err)
@@ -1619,6 +1663,15 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 	defer gzipReader.Close()
 
 	tarReader := tar.NewReader(gzipReader)
+	var entryCount int
+	var expandedSize uint64
+	availableBytes := ^uint64(0)
+	if usage, err := disk.Usage(targetRoot); err == nil {
+		if usage.Free <= restoreDiskReserveBytes {
+			return fmt.Errorf("not enough storage to restore backup: only %d bytes are free", usage.Free)
+		}
+		availableBytes = usage.Free - restoreDiskReserveBytes
+	}
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -1627,6 +1680,11 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 		if err != nil {
 			return fmt.Errorf("read backup archive: %w", err)
 		}
+		entryCount++
+		if header.Size < 0 || entryCount > maxRestoreArchiveEntries || uint64(header.Size) > availableBytes-expandedSize {
+			return fmt.Errorf("backup archive exceeds the available restore space or %d entry limit", maxRestoreArchiveEntries)
+		}
+		expandedSize += uint64(header.Size)
 
 		relativePath, ok := sanitizeArchivePath(header.Name)
 		if !ok {

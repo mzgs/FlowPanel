@@ -1,7 +1,6 @@
 package pm2
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"flowpanel/internal/executil"
 
 	"go.uber.org/zap"
 )
@@ -1079,9 +1080,9 @@ func runCommand(ctx context.Context, environment map[string]string, name string,
 
 	cmd := exec.CommandContext(runCtx, name, args...)
 	cmd.Env = commandEnv(environment)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	err := cmd.Run()
 	combinedOutput := strings.TrimSpace(output.String())

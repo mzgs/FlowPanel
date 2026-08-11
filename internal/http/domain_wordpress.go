@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +22,7 @@ import (
 
 	"flowpanel/internal/config"
 	"flowpanel/internal/domain"
+	"flowpanel/internal/executil"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
 )
@@ -662,7 +662,7 @@ func fetchWordPressSearchResponse(ctx context.Context, requestURL string, target
 		return fmt.Errorf("request WordPress search results failed with status %d", response.StatusCode)
 	}
 
-	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(target); err != nil {
 		return fmt.Errorf("decode WordPress search results: %w", err)
 	}
 
@@ -1014,10 +1014,9 @@ func runWordPressCommandWithWorker(
 			}
 		}
 
-		var stdout bytes.Buffer
-		var stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
+		stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
+		stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
+		cmd.Stdout, cmd.Stderr = stdout, stderr
 
 		err := cmd.Run()
 		output := strings.TrimSpace(strings.Join([]string{stdout.String(), stderr.String()}, "\n"))

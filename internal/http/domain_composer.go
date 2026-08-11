@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"flowpanel/internal/domain"
+	"flowpanel/internal/executil"
 	"flowpanel/internal/phpenv"
 )
 
@@ -83,9 +83,8 @@ func runDomainComposerAction(
 			}
 		}
 
-		var output bytes.Buffer
-		cmd.Stdout = &output
-		cmd.Stderr = &output
+		output := executil.NewTailBuffer(executil.DefaultOutputLimit)
+		cmd.Stdout, cmd.Stderr = output, output
 
 		err := cmd.Run()
 		return executedAsWorker, strings.TrimSpace(output.String()), err

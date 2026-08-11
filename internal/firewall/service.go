@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 
+	"flowpanel/internal/executil"
+
 	"go.uber.org/zap"
 )
 
@@ -409,7 +411,7 @@ func sshPort(ctx context.Context) int {
 			return port
 		}
 	}
-	output, err := exec.CommandContext(ctx, "sshd", "-T").Output()
+	output, _, err := executil.RunCombined(exec.CommandContext(ctx, "sshd", "-T"), executil.DefaultOutputLimit)
 	if err == nil {
 		scanner := bufio.NewScanner(strings.NewReader(string(output)))
 		for scanner.Scan() {
@@ -421,7 +423,7 @@ func sshPort(ctx context.Context) int {
 			}
 		}
 	}
-	if output, err := exec.CommandContext(ctx, "ss", "-H", "-ltnp").Output(); err == nil {
+	if output, _, err := executil.RunCombined(exec.CommandContext(ctx, "ss", "-H", "-ltnp"), executil.DefaultOutputLimit); err == nil {
 		scanner := bufio.NewScanner(strings.NewReader(string(output)))
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -462,7 +464,7 @@ func dockerPublicPorts(ctx context.Context) []Port {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return ports
 	}
-	output, err := exec.CommandContext(ctx, "docker", "ps", "--all", "--format", "{{.Ports}}").Output()
+	output, _, err := executil.RunCombined(exec.CommandContext(ctx, "docker", "ps", "--all", "--format", "{{.Ports}}"), executil.DefaultOutputLimit)
 	if err != nil {
 		return ports
 	}
@@ -528,7 +530,7 @@ func commandOK(ctx context.Context, binary string, args ...string) bool {
 }
 
 func run(ctx context.Context, binary string, args ...string) error {
-	output, err := exec.CommandContext(ctx, binary, append([]string{"-w"}, args...)...).CombinedOutput()
+	output, _, err := executil.RunCombined(exec.CommandContext(ctx, binary, append([]string{"-w"}, args...)...), executil.DefaultOutputLimit)
 	if err == nil {
 		return nil
 	}

@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"flowpanel/internal/executil"
+
 	"go.uber.org/zap"
 )
 
@@ -145,7 +147,7 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 	}
 
 	for version, config := range changedVersions {
-		if output, err := exec.CommandContext(ctx, config.status.FPMPath, "-tt").CombinedOutput(); err != nil {
+		if output, _, err := executil.RunCombined(exec.CommandContext(ctx, config.status.FPMPath, "-tt"), executil.DefaultOutputLimit); err != nil {
 			return nil, fmt.Errorf("validate PHP %s pools: %w: %s", version, err, strings.TrimSpace(string(output)))
 		}
 		if config.status.ServiceRunning {
@@ -253,7 +255,7 @@ func ensureDomainUser(ctx context.Context, name, home string) (bool, error) {
 	} else {
 		args = append(args, "--user-group")
 	}
-	output, err := exec.CommandContext(ctx, useradd, append(args, name)...).CombinedOutput()
+	output, _, err := executil.RunCombined(exec.CommandContext(ctx, useradd, append(args, name)...), executil.DefaultOutputLimit)
 	if err != nil {
 		return false, fmt.Errorf("useradd: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -274,12 +276,12 @@ func deleteDomainUser(ctx context.Context, name string) error {
 	if err != nil {
 		return errors.New("userdel is not installed")
 	}
-	output, err := exec.CommandContext(ctx, userdel, name).CombinedOutput()
+	output, _, err := executil.RunCombined(exec.CommandContext(ctx, userdel, name), executil.DefaultOutputLimit)
 	if err != nil {
 		return fmt.Errorf("userdel: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	if groupdel, err := exec.LookPath("groupdel"); err == nil {
-		if output, err := exec.CommandContext(ctx, groupdel, name).CombinedOutput(); err != nil && !strings.Contains(strings.ToLower(string(output)), "does not exist") {
+		if output, _, err := executil.RunCombined(exec.CommandContext(ctx, groupdel, name), executil.DefaultOutputLimit); err != nil && !strings.Contains(strings.ToLower(string(output)), "does not exist") {
 			return fmt.Errorf("groupdel: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 	}
