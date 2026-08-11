@@ -174,6 +174,10 @@ type DatabaseSource interface {
 	RestoreDatabaseAccess(context.Context, mariadb.DatabaseRecord) error
 }
 
+type databaseStreamSource interface {
+	DumpDatabaseTo(context.Context, string, io.Writer) error
+}
+
 type PM2Syncer interface {
 	Sync(context.Context) ([]pm2.Process, error)
 }
@@ -233,6 +237,15 @@ func (s *Service) Directory() string {
 }
 
 func (s *Service) List(ctx context.Context) ([]Record, error) {
+	if operationLock, err := s.acquireOperationLock(); err == nil {
+		if cleanupErr := s.removeIncompleteLocalBackups(); cleanupErr != nil {
+			s.logger.Warn("remove incomplete backup archives failed", zap.Error(cleanupErr))
+		}
+		_ = operationLock.Close()
+	} else if !errors.Is(err, ErrOperationActive) {
+		s.logger.Warn("lock backups for incomplete archive cleanup failed", zap.Error(err))
+	}
+
 	localBackups, err := s.listLocalBackups()
 	if err != nil {
 		return nil, err
@@ -300,6 +313,30 @@ func (s *Service) listLocalBackups() ([]Record, error) {
 	return backups, nil
 }
 
+func (s *Service) removeIncompleteLocalBackups() error {
+	entries, err := os.ReadDir(s.backupPath)
+	if err != nil {
+		return fmt.Errorf("read backup directory for incomplete archive cleanup: %w", err)
+	}
+
+	var cleanupErr error
+	for _, entry := range entries {
+		name := entry.Name()
+		isArchive := !entry.IsDir() && strings.HasSuffix(strings.ToLower(name), backupExtension+".tmp")
+		isStagingDirectory := entry.IsDir() && strings.HasPrefix(name, ".flowpanel-backup-")
+		if !isArchive && !isStagingDirectory {
+			continue
+		}
+		entryPath := filepath.Join(s.backupPath, name)
+		if err := os.RemoveAll(entryPath); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove incomplete backup %q: %w", name, err))
+			continue
+		}
+		s.logger.Info("removed incomplete backup", zap.String("path", entryPath))
+	}
+	return cleanupErr
+}
+
 func (s *Service) Create(ctx context.Context, input CreateInput) (Record, error) {
 	return s.CreateWithProgress(ctx, input, func(CreateProgress) {})
 }
@@ -316,6 +353,9 @@ func (s *Service) CreateWithProgress(ctx context.Context, input CreateInput, rep
 		return Record{}, err
 	}
 	defer operationLock.Close()
+	if err := s.removeIncompleteLocalBackups(); err != nil {
+		return Record{}, err
+	}
 
 	input.Location = normalizeLocation(input.Location)
 	input.SiteHostnames = normalizeSiteHostnames(input.SiteHostnames)
@@ -364,7 +404,7 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 	tempTargetPath := targetPath + ".tmp"
 
 	update("Preparing backup files…", 10)
-	stagingPath, err := os.MkdirTemp("", "flowpanel-backup-*")
+	stagingPath, err := os.MkdirTemp(filepath.Dir(targetPath), ".flowpanel-backup-*")
 	if err != nil {
 		return Record{}, fmt.Errorf("create backup staging directory: %w", err)
 	}
@@ -393,7 +433,7 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 	}
 	if input.IncludeDatabases {
 		update("Dumping databases…", 35)
-		databaseDumps, err = s.collectDatabaseDumps(ctx, input.DatabaseNames)
+		databaseDumps, err = s.collectDatabaseDumps(ctx, input.DatabaseNames, stagingPath)
 		if err != nil {
 			return Record{}, err
 		}
@@ -1221,11 +1261,11 @@ func (s *Service) collectSites(hostnames []string) ([]siteArchive, error) {
 }
 
 type databaseDump struct {
-	Name    string
-	Content []byte
+	Name string
+	Path string
 }
 
-func (s *Service) collectDatabaseDumps(ctx context.Context, names []string) ([]databaseDump, error) {
+func (s *Service) collectDatabaseDumps(ctx context.Context, names []string, stagingPath string) ([]databaseDump, error) {
 	if s.mariaDB == nil {
 		return nil, nil
 	}
@@ -1261,14 +1301,27 @@ func (s *Service) collectDatabaseDumps(ctx context.Context, names []string) ([]d
 			}
 		}
 
-		content, err := s.mariaDB.DumpDatabase(ctx, record.Name)
+		file, err := os.CreateTemp(stagingPath, "flowpanel-database-*.sql")
+		if err != nil {
+			return nil, fmt.Errorf("create staging file for mariadb database %q: %w", record.Name, err)
+		}
+		if source, ok := s.mariaDB.(databaseStreamSource); ok {
+			err = source.DumpDatabaseTo(ctx, record.Name, file)
+		} else {
+			var content []byte
+			content, err = s.mariaDB.DumpDatabase(ctx, record.Name)
+			if err == nil {
+				_, err = file.Write(content)
+			}
+		}
+		closeErr := file.Close()
 		if err != nil {
 			return nil, fmt.Errorf("dump mariadb database %q: %w", record.Name, err)
 		}
-		dumps = append(dumps, databaseDump{
-			Name:    record.Name,
-			Content: content,
-		})
+		if closeErr != nil {
+			return nil, fmt.Errorf("close mariadb dump for %q: %w", record.Name, closeErr)
+		}
+		dumps = append(dumps, databaseDump{Name: record.Name, Path: file.Name()})
 	}
 
 	sort.Slice(dumps, func(i, j int) bool {
@@ -1455,7 +1508,11 @@ func writeSiteArchiveEntries(tarWriter *tar.Writer, sites []siteArchive) error {
 
 func writeDatabaseDumps(tarWriter *tar.Writer, dumps []databaseDump, modTime time.Time) error {
 	for _, dump := range dumps {
-		if err := writeTarBytes(tarWriter, filepath.ToSlash(filepath.Join("databases", dump.Name+".sql")), dump.Content, modTime); err != nil {
+		info, err := os.Stat(dump.Path)
+		if err != nil {
+			return fmt.Errorf("stat database dump for %q: %w", dump.Name, err)
+		}
+		if err := writeTarEntry(tarWriter, dump.Path, filepath.ToSlash(filepath.Join("databases", dump.Name+".sql")), info); err != nil {
 			return fmt.Errorf("write database dump for %q: %w", dump.Name, err)
 		}
 	}

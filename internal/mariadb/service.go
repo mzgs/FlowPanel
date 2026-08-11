@@ -517,19 +517,27 @@ func (s *Service) CreateDatabase(ctx context.Context, input CreateDatabaseInput)
 }
 
 func (s *Service) DumpDatabase(ctx context.Context, databaseName string) ([]byte, error) {
+	var output bytes.Buffer
+	if err := s.DumpDatabaseTo(ctx, databaseName, &output); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func (s *Service) DumpDatabaseTo(ctx context.Context, databaseName string, output io.Writer) error {
 	databaseName = strings.TrimSpace(databaseName)
 	if message := validateIdentifier(databaseName, "Database name"); message != "" {
-		return nil, ValidationErrors{
+		return ValidationErrors{
 			"name": message,
 		}
 	}
 	if isSystemDatabase(databaseName) {
-		return nil, ValidationErrors{
+		return ValidationErrors{
 			"name": "System databases cannot be exported.",
 		}
 	}
 
-	return s.dumpDatabases(ctx, []string{databaseName})
+	return s.runDumpTo(ctx, output, "--databases", databaseName)
 }
 
 func (s *Service) DumpAllDatabases(ctx context.Context) ([]byte, error) {
@@ -602,9 +610,17 @@ func (s *Service) dumpDatabases(ctx context.Context, databaseNames []string) ([]
 }
 
 func (s *Service) runDump(ctx context.Context, dumpArgs ...string) ([]byte, error) {
+	var output bytes.Buffer
+	if err := s.runDumpTo(ctx, &output, dumpArgs...); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func (s *Service) runDumpTo(ctx context.Context, output io.Writer, dumpArgs ...string) error {
 	dumpPath, ok := lookupFirstCommand(dumpBinaryCandidates...)
 	if !ok {
-		return nil, errors.New("mariadb dump client is not installed")
+		return errors.New("mariadb dump client is not installed")
 	}
 
 	runCtx := ctx
@@ -620,7 +636,7 @@ func (s *Service) runDump(ctx context.Context, dumpArgs ...string) ([]byte, erro
 
 	config, err := s.resolveSQLClientConfig()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	args := []string{
@@ -647,31 +663,27 @@ func (s *Service) runDump(ctx context.Context, dumpArgs ...string) ([]byte, erro
 		cmd.Env = append(os.Environ(), "MYSQL_PWD="+config.password)
 	}
 
-	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	cmd.Stdout = output
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("%s timed out", dumpPath)
+			return fmt.Errorf("%s timed out", dumpPath)
 		}
 		if errors.Is(runCtx.Err(), context.Canceled) {
-			return nil, fmt.Errorf("%s was canceled", dumpPath)
+			return fmt.Errorf("%s was canceled", dumpPath)
 		}
 
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
-			message = strings.TrimSpace(stdout.String())
-		}
-		if message == "" {
-			return nil, fmt.Errorf("%s failed: %w", dumpPath, err)
+			return fmt.Errorf("%s failed: %w", dumpPath, err)
 		}
 
-		return nil, fmt.Errorf("%s failed: %s", dumpPath, message)
+		return fmt.Errorf("%s failed: %s", dumpPath, message)
 	}
 
-	return stdout.Bytes(), nil
+	return nil
 }
 
 func buildDumpArchive(entries []archiveEntry, createdAt time.Time) ([]byte, error) {

@@ -153,6 +153,7 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 			writeJSON(w, stdhttp.StatusConflict, map[string]any{"error": "a backup is already being created"})
 			return
 		}
+		a.mutationEvent(r.Context(), "backups", "create", "backup", job.ID, "FlowPanel backup", "started", "Started creating a backup archive.")
 		go func() {
 			jobCtx := context.Background()
 			var record backup.Record
