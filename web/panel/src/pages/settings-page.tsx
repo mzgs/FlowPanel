@@ -618,12 +618,6 @@ export function SettingsPage() {
               </div>
 
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
-                <Button type="button" variant="outline" asChild>
-                  <a href={googleCloudProjectURL} target="_blank" rel="noreferrer">
-                    Create Google project
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                </Button>
                 <input
                   ref={googleDriveCredentialsInputRef}
                   type="file"
