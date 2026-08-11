@@ -3493,6 +3493,10 @@ export function ApplicationsPage() {
             removeTitle="Automatic yt-dlp removal is only available for installed runtimes supported by this environment."
             meta={[
               { label: "Binary", value: ytdlpStatus?.binary_path?.trim() || "yt-dlp", mono: true },
+              ...(ytdlpStatus?.platform === "linux" && ytdlpStatus.installed
+                ? [{ label: "Installer", value: "Deno + curl_cffi-enabled build" }]
+                : []),
+              { label: "Restricted videos", value: "Pass signed-in browser cookies", fullWidth: true },
             ]}
             onInstall={() => {
               void handleYTDLPInstall();

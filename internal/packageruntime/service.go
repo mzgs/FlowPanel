@@ -1,6 +1,7 @@
 package packageruntime
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,9 +25,11 @@ const statusCommandTimeout = 3 * time.Second
 
 const mongoDBAPTSeries = "8.0"
 const (
-	ytdlpReleaseURL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+	ytdlpReleaseURL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_%s"
 	ytdlpReleaseAPI = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 	ytdlpBinaryPath = "/usr/local/bin/yt-dlp"
+	denoReleaseURL  = "https://github.com/denoland/deno/releases/latest/download/deno-%s-unknown-linux-gnu.zip"
+	denoBinaryPath  = "/usr/local/bin/deno"
 )
 
 var versionPattern = regexp.MustCompile(`\b(\d+(?:\.\d+)+)\b`)
@@ -1076,11 +1079,18 @@ func bootstrapMongoDBAPTRepository(ctx context.Context, repository mongoDBAPTRep
 }
 
 func installLatestYTDLP(ctx context.Context) error {
+	if err := ensureYTDLPJavaScriptRuntime(ctx); err != nil {
+		return err
+	}
+	releaseArch := map[string]string{"amd64": "linux", "arm64": "linux_aarch64"}[runtime.GOARCH]
+	if releaseArch == "" {
+		return fmt.Errorf("automatic yt-dlp installation is not supported on linux/%s", runtime.GOARCH)
+	}
 	if err := os.MkdirAll(filepath.Dir(ytdlpBinaryPath), 0o755); err != nil {
 		return fmt.Errorf("create yt-dlp install directory: %w", err)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ytdlpReleaseURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(ytdlpReleaseURL, releaseArch), nil)
 	if err != nil {
 		return fmt.Errorf("prepare yt-dlp download: %w", err)
 	}
@@ -1119,6 +1129,72 @@ func installLatestYTDLP(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func ensureYTDLPJavaScriptRuntime(ctx context.Context) error {
+	if _, installed := lookupFirstCommand(denoBinaryPath, "deno"); installed {
+		return nil
+	}
+
+	arch := map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[runtime.GOARCH]
+	if arch == "" {
+		return fmt.Errorf("automatic Deno installation for yt-dlp is not supported on linux/%s", runtime.GOARCH)
+	}
+	if err := os.MkdirAll(filepath.Dir(denoBinaryPath), 0o755); err != nil {
+		return fmt.Errorf("create Deno install directory: %w", err)
+	}
+
+	archivePath, err := downloadFile(ctx, fmt.Sprintf(denoReleaseURL, arch), "deno-*.zip")
+	if err != nil {
+		return fmt.Errorf("download Deno for yt-dlp: %w", err)
+	}
+	defer os.Remove(archivePath)
+
+	archive, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("open Deno archive: %w", err)
+	}
+	defer archive.Close()
+
+	for _, entry := range archive.File {
+		if filepath.Base(entry.Name) != "deno" || entry.FileInfo().IsDir() {
+			continue
+		}
+
+		source, err := entry.Open()
+		if err != nil {
+			return fmt.Errorf("open Deno binary: %w", err)
+		}
+		defer source.Close()
+
+		target, err := os.CreateTemp(filepath.Dir(denoBinaryPath), ".deno-*")
+		if err != nil {
+			return fmt.Errorf("create temporary Deno binary: %w", err)
+		}
+		tempPath := target.Name()
+		defer os.Remove(tempPath)
+
+		if _, err := io.Copy(target, source); err != nil {
+			target.Close()
+			return fmt.Errorf("write Deno binary: %w", err)
+		}
+		if err := target.Chmod(0o755); err != nil {
+			target.Close()
+			return fmt.Errorf("make Deno executable: %w", err)
+		}
+		if err := target.Close(); err != nil {
+			return fmt.Errorf("close Deno binary: %w", err)
+		}
+		if _, err := inspectVersion(ctx, tempPath, "--version"); err != nil {
+			return fmt.Errorf("validate Deno binary: %w", err)
+		}
+		if err := os.Rename(tempPath, denoBinaryPath); err != nil {
+			return fmt.Errorf("install Deno for yt-dlp: %w", err)
+		}
+		return nil
+	}
+
+	return errors.New("Deno archive does not contain the deno binary")
 }
 
 func inspectYTDLPUpdate(ctx context.Context) (string, error) {
