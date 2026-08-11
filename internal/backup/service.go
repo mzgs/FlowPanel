@@ -33,7 +33,7 @@ const (
 	LocationLocal               = "local"
 	LocationGoogleDrive         = "google_drive"
 	maxManifestSize             = 1 << 20
-	maxRestoreArchiveEntries    = 1_000_000
+	maxRestoreArchiveEntries    = 2_000_000
 	restoreDiskReserveBytes     = 512 << 20
 	legacyAdminTLSArchiveDir    = "admin_tls"
 	legacyPanelConfigArchiveDir = "panel_config"

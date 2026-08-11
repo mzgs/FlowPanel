@@ -27,8 +27,8 @@ import (
 const (
 	maxEditableFileSize     int64  = 1 << 20
 	maxArchiveExpandedSize  uint64 = 32 << 30
-	maxArchiveEntries              = 100_000
-	maxZipDirectorySize     uint64 = 64 << 20
+	maxArchiveEntries              = 200_000
+	maxZipDirectorySize     uint64 = 128 << 20
 	archiveDiskReserveBytes uint64 = 512 << 20
 	staleDownloadArchiveAge        = 24 * time.Hour
 )
@@ -39,7 +39,7 @@ var (
 	ErrUnsupportedEntry     = errors.New("unsupported file type")
 	ErrUnsupportedArchive   = errors.New("unsupported archive")
 	ErrInvalidArchive       = errors.New("invalid archive")
-	ErrArchiveTooLarge      = errors.New("archive expands beyond the 32 GB or 100,000 entry limit")
+	ErrArchiveTooLarge      = errors.New("archive expands beyond the 32 GB or 200,000 entry limit")
 	ErrInsufficientStorage  = errors.New("not enough free storage to extract archive")
 	ErrInvalidArchiveTarget = errors.New("archive destination is inside a selected directory")
 	ErrFileExpected         = errors.New("file expected")

@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	dockerVolumeArchiveMaxFiles        = 100_000
+	dockerVolumeArchiveMaxFiles        = 200_000
 	dockerVolumeArchiveMaxSize   int64 = 16 << 30
-	dockerVolumeDirectoryMaxSize       = 64 << 20
+	dockerVolumeDirectoryMaxSize       = 128 << 20
 	dockerVolumeDiskReserveBytes       = 512 << 20
 )
 
