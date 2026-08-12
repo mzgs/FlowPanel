@@ -430,7 +430,7 @@ function SystemInfoCard({ status }: { status: SystemStatus | null }) {
 
   return (
     <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-2">
-      <div className="flex w-full items-center justify-between gap-x-5 overflow-x-auto">
+      <div className="flex items-center gap-x-8 overflow-x-auto">
         {details.map((detail) => (
           <DetailItem
             key={detail.label}

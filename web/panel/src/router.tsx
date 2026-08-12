@@ -464,7 +464,7 @@ function RootLayout() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="hidden h-7 shrink-0 rounded-full border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-semibold text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 lg:inline-flex dark:text-amber-300 dark:hover:text-amber-200"
+                    className="mr-1 hidden h-7 shrink-0 rounded-full border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-semibold text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 lg:inline-flex dark:text-amber-300 dark:hover:text-amber-200"
                     disabled={panelUpdating || Boolean(panelUpdateQuery.data.updating)}
                     onClick={() => void handlePanelUpdate()}
                   >
@@ -474,7 +474,7 @@ function RootLayout() {
                       : `Update v${panelUpdateQuery.data.latest_version}`}
                   </Button>
                 ) : (
-                  <div className="hidden shrink-0 text-xs font-medium text-muted-foreground lg:block">
+                  <div className="mr-1 hidden shrink-0 text-xs font-medium text-muted-foreground lg:block">
                     FlowPanel v{panelUpdateQuery.data.current_version}
                   </div>
                 )
