@@ -133,6 +133,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
@@ -714,57 +715,57 @@ function ApplicationCard({
   );
 }
 
-function InstallRemoveApplicationCard({
+function LibraryTableRow({
   app,
   name,
   status,
   runningAction,
-  installActionKey,
-  updateActionKey,
-  removeActionKey,
-  meta,
+  actionKeyPrefix,
+  fallbackBinary,
   removeTitle,
   onInstall,
   onUpdate,
   onRemove,
 }: {
-  app: keyof typeof applicationLogos;
+  app: "ffmpeg" | "ytdlp";
   name: string;
   status: InstallRemoveRuntimeStatus | null;
   runningAction: string | null;
-  installActionKey: string;
-  updateActionKey?: string;
-  removeActionKey: string;
-  meta: Array<{ label?: string; value: ReactNode; mono?: boolean; tone?: StatusMetaTone; fullWidth?: boolean }>;
+  actionKeyPrefix: string;
+  fallbackBinary: string;
   removeTitle: string;
   onInstall: () => void;
-  onUpdate?: () => void;
+  onUpdate: () => void;
   onRemove: () => void;
 }) {
   const busyLabel = getRuntimeActionLabel(status?.state);
+  const badge = getInstallRemoveRuntimeBadge(status);
   const removeEnabled = canRemoveInstallRemoveRuntime(status);
 
   return (
-    <ApplicationCard
-      icon={<ApplicationLogo app={app} />}
-      name={name}
-      summary={formatInstallRemoveRuntimeValue(status)}
-      badge={getInstallRemoveRuntimeBadge(status)}
-      updateAction={
-        status?.update_available && status.latest_version && updateActionKey && onUpdate
-          ? {
-              version: status.latest_version,
-              label: status.update_label || `Update ${name}`,
-              busy: runningAction === updateActionKey,
-              disabled: runningAction !== null,
-              onClick: onUpdate,
-            }
-          : undefined
-      }
-      meta={meta}
-      configAction={null}
-      actions={
-        <>
+    <TableRow>
+      <TableCell>
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-11 shrink-0 items-center justify-center rounded-md bg-[var(--app-surface-muted)] px-1.5">
+            <ApplicationLogo app={app} />
+          </div>
+          <span className="font-medium text-[var(--app-text)]">{name}</span>
+        </div>
+      </TableCell>
+      <TableCell className="font-mono text-[13px] text-[var(--app-text-muted)]">
+        {status?.version?.trim() || "—"}
+      </TableCell>
+      <TableCell
+        className="max-w-[320px] truncate font-mono text-[13px] text-[var(--app-text-muted)]"
+        title={status?.binary_path?.trim() || fallbackBinary}
+      >
+        {status?.binary_path?.trim() || fallbackBinary}
+      </TableCell>
+      <TableCell>
+        <Badge variant={badge.variant}>{badge.label}</Badge>
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center justify-end gap-2">
           {busyLabel ? (
             <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -779,12 +780,29 @@ function InstallRemoveApplicationCard({
               onClick={onInstall}
               disabled={runningAction !== null}
             >
-              {runningAction === installActionKey ? (
+              {runningAction === `install-${actionKeyPrefix}` ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : (
                 <Package className="h-4 w-4" />
               )}
-              {getApplicationActionLabel("install")}
+              Install
+            </Button>
+          ) : null}
+          {status?.update_available ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={compactActionButtonClassName}
+              onClick={onUpdate}
+              disabled={runningAction !== null}
+            >
+              {runningAction === `update-${actionKeyPrefix}` ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Update{status.latest_version ? ` ${status.latest_version}` : ""}
             </Button>
           ) : null}
           <Button
@@ -796,16 +814,16 @@ function InstallRemoveApplicationCard({
             disabled={runningAction !== null || !removeEnabled}
             title={removeEnabled ? undefined : removeTitle}
           >
-            {runningAction === removeActionKey ? (
+            {runningAction === `remove-${actionKeyPrefix}` ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
             ) : (
               <Trash2 className="h-4 w-4" />
             )}
             Remove
           </Button>
-        </>
-      }
-    />
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -1025,9 +1043,16 @@ function ApplicationsPageSkeleton() {
           <ApplicationCardSkeleton />
           <ApplicationCardSkeleton />
           <ApplicationCardSkeleton />
-          <ApplicationCardSkeleton />
-          <ApplicationCardSkeleton />
         </div>
+        <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+          <div className="border-b border-[var(--app-border)] px-4 py-3">
+            <Skeleton width={36} height={16} />
+          </div>
+          <div className="space-y-3 px-4 py-3">
+            <Skeleton width="100%" height={32} />
+            <Skeleton width="100%" height={32} />
+          </div>
+        </section>
       </div>
     </SkeletonTheme>
   );
@@ -3378,56 +3403,6 @@ export function ApplicationsPage() {
             }}
           />
 
-          <InstallRemoveApplicationCard
-            app="ffmpeg"
-            name="FFmpeg"
-            status={ffmpegStatus}
-            runningAction={runningAction}
-            installActionKey="install-ffmpeg"
-            updateActionKey="update-ffmpeg"
-            removeActionKey="remove-ffmpeg"
-            removeTitle="Automatic FFmpeg removal is only available for installed runtimes supported by this environment."
-            meta={[
-              { label: "Toolchain", value: ffmpegStatus?.binary_path?.trim() || "ffmpeg", mono: true },
-            ]}
-            onInstall={() => {
-              void handleFFmpegInstall();
-            }}
-            onUpdate={() => {
-              void handlePackageRuntimeUpdate("ffmpeg", "FFmpeg", updateFFmpeg, setFFmpegStatus);
-            }}
-            onRemove={() => {
-              setRemoveCandidate({ kind: "ffmpeg" });
-            }}
-          />
-
-          <InstallRemoveApplicationCard
-            app="ytdlp"
-            name="yt-dlp"
-            status={ytdlpStatus}
-            runningAction={runningAction}
-            installActionKey="install-ytdlp"
-            updateActionKey="update-ytdlp"
-            removeActionKey="remove-ytdlp"
-            removeTitle="Automatic yt-dlp removal is only available for installed runtimes supported by this environment."
-            meta={[
-              { label: "Binary", value: ytdlpStatus?.binary_path?.trim() || "yt-dlp", mono: true },
-              ...(ytdlpStatus?.platform === "linux" && ytdlpStatus.installed
-                ? [{ label: "Installer", value: "Deno + curl_cffi-enabled build" }]
-                : []),
-              { label: "Restricted videos", value: "Pass signed-in browser cookies", fullWidth: true },
-            ]}
-            onInstall={() => {
-              void handleYTDLPInstall();
-            }}
-            onUpdate={() => {
-              void handlePackageRuntimeUpdate("ytdlp", "yt-dlp", updateYTDLP, setYTDLPStatus);
-            }}
-            onRemove={() => {
-              setRemoveCandidate({ kind: "ytdlp" });
-            }}
-          />
-
           <ServiceApplicationCard
             app="redis"
             name="Redis"
@@ -3820,6 +3795,49 @@ export function ApplicationsPage() {
             }
           />
         </div>
+
+        <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
+          <div className="border-b border-[var(--app-border)] px-4 py-3">
+            <h2 className="text-sm font-semibold tracking-tight text-[var(--app-text)]">Libs</h2>
+          </div>
+          <Table className="min-w-[760px]">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Library</TableHead>
+                <TableHead className="w-[160px]">Version</TableHead>
+                <TableHead>Binary</TableHead>
+                <TableHead className="w-[140px]">Status</TableHead>
+                <TableHead className="w-[320px] text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <LibraryTableRow
+                app="ffmpeg"
+                name="FFmpeg"
+                status={ffmpegStatus}
+                runningAction={runningAction}
+                actionKeyPrefix="ffmpeg"
+                fallbackBinary="ffmpeg"
+                removeTitle="Automatic FFmpeg removal is only available for installed runtimes supported by this environment."
+                onInstall={() => void handleFFmpegInstall()}
+                onUpdate={() => void handlePackageRuntimeUpdate("ffmpeg", "FFmpeg", updateFFmpeg, setFFmpegStatus)}
+                onRemove={() => setRemoveCandidate({ kind: "ffmpeg" })}
+              />
+              <LibraryTableRow
+                app="ytdlp"
+                name="yt-dlp"
+                status={ytdlpStatus}
+                runningAction={runningAction}
+                actionKeyPrefix="ytdlp"
+                fallbackBinary="yt-dlp"
+                removeTitle="Automatic yt-dlp removal is only available for installed runtimes supported by this environment."
+                onInstall={() => void handleYTDLPInstall()}
+                onUpdate={() => void handlePackageRuntimeUpdate("ytdlp", "yt-dlp", updateYTDLP, setYTDLPStatus)}
+                onRemove={() => setRemoveCandidate({ kind: "ytdlp" })}
+              />
+            </TableBody>
+          </Table>
+        </section>
       </div>
     </>
   );
