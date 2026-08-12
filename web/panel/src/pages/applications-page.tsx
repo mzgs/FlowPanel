@@ -3798,7 +3798,7 @@ export function ApplicationsPage() {
 
         <section className="overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] shadow-[var(--app-shadow)]">
           <div className="border-b border-[var(--app-border)] px-4 py-3">
-            <h2 className="text-sm font-semibold tracking-tight text-[var(--app-text)]">Libs</h2>
+            <h2 className="text-sm font-semibold tracking-tight text-[var(--app-text)]">Tools</h2>
           </div>
           <Table className="min-w-[760px]">
             <TableHeader>
