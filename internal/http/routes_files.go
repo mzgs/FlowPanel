@@ -239,7 +239,11 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 		}
 		defer cleanup()
 
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+		disposition := "attachment"
+		if r.URL.Query().Get("preview") == "1" {
+			disposition = "inline"
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disposition, name))
 		stdhttp.ServeFile(w, r, absolutePath)
 	})
 

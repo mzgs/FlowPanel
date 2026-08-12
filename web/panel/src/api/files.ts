@@ -159,6 +159,10 @@ function getDownloadUrl(path: string) {
   return `/api/files/download?path=${encodeURIComponent(path)}`;
 }
 
+export function getFilePreviewUrl(path: string) {
+  return `${getDownloadUrl(path)}&preview=1`;
+}
+
 export async function downloadEntry(path: string): Promise<string> {
   const response = await fetch(getDownloadUrl(path), {
     credentials: "include",

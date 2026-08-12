@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   ArrowUp,
+  ChevronRight,
   Clipboard,
   Copy,
   Download,
@@ -43,6 +44,7 @@ import {
   extractArchive,
   fetchFileContent,
   fetchFiles,
+  getFilePreviewUrl,
   renameEntry,
   saveFileContent,
   transferEntries,
@@ -90,6 +92,7 @@ type ViewMode = "list" | "grid";
 type DialogMode = "folder" | "file" | "rename" | null;
 type ClipboardMode = "copy" | "move" | null;
 type UploadProgressState = FileUploadProgress & { fileCount: number; startedAt: number };
+type MediaType = "image" | "video" | "audio";
 
 type MarqueeState = {
   active: boolean;
@@ -141,6 +144,12 @@ const editableExtensions = new Set([
   "zsh",
 ]);
 
+const mediaExtensions: Record<MediaType, Set<string>> = {
+  image: new Set(["avif", "bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"]),
+  video: new Set(["m4v", "mov", "mp4", "ogv", "webm"]),
+  audio: new Set(["aac", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav"]),
+};
+
 const loadFileEditor = () =>
   import("@/components/file-editor").then((module) => ({ default: module.FileEditor }));
 const FileEditor = lazy(loadFileEditor);
@@ -175,6 +184,16 @@ function isEditableFile(item: FileEntry) {
   }
 
   return editableExtensions.has(item.extension);
+}
+
+function getMediaType(item: FileEntry): MediaType | null {
+  if (item.type !== "file" || !item.extension) {
+    return null;
+  }
+
+  return (Object.entries(mediaExtensions).find(([, extensions]) =>
+    extensions.has(item.extension!),
+  )?.[0] as MediaType | undefined) ?? null;
 }
 
 function getItemLabel(item: FileEntry) {
@@ -423,6 +442,8 @@ export function FileManager({
   const [permissionValue, setPermissionValue] = useState("");
   const [permissionRecursive, setPermissionRecursive] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [previewItem, setPreviewItem] = useState<FileEntry | null>(null);
+  const [previewDownloading, setPreviewDownloading] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadFileEditor(), 300);
@@ -477,6 +498,11 @@ export function FileManager({
   const contextPasteTarget =
     contextTargetItem?.type === "directory" ? contextTargetItem.path : currentPath;
   const terminalPathLabel = listing?.absolute_path || listing?.root_path || "/";
+  const previewType = previewItem ? getMediaType(previewItem) : null;
+  const galleryItems = allItems.filter((item) => getMediaType(item) === "image");
+  const galleryIndex = previewType === "image"
+    ? galleryItems.findIndex((item) => item.path === previewItem?.path)
+    : -1;
 
   useEffect(() => {
     if (initialPath === undefined) {
@@ -934,7 +960,37 @@ export function FileManager({
       return;
     }
 
+    if (getMediaType(item) || !isEditableFile(item)) {
+      closeContextMenu();
+      setPreviewItem(item);
+      return;
+    }
+
     void openEditor(item.path);
+  }
+
+  function showAdjacentImage(offset: number) {
+    if (galleryIndex < 0 || galleryItems.length < 2) {
+      return;
+    }
+
+    setPreviewItem(galleryItems[(galleryIndex + offset + galleryItems.length) % galleryItems.length]);
+  }
+
+  async function downloadPreviewItem() {
+    if (!previewItem || previewDownloading) {
+      return;
+    }
+
+    setPreviewDownloading(true);
+    try {
+      const fileName = await downloadEntry(previewItem.path);
+      toast.success(`${fileName} download started.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to download file."));
+    } finally {
+      setPreviewDownloading(false);
+    }
   }
 
   async function openEditor(path: string) {
@@ -1930,6 +1986,115 @@ export function FileManager({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={previewItem !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPreviewItem(null);
+          }
+        }}
+      >
+        <DialogContent
+          className={cn(
+            "gap-3 overflow-hidden p-4 sm:p-4",
+            previewType === "image" || previewType === "video" ? "sm:max-w-5xl" : "sm:max-w-lg",
+          )}
+        >
+          <DialogHeader className="min-w-0 gap-0 pe-12">
+            <DialogTitle className="truncate text-[15px]">{previewItem?.name ?? "Media preview"}</DialogTitle>
+            <DialogDescription className="truncate leading-5">
+              {previewItem ? `${getItemLabel(previewItem)} · ${formatBytes(previewItem.size)}` : "Preview file"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {previewItem && previewType === "image" ? (
+            <div className="relative flex min-h-64 items-center justify-center overflow-hidden rounded-[10px] border border-[var(--app-border)] bg-[#101113] sm:min-h-[28rem]">
+              <img
+                key={previewItem.path}
+                src={getFilePreviewUrl(previewItem.path)}
+                alt={previewItem.name}
+                className="max-h-[calc(100vh-10rem)] max-w-full object-contain"
+              />
+              {galleryItems.length > 1 ? (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Previous image"
+                    className="absolute start-3 flex size-9 items-center justify-center rounded-full border border-white/15 bg-black/55 text-white transition-colors hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                    onClick={() => showAdjacentImage(-1)}
+                  >
+                    <ChevronRight className="size-5 rotate-180" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Next image"
+                    className="absolute end-3 flex size-9 items-center justify-center rounded-full border border-white/15 bg-black/55 text-white transition-colors hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                    onClick={() => showAdjacentImage(1)}
+                  >
+                    <ChevronRight className="size-5" />
+                  </button>
+                  <span className="absolute bottom-3 rounded-full bg-black/60 px-2.5 py-1 text-[11px] tabular-nums text-white">
+                    {galleryIndex + 1} / {galleryItems.length}
+                  </span>
+                </>
+              ) : null}
+            </div>
+          ) : previewItem && previewType === "video" ? (
+            <div className="flex min-h-64 items-center justify-center overflow-hidden rounded-[10px] border border-[var(--app-border)] bg-[#101113]">
+              <video
+                key={previewItem.path}
+                src={getFilePreviewUrl(previewItem.path)}
+                controls
+                autoPlay
+                preload="metadata"
+                className="max-h-[calc(100vh-10rem)] w-full"
+              >
+                Your browser cannot play this video.
+              </video>
+            </div>
+          ) : previewItem && previewType === "audio" ? (
+            <div className="flex min-h-28 items-center px-5">
+              <audio
+                key={previewItem.path}
+                src={getFilePreviewUrl(previewItem.path)}
+                controls
+                autoPlay
+                preload="metadata"
+                className="w-full"
+              >
+                Your browser cannot play this audio file.
+              </audio>
+            </div>
+          ) : previewItem ? (
+            <>
+              <div className="overflow-hidden rounded-[10px] border border-[var(--app-border)]">
+                {[
+                  ["Type", getItemLabel(previewItem)],
+                  ["Size", formatBytes(previewItem.size)],
+                  ["Modified", formatDateTime(previewItem.modified_at)],
+                  ["Permissions", previewItem.permissions ?? "—"],
+                  ["Path", previewItem.path],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="grid grid-cols-[6rem_minmax(0,1fr)] gap-3 border-t border-[var(--app-border)] px-3 py-2.5 text-[13px] first:border-t-0"
+                  >
+                    <div className="text-[var(--app-text-muted)]">{label}</div>
+                    <div className={cn("min-w-0 text-[var(--app-text)]", label === "Path" && "break-all font-mono text-[12px]")}>{value}</div>
+                  </div>
+                ))}
+              </div>
+              <DialogFooter className="pt-3">
+                <Button type="button" size="sm" onClick={() => void downloadPreviewItem()} disabled={previewDownloading}>
+                  <Download className="size-4" />
+                  {previewDownloading ? "Downloading..." : "Download"}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
         </DialogContent>
       </Dialog>
 
