@@ -84,7 +84,7 @@ import {
 } from "@/components/ui/sheet";
 import { formatBytes, formatDateTime, formatUploadTimeRemaining } from "@/lib/format";
 import { consumePendingFilesPath } from "@/lib/files-navigation";
-import { cn, getErrorMessage } from "@/lib/utils";
+import { cn, copyTextToClipboard, getErrorMessage } from "@/lib/utils";
 
 type ViewMode = "list" | "grid";
 type DialogMode = "folder" | "file" | "rename" | null;
@@ -1125,6 +1125,25 @@ export function FileManager({
     );
   }
 
+  async function copyContextPath() {
+    closeContextMenu();
+    if (!listing) {
+      return;
+    }
+
+    const basePath = listing.absolute_path.replace(/\/+$/, "");
+    const paths = selectedItems.length > 0
+      ? selectedItems.map((item) => `${basePath}/${item.name}`)
+      : [listing.absolute_path];
+
+    try {
+      await copyTextToClipboard(paths.join("\n"));
+      toast.success(paths.length > 1 ? `${paths.length} paths copied.` : "Path copied.");
+    } catch {
+      toast.error("Failed to copy path.");
+    }
+  }
+
   async function pasteInto(targetPath: string) {
     closeContextMenu();
     if (!clipboardReady) {
@@ -1396,6 +1415,10 @@ export function FileManager({
                 Cut
                 <DropdownMenuShortcut>Ctrl+X</DropdownMenuShortcut>
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void copyContextPath()}>
+                <Clipboard className="h-4 w-4" />
+                {selectedItems.length > 1 ? "Copy paths" : "Copy path"}
+              </DropdownMenuItem>
               {contextTargetItem?.type === "directory" && clipboardReady ? (
                 <DropdownMenuItem onSelect={() => void pasteInto(contextPasteTarget)}>
                   <Clipboard className="h-4 w-4" />
@@ -1446,6 +1469,10 @@ export function FileManager({
                 </DropdownMenuItem>
               ) : null}
               <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={!listing} onSelect={() => void copyContextPath()}>
+                <Clipboard className="h-4 w-4" />
+                Copy path
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void listingQuery.refetch()}>
                 <RefreshCw className="h-4 w-4" />
                 Refresh
