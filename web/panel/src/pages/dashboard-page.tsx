@@ -59,7 +59,7 @@ import {
   stopRedis,
   type RedisStatus,
 } from "@/api/redis";
-import { fetchPanelUpdate, fetchSystemStatus, updatePanel, type PanelUpdateStatus, type SystemStatus } from "@/api/system";
+import { fetchSystemStatus, type SystemStatus } from "@/api/system";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { LoaderCircle, Plus, Trash2, Database, PlayerPlayFilled, PlayerStop, RefreshCw, World } from "@/components/icons/lucide-icons";
 import { PM2ProcessList } from "@/components/pm2-process-list";
@@ -81,7 +81,6 @@ const pm2LogsBottomThresholdPx = 24;
 type OverviewData = {
   databaseCount: number | null;
   health: OperationalHealth;
-  panelUpdate: PanelUpdateStatus | null;
   siteCount: number | null;
   systemStatus: SystemStatus | null;
 };
@@ -140,12 +139,11 @@ async function fetchOperationalHealth(): Promise<OperationalHealth> {
 }
 
 async function fetchOverviewData(): Promise<OverviewData> {
-  const [databaseResult, domainsResult, systemResult, healthResult, panelUpdateResult] = await Promise.allSettled([
+  const [databaseResult, domainsResult, systemResult, healthResult] = await Promise.allSettled([
     fetchMariaDBDatabases(),
     fetchDomains(),
     fetchSystemStatus(),
     fetchOperationalHealth(),
-    fetchPanelUpdate(),
   ]);
 
   return {
@@ -154,7 +152,6 @@ async function fetchOverviewData(): Promise<OverviewData> {
       healthResult.status === "fulfilled"
         ? healthResult.value
         : { backup: null, database: null, runtime: null, webServer: null },
-    panelUpdate: panelUpdateResult.status === "fulfilled" ? panelUpdateResult.value : null,
     siteCount: domainsResult.status === "fulfilled" ? domainsResult.value.domains.length : null,
     systemStatus: systemResult.status === "fulfilled" ? systemResult.value : null,
   };
@@ -412,17 +409,7 @@ function DetailItem({ label, value, valueClassName = "" }: { label: string; valu
   );
 }
 
-function SystemInfoCard({
-  onUpdate,
-  panelUpdate,
-  status,
-  updating,
-}: {
-  onUpdate: () => void;
-  panelUpdate: PanelUpdateStatus | null;
-  status: SystemStatus | null;
-  updating: boolean;
-}) {
+function SystemInfoCard({ status }: { status: SystemStatus | null }) {
   const details = [
     {
       label: "IPv4 Public IP",
@@ -442,33 +429,18 @@ function SystemInfoCard({
   ];
 
   return (
-      <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-2">
-        <div className="flex items-center justify-between gap-4 overflow-x-auto">
-          <div className="flex shrink-0 items-center gap-x-5">
-            {details.map((detail) => (
-              <DetailItem
-                key={detail.label}
-                label={detail.label}
-                value={detail.value}
-                valueClassName={detail.valueClassName}
-              />
-            ))}
-          </div>
-          {panelUpdate?.update_available && panelUpdate.latest_version ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 shrink-0 rounded-full border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-semibold text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
-              disabled={updating}
-              onClick={onUpdate}
-            >
-              {updating ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
-              {updating ? "Updating..." : `Update v${panelUpdate.latest_version}`}
-            </Button>
-          ) : null}
-        </div>
+    <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-2">
+      <div className="flex w-full items-center justify-between gap-x-5 overflow-x-auto">
+        {details.map((detail) => (
+          <DetailItem
+            key={detail.label}
+            label={detail.label}
+            value={detail.value}
+            valueClassName={detail.valueClassName}
+          />
+        ))}
       </div>
+    </div>
   );
 }
 
@@ -574,8 +546,6 @@ export function DashboardPage() {
     webServer: null,
   });
   const [siteCount, setSiteCount] = useState<number | null>(null);
-  const [panelUpdate, setPanelUpdate] = useState<PanelUpdateStatus | null>(null);
-  const [panelUpdating, setPanelUpdating] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [systemStatusHistory, setSystemStatusHistory] = useState<SystemStatusSample[]>([]);
   const [loading, setLoading] = useState(true);
@@ -641,43 +611,6 @@ export function DashboardPage() {
       toast.error(message);
     } finally {
       setInstalledAppsActionKey((current) => (current === action.key ? null : current));
-    }
-  }
-
-  async function handlePanelUpdate() {
-    if (panelUpdating) {
-      return;
-    }
-
-    setPanelUpdating(true);
-    try {
-      await updatePanel();
-      toast.success("FlowPanel update started. The panel will restart when it is ready.");
-
-      for (let attempt = 0; attempt < 90; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
-        try {
-          const status = await fetchPanelUpdate();
-          setPanelUpdate(status);
-          if (status.update_error) {
-            throw new Error(status.update_error);
-          }
-          if (!status.update_available) {
-            window.location.reload();
-            return;
-          }
-        } catch (error) {
-          if (error instanceof Error && error.message.startsWith("Panel update failed")) {
-            throw error;
-          }
-          // The panel is temporarily unreachable while its service restarts.
-        }
-      }
-
-      throw new Error("The update is taking longer than expected. Reload the panel in a moment.");
-    } catch (error) {
-      toast.error(getErrorMessage(error, "Failed to update FlowPanel."));
-      setPanelUpdating(false);
     }
   }
 
@@ -938,7 +871,6 @@ export function DashboardPage() {
 
       setDatabaseCount(nextOverview.databaseCount);
       setHealth(nextOverview.health);
-      setPanelUpdate(nextOverview.panelUpdate);
       setSiteCount(nextOverview.siteCount);
       if (nextOverview.systemStatus) {
         syncSystemStatus(nextOverview.systemStatus);
@@ -1305,12 +1237,7 @@ export function DashboardPage() {
         onSubmit={(input) => void handlePM2FormSubmit(input)}
       />
       <div className="px-4 pb-3 pt-4 sm:px-6 lg:px-8">
-        <SystemInfoCard
-          panelUpdate={panelUpdate}
-          status={systemStatus}
-          updating={panelUpdating || Boolean(panelUpdate?.updating)}
-          onUpdate={() => void handlePanelUpdate()}
-        />
+        <SystemInfoCard status={systemStatus} />
       </div>
 
       <div className="px-4 pb-6 pt-3 sm:px-6 lg:px-8">

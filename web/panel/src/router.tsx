@@ -21,6 +21,7 @@ import {
 } from "react";
 import { fetchAuthSession, logout } from "@/api/auth";
 import { fetchSettings, panelSettingsQueryKey } from "@/api/settings";
+import { fetchPanelUpdate, updatePanel } from "@/api/system";
 import { AuthPage } from "@/pages/auth-page";
 import {
   Bell,
@@ -32,6 +33,7 @@ import {
   HardDrive,
   LayoutDashboard,
   List,
+  LoaderCircle,
   LogOut,
   Monitor,
   Package,
@@ -44,6 +46,8 @@ import {
 import { FlowPanelMark } from "@/components/flowpanel-mark";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { getErrorMessage } from "@/lib/utils";
+import { toast } from "sonner";
 import {
   Sidebar,
   SidebarContent,
@@ -216,6 +220,7 @@ function RootLayout() {
   const [panelSearch, setPanelSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
+  const [panelUpdating, setPanelUpdating] = useState(false);
   const authQuery = useQuery({
     queryKey: ["auth", "session"],
     queryFn: fetchAuthSession,
@@ -224,6 +229,11 @@ function RootLayout() {
   const settingsQuery = useQuery({
     queryKey: panelSettingsQueryKey,
     queryFn: fetchSettings,
+    enabled: Boolean(authQuery.data?.authenticated),
+  });
+  const panelUpdateQuery = useQuery({
+    queryKey: ["panel", "update"],
+    queryFn: fetchPanelUpdate,
     enabled: Boolean(authQuery.data?.authenticated),
   });
   const logoutMutation = useMutation({
@@ -300,6 +310,37 @@ function RootLayout() {
     } else if (event.key === "Escape") {
       setSearchOpen(false);
       searchInputRef.current?.blur();
+    }
+  };
+
+  const handlePanelUpdate = async () => {
+    if (panelUpdating) return;
+
+    setPanelUpdating(true);
+    try {
+      await updatePanel();
+      toast.success("FlowPanel update started. The panel will restart when it is ready.");
+
+      for (let attempt = 0; attempt < 90; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        try {
+          const status = await fetchPanelUpdate();
+          queryClient.setQueryData(["panel", "update"], status);
+          if (status.update_error) throw new Error(status.update_error);
+          if (!status.update_available) {
+            window.location.reload();
+            return;
+          }
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith("Panel update failed")) throw error;
+          // The panel is temporarily unreachable while its service restarts.
+        }
+      }
+
+      throw new Error("The update is taking longer than expected. Reload the panel in a moment.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to update FlowPanel."));
+      setPanelUpdating(false);
     }
   };
 
@@ -417,6 +458,27 @@ function RootLayout() {
             </div>
 
             <div className="flex items-center gap-2">
+              {panelUpdateQuery.data ? (
+                panelUpdateQuery.data.update_available && panelUpdateQuery.data.latest_version ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="hidden h-7 shrink-0 rounded-full border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-semibold text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 lg:inline-flex dark:text-amber-300 dark:hover:text-amber-200"
+                    disabled={panelUpdating || Boolean(panelUpdateQuery.data.updating)}
+                    onClick={() => void handlePanelUpdate()}
+                  >
+                    {panelUpdating || panelUpdateQuery.data.updating ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+                    {panelUpdating || panelUpdateQuery.data.updating
+                      ? "Updating..."
+                      : `Update v${panelUpdateQuery.data.latest_version}`}
+                  </Button>
+                ) : (
+                  <div className="hidden shrink-0 text-xs font-medium text-muted-foreground lg:block">
+                    FlowPanel v{panelUpdateQuery.data.current_version}
+                  </div>
+                )
+              ) : null}
               <div
                 className="relative hidden w-64 lg:block"
                 onBlur={(event) => {
