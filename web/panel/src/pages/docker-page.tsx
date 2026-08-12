@@ -37,6 +37,7 @@ import {
   type DomainRecord,
   type EnvironmentVariable,
 } from "@/api/domains";
+import { fetchSystemStatus } from "@/api/system";
 import { DockerVolumeMappingsEditor } from "@/components/docker-volume-mappings-editor";
 import { EnvironmentVariablesEditor } from "@/components/environment-variables-editor";
 import { FieldError } from "@/components/field-error";
@@ -548,14 +549,14 @@ function formatDockerHost(host: string) {
   return normalized.includes(":") ? `[${normalized}]` : normalized;
 }
 
-function getDockerContainerLinks(ports: DockerContainerPortMapping[]) {
+function getDockerContainerLinks(ports: DockerContainerPortMapping[], publicIPv4: string) {
   const browserHost = typeof window === "undefined" ? "localhost" : window.location.hostname;
   const links = ports.flatMap((port) => {
     if (!port.host_port) {
       return [];
     }
 
-    const host = isDockerPublicHostIP(port.host_ip) ? browserHost : port.host_ip.trim();
+    const host = isDockerPublicHostIP(port.host_ip) ? publicIPv4 || browserHost : port.host_ip.trim();
     const address = `${formatDockerHost(host || browserHost)}:${port.host_port}`;
     const protocol = port.container_port.split("/")[0] === "443" ? "https" : "http";
     return [{ address, url: `${protocol}://${address}` }];
@@ -718,16 +719,18 @@ function TabButton({
 
 function ContainerResourcesPanel({
   container,
+  publicIPv4,
   resources,
 }: {
   container: DockerContainer;
+  publicIPv4: string;
   resources: DockerContainerResourcesState;
 }) {
   const cpuPercent = clampPercent(resources.details?.cpu_percent);
   const memoryPercent = clampPercent(resources.details?.memory_percent);
   const portMappings = resources.details?.ports ?? [];
   const portSummary = getDockerContainerPortSummary(portMappings);
-  const containerLinks = getDockerContainerLinks(portMappings);
+  const containerLinks = getDockerContainerLinks(portMappings, publicIPv4);
   const metricsUnavailable = cpuPercent == null && memoryPercent == null;
 
   return (
@@ -851,6 +854,7 @@ function ContainerResourcesPanel({
 function ContainerList({
   containers,
   domains,
+  publicIPv4,
   activeContainerID,
   pendingOperation,
   actionErrors,
@@ -868,6 +872,7 @@ function ContainerList({
 }: {
   containers: DockerContainer[];
   domains: DomainRecord[];
+  publicIPv4: string;
   activeContainerID: string | null;
   pendingOperation: DockerContainerOperation | null;
   actionErrors: DockerContainerActionErrors;
@@ -1390,7 +1395,11 @@ function ContainerList({
                     ) : null}
                   </div>
 
-                  <ContainerResourcesPanel container={container} resources={containerResources} />
+                  <ContainerResourcesPanel
+                    container={container}
+                    publicIPv4={publicIPv4}
+                    resources={containerResources}
+                  />
                 </div>
               </div>
             ) : null}
@@ -2625,6 +2634,7 @@ export function DockerPage() {
   const [containers, setContainers] = useState<DockerContainer[]>([]);
   const [images, setImages] = useState<DockerImage[]>([]);
   const [domains, setDomains] = useState<DomainRecord[]>([]);
+  const [publicIPv4, setPublicIPv4] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [pullDialogOpen, setPullDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -2914,9 +2924,18 @@ export function DockerPage() {
     }
   }
 
+  async function loadPublicIPv4() {
+    try {
+      setPublicIPv4((await fetchSystemStatus()).public_ipv4?.trim() ?? "");
+    } catch {
+      // Docker inventory remains usable when system data is temporarily unavailable.
+    }
+  }
+
   useEffect(() => {
     void loadDocker();
     void loadDomains();
+    void loadPublicIPv4();
 
     return () => {
       latestRequestRef.current += 1;
@@ -3315,6 +3334,7 @@ export function DockerPage() {
         onClick={() => {
           void loadDocker({ silent: true });
           void loadDomains();
+          void loadPublicIPv4();
         }}
         disabled={loading || refreshing || anyActionInFlight}
       >
@@ -3556,6 +3576,7 @@ export function DockerPage() {
             <ContainerList
               containers={containers}
               domains={domains}
+              publicIPv4={publicIPv4}
               activeContainerID={activeContainerID}
               pendingOperation={pendingOperation}
               actionErrors={containerActionErrors}
