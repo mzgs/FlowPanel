@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { PM2Process } from "@/api/pm2";
 import {
   LoaderCircle,
+  Pencil,
   PlayerPlayFilled,
   PlayerStop,
   RotateCcw,
@@ -25,6 +26,7 @@ type PM2ProcessListProps = {
   onProcessAction: (action: "start" | "stop" | "restart" | "delete", process: Pick<PM2Process, "id" | "name">) => void;
   onDelete: (process: Pick<PM2Process, "id" | "name">) => void;
   onOpenLogs: (process: PM2Process) => void;
+  onEdit: (process: PM2Process) => void;
 };
 
 const compactActionButtonClassName = "h-7 gap-1.5 px-2.5 text-xs";
@@ -130,6 +132,13 @@ function formatPM2ProcessUptime(process: PM2Process) {
   return `${Math.max(1, Math.floor(elapsed / 1000))}s`;
 }
 
+function formatPM2Command(process: PM2Process) {
+  return [process.script_path, ...(process.arguments ?? [])]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .map((part) => (/^[\w@%+=:,./-]+$/.test(part) ? part : JSON.stringify(part)))
+    .join(" ") || "-";
+}
+
 function canStartPM2Process(process: PM2Process) {
   const status = process.status.trim().toLowerCase();
   return status !== "online" && status !== "launching";
@@ -171,6 +180,7 @@ function PM2ProcessActionButtons({
   processActionKey,
   onDelete,
   onOpenLogs,
+  onEdit,
   onProcessAction,
 }: {
   process: PM2Process;
@@ -178,6 +188,7 @@ function PM2ProcessActionButtons({
   processActionKey: string | null;
   onDelete: (process: Pick<PM2Process, "id" | "name">) => void;
   onOpenLogs: (process: PM2Process) => void;
+  onEdit: (process: PM2Process) => void;
   onProcessAction: (action: "start" | "stop" | "restart" | "delete", process: Pick<PM2Process, "id" | "name">) => void;
 }) {
   const activeAction = processActionKey?.endsWith(`:${process.id}`) ? processActionKey.split(":")[0] : null;
@@ -187,6 +198,9 @@ function PM2ProcessActionButtons({
 
   return (
     <div className="flex flex-wrap justify-end gap-2">
+      <Button type="button" variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => onEdit(process)} disabled={busy} aria-label={`Edit ${process.name}`} title={`Edit ${process.name}`}>
+        <Pencil className="h-4 w-4" />
+      </Button>
       <Button
         type="button"
         variant="outline"
@@ -268,6 +282,7 @@ function PM2ProcessDashboardRows({
   processActionKey,
   onDelete,
   onOpenLogs,
+  onEdit,
   onProcessAction,
 }: Omit<PM2ProcessListProps, "mode" | "error" | "loading" | "className" | "emptyState">) {
   return (
@@ -297,6 +312,9 @@ function PM2ProcessDashboardRows({
                 <span>Restarts {process.restarts}</span>
                 <span>Uptime {formatPM2ProcessUptime(process)}</span>
               </div>
+              <div className="mt-1 truncate font-mono text-[11px] text-[var(--app-text-muted)]" title={formatPM2Command(process)}>
+                {formatPM2Command(process)}
+              </div>
             </div>
 
             <PM2ProcessActionButtons
@@ -305,6 +323,7 @@ function PM2ProcessDashboardRows({
               processActionKey={processActionKey}
               onDelete={onDelete}
               onOpenLogs={onOpenLogs}
+              onEdit={onEdit}
               onProcessAction={onProcessAction}
             />
           </div>
@@ -320,6 +339,7 @@ function PM2ProcessDialogTable({
   processActionKey,
   onDelete,
   onOpenLogs,
+  onEdit,
   onProcessAction,
 }: Omit<PM2ProcessListProps, "mode" | "error" | "loading" | "className" | "emptyState">) {
   return (
@@ -335,7 +355,7 @@ function PM2ProcessDialogTable({
             <TableHead>Restarts</TableHead>
             <TableHead>Uptime</TableHead>
             <TableHead className="min-w-[280px]">Script</TableHead>
-            <TableHead className="w-[300px] text-right">Actions</TableHead>
+            <TableHead className="w-[340px] text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
 
@@ -370,7 +390,7 @@ function PM2ProcessDialogTable({
                 </TableCell>
                 <TableCell className="max-w-0 py-3">
                   <div className="whitespace-normal break-all font-mono text-xs text-[var(--app-text-muted)]">
-                    {process.script_path?.trim() || "-"}
+                    {formatPM2Command(process)}
                   </div>
                 </TableCell>
                 <TableCell className="py-3 text-right">
@@ -380,6 +400,7 @@ function PM2ProcessDialogTable({
                     processActionKey={processActionKey}
                     onDelete={onDelete}
                     onOpenLogs={onOpenLogs}
+                    onEdit={onEdit}
                     onProcessAction={onProcessAction}
                   />
                 </TableCell>
@@ -404,6 +425,7 @@ export function PM2ProcessList({
   onProcessAction,
   onDelete,
   onOpenLogs,
+  onEdit,
 }: PM2ProcessListProps) {
   const initialLoading = loading && processes.length === 0;
   const isDashboard = mode === "dashboard";
@@ -470,6 +492,7 @@ export function PM2ProcessList({
           processActionKey={processActionKey}
           onDelete={onDelete}
           onOpenLogs={onOpenLogs}
+          onEdit={onEdit}
           onProcessAction={onProcessAction}
         />
       ) : (
@@ -479,6 +502,7 @@ export function PM2ProcessList({
           processActionKey={processActionKey}
           onDelete={onDelete}
           onOpenLogs={onOpenLogs}
+          onEdit={onEdit}
           onProcessAction={onProcessAction}
         />
       )}

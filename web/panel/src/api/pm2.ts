@@ -22,6 +22,8 @@ export type PM2Process = {
   restarts: number;
   uptime_unix_milli?: number;
   script_path?: string;
+  working_directory?: string;
+  arguments?: string[];
   namespace?: string;
   version?: string;
   exec_mode?: string;
@@ -31,6 +33,7 @@ export type PM2CreateProcessInput = {
   name?: string;
   script_path: string;
   working_directory?: string;
+  arguments?: string[];
 };
 
 type PM2StatusPayload = {
@@ -94,6 +97,17 @@ export async function createPM2Process(input: PM2CreateProcessInput): Promise<PM
     body: JSON.stringify(input),
   });
 
+  const payload = await parsePM2Response<PM2ProcessesPayload>(response);
+  return payload.processes;
+}
+
+export async function updatePM2Process(processID: number, input: PM2CreateProcessInput): Promise<PM2Process[]> {
+  const response = await fetch(`/api/pm2/processes/${processID}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
   const payload = await parsePM2Response<PM2ProcessesPayload>(response);
   return payload.processes;
 }

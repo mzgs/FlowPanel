@@ -39,6 +39,7 @@ type Manager interface {
 	Logs(context.Context, int) (string, error)
 	ClearLogs(context.Context, int) error
 	CreateProcess(context.Context, CreateProcessInput) ([]Process, error)
+	UpdateProcess(context.Context, int, CreateProcessInput) ([]Process, error)
 	StartProcess(context.Context, int) ([]Process, error)
 	StopProcess(context.Context, int) ([]Process, error)
 	RestartProcess(context.Context, int) ([]Process, error)
@@ -51,24 +52,26 @@ type CreateProcessInput struct {
 	Name             string
 	ScriptPath       string
 	WorkingDirectory string
+	Arguments        []string
 	Interpreter      string
 	Environment      map[string]string
 }
 
 type Process struct {
-	ID               int     `json:"id"`
-	Name             string  `json:"name"`
-	Status           string  `json:"status"`
-	CPU              float64 `json:"cpu"`
-	MemoryBytes      int64   `json:"memory_bytes"`
-	Restarts         int     `json:"restarts"`
-	UptimeUnixMilli  int64   `json:"uptime_unix_milli,omitempty"`
-	ScriptPath       string  `json:"script_path,omitempty"`
-	WorkingDirectory string  `json:"working_directory,omitempty"`
-	Interpreter      string  `json:"interpreter,omitempty"`
-	Namespace        string  `json:"namespace,omitempty"`
-	Version          string  `json:"version,omitempty"`
-	ExecMode         string  `json:"exec_mode,omitempty"`
+	ID               int      `json:"id"`
+	Name             string   `json:"name"`
+	Status           string   `json:"status"`
+	CPU              float64  `json:"cpu"`
+	MemoryBytes      int64    `json:"memory_bytes"`
+	Restarts         int      `json:"restarts"`
+	UptimeUnixMilli  int64    `json:"uptime_unix_milli,omitempty"`
+	ScriptPath       string   `json:"script_path,omitempty"`
+	WorkingDirectory string   `json:"working_directory,omitempty"`
+	Arguments        []string `json:"arguments,omitempty"`
+	Interpreter      string   `json:"interpreter,omitempty"`
+	Namespace        string   `json:"namespace,omitempty"`
+	Version          string   `json:"version,omitempty"`
+	ExecMode         string   `json:"exec_mode,omitempty"`
 }
 
 type Status struct {
@@ -101,16 +104,17 @@ type rawProcess struct {
 	Name   string `json:"name"`
 	PMID   int    `json:"pm_id"`
 	PM2Env struct {
-		Status      string `json:"status"`
-		PMXModule   bool   `json:"pmx_module"`
-		RestartTime int    `json:"restart_time"`
-		PMUptime    int64  `json:"pm_uptime"`
-		PMExecPath  string `json:"pm_exec_path"`
-		PMCwd       string `json:"pm_cwd"`
-		Interpreter string `json:"exec_interpreter"`
-		Namespace   string `json:"namespace"`
-		Version     string `json:"version"`
-		ExecMode    string `json:"exec_mode"`
+		Status      string   `json:"status"`
+		PMXModule   bool     `json:"pmx_module"`
+		RestartTime int      `json:"restart_time"`
+		PMUptime    int64    `json:"pm_uptime"`
+		PMExecPath  string   `json:"pm_exec_path"`
+		PMCwd       string   `json:"pm_cwd"`
+		Interpreter string   `json:"exec_interpreter"`
+		Namespace   string   `json:"namespace"`
+		Version     string   `json:"version"`
+		ExecMode    string   `json:"exec_mode"`
+		Args        []string `json:"args"`
 	} `json:"pm2_env"`
 	Monit struct {
 		Memory int64   `json:"memory"`
@@ -344,6 +348,7 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 		Name:             strings.TrimSpace(input.Name),
 		ScriptPath:       scriptPath,
 		WorkingDirectory: strings.TrimSpace(input.WorkingDirectory),
+		Arguments:        append([]string(nil), input.Arguments...),
 		Interpreter:      strings.TrimSpace(input.Interpreter),
 		Environment:      cloneEnvironmentMap(input.Environment),
 	}
@@ -358,6 +363,7 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 	if definition.Interpreter != "" {
 		args = append(args, "--interpreter", definition.Interpreter)
 	}
+	args = appendProcessArguments(args, definition.Arguments)
 
 	if _, err := runInspectCommandWithTimeoutAndEnv(ctx, actionCommandTimeout, definition.Environment, pm2Path, args...); err != nil {
 		return nil, err
@@ -372,6 +378,83 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 		return nil, err
 	}
 
+	return processes, s.saveProcessSnapshot(ctx, pm2Path)
+}
+
+func (s *Service) UpdateProcess(ctx context.Context, processID int, input CreateProcessInput) ([]Process, error) {
+	pm2Path, installed := detectPM2Binary()
+	if !installed {
+		return nil, errors.New("PM2 is not installed")
+	}
+
+	definition := Definition{
+		Name:             strings.TrimSpace(input.Name),
+		ScriptPath:       strings.TrimSpace(input.ScriptPath),
+		WorkingDirectory: strings.TrimSpace(input.WorkingDirectory),
+		Arguments:        append([]string(nil), input.Arguments...),
+		Interpreter:      strings.TrimSpace(input.Interpreter),
+		Environment:      cloneEnvironmentMap(input.Environment),
+	}
+	if definition.ScriptPath == "" {
+		return nil, errors.New("PM2 script path is required")
+	}
+
+	stored, err := s.loadDefinitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	old, live := Definition{}, processID >= 0
+	wasStopped := false
+	if live {
+		target, inspectErr := s.inspectProcess(ctx, pm2Path, processID)
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		old = target.Definition
+		wasStopped = strings.EqualFold(target.Status, "stopped")
+	} else {
+		old, err = s.resolveStoredProcess(ctx, pm2Path, processID)
+		if err != nil {
+			return nil, err
+		}
+		wasStopped = true
+	}
+	for _, storedDefinition := range stored {
+		if definitionKey(storedDefinition) == definitionKey(old) {
+			old.Environment = cloneEnvironmentMap(storedDefinition.Environment)
+			break
+		}
+	}
+	definition.ManuallyStopped = wasStopped
+	if definition.Interpreter == "" {
+		definition.Interpreter = old.Interpreter
+	}
+	if definition.Environment == nil {
+		definition.Environment = cloneEnvironmentMap(old.Environment)
+	}
+
+	next := removeDefinitionCounts(stored, map[string]int{definitionKey(old): 1})
+	next = append(next, definition)
+	if live {
+		if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, "delete", strconv.Itoa(processID)); err != nil {
+			return nil, err
+		}
+	}
+	if !wasStopped {
+		if err := s.createMissingProcess(ctx, pm2Path, definition); err != nil {
+			if live {
+				_ = s.createMissingProcess(ctx, pm2Path, old)
+			}
+			return nil, fmt.Errorf("start updated PM2 process: %w", err)
+		}
+	}
+	if err := s.replaceDefinitions(ctx, next); err != nil {
+		return nil, err
+	}
+	processes, err := s.refresh(ctx, pm2Path, nil)
+	if err != nil {
+		return nil, err
+	}
 	return processes, s.saveProcessSnapshot(ctx, pm2Path)
 }
 
@@ -546,6 +629,7 @@ func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
 			UptimeUnixMilli:  record.PM2Env.PMUptime,
 			ScriptPath:       strings.TrimSpace(record.PM2Env.PMExecPath),
 			WorkingDirectory: strings.TrimSpace(record.PM2Env.PMCwd),
+			Arguments:        append([]string(nil), record.PM2Env.Args...),
 			Interpreter:      strings.TrimSpace(record.PM2Env.Interpreter),
 			Namespace:        strings.TrimSpace(record.PM2Env.Namespace),
 			Version:          strings.TrimSpace(record.PM2Env.Version),
@@ -555,6 +639,7 @@ func parseInspectedProcesses(output string) ([]inspectedProcess, error) {
 			Name:             strings.TrimSpace(record.Name),
 			ScriptPath:       process.ScriptPath,
 			WorkingDirectory: process.WorkingDirectory,
+			Arguments:        append([]string(nil), process.Arguments...),
 			Interpreter:      process.Interpreter,
 		}
 		if process.Name == "" {
@@ -612,6 +697,7 @@ func toProcesses(inspected []inspectedProcess, stored []Definition, matchedStore
 			Status:           "stopped",
 			ScriptPath:       strings.TrimSpace(definition.ScriptPath),
 			WorkingDirectory: strings.TrimSpace(definition.WorkingDirectory),
+			Arguments:        append([]string(nil), definition.Arguments...),
 			Interpreter:      strings.TrimSpace(definition.Interpreter),
 		})
 		virtualID--
@@ -883,11 +969,19 @@ func (s *Service) createMissingProcess(ctx context.Context, pm2Path string, defi
 	if interpreter := strings.TrimSpace(definition.Interpreter); interpreter != "" {
 		args = append(args, "--interpreter", interpreter)
 	}
+	args = appendProcessArguments(args, definition.Arguments)
 	if _, err := runInspectCommandWithTimeoutAndEnv(ctx, actionCommandTimeout, definition.Environment, pm2Path, args...); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func appendProcessArguments(command, arguments []string) []string {
+	if len(arguments) == 0 {
+		return command
+	}
+	return append(append(command, "--"), arguments...)
 }
 
 func (s *Service) inspectProcess(ctx context.Context, pm2Path string, processID int) (inspectedProcess, error) {

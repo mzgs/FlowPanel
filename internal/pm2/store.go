@@ -18,6 +18,7 @@ type Definition struct {
 	Name             string
 	ScriptPath       string
 	WorkingDirectory string
+	Arguments        []string
 	Interpreter      string
 	Environment      map[string]string
 	ManuallyStopped  bool
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS pm2_processes (
     name TEXT NOT NULL DEFAULT '',
     script_path TEXT NOT NULL DEFAULT '',
     working_directory TEXT NOT NULL DEFAULT '',
+    arguments_json TEXT NOT NULL DEFAULT '',
     interpreter TEXT NOT NULL DEFAULT '',
     environment_json TEXT NOT NULL DEFAULT '',
     manually_stopped INTEGER NOT NULL DEFAULT 0
@@ -54,7 +56,10 @@ CREATE TABLE IF NOT EXISTS pm2_processes (
 		return err
 	}
 
-	return ensurePM2StoreColumn(ctx, s.db, "pm2_processes", "environment_json", "TEXT NOT NULL DEFAULT ''")
+	if err := ensurePM2StoreColumn(ctx, s.db, "pm2_processes", "environment_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	return ensurePM2StoreColumn(ctx, s.db, "pm2_processes", "arguments_json", "TEXT NOT NULL DEFAULT ''")
 }
 
 func (s *Store) List(ctx context.Context) ([]Definition, error) {
@@ -66,7 +71,7 @@ func (s *Store) List(ctx context.Context) ([]Definition, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT name, script_path, working_directory, environment_json, manually_stopped, interpreter
+SELECT name, script_path, working_directory, arguments_json, environment_json, manually_stopped, interpreter
 FROM pm2_processes
 ORDER BY position ASC
 `)
@@ -79,10 +84,14 @@ ORDER BY position ASC
 	for rows.Next() {
 		var (
 			definition      Definition
+			argumentsJSON   string
 			environmentJSON string
 		)
-		if err := rows.Scan(&definition.Name, &definition.ScriptPath, &definition.WorkingDirectory, &environmentJSON, &definition.ManuallyStopped, &definition.Interpreter); err != nil {
+		if err := rows.Scan(&definition.Name, &definition.ScriptPath, &definition.WorkingDirectory, &argumentsJSON, &environmentJSON, &definition.ManuallyStopped, &definition.Interpreter); err != nil {
 			return nil, fmt.Errorf("scan pm2 process row: %w", err)
+		}
+		if err := decodeDefinitionArguments(argumentsJSON, &definition); err != nil {
+			return nil, fmt.Errorf("decode pm2 process arguments: %w", err)
 		}
 		if err := decodeDefinitionEnvironment(environmentJSON, &definition); err != nil {
 			return nil, fmt.Errorf("decode pm2 process environment: %w", err)
@@ -122,8 +131,8 @@ func (s *Store) Replace(ctx context.Context, definitions []Definition) error {
 	}
 
 	statement, err := tx.PrepareContext(ctx, `
-INSERT INTO pm2_processes (position, name, script_path, working_directory, environment_json, manually_stopped, interpreter)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pm2_processes (position, name, script_path, working_directory, arguments_json, environment_json, manually_stopped, interpreter)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `)
 	if err != nil {
 		return fmt.Errorf("prepare pm2 process insert: %w", err)
@@ -131,7 +140,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	defer statement.Close()
 
 	for index, definition := range definitions {
-		if _, err := statement.ExecContext(ctx, index, definition.Name, definition.ScriptPath, definition.WorkingDirectory, encodeDefinitionEnvironment(definition), definition.ManuallyStopped, definition.Interpreter); err != nil {
+		if _, err := statement.ExecContext(ctx, index, definition.Name, definition.ScriptPath, definition.WorkingDirectory, encodeDefinitionArguments(definition), encodeDefinitionEnvironment(definition), definition.ManuallyStopped, definition.Interpreter); err != nil {
 			return fmt.Errorf("insert pm2 process at position %d: %w", index, err)
 		}
 	}
@@ -141,6 +150,25 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	}
 
 	return nil
+}
+
+func encodeDefinitionArguments(definition Definition) string {
+	if len(definition.Arguments) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(definition.Arguments)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
+}
+
+func decodeDefinitionArguments(raw string, definition *Definition) error {
+	if strings.TrimSpace(raw) == "" {
+		definition.Arguments = nil
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), &definition.Arguments)
 }
 
 func encodeDefinitionEnvironment(definition Definition) string {

@@ -32,6 +32,7 @@ import { fetchPHPStatus, restartPHP, startPHP, stopPHP, type PHPStatus } from "@
 import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
 import {
   clearPM2ProcessLogs,
+  createPM2Process,
   deletePM2Process,
   fetchPM2ProcessLogs,
   fetchPM2Processes,
@@ -39,6 +40,8 @@ import {
   restartPM2Process,
   startPM2Process,
   stopPM2Process,
+  updatePM2Process,
+  type PM2CreateProcessInput,
   type PM2Process,
   type PM2Status,
 } from "@/api/pm2";
@@ -58,8 +61,9 @@ import {
 } from "@/api/redis";
 import { fetchPanelUpdate, fetchSystemStatus, updatePanel, type PanelUpdateStatus, type SystemStatus } from "@/api/system";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
-import { LoaderCircle, Trash2, Database, PlayerPlayFilled, PlayerStop, RefreshCw, World } from "@/components/icons/lucide-icons";
+import { LoaderCircle, Plus, Trash2, Database, PlayerPlayFilled, PlayerStop, RefreshCw, World } from "@/components/icons/lucide-icons";
 import { PM2ProcessList } from "@/components/pm2-process-list";
+import { PM2ProcessDialog } from "@/components/pm2-process-dialog";
 import { appendSystemStatusSample, type SystemStatusSample } from "@/components/system-metrics-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -581,6 +585,10 @@ export function DashboardPage() {
   const [pm2Refreshing, setPM2Refreshing] = useState(false);
   const [pm2Error, setPM2Error] = useState<string | null>(null);
   const [pm2ProcessActionKey, setPM2ProcessActionKey] = useState<string | null>(null);
+  const [pm2FormOpen, setPM2FormOpen] = useState(false);
+  const [pm2FormTarget, setPM2FormTarget] = useState<PM2Process | null>(null);
+  const [pm2FormSubmitting, setPM2FormSubmitting] = useState(false);
+  const [pm2FormError, setPM2FormError] = useState<string | null>(null);
   const [pm2LogsOpen, setPM2LogsOpen] = useState(false);
   const [pm2LogsTarget, setPM2LogsTarget] = useState<PM2Process | null>(null);
   const [pm2LogsOutput, setPM2LogsOutput] = useState("");
@@ -813,6 +821,34 @@ export function DashboardPage() {
     void loadPM2Logs(process);
   }
 
+  function handlePM2FormOpenChange(open: boolean) {
+    setPM2FormOpen(open);
+    if (!open) {
+      setPM2FormTarget(null);
+      setPM2FormError(null);
+    }
+  }
+
+  async function handlePM2FormSubmit(input: PM2CreateProcessInput) {
+    const editing = pm2FormTarget !== null;
+    setPM2FormSubmitting(true);
+    setPM2FormError(null);
+    try {
+      const nextProcesses = pm2FormTarget
+        ? await updatePM2Process(pm2FormTarget.id, input)
+        : await createPM2Process(input);
+      syncPM2Processes(nextProcesses);
+      handlePM2FormOpenChange(false);
+      toast.success(`${input.name || input.script_path} ${editing ? "updated" : "created"}.`);
+    } catch (error) {
+      const message = getErrorMessage(error, `Failed to ${editing ? "update" : "create"} ${input.name || input.script_path}.`);
+      setPM2FormError(message);
+      toast.error(message);
+    } finally {
+      setPM2FormSubmitting(false);
+    }
+  }
+
   async function handlePM2ClearLogs(process: PM2Process) {
     if (pm2LogsClearing) {
       return;
@@ -951,7 +987,7 @@ export function DashboardPage() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      if (pm2Loading || pm2Refreshing || pm2ProcessActionKey !== null) {
+      if (pm2Loading || pm2Refreshing || pm2ProcessActionKey !== null || pm2FormSubmitting) {
         return;
       }
 
@@ -961,7 +997,7 @@ export function DashboardPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [pm2Loading, pm2Refreshing, pm2ProcessActionKey]);
+  }, [pm2Loading, pm2Refreshing, pm2ProcessActionKey, pm2FormSubmitting]);
 
   useEffect(() => {
     if (!pm2LogsOpen || pm2LogsTarget === null) {
@@ -1212,11 +1248,14 @@ export function DashboardPage() {
     : "Delete this PM2 process?";
   const pm2ProcessesSection = pm2Status?.installed === false ? null : (
     <section className="rounded-xl border border-[var(--app-border)] bg-[var(--app-bg-2)] px-4 py-4 shadow-[var(--app-shadow)]">
-      <div className="min-w-0">
+      <div className="flex min-w-0 items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <div className="text-[15px] font-semibold tracking-tight text-[var(--app-text)]">PM2 processes</div>
           {pm2Status?.installed ? <Badge variant="secondary">{pm2ProcessCountLabel}</Badge> : null}
         </div>
+        <Button type="button" variant="outline" size="sm" className="h-7 w-7 shrink-0 p-0" onClick={() => setPM2FormOpen(true)} disabled={!pm2Status?.installed || pm2FormSubmitting} aria-label="Add PM2 process" title="Add PM2 process">
+          <Plus className="h-4 w-4" />
+        </Button>
       </div>
 
       <div className="mt-3">
@@ -1225,13 +1264,17 @@ export function DashboardPage() {
           processes={pm2Processes}
           error={pm2Error}
           loading={pm2Loading}
-          busy={pm2ProcessActionKey !== null}
+          busy={pm2ProcessActionKey !== null || pm2FormSubmitting}
           processActionKey={pm2ProcessActionKey}
           onProcessAction={(action, process) => {
             void handlePM2ProcessAction(action, process);
           }}
           onDelete={(process) => {
             setPM2DeleteCandidate(process);
+          }}
+          onEdit={(process) => {
+            setPM2FormTarget(process);
+            setPM2FormOpen(true);
           }}
           onOpenLogs={openPM2Logs}
         />
@@ -1253,6 +1296,14 @@ export function DashboardPage() {
 
   return (
     <>
+      <PM2ProcessDialog
+        open={pm2FormOpen}
+        process={pm2FormTarget}
+        submitting={pm2FormSubmitting}
+        error={pm2FormError}
+        onOpenChange={handlePM2FormOpenChange}
+        onSubmit={(input) => void handlePM2FormSubmit(input)}
+      />
       <div className="px-4 pb-3 pt-4 sm:px-6 lg:px-8">
         <SystemInfoCard
           panelUpdate={panelUpdate}

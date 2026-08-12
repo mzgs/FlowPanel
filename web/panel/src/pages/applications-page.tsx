@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { fetchCaddyStatus, restartCaddy, type CaddyStatus } from "@/api/caddy";
 import {
   fetchDockerStatus,
@@ -48,6 +48,7 @@ import {
   removePM2,
   startPM2Process,
   stopPM2Process,
+  updatePM2Process,
   type PM2CreateProcessInput,
   type PM2Process,
   type PM2Status,
@@ -110,6 +111,7 @@ import {
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { MariaDBSettingsDialog } from "@/components/mariadb-settings-dialog";
 import { PM2ProcessList } from "@/components/pm2-process-list";
+import { PM2ProcessDialog } from "@/components/pm2-process-dialog";
 import { PHPSettingsDialog } from "@/components/php-settings-dialog";
 import { PHPMyAdminSettingsDialog } from "@/components/phpmyadmin-settings-dialog";
 import {
@@ -130,8 +132,6 @@ import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -503,6 +503,8 @@ function isSamePM2Process(current: PM2Process, next: PM2Process) {
     current.restarts === next.restarts &&
     current.uptime_unix_milli === next.uptime_unix_milli &&
     current.script_path === next.script_path &&
+    current.working_directory === next.working_directory &&
+    JSON.stringify(current.arguments ?? []) === JSON.stringify(next.arguments ?? []) &&
     current.namespace === next.namespace &&
     current.version === next.version &&
     current.exec_mode === next.exec_mode
@@ -1371,9 +1373,7 @@ export function ApplicationsPage() {
   const [pm2ProcessesError, setPM2ProcessesError] = useState<string | null>(null);
   const [pm2ProcessActionKey, setPM2ProcessActionKey] = useState<string | null>(null);
   const [pm2CreateOpen, setPM2CreateOpen] = useState(false);
-  const [pm2CreateName, setPM2CreateName] = useState("");
-  const [pm2CreateScriptPath, setPM2CreateScriptPath] = useState("");
-  const [pm2CreateWorkingDirectory, setPM2CreateWorkingDirectory] = useState("");
+  const [pm2EditTarget, setPM2EditTarget] = useState<PM2Process | null>(null);
   const [pm2CreateSubmitting, setPM2CreateSubmitting] = useState(false);
   const [pm2CreateError, setPM2CreateError] = useState<string | null>(null);
   const [pm2LogsOpen, setPM2LogsOpen] = useState(false);
@@ -1412,9 +1412,7 @@ export function ApplicationsPage() {
     pm2CreateRequestIdRef.current += 1;
     setPM2CreateSubmitting(false);
     setPM2CreateError(null);
-    setPM2CreateName("");
-    setPM2CreateScriptPath("");
-    setPM2CreateWorkingDirectory("");
+    setPM2EditTarget(null);
   }
 
   function handlePM2CreateOpenChange(open: boolean) {
@@ -1581,20 +1579,8 @@ export function ApplicationsPage() {
     void loadPM2Logs(process);
   }
 
-  async function handlePM2CreateSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const input: PM2CreateProcessInput = {
-      name: pm2CreateName.trim() || undefined,
-      script_path: pm2CreateScriptPath.trim(),
-      working_directory: pm2CreateWorkingDirectory.trim() || undefined,
-    };
-
-    if (!input.script_path) {
-      setPM2CreateError("Script path is required.");
-      return;
-    }
-
+  async function handlePM2CreateSubmit(input: PM2CreateProcessInput) {
+    const editing = pm2EditTarget !== null;
     const requestId = pm2CreateRequestIdRef.current + 1;
     pm2CreateRequestIdRef.current = requestId;
     setPM2CreateSubmitting(true);
@@ -1603,20 +1589,22 @@ export function ApplicationsPage() {
     const processLabel = input.name || input.script_path;
 
     try {
-      const processes = await createPM2Process(input);
+      const processes = pm2EditTarget
+        ? await updatePM2Process(pm2EditTarget.id, input)
+        : await createPM2Process(input);
       if (pm2CreateRequestIdRef.current !== requestId) {
         return;
       }
 
       syncPM2Processes(processes);
       handlePM2CreateOpenChange(false);
-      toast.success(`${processLabel} created.`);
+      toast.success(`${processLabel} ${editing ? "updated" : "created"}.`);
     } catch (error) {
       if (pm2CreateRequestIdRef.current !== requestId) {
         return;
       }
 
-      const message = getErrorMessage(error, `Failed to create ${processLabel}.`);
+      const message = getErrorMessage(error, `Failed to ${editing ? "update" : "create"} ${processLabel}.`);
       setPM2CreateError(message);
       toast.error(message);
     } finally {
@@ -2947,93 +2935,24 @@ export function ApplicationsPage() {
               onDelete={(process) => {
                 setPM2DeleteCandidate(process);
               }}
+              onEdit={(process) => {
+                setPM2EditTarget(process);
+                handlePM2CreateOpenChange(true);
+              }}
               onOpenLogs={openPM2Logs}
             />
           </div>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={pm2CreateOpen} onOpenChange={handlePM2CreateOpenChange}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Add PM2 process</DialogTitle>
-            <DialogDescription>
-              Start a new PM2 process from a script or entry file. Leave the name empty to let PM2 derive it.
-            </DialogDescription>
-          </DialogHeader>
-
-          <form className="space-y-4" onSubmit={handlePM2CreateSubmit}>
-            {pm2CreateError ? (
-              <div className="rounded-lg border border-[var(--app-danger)]/30 bg-[var(--app-danger-soft)] px-4 py-3 text-sm text-[var(--app-danger)]">
-                {pm2CreateError}
-              </div>
-            ) : null}
-
-            <div className="space-y-2">
-              <Label htmlFor="pm2-create-name">Process name</Label>
-              <Input
-                id="pm2-create-name"
-                value={pm2CreateName}
-                onChange={(event) => {
-                  setPM2CreateName(event.target.value);
-                }}
-                placeholder="api-server"
-                disabled={pm2CreateSubmitting}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="pm2-create-script-path">Script path</Label>
-              <Input
-                id="pm2-create-script-path"
-                value={pm2CreateScriptPath}
-                onChange={(event) => {
-                  setPM2CreateScriptPath(event.target.value);
-                }}
-                placeholder="/var/www/app/server.js"
-                disabled={pm2CreateSubmitting}
-                autoFocus
-              />
-              <p className="text-xs text-[var(--app-text-muted)]">
-                Required. Use the script or entry file you would normally pass to `pm2 start`.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="pm2-create-working-directory">Working directory</Label>
-              <Input
-                id="pm2-create-working-directory"
-                value={pm2CreateWorkingDirectory}
-                onChange={(event) => {
-                  setPM2CreateWorkingDirectory(event.target.value);
-                }}
-                placeholder="/var/www/app"
-                disabled={pm2CreateSubmitting}
-              />
-              <p className="text-xs text-[var(--app-text-muted)]">
-                Optional. PM2 will start the process from this directory when provided.
-              </p>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  handlePM2CreateOpenChange(false);
-                }}
-                disabled={pm2CreateSubmitting}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={pm2CreateSubmitting || !pm2Status?.installed}>
-                {pm2CreateSubmitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Add process
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <PM2ProcessDialog
+        open={pm2CreateOpen}
+        process={pm2EditTarget}
+        submitting={pm2CreateSubmitting}
+        error={pm2CreateError}
+        onOpenChange={handlePM2CreateOpenChange}
+        onSubmit={(input) => void handlePM2CreateSubmit(input)}
+      />
 
       <Dialog open={pm2LogsOpen} onOpenChange={handlePM2LogsOpenChange}>
         <DialogContent className="h-[min(80vh,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
