@@ -18,6 +18,13 @@ import {
   type FFmpegStatus,
 } from "@/api/ffmpeg";
 import {
+  fetchImageMagickStatus,
+  installImageMagick,
+  removeImageMagick,
+  updateImageMagick,
+  type ImageMagickStatus,
+} from "@/api/imagemagick";
+import {
   fetchYTDLPStatus,
   installYTDLP,
   removeYTDLP,
@@ -189,6 +196,7 @@ type RemovableApplication =
   | { kind: "mariadb" }
   | { kind: "docker" }
   | { kind: "ffmpeg" }
+  | { kind: "imagemagick" }
   | { kind: "ytdlp" }
   | { kind: "redis" }
   | { kind: "mongodb" }
@@ -727,7 +735,7 @@ function LibraryTableRow({
   onUpdate,
   onRemove,
 }: {
-  app: "ffmpeg" | "ytdlp";
+  app?: "ffmpeg" | "ytdlp";
   name: string;
   status: InstallRemoveRuntimeStatus | null;
   runningAction: string | null;
@@ -747,7 +755,7 @@ function LibraryTableRow({
       <TableCell>
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-11 shrink-0 items-center justify-center rounded-md bg-[var(--app-surface-muted)] px-1.5">
-            <ApplicationLogo app={app} />
+            {app ? <ApplicationLogo app={app} /> : <Package className="h-5 w-5 text-[var(--app-text-muted)]" />}
           </div>
           <span className="font-medium text-[var(--app-text)]">{name}</span>
         </div>
@@ -1383,6 +1391,7 @@ export function ApplicationsPage() {
   const [mariadbStatus, setMariaDBStatus] = useState<MariaDBStatus | null>(null);
   const [dockerStatus, setDockerStatus] = useState<DockerStatus | null>(null);
   const [ffmpegStatus, setFFmpegStatus] = useState<FFmpegStatus | null>(null);
+  const [imageMagickStatus, setImageMagickStatus] = useState<ImageMagickStatus | null>(null);
   const [ytdlpStatus, setYTDLPStatus] = useState<YTDLPStatus | null>(null);
   const [redisStatus, setRedisStatus] = useState<RedisStatus | null>(null);
   const [mongoDBStatus, setMongoDBStatus] = useState<MongoDBStatus | null>(null);
@@ -1715,6 +1724,7 @@ export function ApplicationsPage() {
       mariadbResult,
       dockerResult,
       ffmpegResult,
+      imageMagickResult,
       ytdlpResult,
       redisResult,
       mongoDBResult,
@@ -1729,6 +1739,7 @@ export function ApplicationsPage() {
       fetchMariaDBStatus(),
       fetchDockerStatus(),
       fetchFFmpegStatus(),
+      fetchImageMagickStatus(),
       fetchYTDLPStatus(),
       fetchRedisStatus(),
       fetchMongoDBStatus(),
@@ -1775,6 +1786,13 @@ export function ApplicationsPage() {
     } else {
       setFFmpegStatus(null);
       nextErrors.push(getErrorMessage(ffmpegResult.reason, "Failed to inspect FFmpeg."));
+    }
+
+    if (imageMagickResult.status === "fulfilled") {
+      setImageMagickStatus(imageMagickResult.value);
+    } else {
+      setImageMagickStatus(null);
+      nextErrors.push(getErrorMessage(imageMagickResult.reason, "Failed to inspect ImageMagick."));
     }
 
     if (ytdlpResult.status === "fulfilled") {
@@ -1879,6 +1897,7 @@ export function ApplicationsPage() {
       !isRuntimeActionState(mariadbStatus?.state) &&
       !isRuntimeActionState(dockerStatus?.state) &&
       !isRuntimeActionState(ffmpegStatus?.state) &&
+      !isRuntimeActionState(imageMagickStatus?.state) &&
       !isRuntimeActionState(ytdlpStatus?.state) &&
       !isRuntimeActionState(redisStatus?.state) &&
       !isRuntimeActionState(mongoDBStatus?.state) &&
@@ -1905,6 +1924,7 @@ export function ApplicationsPage() {
     mariadbStatus?.state,
     dockerStatus?.state,
     ffmpegStatus?.state,
+    imageMagickStatus?.state,
     ytdlpStatus?.state,
     redisStatus?.state,
     mongoDBStatus?.state,
@@ -1960,6 +1980,7 @@ export function ApplicationsPage() {
           ["remove-mariadb", mariadbStatus],
           ["remove-docker", dockerStatus],
           ["remove-ffmpeg", ffmpegStatus],
+          ["remove-imagemagick", imageMagickStatus],
           ["remove-ytdlp", ytdlpStatus],
           ["remove-redis", redisStatus],
           ["remove-mongodb", mongoDBStatus],
@@ -1986,6 +2007,7 @@ export function ApplicationsPage() {
     mariadbStatus,
     dockerStatus,
     ffmpegStatus,
+    imageMagickStatus,
     ytdlpStatus,
     redisStatus,
     mongoDBStatus,
@@ -2034,6 +2056,10 @@ export function ApplicationsPage() {
       setRunningAction(null);
       return;
     }
+    if (runningAction === "install-imagemagick" && imageMagickStatus?.installed) {
+      setRunningAction(null);
+      return;
+    }
     if (runningAction === "install-ytdlp" && ytdlpStatus?.installed) {
       setRunningAction(null);
       return;
@@ -2045,6 +2071,11 @@ export function ApplicationsPage() {
     }
     if (runningAction === "remove-ffmpeg" && ffmpegStatus && !ffmpegStatus.installed) {
       setRemoveCandidate((current) => (current?.kind === "ffmpeg" ? null : current));
+      setRunningAction(null);
+      return;
+    }
+    if (runningAction === "remove-imagemagick" && imageMagickStatus && !imageMagickStatus.installed) {
+      setRemoveCandidate((current) => (current?.kind === "imagemagick" ? null : current));
       setRunningAction(null);
       return;
     }
@@ -2129,6 +2160,7 @@ export function ApplicationsPage() {
     mariadbStatus,
     dockerStatus,
     ffmpegStatus,
+    imageMagickStatus,
     ytdlpStatus,
     redisStatus,
     mongoDBStatus,
@@ -2228,6 +2260,8 @@ export function ApplicationsPage() {
           ? "Remove Docker from this node? Container workloads and image builds will stop working until Docker is installed again."
         : removeCandidate?.kind === "ffmpeg"
           ? "Remove FFmpeg from this node? Video and audio processing commands that rely on FFmpeg will stop working until it is installed again."
+        : removeCandidate?.kind === "imagemagick"
+          ? "Remove ImageMagick from this node? Image conversion commands that rely on the system CLI will stop working. PHP imagick extensions are managed separately."
         : removeCandidate?.kind === "ytdlp"
           ? "Remove yt-dlp from this node? Downloads and jobs that rely on yt-dlp will stop working until it is installed again."
         : removeCandidate?.kind === "redis"
@@ -2254,6 +2288,8 @@ export function ApplicationsPage() {
           ? "Remove Docker"
         : removeCandidate?.kind === "ffmpeg"
           ? "Remove FFmpeg"
+        : removeCandidate?.kind === "imagemagick"
+          ? "Remove ImageMagick"
         : removeCandidate?.kind === "ytdlp"
           ? "Remove yt-dlp"
         : removeCandidate?.kind === "redis"
@@ -2289,6 +2325,8 @@ export function ApplicationsPage() {
             ? "remove-docker"
           : target.kind === "ffmpeg"
             ? "remove-ffmpeg"
+          : target.kind === "imagemagick"
+            ? "remove-imagemagick"
           : target.kind === "ytdlp"
             ? "remove-ytdlp"
           : target.kind === "redis"
@@ -2332,6 +2370,10 @@ export function ApplicationsPage() {
         const nextStatus = await removeFFmpeg();
         setFFmpegStatus(nextStatus);
         toast.success(!nextStatus.installed ? "FFmpeg removed." : "FFmpeg removal started.");
+      } else if (target.kind === "imagemagick") {
+        const nextStatus = await removeImageMagick();
+        setImageMagickStatus(nextStatus);
+        toast.success(!nextStatus.installed ? "ImageMagick removed." : "ImageMagick removal started.");
       } else if (target.kind === "ytdlp") {
         const nextStatus = await removeYTDLP();
         setYTDLPStatus(nextStatus);
@@ -2377,6 +2419,8 @@ export function ApplicationsPage() {
               ? "Failed to remove Docker."
             : target.kind === "ffmpeg"
               ? "Failed to remove FFmpeg."
+            : target.kind === "imagemagick"
+              ? "Failed to remove ImageMagick."
             : target.kind === "ytdlp"
               ? "Failed to remove yt-dlp."
             : target.kind === "redis"
@@ -2532,6 +2576,23 @@ export function ApplicationsPage() {
       toast.success("FFmpeg installed.");
     } catch (error) {
       const message = getErrorMessage(error, "Failed to install FFmpeg.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
+  async function handleImageMagickInstall() {
+    setRunningAction("install-imagemagick");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installImageMagick();
+      setImageMagickStatus(nextStatus);
+      toast.success("ImageMagick installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install ImageMagick.");
       setPageError(message);
       toast.error(message);
     } finally {
@@ -3126,6 +3187,7 @@ export function ApplicationsPage() {
           (removeCandidate?.kind === "mariadb" && runningAction === "remove-mariadb") ||
           (removeCandidate?.kind === "docker" && runningAction === "remove-docker") ||
           (removeCandidate?.kind === "ffmpeg" && runningAction === "remove-ffmpeg") ||
+          (removeCandidate?.kind === "imagemagick" && runningAction === "remove-imagemagick") ||
           (removeCandidate?.kind === "redis" && runningAction === "remove-redis") ||
           (removeCandidate?.kind === "mongodb" && runningAction === "remove-mongodb") ||
           (removeCandidate?.kind === "postgresql" && runningAction === "remove-postgresql") ||
@@ -3803,7 +3865,7 @@ export function ApplicationsPage() {
           <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead>Library</TableHead>
+                <TableHead>Tool</TableHead>
                 <TableHead className="w-[160px]">Version</TableHead>
                 <TableHead>Binary</TableHead>
                 <TableHead className="w-[140px]">Status</TableHead>
@@ -3822,6 +3884,24 @@ export function ApplicationsPage() {
                 onInstall={() => void handleFFmpegInstall()}
                 onUpdate={() => void handlePackageRuntimeUpdate("ffmpeg", "FFmpeg", updateFFmpeg, setFFmpegStatus)}
                 onRemove={() => setRemoveCandidate({ kind: "ffmpeg" })}
+              />
+              <LibraryTableRow
+                name="ImageMagick"
+                status={imageMagickStatus}
+                runningAction={runningAction}
+                actionKeyPrefix="imagemagick"
+                fallbackBinary="magick"
+                removeTitle="Automatic ImageMagick removal is only available for installed tools supported by this environment."
+                onInstall={() => void handleImageMagickInstall()}
+                onUpdate={() =>
+                  void handlePackageRuntimeUpdate(
+                    "imagemagick",
+                    "ImageMagick",
+                    updateImageMagick,
+                    setImageMagickStatus,
+                  )
+                }
+                onRemove={() => setRemoveCandidate({ kind: "imagemagick" })}
               />
               <LibraryTableRow
                 app="ytdlp"

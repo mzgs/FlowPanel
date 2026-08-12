@@ -251,6 +251,23 @@ func NewFFmpegService(logger *zap.Logger) *Service {
 	})
 }
 
+func NewImageMagickService(logger *zap.Logger) *Service {
+	return NewService(logger, Definition{
+		Key:             "imagemagick",
+		DisplayName:     "ImageMagick",
+		BinaryNames:     []string{"magick", "convert"},
+		VersionArgs:     []string{"--version"},
+		InstallLabel:    "Install ImageMagick",
+		UpdateLabel:     "Update ImageMagick",
+		RemoveLabel:     "Remove ImageMagick",
+		HomebrewFormula: "imagemagick",
+		APTPackages:     []string{"imagemagick"},
+		DNFPackages:     []string{"ImageMagick"},
+		YUMPackages:     []string{"ImageMagick"},
+		PacmanPackages:  []string{"imagemagick"},
+	})
+}
+
 func NewYTDLPService(logger *zap.Logger) *Service {
 	return NewService(logger, Definition{
 		Key:             "ytdlp",

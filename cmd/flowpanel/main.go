@@ -1748,6 +1748,7 @@ func runServer() error {
 	redisManager := packageruntime.NewRedisService(logger.Named("redis"))
 	dockerManager := packageruntime.NewDockerService(logger.Named("docker"))
 	ffmpegManager := packageruntime.NewFFmpegService(logger.Named("ffmpeg"))
+	imageMagickManager := packageruntime.NewImageMagickService(logger.Named("imagemagick"))
 	ytdlpManager := packageruntime.NewYTDLPService(logger.Named("ytdlp"))
 	mongoDBManager := packageruntime.NewMongoDBService(logger.Named("mongodb"))
 	postgresqlManager := packageruntime.NewPostgreSQLService(logger.Named("postgresql"))
@@ -1820,6 +1821,7 @@ func runServer() error {
 		mariadbManager,
 		dockerManager,
 		ffmpegManager,
+		imageMagickManager,
 		ytdlpManager,
 		redisManager,
 		mongoDBManager,

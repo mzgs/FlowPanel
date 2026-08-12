@@ -17,7 +17,7 @@ FlowPanel currently includes:
 - PHP/PHP-FPM management, per-domain PHP settings, Composer access, and PHP app templates for WordPress, Symfony, Laravel, October CMS, CakePHP, CodeIgniter, and Slim
 - WordPress toolkit for status, core updates, plugins, themes, database details, and extension search/install actions
 - GitHub deployment settings with optional push webhooks and post-fetch scripts
-- Node.js, Go, PM2, Docker, Redis, MongoDB, PostgreSQL, FFmpeg, yt-dlp, MariaDB, and phpMyAdmin runtime controls
+- Node.js, Go, PM2, Docker, Redis, MongoDB, PostgreSQL, FFmpeg, ImageMagick, yt-dlp, MariaDB, and phpMyAdmin runtime controls
 - Docker container, image, volume, network, log, exec, and Docker Hub search tools
 - MariaDB database/user management and database dump downloads
 - File manager with upload, download, edit, archive, extract, permissions, and transfer actions

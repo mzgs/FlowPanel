@@ -32,6 +32,7 @@ func (a *apiRoutes) registerApplicationRoutes(r chi.Router) {
 	a.registerMariaDBRoutes(r)
 	a.registerDockerRoutes(r)
 	a.registerPackageRuntimeRoutes(r, "ffmpeg", "FFmpeg", a.app.FFmpeg)
+	a.registerPackageRuntimeRoutes(r, "imagemagick", "ImageMagick", a.app.ImageMagick)
 	a.registerPackageRuntimeRoutes(r, "ytdlp", "yt-dlp", a.app.YTDLP)
 	a.registerPackageRuntimeRoutes(r, "redis", "Redis", a.app.Redis)
 	a.registerPackageRuntimeRoutes(r, "mongodb", "MongoDB", a.app.MongoDB)
