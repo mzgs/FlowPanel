@@ -37,6 +37,7 @@ import {
   removeGolang,
   type GolangStatus,
 } from "@/api/golang";
+import { fetchRustStatus, installRust, removeRust, updateRust, type RustStatus } from "@/api/rust";
 import {
   fetchNodeJSStatus,
   installNodeJS,
@@ -186,6 +187,7 @@ const applicationLogos = {
     className: "h-7 w-full",
   },
   go: { src: "/application-icons/go.png", alt: "Go logo", className: "h-7 w-full" },
+  rust: { src: "/application-icons/rust.svg", alt: "Rust logo", className: "h-8 w-full dark:invert" },
   nodejs: { src: "/application-icons/nodejs.svg", alt: "Node.js logo", className: "h-7 w-full" },
   pm2: { src: "/application-icons/pm2.png", alt: "PM2 logo", className: "h-7 w-full" },
 } as const;
@@ -203,6 +205,7 @@ type RemovableApplication =
   | { kind: "postgresql" }
   | { kind: "phpmyadmin" }
   | { kind: "golang" }
+  | { kind: "rust" }
   | { kind: "nodejs" }
   | { kind: "pm2" };
 type RemovablePM2Process = Pick<PM2Process, "id" | "name">;
@@ -1398,6 +1401,7 @@ export function ApplicationsPage() {
   const [postgresqlStatus, setPostgreSQLStatus] = useState<PostgreSQLStatus | null>(null);
   const [phpMyAdminStatus, setPHPMyAdminStatus] = useState<PHPMyAdminStatus | null>(null);
   const [golangStatus, setGolangStatus] = useState<GolangStatus | null>(null);
+  const [rustStatus, setRustStatus] = useState<RustStatus | null>(null);
   const [nodeJSStatus, setNodeJSStatus] = useState<NodeJSStatus | null>(null);
   const [pm2Status, setPM2Status] = useState<PM2Status | null>(null);
   const [pm2ListOpen, setPM2ListOpen] = useState(false);
@@ -1731,6 +1735,7 @@ export function ApplicationsPage() {
       postgresqlResult,
       phpMyAdminResult,
       golangResult,
+      rustResult,
       nodeJSResult,
       pm2Result,
     ] = await Promise.allSettled([
@@ -1746,6 +1751,7 @@ export function ApplicationsPage() {
       fetchPostgreSQLStatus(),
       fetchPHPMyAdminStatus(),
       fetchGolangStatus(),
+      fetchRustStatus(),
       fetchNodeJSStatus(),
       fetchPM2Status(),
     ]);
@@ -1835,6 +1841,13 @@ export function ApplicationsPage() {
     } else {
       setGolangStatus(null);
       nextErrors.push(getErrorMessage(golangResult.reason, "Failed to inspect Go."));
+    }
+
+    if (rustResult.status === "fulfilled") {
+      setRustStatus(rustResult.value);
+    } else {
+      setRustStatus(null);
+      nextErrors.push(getErrorMessage(rustResult.reason, "Failed to inspect Rust."));
     }
 
     if (nodeJSResult.status === "fulfilled") {
@@ -2231,11 +2244,13 @@ export function ApplicationsPage() {
   const mariaDBRemoveEnabled = canRemoveMariaDB(mariadbStatus);
   const phpMyAdminRemoveEnabled = canRemovePHPMyAdmin(phpMyAdminStatus);
   const golangRemoveEnabled = canRemoveGolang(golangStatus);
+  const rustRemoveEnabled = canRemoveInstallRemoveRuntime(rustStatus);
   const nodeJSRemoveEnabled = canRemoveNodeJS(nodeJSStatus);
   const pm2RemoveEnabled = canRemovePM2(pm2Status);
   const mariadbBusyLabel = getRuntimeActionLabel(mariadbStatus?.state);
   const phpMyAdminBusyLabel = getRuntimeActionLabel(phpMyAdminStatus?.state);
   const golangBusyLabel = getRuntimeActionLabel(golangStatus?.state);
+  const rustBusyLabel = getRuntimeActionLabel(rustStatus?.state);
   const nodeJSBusyLabel = getRuntimeActionLabel(nodeJSStatus?.state);
   const pm2BusyLabel = getRuntimeActionLabel(pm2Status?.state);
   const pm2InstallDisabled = runningAction !== null || !pm2Status?.install_available;
@@ -2274,8 +2289,10 @@ export function ApplicationsPage() {
           ? "Remove phpMyAdmin from this node? The browser database client will no longer be available."
         : removeCandidate?.kind === "golang"
           ? "Remove Go from this node? Deployments and scripts that rely on the Go toolchain will stop working until it is installed again."
-          : removeCandidate?.kind === "nodejs"
-            ? "Remove Node.js from this node? Applications and build steps that rely on the Node.js runtime will stop working until it is installed again."
+          : removeCandidate?.kind === "rust"
+            ? "Remove Rust from this node? Deployments and build steps that rely on the Rust toolchain will stop working until it is installed again."
+            : removeCandidate?.kind === "nodejs"
+              ? "Remove Node.js from this node? Applications and build steps that rely on the Node.js runtime will stop working until it is installed again."
             : removeCandidate?.kind === "pm2"
               ? "Remove PM2 from this node? Node.js process management and PM2 log rotation will stop working until PM2 is installed again."
           : "Remove this runtime?";
@@ -2302,8 +2319,10 @@ export function ApplicationsPage() {
           ? "Remove phpMyAdmin"
         : removeCandidate?.kind === "golang"
           ? "Remove Go"
-          : removeCandidate?.kind === "nodejs"
-            ? "Remove Node.js"
+          : removeCandidate?.kind === "rust"
+            ? "Remove Rust"
+            : removeCandidate?.kind === "nodejs"
+              ? "Remove Node.js"
             : removeCandidate?.kind === "pm2"
               ? "Remove PM2"
           : "Remove application";
@@ -2339,8 +2358,10 @@ export function ApplicationsPage() {
                   ? "remove-phpmyadmin"
                   : target.kind === "golang"
                     ? "remove-golang"
-                    : target.kind === "nodejs"
-                      ? "remove-nodejs"
+                    : target.kind === "rust"
+                      ? "remove-rust"
+                      : target.kind === "nodejs"
+                        ? "remove-nodejs"
                       : "remove-pm2";
     setRunningAction(action);
     setPageError(null);
@@ -2399,6 +2420,10 @@ export function ApplicationsPage() {
           const nextStatus = await removeGolang();
           setGolangStatus(nextStatus);
           toast.success(!nextStatus.installed ? "Go removed." : "Go removal started.");
+        } else if (target.kind === "rust") {
+          const nextStatus = await removeRust();
+          setRustStatus(nextStatus);
+          toast.success(!nextStatus.installed ? "Rust removed." : "Rust removal started.");
         } else if (target.kind === "nodejs") {
           const nextStatus = await removeNodeJS();
           setNodeJSStatus(nextStatus);
@@ -2433,8 +2458,10 @@ export function ApplicationsPage() {
                     ? "Failed to remove phpMyAdmin."
                     : target.kind === "golang"
                       ? "Failed to remove Go."
-                      : target.kind === "nodejs"
-                        ? "Failed to remove Node.js."
+                      : target.kind === "rust"
+                        ? "Failed to remove Rust."
+                        : target.kind === "nodejs"
+                          ? "Failed to remove Node.js."
                         : "Failed to remove PM2.";
       const message = getErrorMessage(error, fallback);
       setPageError(message);
@@ -2910,6 +2937,23 @@ export function ApplicationsPage() {
     }
   }
 
+  async function handleRustInstall() {
+    setRunningAction("install-rust");
+    setPageError(null);
+
+    try {
+      const nextStatus = await installRust();
+      setRustStatus(nextStatus);
+      toast.success("Rust installed.");
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to install Rust.");
+      setPageError(message);
+      toast.error(message);
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
   async function handleNodeJSInstall() {
     setRunningAction("install-nodejs");
     setPageError(null);
@@ -3193,6 +3237,7 @@ export function ApplicationsPage() {
           (removeCandidate?.kind === "postgresql" && runningAction === "remove-postgresql") ||
           (removeCandidate?.kind === "phpmyadmin" && runningAction === "remove-phpmyadmin") ||
           (removeCandidate?.kind === "golang" && runningAction === "remove-golang") ||
+          (removeCandidate?.kind === "rust" && runningAction === "remove-rust") ||
           (removeCandidate?.kind === "nodejs" && runningAction === "remove-nodejs") ||
           (removeCandidate?.kind === "pm2" && runningAction === "remove-pm2")
         }
@@ -3690,6 +3735,70 @@ export function ApplicationsPage() {
                   title={golangRemoveEnabled ? undefined : "Automatic Go removal is only available for installed runtimes supported by this environment."}
                 >
                   {runningAction === "remove-golang" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  Remove
+                </Button>
+              </>
+            }
+          />
+
+          <ApplicationCard
+            icon={<ApplicationLogo app="rust" />}
+            name="Rust"
+            summary={formatInstallRemoveRuntimeValue(rustStatus)}
+            badge={getInstallRemoveRuntimeBadge(rustStatus)}
+            updateAction={
+              rustStatus?.update_available && rustStatus.latest_version
+                ? {
+                    version: rustStatus.latest_version,
+                    label: rustStatus.update_label || "Update Rust",
+                    busy: runningAction === "update-rust",
+                    disabled: runningAction !== null,
+                    onClick: () => {
+                      void handlePackageRuntimeUpdate("rust", "Rust", updateRust, setRustStatus);
+                    },
+                  }
+                : undefined
+            }
+            meta={[{ label: "Toolchain", value: rustStatus?.binary_path?.trim() || "rustc", mono: true }]}
+            configAction={null}
+            actions={
+              <>
+                {rustBusyLabel ? (
+                  <Button type="button" variant="outline" size="sm" className={compactActionButtonClassName} disabled>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    {rustBusyLabel}
+                  </Button>
+                ) : null}
+                {rustStatus?.install_available ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className={compactActionButtonClassName}
+                    onClick={() => void handleRustInstall()}
+                    disabled={runningAction !== null}
+                  >
+                    {runningAction === "install-rust" ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Package className="h-4 w-4" />
+                    )}
+                    {getApplicationActionLabel("install")}
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={compactActionButtonClassName}
+                  onClick={() => setRemoveCandidate({ kind: "rust" })}
+                  disabled={runningAction !== null || !rustRemoveEnabled}
+                  title={rustRemoveEnabled ? undefined : "Automatic Rust removal is only available for installed runtimes supported by this environment."}
+                >
+                  {runningAction === "remove-rust" ? (
                     <LoaderCircle className="h-4 w-4 animate-spin" />
                   ) : (
                     <Trash2 className="h-4 w-4" />

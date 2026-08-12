@@ -1743,6 +1743,7 @@ func runServer() error {
 	}
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), stores.MariaDB)
 	golangManager := golang.NewService(logger.Named("golang"))
+	rustManager := packageruntime.NewRustService(logger.Named("rust"))
 	nodeJSManager := nodejs.NewService(logger.Named("nodejs"))
 	pm2Manager := pm2.NewService(logger.Named("pm2"), stores.PM2)
 	redisManager := packageruntime.NewRedisService(logger.Named("redis"))
@@ -1816,6 +1817,7 @@ func runServer() error {
 		scheduler,
 		caddyRuntime,
 		golangManager,
+		rustManager,
 		nodeJSManager,
 		pm2Manager,
 		mariadbManager,

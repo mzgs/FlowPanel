@@ -251,6 +251,23 @@ func NewFFmpegService(logger *zap.Logger) *Service {
 	})
 }
 
+func NewRustService(logger *zap.Logger) *Service {
+	return NewService(logger, Definition{
+		Key:             "rust",
+		DisplayName:     "Rust",
+		BinaryNames:     []string{"rustc"},
+		VersionArgs:     []string{"--version"},
+		InstallLabel:    "Install Rust",
+		UpdateLabel:     "Update Rust",
+		RemoveLabel:     "Remove Rust",
+		HomebrewFormula: "rust",
+		APTPackages:     []string{"rustc", "cargo"},
+		DNFPackages:     []string{"rust", "cargo"},
+		YUMPackages:     []string{"rust", "cargo"},
+		PacmanPackages:  []string{"rust"},
+	})
+}
+
 func NewImageMagickService(logger *zap.Logger) *Service {
 	return NewService(logger, Definition{
 		Key:             "imagemagick",

@@ -27,6 +27,7 @@ func (a *apiRoutes) registerApplicationRoutes(r chi.Router) {
 
 	a.registerCaddyRoutes(r)
 	a.registerGoRoutes(r)
+	a.registerPackageRuntimeRoutes(r, "rust", "Rust", a.app.Rust)
 	a.registerNodeJSRoutes(r)
 	a.registerPM2Routes(r)
 	a.registerMariaDBRoutes(r)

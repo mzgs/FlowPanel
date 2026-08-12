@@ -41,6 +41,7 @@ type App struct {
 	Cron          *cron.Scheduler
 	Caddy         *caddy.Runtime
 	Golang        golang.Manager
+	Rust          packageruntime.Manager
 	NodeJS        nodejs.Manager
 	PM2           pm2.Manager
 	MariaDB       mariadb.Manager
@@ -77,6 +78,7 @@ func New(
 	scheduler *cron.Scheduler,
 	caddyRuntime *caddy.Runtime,
 	golangManager golang.Manager,
+	rustManager packageruntime.Manager,
 	nodeJSManager nodejs.Manager,
 	pm2Manager pm2.Manager,
 	mariadbManager mariadb.Manager,
@@ -112,6 +114,7 @@ func New(
 		Cron:          scheduler,
 		Caddy:         caddyRuntime,
 		Golang:        golangManager,
+		Rust:          rustManager,
 		NodeJS:        nodeJSManager,
 		PM2:           pm2Manager,
 		MariaDB:       mariadbManager,
