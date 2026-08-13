@@ -1642,7 +1642,7 @@ func writeTarEntry(tarWriter *tar.Writer, sourcePath, archivePath string, info f
 	}
 	defer file.Close()
 
-	if _, err := io.Copy(tarWriter, file); err != nil {
+	if _, err := io.CopyN(tarWriter, file, info.Size()); err != nil {
 		return fmt.Errorf("write backup source %q: %w", sourcePath, err)
 	}
 
