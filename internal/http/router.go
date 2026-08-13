@@ -371,15 +371,20 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 
 			if previousPanelURL != record.PanelURL {
 				if err := syncDomainsWithPanelURL(r.Context(), app, record.PanelURL); err != nil {
-					if errors.Is(err, caddy.ErrRuntimeNotStarted) {
-						api.mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "succeeded", "Updated panel settings.")
-						writeSettingsResponse(w, stdhttp.StatusOK, app, record)
+					if !errors.Is(err, caddy.ErrRuntimeNotStarted) {
+						app.Logger.Error("sync caddy runtime after settings update failed", zap.Error(err))
+						api.mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "failed", "Saved panel settings but could not refresh panel routing.")
+						writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
+							"error": "settings saved but panel routing could not be refreshed",
+						})
 						return
 					}
-					app.Logger.Error("sync caddy runtime after settings update failed", zap.Error(err))
-					api.mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "failed", "Saved panel settings but could not refresh panel routing.")
-					writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{
-						"error": "settings saved but panel routing could not be refreshed",
+				}
+				if err := reconcileGitHubWebhookURLs(r.Context(), r, app.Domains, app.Settings, record.PanelURL); err != nil {
+					app.Logger.Error("reconcile github webhooks after panel url update failed", zap.Error(err))
+					api.mutationEvent(r.Context(), "settings", "update", "settings", "panel", "Panel settings", "failed", "Saved panel settings but could not update GitHub webhook URLs.")
+					writeJSON(w, stdhttp.StatusBadGateway, map[string]any{
+						"error": "settings saved but github webhook urls could not be updated",
 					})
 					return
 				}

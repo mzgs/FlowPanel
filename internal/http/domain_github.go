@@ -402,6 +402,66 @@ func buildGitHubWebhookURL(r *stdhttp.Request, hostname string, panelURL string)
 	return fmt.Sprintf("%s/api/domains/%s/github/webhook", strings.TrimRight(baseURL, "/"), neturl.PathEscape(strings.TrimSpace(hostname))), nil
 }
 
+func reconcileGitHubWebhookURLs(
+	ctx context.Context,
+	r *stdhttp.Request,
+	domains *domain.Service,
+	settingsService *settings.Service,
+	panelURL string,
+) error {
+	if domains == nil {
+		return nil
+	}
+
+	records := domains.List()
+	hasEnabledWebhook := false
+	for _, record := range records {
+		if record.GitHub != nil && record.GitHub.AutoDeployOnPush {
+			hasEnabledWebhook = true
+			break
+		}
+	}
+	if !hasEnabledWebhook {
+		return nil
+	}
+
+	token, err := getGitHubToken(ctx, settingsService)
+	if err != nil {
+		return err
+	}
+
+	var errs []error
+	for _, record := range records {
+		if record.GitHub == nil || !record.GitHub.AutoDeployOnPush {
+			continue
+		}
+
+		integration := *record.GitHub
+		ref, reconcileErr := parseGitHubRepositoryURL(integration.RepositoryURL)
+		if reconcileErr == nil && strings.TrimSpace(integration.WebhookSecret) == "" {
+			integration.WebhookSecret, reconcileErr = generateGitHubWebhookSecret()
+		}
+		var webhookURL string
+		if reconcileErr == nil {
+			webhookURL, reconcileErr = buildGitHubWebhookURL(r, record.Hostname, panelURL)
+		}
+		var webhookID int64
+		if reconcileErr == nil {
+			webhookID, reconcileErr = upsertGitHubWebhook(ctx, token, ref, integration.WebhookID, webhookURL, integration.WebhookSecret)
+		}
+		if reconcileErr == nil && (webhookID != integration.WebhookID || integration.WebhookSecret != record.GitHub.WebhookSecret) {
+			integration.WebhookID = webhookID
+			integration.UpdatedAt = time.Now().UTC()
+			_, reconcileErr = domains.UpsertGitHubIntegration(ctx, record.Hostname, integration)
+		}
+		if reconcileErr != nil {
+			errs = append(errs, fmt.Errorf("reconcile GitHub webhook for %q: %w", record.Hostname, reconcileErr))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 func requestBaseURL(r *stdhttp.Request) string {
 	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
 	if scheme == "" {
