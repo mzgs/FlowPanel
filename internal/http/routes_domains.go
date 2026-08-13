@@ -293,6 +293,27 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"domain": record})
 	})
 
+	domainsSecurityEventsHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		record, ok := a.app.Domains.FindByHostname(hostname)
+		if !ok {
+			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			return
+		}
+		if a.app.Events == nil {
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"events": []any{}})
+			return
+		}
+
+		events, err := a.app.Events.ListSecurity(r.Context(), record.Hostname, 100)
+		if err != nil {
+			a.app.Logger.Error("list domain security events failed", zap.String("hostname", record.Hostname), zap.Error(err))
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to list security events"})
+			return
+		}
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"events": events})
+	})
+
 	domainsWebsiteCopyHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hostname := chi.URLParam(r, "hostname")
 		sourceRecord, ok := a.app.Domains.FindByHostname(hostname)
@@ -1482,6 +1503,8 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodGet, "/domains/{hostname}/preview", domainsPreviewHandler)
 	r.Method(stdhttp.MethodHead, "/domains/{hostname}/preview", domainsPreviewHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/cache/clear", domainsCacheClearHandler)
+	r.Method(stdhttp.MethodGet, "/domains/{hostname}/security/events", domainsSecurityEventsHandler)
+	r.Method(stdhttp.MethodHead, "/domains/{hostname}/security/events", domainsSecurityEventsHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/protection", domainsProtectionUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/copy", domainsWebsiteCopyHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/templates/install", domainsTemplateInstallHandler)

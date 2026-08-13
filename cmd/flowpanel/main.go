@@ -1756,6 +1756,21 @@ func runServer() error {
 	phpManager := phpenv.NewService(logger.Named("php"))
 	phpMyAdminManager := phpmyadmin.NewService(logger.Named("phpmyadmin"))
 	eventService := events.NewService(logger.Named("events"), stores.Events)
+	retentionCtx, stopEventRetention := context.WithCancel(context.Background())
+	defer stopEventRetention()
+	eventService.StartRetention(retentionCtx)
+	logging.SetSecurityEventHandler(func(event logging.SecurityEvent) {
+		if _, err := eventService.RecordSecurity(context.Background(), events.SecurityInput{
+			Action:        event.Action,
+			Hostname:      event.Hostname,
+			URI:           event.URI,
+			ClientIP:      event.ClientIP,
+			TransactionID: event.TransactionID,
+			ExpiresAt:     event.ExpiresAt,
+		}); err != nil {
+			logger.Error("record WAF security event failed", zap.String("hostname", event.Hostname), zap.Error(err))
+		}
+	})
 	settingsService := settings.NewService(stores.Settings)
 	phpManager.SetDefaultVersionResolver(func(ctx context.Context, status phpenv.Status) string {
 		record, err := settingsService.Get(ctx)

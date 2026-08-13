@@ -779,10 +779,10 @@ func securityBlockRouteForRecord(record domain.Record) *caddyhttp.Route {
 	return &caddyhttp.Route{
 		MatcherSetsRaw: []caddyv2.ModuleMap{matchers},
 		HandlersRaw: []json.RawMessage{
-			caddyconfig.JSONModuleObject(caddyhttp.StaticResponse{
-				StatusCode: caddyhttp.WeakString("403"),
-				Body:       "Forbidden",
-			}, "handler", "static_response", nil),
+			caddyconfig.JSONModuleObject(flowlogging.SecurityBlockHandler{
+				Hostname: record.Hostname,
+				Action:   "ip_blocked",
+			}, "handler", "flowpanel_security_block", nil),
 		},
 		Terminal: true,
 	}
@@ -855,7 +855,10 @@ func handlersForRecord(record domain.Record, phpConfig *phpRouteConfig) ([]json.
 
 func securityHandlersForRecord(record domain.Record, originHandlers []json.RawMessage) []json.RawMessage {
 	protection := domain.NormalizeProtectionConfig(record.Protection)
-	handlers := make([]json.RawMessage, 0, len(originHandlers)+2)
+	handlers := make([]json.RawMessage, 0, len(originHandlers)+3)
+	if protection.AutoBan.Enabled {
+		handlers = append(handlers, caddyconfig.JSONModuleObject(flowlogging.AutoBanHandler{Hostname: record.Hostname}, "handler", "flowpanel_auto_ban", nil))
+	}
 	if protection.RateLimit.Enabled {
 		handlers = append(handlers, caddyconfig.JSONModuleObject(rateLimitHandlerConfig(record.Hostname, protection), "handler", "rate_limit", nil))
 	}
@@ -1451,12 +1454,38 @@ func cacheHandlerConfig() httpcache.SouinCaddyMiddleware {
 }
 
 func domainLoggingConfig(records []domain.Record) *caddyv2.Logging {
-	logs := make(map[string]*caddyv2.CustomLog, len(records)*2+1)
+	rateLimitDomains := make(map[string]string)
+	autoBanPolicies := make(map[string]flowlogging.AutoBanPolicy)
+	for _, record := range records {
+		protection := domain.NormalizeProtectionConfig(record.Protection)
+		if protection.RateLimit.Enabled {
+			rateLimitDomains["domain_"+sanitizeLoggerName(record.Hostname)] = record.Hostname
+		}
+		if protection.AutoBan.Enabled {
+			autoBanPolicies[record.Hostname] = flowlogging.AutoBanPolicy{
+				BlockedRequests: protection.AutoBan.BlockedRequests,
+				Window:          time.Duration(protection.AutoBan.WindowMinutes) * time.Minute,
+				Ban:             time.Duration(protection.AutoBan.BanMinutes) * time.Minute,
+				Allowed:         protection.IPAccess.Allowed,
+			}
+		}
+	}
+	flowlogging.ConfigureSecurityPolicies(rateLimitDomains, autoBanPolicies)
+
+	logs := make(map[string]*caddyv2.CustomLog, len(records)*2+2)
 	logs["default"] = &caddyv2.CustomLog{
 		BaseLog: caddyv2.BaseLog{
 			WriterRaw: caddyconfig.JSONModuleObject(flowlogging.CaddyWriter{}, "output", "flowpanel", nil),
 			Level:     "INFO",
 		},
+	}
+	logs["security_events"] = &caddyv2.CustomLog{
+		BaseLog: caddyv2.BaseLog{
+			WriterRaw:  caddyconfig.JSONModuleObject(flowlogging.SecurityWriter{}, "output", "flowpanel_security", nil),
+			EncoderRaw: caddyconfig.JSONModuleObject(caddylogging.JSONEncoder{}, "format", "json", nil),
+			Level:      "INFO",
+		},
+		Include: []string{"http.handlers.waf", "http.handlers.rate_limit"},
 	}
 	for _, record := range records {
 		if strings.TrimSpace(record.Logs.Access) == "" || strings.TrimSpace(record.Logs.Error) == "" {

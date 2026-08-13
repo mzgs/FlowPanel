@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_created_at
 ON events (created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_events_security_resource
+ON events (category, resource_type, resource_id, created_at DESC, id DESC);
 `
 
 	return dbutil.ExecStatements(ctx, s.db, dbutil.Statement{
@@ -96,6 +99,7 @@ func (s *Store) List(ctx context.Context, limit int) ([]Record, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, actor, category, action, resource_type, resource_id, resource_label, status, message, created_at
 FROM events
+WHERE category <> 'security'
 ORDER BY created_at DESC, id DESC
 LIMIT ?
 `, limit)
@@ -104,7 +108,86 @@ LIMIT ?
 	}
 	defer rows.Close()
 
-	records := make([]Record, 0, limit)
+	return scanRecords(rows, limit)
+}
+
+func (s *Store) ListSecurity(ctx context.Context, hostname string, limit int) ([]Record, error) {
+	if s == nil || s.db == nil {
+		return []Record{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, actor, category, action, resource_type, resource_id, resource_label, status, message, created_at
+FROM events
+WHERE category = 'security' AND resource_type = 'domain' AND resource_id = ?
+ORDER BY created_at DESC, id DESC
+LIMIT ?
+`, hostname, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list security events: %w", err)
+	}
+	defer rows.Close()
+
+	return scanRecords(rows, limit)
+}
+
+func (s *Store) Prune(ctx context.Context, securityMaxPerDomain, activityMax int) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin event cleanup: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var removed int64
+	for _, query := range []struct {
+		sql  string
+		args []any
+	}{
+		{`
+WITH ranked AS (
+    SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY resource_type, resource_id
+        ORDER BY created_at DESC, id DESC
+    ) AS position
+    FROM events
+    WHERE category = 'security' AND resource_type = 'domain'
+)
+DELETE FROM events
+WHERE id IN (SELECT id FROM ranked WHERE position > ?)
+`, []any{securityMaxPerDomain}},
+		{`
+WITH ranked AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) AS position
+    FROM events
+    WHERE category <> 'security'
+)
+DELETE FROM events
+WHERE id IN (SELECT id FROM ranked WHERE position > ?)
+`, []any{activityMax}},
+	} {
+		result, err := tx.ExecContext(ctx, query.sql, query.args...)
+		if err != nil {
+			return 0, fmt.Errorf("prune events: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("count pruned events: %w", err)
+		}
+		removed += count
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit event cleanup: %w", err)
+	}
+	return removed, nil
+}
+
+func scanRecords(rows *sql.Rows, capacity int) ([]Record, error) {
+	records := make([]Record, 0, capacity)
 	for rows.Next() {
 		var (
 			record        Record
@@ -133,6 +216,5 @@ LIMIT ?
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate event rows: %w", err)
 	}
-
 	return records, nil
 }

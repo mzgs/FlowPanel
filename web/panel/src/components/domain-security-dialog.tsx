@@ -1,7 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
+  fetchDomainSecurityEvents,
   updateDomainProtection,
   type DomainRecord,
+  type DomainSecurityEvent,
   type ProtectionConfig,
   type RateLimitPreset,
   type WAFMode,
@@ -11,6 +13,7 @@ import {
   ExternalLink,
   List,
   LoaderCircle,
+  RefreshCw,
   ShieldCheck,
 } from "@/components/icons/lucide-icons";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { formatDateTime } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -108,6 +112,9 @@ export function DomainSecurityDialog({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [securityEvents, setSecurityEvents] = useState<DomainSecurityEvent[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -117,6 +124,24 @@ export function DomainSecurityDialog({
     setForm(formFromProtection(domain.protection_config));
     setError(null);
   }, [domain.protection_config, open]);
+
+  const loadSecurityEvents = useCallback(async () => {
+    setLogsLoading(true);
+    setLogsError(null);
+    try {
+      setSecurityEvents(await fetchDomainSecurityEvents(domain.hostname));
+    } catch (loadError) {
+      setLogsError(getErrorMessage(loadError, "Failed to load security events."));
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [domain.hostname]);
+
+  useEffect(() => {
+    if (open && activeTab === "logs") {
+      void loadSecurityEvents();
+    }
+  }, [activeTab, loadSecurityEvents, open]);
 
   const wafEnabled = form.wafMode !== "disabled";
 
@@ -431,9 +456,48 @@ export function DomainSecurityDialog({
           ) : null}
 
           {activeTab === "logs" ? (
-            <div className="flex min-h-56 items-center justify-center rounded-lg border border-[var(--app-border)] text-sm text-[var(--app-text-muted)]">
-              <List className="mr-2 h-4 w-4" />
-              No security events recorded.
+            <div className="overflow-hidden rounded-lg border border-[var(--app-border)]">
+              <div className="flex items-center justify-between gap-3 border-b border-[var(--app-border)] px-3 py-2">
+                <div>
+                  <div className="text-sm font-medium">Security events</div>
+                  <div className="text-xs text-[var(--app-text-muted)]">WAF, rate-limit, IP-rule, and auto-ban actions</div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => void loadSecurityEvents()}
+                  disabled={logsLoading}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${logsLoading ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+              </div>
+
+              <div className="max-h-[320px] overflow-y-auto">
+                {logsLoading && securityEvents.length === 0 ? (
+                  <LogState icon={<LoaderCircle className="h-4 w-4 animate-spin" />} message="Loading security events..." />
+                ) : logsError ? (
+                  <LogState icon={<List className="h-4 w-4" />} message={logsError} />
+                ) : securityEvents.length === 0 ? (
+                  <LogState icon={<List className="h-4 w-4" />} message="No security events recorded." />
+                ) : (
+                  securityEvents.map((event) => (
+                    <div key={event.id} className="grid gap-1 border-b border-[var(--app-border)] px-3 py-2.5 last:border-b-0 sm:grid-cols-[8rem_minmax(0,1fr)_9rem]">
+                      <div className="text-xs text-[var(--app-text-muted)]">{formatDateTime(event.created_at)}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium" title={event.uri}>{event.uri}</div>
+                        <div className="truncate text-xs text-[var(--app-text-muted)]" title={securityEventMeta(event)}>{securityEventMeta(event)}</div>
+                      </div>
+                      <div className="flex items-start justify-between gap-2 sm:justify-end">
+                        <span className="truncate text-xs text-[var(--app-text-muted)]" title={event.client_ip}>{event.client_ip}</span>
+                        <Badge variant={event.action === "rate_limited" ? "secondary" : "destructive"}>{securityEventLabel(event.action)}</Badge>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           ) : null}
         </div>
@@ -474,6 +538,39 @@ export function DomainSecurityDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function LogState({ icon, message }: { icon: ReactNode; message: string }) {
+  return (
+    <div className="flex min-h-56 items-center justify-center gap-2 text-sm text-[var(--app-text-muted)]">
+      {icon}
+      {message}
+    </div>
+  );
+}
+
+function securityEventLabel(action: DomainSecurityEvent["action"]) {
+  switch (action) {
+    case "rate_limited":
+      return "Rate limited";
+    case "ip_blocked":
+      return "IP blocked";
+    case "auto_banned":
+      return "Auto-banned";
+    case "auto_ban_blocked":
+      return "Ban enforced";
+    default:
+      return "WAF blocked";
+  }
+}
+
+function securityEventMeta(event: DomainSecurityEvent) {
+  if (event.expires_at) {
+    return `Ban until ${formatDateTime(event.expires_at)}`;
+  }
+  return event.transaction_id && event.transaction_id !== "-"
+    ? `ID ${event.transaction_id}`
+    : securityEventLabel(event.action);
 }
 
 function Field({

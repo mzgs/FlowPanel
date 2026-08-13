@@ -85,6 +85,22 @@ export type DomainFTPStatus = {
   port: number;
 };
 
+export type DomainSecurityEvent = {
+  id: string;
+  action:
+    | "waf_blocked"
+    | "rate_limited"
+    | "ip_blocked"
+    | "auto_banned"
+    | "auto_ban_blocked";
+  hostname: string;
+  uri: string;
+  client_ip: string;
+  transaction_id: string;
+  expires_at?: string;
+  created_at: string;
+};
+
 export type DomainGitHubIntegration = {
   repository_url: string;
   auto_deploy_on_push: boolean;
@@ -501,6 +517,21 @@ export async function updateDomainProtection(
   );
 
   return readDomainMutationResponse(response, "save security settings");
+}
+
+export async function fetchDomainSecurityEvents(
+  hostname: string,
+): Promise<DomainSecurityEvent[]> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/security/events`,
+    { credentials: "include" },
+  );
+  if (!response.ok) {
+    throw new Error(`security events request failed with status ${response.status}`);
+  }
+
+  const payload = (await response.json()) as { events: DomainSecurityEvent[] };
+  return payload.events;
 }
 
 export async function deployDomainGitHubIntegration(
