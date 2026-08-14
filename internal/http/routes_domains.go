@@ -323,6 +323,30 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 		writeJSON(w, stdhttp.StatusOK, map[string]any{"events": events})
 	})
 
+	domainsSecurityEventsClearHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		hostname := chi.URLParam(r, "hostname")
+		record, ok := a.app.Domains.FindByHostname(hostname)
+		if !ok {
+			writeJSON(w, stdhttp.StatusNotFound, map[string]any{"error": "domain not found"})
+			return
+		}
+		if a.app.Events == nil {
+			writeJSON(w, stdhttp.StatusOK, map[string]any{"cleared": 0})
+			return
+		}
+
+		cleared, err := a.app.Events.ClearSecurity(r.Context(), record.Hostname)
+		if err != nil {
+			a.app.Logger.Error("clear domain security events failed", zap.String("hostname", record.Hostname), zap.Error(err))
+			a.mutationEvent(r.Context(), "domains", "clear_security_logs", "domain", record.ID, record.Hostname, "failed", "Failed to clear domain security logs.")
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to clear security logs"})
+			return
+		}
+
+		a.mutationEvent(r.Context(), "domains", "clear_security_logs", "domain", record.ID, record.Hostname, "succeeded", fmt.Sprintf("Cleared %d security log entries for %q.", cleared, record.Hostname))
+		writeJSON(w, stdhttp.StatusOK, map[string]any{"cleared": cleared})
+	})
+
 	domainsWebsiteCopyHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		hostname := chi.URLParam(r, "hostname")
 		sourceRecord, ok := a.app.Domains.FindByHostname(hostname)
@@ -1514,6 +1538,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/cache/clear", domainsCacheClearHandler)
 	r.Method(stdhttp.MethodGet, "/domains/{hostname}/security/events", domainsSecurityEventsHandler)
 	r.Method(stdhttp.MethodHead, "/domains/{hostname}/security/events", domainsSecurityEventsHandler)
+	r.Method(stdhttp.MethodDelete, "/domains/{hostname}/security/events", domainsSecurityEventsClearHandler)
 	r.Method(stdhttp.MethodPut, "/domains/{hostname}/protection", domainsProtectionUpdateHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/copy", domainsWebsiteCopyHandler)
 	r.Method(stdhttp.MethodPost, "/domains/{hostname}/templates/install", domainsTemplateInstallHandler)

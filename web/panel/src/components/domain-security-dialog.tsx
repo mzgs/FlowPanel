@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
+  clearDomainSecurityEvents,
   fetchDomainSecurityEvents,
   updateDomainProtection,
   type DomainRecord,
@@ -15,7 +16,9 @@ import {
   LoaderCircle,
   RefreshCw,
   ShieldCheck,
+  Trash2,
 } from "@/components/icons/lucide-icons";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -114,7 +117,9 @@ export function DomainSecurityDialog({
   const [error, setError] = useState<string | null>(null);
   const [securityEvents, setSecurityEvents] = useState<DomainSecurityEvent[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsClearing, setLogsClearing] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
+  const [clearLogsConfirmOpen, setClearLogsConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -123,6 +128,7 @@ export function DomainSecurityDialog({
     setActiveTab("waf");
     setForm(formFromProtection(domain.protection_config));
     setError(null);
+    setClearLogsConfirmOpen(false);
   }, [domain.protection_config, open]);
 
   const loadSecurityEvents = useCallback(async () => {
@@ -144,6 +150,21 @@ export function DomainSecurityDialog({
   }, [activeTab, loadSecurityEvents, open]);
 
   const wafEnabled = form.wafMode !== "disabled";
+
+  async function handleClearSecurityEvents() {
+    setLogsClearing(true);
+    try {
+      const cleared = await clearDomainSecurityEvents(domain.hostname);
+      setSecurityEvents([]);
+      setLogsError(null);
+      setClearLogsConfirmOpen(false);
+      toast.success(`Cleared ${cleared} security log ${cleared === 1 ? "entry" : "entries"}.`);
+    } catch (clearError) {
+      toast.error(getErrorMessage(clearError, "Failed to clear security logs."));
+    } finally {
+      setLogsClearing(false);
+    }
+  }
 
   async function handleSave() {
     const validationError = validateSecurityForm(form);
@@ -499,17 +520,30 @@ export function DomainSecurityDialog({
                     actions are grouped for one minute
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => void loadSecurityEvents()}
-                  disabled={logsLoading}
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${logsLoading ? "animate-spin" : ""}`} />
-                  Refresh
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => setClearLogsConfirmOpen(true)}
+                    disabled={logsLoading || logsClearing || securityEvents.length === 0}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Clear logs
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => void loadSecurityEvents()}
+                    disabled={logsLoading || logsClearing}
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${logsLoading ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
+                </div>
               </div>
 
               <div className="max-h-[320px] overflow-y-auto">
@@ -578,6 +612,16 @@ export function DomainSecurityDialog({
           </div>
         </div>
       </DialogContent>
+      <ConfirmDialog
+        open={clearLogsConfirmOpen}
+        onOpenChange={setClearLogsConfirmOpen}
+        title="Clear security logs?"
+        desc={`Delete all recorded security events for ${domain.hostname}? Active auto-bans will remain in effect.`}
+        confirmText="Clear logs"
+        destructive
+        isLoading={logsClearing}
+        handleConfirm={() => void handleClearSecurityEvents()}
+      />
     </Dialog>
   );
 }

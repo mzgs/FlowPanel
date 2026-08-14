@@ -236,6 +236,13 @@ func (s *Service) ListSecurity(ctx context.Context, hostname string, limit int) 
 	return result, nil
 }
 
+func (s *Service) ClearSecurity(ctx context.Context, hostname string) (int64, error) {
+	if s == nil {
+		return 0, nil
+	}
+	return s.store.ClearSecurity(ctx, strings.TrimSpace(hostname))
+}
+
 func securityRecord(record Record, details securityDetails) SecurityRecord {
 	var expiresAt *time.Time
 	if parsed, err := time.Parse(time.RFC3339Nano, details.ExpiresAt); err == nil {

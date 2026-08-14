@@ -534,6 +534,26 @@ export async function fetchDomainSecurityEvents(
   return payload.events;
 }
 
+export async function clearDomainSecurityEvents(hostname: string): Promise<number> {
+  const response = await fetch(
+    `/api/domains/${encodeURIComponent(hostname)}/security/events`,
+    { method: "DELETE", credentials: "include" },
+  );
+  if (!response.ok) {
+    let message = `clear security logs request failed with status ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      message = payload.error || message;
+    } catch {
+      // Keep the status-based message for non-JSON responses.
+    }
+    throw new Error(message);
+  }
+
+  const payload = (await response.json()) as { cleared: number };
+  return payload.cleared;
+}
+
 export async function deployDomainGitHubIntegration(
   hostname: string,
 ): Promise<DomainGitHubDeployResult> {

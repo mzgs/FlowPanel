@@ -131,6 +131,26 @@ LIMIT ?
 	return scanRecords(rows, limit)
 }
 
+func (s *Store) ClearSecurity(ctx context.Context, hostname string) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+DELETE FROM events
+WHERE category = 'security' AND resource_type = 'domain' AND resource_id = ?
+`, hostname)
+	if err != nil {
+		return 0, fmt.Errorf("clear security events: %w", err)
+	}
+
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count cleared security events: %w", err)
+	}
+	return removed, nil
+}
+
 func (s *Store) Prune(ctx context.Context, securityMaxPerDomain, activityMax int) (int64, error) {
 	if s == nil || s.db == nil {
 		return 0, nil
