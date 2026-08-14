@@ -103,13 +103,27 @@ func NormalizeProtectionConfig(config ProtectionConfig) ProtectionConfig {
 
 func ValidateProtectionConfig(config ProtectionConfig) ValidationErrors {
 	validation := ValidationErrors{}
-	config = NormalizeProtectionConfig(config)
+
+	switch config.WAF.Mode {
+	case WAFModeDisabled, WAFModeDetectionOnly, WAFModeBlocking:
+	default:
+		validation["waf.mode"] = "Select a valid WAF mode."
+	}
+	if config.WAF.ParanoiaLevel < 1 || config.WAF.ParanoiaLevel > 4 {
+		validation["waf.paranoia_level"] = "Paranoia level must be between 1 and 4."
+	}
 
 	if len(config.WAF.CustomRules) > 20000 {
 		validation["waf.custom_rules"] = "Custom rules must be 20,000 characters or less."
 	}
 	if len(config.WAF.ExcludedRuleIDs) > 200 {
 		validation["waf.excluded_rule_ids"] = "Enter 200 excluded rule IDs or fewer."
+	}
+	for _, ruleID := range config.WAF.ExcludedRuleIDs {
+		if ruleID <= 0 {
+			validation["waf.excluded_rule_ids"] = "Rule IDs must be positive numbers."
+			break
+		}
 	}
 	if len(config.WAF.PathExclusions) > 100 {
 		validation["waf.path_exclusions"] = "Enter 100 path exclusions or fewer."
@@ -122,15 +136,32 @@ func ValidateProtectionConfig(config ProtectionConfig) ValidationErrors {
 		if len(exclusion.ExcludedRuleIDs) > 50 {
 			validation[fmt.Sprintf("waf.path_exclusions.%d.excluded_rule_ids", index)] = "Enter 50 rule IDs or fewer for one path."
 		}
+		if !exclusion.DisableWAF && len(exclusion.ExcludedRuleIDs) == 0 {
+			validation[fmt.Sprintf("waf.path_exclusions.%d.excluded_rule_ids", index)] = "Enter at least one rule ID or disable WAF for this path."
+		}
+		for _, ruleID := range exclusion.ExcludedRuleIDs {
+			if ruleID <= 0 {
+				validation[fmt.Sprintf("waf.path_exclusions.%d.excluded_rule_ids", index)] = "Rule IDs must be positive numbers."
+				break
+			}
+		}
 	}
 
 	validateIPList(validation, "ip_access.allowed", config.IPAccess.Allowed)
 	validateIPList(validation, "ip_access.blocked", config.IPAccess.Blocked)
 
+	switch config.RateLimit.Preset {
+	case RateLimitPresetNormal, RateLimitPresetStrict, RateLimitPresetCustom:
+	default:
+		validation["rate_limit.preset"] = "Select a valid rate-limit preset."
+	}
 	if config.RateLimit.Enabled && (config.RateLimit.RequestsPerMinute < 1 || config.RateLimit.RequestsPerMinute > 10000) {
 		validation["rate_limit.requests_per_minute"] = "Requests per minute must be between 1 and 10000."
 	}
 	if config.AutoBan.Enabled {
+		if config.WAF.Mode != WAFModeBlocking && !config.RateLimit.Enabled {
+			validation["auto_ban.enabled"] = "Auto-ban requires blocking WAF or rate limiting."
+		}
 		if config.AutoBan.BlockedRequests < 1 || config.AutoBan.BlockedRequests > 10000 {
 			validation["auto_ban.blocked_requests"] = "Blocked requests must be between 1 and 10000."
 		}

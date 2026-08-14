@@ -13,7 +13,7 @@ import (
 const (
 	defaultListLimit         = 100
 	maxListLimit             = 250
-	eventRetentionCheck      = 24 * time.Hour
+	eventRetentionCheck      = 5 * time.Minute
 	securityMaxEventsPerHost = 10_000
 	activityMaxEvents        = 10_000
 )
@@ -178,14 +178,15 @@ func (s *Service) RecordSecurity(ctx context.Context, input SecurityInput) (Secu
 		return SecurityRecord{}, fmt.Errorf("encode security event: %w", err)
 	}
 
+	actor, status := securityEventMetadata(input.Action)
 	record, err := s.Record(ctx, CreateInput{
-		Actor:         "waf",
+		Actor:         actor,
 		Category:      "security",
 		Action:        normalizeValue(input.Action, "waf_blocked", 40),
 		ResourceType:  "domain",
 		ResourceID:    input.Hostname,
 		ResourceLabel: input.Hostname,
-		Status:        "blocked",
+		Status:        status,
 		Message:       string(message),
 	})
 	if err != nil {
@@ -193,6 +194,19 @@ func (s *Service) RecordSecurity(ctx context.Context, input SecurityInput) (Secu
 	}
 
 	return securityRecord(record, details), nil
+}
+
+func securityEventMetadata(action string) (string, string) {
+	switch action {
+	case "rate_limited":
+		return "rate_limit", "blocked"
+	case "ip_blocked":
+		return "ip_access", "blocked"
+	case "auto_banned", "auto_ban_blocked":
+		return "auto_ban", "blocked"
+	default:
+		return "waf", "blocked"
+	}
 }
 
 func (s *Service) ListSecurity(ctx context.Context, hostname string, limit int) ([]SecurityRecord, error) {

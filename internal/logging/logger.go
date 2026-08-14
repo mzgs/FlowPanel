@@ -20,7 +20,12 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-const MaxFileSizeMB = 500
+const (
+	MaxFileSizeMB        = 500
+	maxAutoBanStates     = 10_000
+	autoBanPruneInterval = time.Minute
+	securityLogInterval  = time.Minute
+)
 
 var (
 	sharedWriterMu sync.RWMutex
@@ -33,6 +38,7 @@ var (
 		rateLimitDomains: make(map[string]string),
 		autoBanPolicies:  make(map[string]AutoBanPolicy),
 		autoBans:         make(map[string]autoBanState),
+		securityLogTimes: make(map[string]time.Time),
 	}
 )
 
@@ -63,8 +69,10 @@ type AutoBanPolicy struct {
 }
 
 type autoBanState struct {
-	Attempts    []time.Time
-	BannedUntil time.Time
+	WindowStarted   time.Time
+	BlockedRequests int
+	BannedUntil     time.Time
+	UpdatedAt       time.Time
 }
 
 type securityStateManager struct {
@@ -72,6 +80,8 @@ type securityStateManager struct {
 	rateLimitDomains map[string]string
 	autoBanPolicies  map[string]AutoBanPolicy
 	autoBans         map[string]autoBanState
+	securityLogTimes map[string]time.Time
+	lastAutoBanPrune time.Time
 }
 
 type sharedWriteCloser struct {
@@ -156,16 +166,8 @@ func (securityWriteCloser) Write(data []byte) (int, error) {
 			continue
 		}
 
-		event.Hostname = strings.ToLower(strings.TrimSpace(event.Hostname))
-		hostname := event.Hostname
-		if host, _, err := net.SplitHostPort(hostname); err == nil {
-			event.Hostname = host
-		}
-		clientIP := strings.TrimSpace(event.ClientIP)
-		if host, _, err := net.SplitHostPort(clientIP); err == nil {
-			clientIP = host
-		}
-		event.ClientIP = clientIP
+		event.Hostname = normalizeSecurityHostname(event.Hostname)
+		event.ClientIP = normalizeClientIP(event.ClientIP)
 		publishSecurityEvent(event)
 	}
 	return len(data), nil
@@ -194,12 +196,16 @@ func SetSecurityEventHandler(handler func(SecurityEvent)) {
 }
 
 func publishSecurityEvent(event SecurityEvent) {
+	event.Hostname = normalizeSecurityHostname(event.Hostname)
+	event.ClientIP = normalizeClientIP(event.ClientIP)
 	if event.Hostname == "" {
 		return
 	}
-	select {
-	case securityQueue <- event:
-	default:
+	if securityState.shouldLog(event) {
+		select {
+		case securityQueue <- event:
+		default:
+		}
 	}
 	if event.Action == "waf_blocked" || event.Action == "rate_limited" {
 		if banned, ok := securityState.recordBlocked(event); ok {
@@ -214,15 +220,9 @@ func publishSecurityEvent(event SecurityEvent) {
 func ConfigureSecurityPolicies(rateLimitDomains map[string]string, autoBanPolicies map[string]AutoBanPolicy) {
 	securityState.mu.Lock()
 	defer securityState.mu.Unlock()
-	securityState.rateLimitDomains = rateLimitDomains
-	securityState.autoBanPolicies = autoBanPolicies
-	for key := range securityState.autoBans {
-		hostname, clientIP, _ := strings.Cut(key, "\x00")
-		policy, ok := autoBanPolicies[hostname]
-		if !ok || policy.allows(clientIP) {
-			delete(securityState.autoBans, key)
-		}
-	}
+	securityState.rateLimitDomains = normalizedRateLimitDomains(rateLimitDomains)
+	securityState.autoBanPolicies = normalizedAutoBanPolicies(autoBanPolicies)
+	securityState.pruneAutoBansLocked(time.Now().UTC(), true)
 }
 
 func (s *securityStateManager) rateLimitDomain(zone string) string {
@@ -239,27 +239,30 @@ func (s *securityStateManager) recordBlocked(event SecurityEvent) (SecurityEvent
 	key := event.Hostname + "\x00" + event.ClientIP
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneAutoBansLocked(now, false)
 	policy, ok := s.autoBanPolicies[event.Hostname]
 	if !ok || policy.allows(event.ClientIP) {
 		return SecurityEvent{}, false
 	}
-	state := s.autoBans[key]
+	state, exists := s.autoBans[key]
+	if !exists && len(s.autoBans) >= maxAutoBanStates {
+		return SecurityEvent{}, false
+	}
 	if state.BannedUntil.After(now) {
 		return SecurityEvent{}, false
 	}
-	cutoff := now.Add(-policy.Window)
-	attempts := state.Attempts[:0]
-	for _, attempt := range state.Attempts {
-		if attempt.After(cutoff) {
-			attempts = append(attempts, attempt)
-		}
+	if state.WindowStarted.IsZero() || now.Sub(state.WindowStarted) >= policy.Window {
+		state.WindowStarted = now
+		state.BlockedRequests = 0
 	}
-	state.Attempts = append(attempts, now)
-	if len(state.Attempts) < policy.BlockedRequests {
+	state.BlockedRequests++
+	state.UpdatedAt = now
+	if state.BlockedRequests < policy.BlockedRequests {
 		s.autoBans[key] = state
 		return SecurityEvent{}, false
 	}
-	state.Attempts = nil
+	state.BlockedRequests = 0
+	state.WindowStarted = time.Time{}
 	state.BannedUntil = now.Add(policy.Ban)
 	s.autoBans[key] = state
 	event.Action = "auto_banned"
@@ -267,12 +270,54 @@ func (s *securityStateManager) recordBlocked(event SecurityEvent) (SecurityEvent
 	return event, true
 }
 
-func (s *securityStateManager) bannedUntil(hostname, clientIP string) time.Time {
+func (s *securityStateManager) pruneAutoBansLocked(now time.Time, force bool) {
+	if !force && now.Sub(s.lastAutoBanPrune) < autoBanPruneInterval {
+		return
+	}
+	for key, state := range s.autoBans {
+		hostname, clientIP, _ := strings.Cut(key, "\x00")
+		policy, ok := s.autoBanPolicies[hostname]
+		if !ok || policy.allows(clientIP) || (!state.BannedUntil.After(now) && now.Sub(state.UpdatedAt) > policy.Window) {
+			delete(s.autoBans, key)
+		}
+	}
+	for key, loggedAt := range s.securityLogTimes {
+		if now.Sub(loggedAt) >= securityLogInterval {
+			delete(s.securityLogTimes, key)
+		}
+	}
+	s.lastAutoBanPrune = now
+}
+
+func (s *securityStateManager) shouldLog(event SecurityEvent) bool {
+	switch event.Action {
+	case "waf_blocked", "rate_limited", "ip_blocked", "auto_ban_blocked":
+	default:
+		return true
+	}
 	now := time.Now().UTC()
-	key := strings.ToLower(strings.TrimSpace(hostname)) + "\x00" + clientIP
+	key := event.Action + "\x00" + event.Hostname + "\x00" + event.ClientIP
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if policy, ok := s.autoBanPolicies[strings.ToLower(strings.TrimSpace(hostname))]; !ok || policy.allows(clientIP) {
+	s.pruneAutoBansLocked(now, false)
+	if lastLogged := s.securityLogTimes[key]; now.Sub(lastLogged) < securityLogInterval {
+		return false
+	}
+	if len(s.securityLogTimes) >= maxAutoBanStates {
+		return false
+	}
+	s.securityLogTimes[key] = now
+	return true
+}
+
+func (s *securityStateManager) bannedUntil(hostname, clientIP string) time.Time {
+	now := time.Now().UTC()
+	hostname = normalizeSecurityHostname(hostname)
+	clientIP = normalizeClientIP(clientIP)
+	key := hostname + "\x00" + clientIP
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if policy, ok := s.autoBanPolicies[hostname]; !ok || policy.allows(clientIP) {
 		return time.Time{}
 	}
 	state := s.autoBans[key]
@@ -288,6 +333,7 @@ func (p AutoBanPolicy) allows(clientIP string) bool {
 	if err != nil {
 		return false
 	}
+	address = address.Unmap()
 	for _, value := range p.Allowed {
 		prefix, err := netip.ParsePrefix(value)
 		if err != nil {
@@ -327,10 +373,42 @@ func (h AutoBanHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, next c
 }
 
 func requestIP(remoteAddr string) string {
-	if host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr)); err == nil {
-		return host
+	return normalizeClientIP(remoteAddr)
+}
+
+func normalizeSecurityHostname(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
 	}
-	return strings.TrimSpace(remoteAddr)
+	return strings.TrimSuffix(value, ".")
+}
+
+func normalizeClientIP(value string) string {
+	value = strings.TrimSpace(value)
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	if address, err := netip.ParseAddr(value); err == nil {
+		return address.Unmap().String()
+	}
+	return value
+}
+
+func normalizedRateLimitDomains(values map[string]string) map[string]string {
+	result := make(map[string]string, len(values))
+	for zone, hostname := range values {
+		result[zone] = normalizeSecurityHostname(hostname)
+	}
+	return result
+}
+
+func normalizedAutoBanPolicies(values map[string]AutoBanPolicy) map[string]AutoBanPolicy {
+	result := make(map[string]AutoBanPolicy, len(values))
+	for hostname, policy := range values {
+		result[normalizeSecurityHostname(hostname)] = policy
+	}
+	return result
 }
 
 func forbidden(w http.ResponseWriter) error {

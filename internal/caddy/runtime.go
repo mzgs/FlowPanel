@@ -108,6 +108,13 @@ const (
 const defaultCacheTTL = 120 * time.Second
 const souinAdminAPIPath = "/souin-api/souin"
 
+var rateLimitStaticAssetPaths = []string{
+	"*.avif", "*.bmp", "*.css", "*.eot", "*.gif", "*.ico", "*.jpeg", "*.jpg",
+	"*.js", "*.m4a", "*.map", "*.mjs", "*.mp3", "*.mp4", "*.ogg", "*.otf",
+	"*.png", "*.svg", "*.ttf", "*.wasm", "*.wav", "*.webm", "*.webmanifest",
+	"*.webp", "*.woff", "*.woff2",
+}
+
 var loggerNameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 var ErrRuntimeNotStarted = errors.New("embedded caddy runtime is not started")
@@ -212,6 +219,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 		return err
 	}
 	r.rawJSON = append(r.rawJSON[:0], rawConfig...)
+	configureSecurityPolicies(nil)
 
 	r.started = true
 	r.logger.Info("embedded caddy runtime started",
@@ -301,6 +309,7 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL st
 
 		r.rawJSON = append(r.rawJSON[:0], rawConfig...)
 		r.records = append(r.records[:0], records...)
+		configureSecurityPolicies(records)
 		committed = true
 
 		fields := []zap.Field{
@@ -337,6 +346,7 @@ func (r *Runtime) Stop(ctx context.Context) error {
 
 	r.started = false
 	r.rawJSON = nil
+	configureSecurityPolicies(nil)
 	r.logger.Info("embedded caddy runtime stopped")
 
 	return nil
@@ -870,17 +880,22 @@ func securityHandlersForRecord(record domain.Record, originHandlers []json.RawMe
 }
 
 func rateLimitHandlerConfig(hostname string, protection domain.ProtectionConfig) map[string]any {
+	excludedRequests := []map[string]any{{
+		"method": []string{http.MethodGet, http.MethodHead},
+		"path":   rateLimitStaticAssetPaths,
+	}}
+	if len(protection.IPAccess.Allowed) > 0 {
+		excludedRequests = append(excludedRequests, map[string]any{
+			"remote_ip": map[string]any{"ranges": protection.IPAccess.Allowed},
+		})
+	}
 	zone := map[string]any{
 		"key":        "{http.request.remote.host}",
 		"window":     "1m",
 		"max_events": protection.RateLimit.RequestsPerMinute,
-	}
-	if len(protection.IPAccess.Allowed) > 0 {
-		zone["match"] = []map[string]any{{
-			"not": []map[string]any{{
-				"remote_ip": map[string]any{"ranges": protection.IPAccess.Allowed},
-			}},
-		}}
+		"match": []map[string]any{{
+			"not": excludedRequests,
+		}},
 	}
 
 	return map[string]any{
@@ -907,7 +922,11 @@ func wafDirectives(protection domain.ProtectionConfig) string {
 	builder.WriteString("Include @coraza.conf-recommended\n")
 	builder.WriteString("Include @crs-setup.conf.example\n")
 	builder.WriteString("SecRuleEngine " + mode + "\n")
-	builder.WriteString(fmt.Sprintf("SecAction \"id:900001,phase:1,pass,nolog,setvar:tx.paranoia_level=%d\"\n", protection.WAF.ParanoiaLevel))
+	builder.WriteString(fmt.Sprintf(
+		"SecAction \"id:900000,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d,setvar:tx.detection_paranoia_level=%d\"\n",
+		protection.WAF.ParanoiaLevel,
+		protection.WAF.ParanoiaLevel,
+	))
 
 	for index, exclusion := range protection.WAF.PathExclusions {
 		ctl := "ruleEngine=Off"
@@ -1454,24 +1473,6 @@ func cacheHandlerConfig() httpcache.SouinCaddyMiddleware {
 }
 
 func domainLoggingConfig(records []domain.Record) *caddyv2.Logging {
-	rateLimitDomains := make(map[string]string)
-	autoBanPolicies := make(map[string]flowlogging.AutoBanPolicy)
-	for _, record := range records {
-		protection := domain.NormalizeProtectionConfig(record.Protection)
-		if protection.RateLimit.Enabled {
-			rateLimitDomains["domain_"+sanitizeLoggerName(record.Hostname)] = record.Hostname
-		}
-		if protection.AutoBan.Enabled {
-			autoBanPolicies[record.Hostname] = flowlogging.AutoBanPolicy{
-				BlockedRequests: protection.AutoBan.BlockedRequests,
-				Window:          time.Duration(protection.AutoBan.WindowMinutes) * time.Minute,
-				Ban:             time.Duration(protection.AutoBan.BanMinutes) * time.Minute,
-				Allowed:         protection.IPAccess.Allowed,
-			}
-		}
-	}
-	flowlogging.ConfigureSecurityPolicies(rateLimitDomains, autoBanPolicies)
-
 	logs := make(map[string]*caddyv2.CustomLog, len(records)*2+2)
 	logs["default"] = &caddyv2.CustomLog{
 		BaseLog: caddyv2.BaseLog{
@@ -1517,9 +1518,27 @@ func domainLoggingConfig(records []domain.Record) *caddyv2.Logging {
 		}
 	}
 
-	return &caddyv2.Logging{
-		Logs: logs,
+	return &caddyv2.Logging{Logs: logs}
+}
+
+func configureSecurityPolicies(records []domain.Record) {
+	rateLimitDomains := make(map[string]string)
+	autoBanPolicies := make(map[string]flowlogging.AutoBanPolicy)
+	for _, record := range records {
+		protection := domain.NormalizeProtectionConfig(record.Protection)
+		if protection.RateLimit.Enabled {
+			rateLimitDomains["domain_"+sanitizeLoggerName(record.Hostname)] = record.Hostname
+		}
+		if protection.AutoBan.Enabled {
+			autoBanPolicies[record.Hostname] = flowlogging.AutoBanPolicy{
+				BlockedRequests: protection.AutoBan.BlockedRequests,
+				Window:          time.Duration(protection.AutoBan.WindowMinutes) * time.Minute,
+				Ban:             time.Duration(protection.AutoBan.BanMinutes) * time.Minute,
+				Allowed:         protection.IPAccess.Allowed,
+			}
+		}
 	}
+	flowlogging.ConfigureSecurityPolicies(rateLimitDomains, autoBanPolicies)
 }
 
 func domainServerLogConfig(records []domain.Record) *caddyhttp.ServerLogConfig {

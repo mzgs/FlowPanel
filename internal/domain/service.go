@@ -825,10 +825,10 @@ func (s *Service) UpdateProtection(
 		return Record{}, Record{}, ErrNotFound
 	}
 
-	protection := NormalizeProtectionConfig(input.Protection)
-	if validation := ValidateProtectionConfig(protection); len(validation) > 0 {
+	if validation := ValidateProtectionConfig(input.Protection); len(validation) > 0 {
 		return Record{}, Record{}, validation
 	}
+	protection := NormalizeProtectionConfig(input.Protection)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -146,6 +146,11 @@ export function DomainSecurityDialog({
   const wafEnabled = form.wafMode !== "disabled";
 
   async function handleSave() {
+    const validationError = validateSecurityForm(form);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setSaving(true);
     setError(null);
 
@@ -157,7 +162,10 @@ export function DomainSecurityDialog({
       toast.success("Security settings saved.");
       onOpenChange(false);
     } catch (saveError) {
-      setError(getErrorMessage(saveError, "Failed to save security settings."));
+      setError(
+        firstFieldError(saveError) ??
+          getErrorMessage(saveError, "Failed to save security settings."),
+      );
     } finally {
       setSaving(false);
     }
@@ -233,6 +241,12 @@ export function DomainSecurityDialog({
                   </SelectContent>
                 </Select>
               </Field>
+              {form.wafMode === "detection_only" ? (
+                <p className="text-xs text-[var(--app-text-muted)] md:col-span-2">
+                  Detection mode reports matches without blocking requests and
+                  does not trigger auto-ban.
+                </p>
+              ) : null}
               <Field label="Excluded rule IDs">
                 <Input
                   value={form.excludedRuleIDs}
@@ -361,12 +375,16 @@ export function DomainSecurityDialog({
                 label="Response"
                 value={form.rateLimitEnabled ? "429 Too Many Requests" : "Off"}
               />
+              <p className="text-xs text-[var(--app-text-muted)]">
+                Page and API requests are counted. CSS, JavaScript, images,
+                fonts, and media files are excluded.
+              </p>
             </div>
           ) : null}
 
           {activeTab === "ip-rules" ? (
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Allowed IPs / CIDRs">
+              <Field label="Trusted IPs / CIDRs (bypass)">
                 <Textarea
                   className="min-h-56 resize-y font-mono text-sm"
                   value={form.allowedIPs}
@@ -392,6 +410,10 @@ export function DomainSecurityDialog({
                   placeholder={`198.51.100.24\n192.0.2.0/24`}
                 />
               </Field>
+              <p className="text-xs text-[var(--app-text-muted)] md:col-span-2">
+                Trusted addresses bypass IP blocks, rate limits, and auto-ban.
+                WAF inspection still applies.
+              </p>
             </div>
           ) : null}
 
@@ -451,7 +473,19 @@ export function DomainSecurityDialog({
                   />
                 </Field>
               </div>
-              <SummaryRow label="Status" value="Stored setting" />
+              <SummaryRow
+                label="Status"
+                value={
+                  form.autoBanEnabled
+                    ? `Ban after ${form.autoBanBlockedRequests} blocked requests`
+                    : "Off"
+                }
+              />
+              <p className="text-xs text-[var(--app-text-muted)]">
+                Auto-ban counts requests blocked by blocking WAF or rate
+                limiting. Detection-only WAF and IP block rules do not add
+                strikes.
+              </p>
             </div>
           ) : null}
 
@@ -459,8 +493,11 @@ export function DomainSecurityDialog({
             <div className="overflow-hidden rounded-lg border border-[var(--app-border)]">
               <div className="flex items-center justify-between gap-3 border-b border-[var(--app-border)] px-3 py-2">
                 <div>
-                  <div className="text-sm font-medium">Security events</div>
-                  <div className="text-xs text-[var(--app-text-muted)]">WAF, rate-limit, IP-rule, and auto-ban actions</div>
+                  <div className="text-sm font-medium">Blocked actions</div>
+                  <div className="text-xs text-[var(--app-text-muted)]">
+                    WAF, rate-limit, IP-rule, and auto-ban actions; repeated
+                    actions are grouped for one minute
+                  </div>
                 </div>
                 <Button
                   type="button"
@@ -487,7 +524,12 @@ export function DomainSecurityDialog({
                     <div key={event.id} className="grid gap-1 border-b border-[var(--app-border)] px-3 py-2.5 last:border-b-0 sm:grid-cols-[8rem_minmax(0,1fr)_9rem]">
                       <div className="text-xs text-[var(--app-text-muted)]">{formatDateTime(event.created_at)}</div>
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium" title={event.uri}>{event.uri}</div>
+                        <div
+                          className="truncate text-sm font-medium"
+                          title={securityEventTitle(event)}
+                        >
+                          {securityEventTitle(event)}
+                        </div>
                         <div className="truncate text-xs text-[var(--app-text-muted)]" title={securityEventMeta(event)}>{securityEventMeta(event)}</div>
                       </div>
                       <div className="flex items-start justify-between gap-2 sm:justify-end">
@@ -570,6 +612,12 @@ function securityEventMeta(event: DomainSecurityEvent) {
   }
   return event.transaction_id && event.transaction_id !== "-"
     ? `ID ${event.transaction_id}`
+    : securityEventLabel(event.action);
+}
+
+function securityEventTitle(event: DomainSecurityEvent) {
+  return event.uri && event.uri !== "-"
+    ? event.uri
     : securityEventLabel(event.action);
 }
 
@@ -746,4 +794,70 @@ function lineList(value: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function validateSecurityForm(form: SecurityForm) {
+  if (form.wafMode !== "disabled") {
+    if (!validRuleIDList(form.excludedRuleIDs)) {
+      return "Excluded rule IDs must be positive numbers separated by commas or spaces.";
+    }
+    for (const path of lineList(form.disabledPaths)) {
+      if (!path.startsWith("/")) {
+        return `Disabled path "${path}" must start with /.`;
+      }
+    }
+    for (const line of lineList(form.pathRuleExclusions)) {
+      const [path = "", ...ruleIDs] = line.split(/\s+/);
+      if (
+        !path.startsWith("/") ||
+        ruleIDs.length === 0 ||
+        !validRuleIDList(ruleIDs.join(" "), false)
+      ) {
+        return `Path rule exclusion "${line}" must use: /path 942100,941100`;
+      }
+    }
+  }
+
+  if (
+    form.rateLimitEnabled &&
+    !integerInRange(form.requestsPerMinute, 1, 10000)
+  ) {
+    return "Requests per minute must be a whole number between 1 and 10000.";
+  }
+  if (form.autoBanEnabled) {
+    if (form.wafMode !== "blocking" && !form.rateLimitEnabled) {
+      return "Auto-ban requires blocking WAF or rate limiting.";
+    }
+    if (!integerInRange(form.autoBanBlockedRequests, 1, 10000)) {
+      return "Blocked requests must be a whole number between 1 and 10000.";
+    }
+    if (!integerInRange(form.autoBanWindowMinutes, 1, 1440)) {
+      return "Window minutes must be a whole number between 1 and 1440.";
+    }
+    if (!integerInRange(form.autoBanMinutes, 1, 10080)) {
+      return "Ban minutes must be a whole number between 1 and 10080.";
+    }
+  }
+  return null;
+}
+
+function validRuleIDList(value: string, allowEmpty = true) {
+  const trimmed = value.trim();
+  return trimmed === ""
+    ? allowEmpty
+    : trimmed.split(/[,\s]+/).every((item) => /^[1-9]\d*$/.test(item));
+}
+
+function integerInRange(value: string, min: number, max: number) {
+  return /^\d+$/.test(value) && Number(value) >= min && Number(value) <= max;
+}
+
+function firstFieldError(error: unknown) {
+  if (typeof error !== "object" || error === null || !("fieldErrors" in error)) {
+    return null;
+  }
+  const fieldErrors = (error as {
+    fieldErrors?: Record<string, string>;
+  }).fieldErrors;
+  return fieldErrors ? Object.values(fieldErrors)[0] ?? null : null;
 }
