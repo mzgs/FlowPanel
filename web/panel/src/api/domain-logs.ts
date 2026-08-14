@@ -1,4 +1,5 @@
 export type DomainLogType = "all" | "access" | "error";
+export type DomainLogView = "requests" | "visits";
 
 export type DomainLogRecord = {
   hostname: string;
@@ -18,6 +19,7 @@ export type DomainLogsPayload = {
   filters: {
     hostname: string;
     type: DomainLogType;
+    view: DomainLogView;
     search: string;
     limit: number;
   };
@@ -27,6 +29,7 @@ export type DomainLogsPayload = {
 export type FetchDomainLogsInput = {
   hostname?: string;
   type?: DomainLogType;
+  view?: DomainLogView;
   search?: string;
   limit?: number;
 };
@@ -38,6 +41,9 @@ export async function fetchDomainLogs(input: FetchDomainLogsInput = {}): Promise
   }
   if (input.type) {
     query.set("type", input.type);
+  }
+  if (input.view) {
+    query.set("view", input.view);
   }
   if (typeof input.search === "string" && input.search.trim() !== "") {
     query.set("search", input.search.trim());

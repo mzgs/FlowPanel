@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   fetchDomainLogs,
   type DomainLogRecord,
-  type DomainLogType,
+  type DomainLogView,
   type FetchDomainLogsInput,
 } from "@/api/domain-logs";
 import {
@@ -37,7 +37,7 @@ import { formatBytes } from "@/lib/format";
 import { cn, getErrorMessage } from "@/lib/utils";
 
 type FilterState = {
-  type: DomainLogType;
+  view: "visits" | "requests" | "errors";
   search: string;
   limit: string;
 };
@@ -50,7 +50,7 @@ type ClientFilterState = {
 type ParsedLogRow = {
   id: string;
   hostname: string;
-  type: Exclude<DomainLogType, "all">;
+  type: DomainLogRecord["type"];
   timestamp: string | null;
   timestampLabel: string;
   ip: string;
@@ -63,7 +63,7 @@ type ParsedLogRow = {
 };
 
 const initialFilters: FilterState = {
-  type: "all",
+  view: "visits",
   search: "",
   limit: "200",
 };
@@ -95,14 +95,15 @@ function buildRequestFilters(filters: FilterState, hostname: string): FetchDomai
   const limit = Number.parseInt(filters.limit, 10);
   return {
     hostname,
-    type: filters.type,
+    type: filters.view === "errors" ? "error" : "access",
+    view: filters.view === "visits" ? "visits" : "requests",
     search: filters.search.trim() || undefined,
     limit: Number.isFinite(limit) ? limit : 200,
   };
 }
 
-function logTypeLabel(type: DomainLogRecord["type"]) {
-  return type === "access" ? "Access" : "Error";
+function logTypeLabel(type: DomainLogRecord["type"], view: DomainLogView | undefined) {
+  return type === "access" ? (view === "visits" ? "Visit" : "Request") : "Error";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -378,6 +379,7 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
       setActiveFilters({
         hostname,
         type: payload.filters.type,
+        view: payload.filters.view,
         search: payload.filters.search || undefined,
         limit: payload.filters.limit,
       });
@@ -455,16 +457,16 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
         Reset
       </Button>
       <Select
-        value={filters.type}
-        onValueChange={(value) => setFilters((current) => ({ ...current, type: value as DomainLogType }))}
+        value={filters.view}
+        onValueChange={(value) => setFilters((current) => ({ ...current, view: value as FilterState["view"] }))}
       >
         <SelectTrigger className={cn(toolbarButtonClassName, "w-[150px]")}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All logs</SelectItem>
-          <SelectItem value="access">Access only</SelectItem>
-          <SelectItem value="error">Error only</SelectItem>
+          <SelectItem value="visits">Visits</SelectItem>
+          <SelectItem value="requests">All requests</SelectItem>
+          <SelectItem value="errors">Errors</SelectItem>
         </SelectContent>
       </Select>
       <Select
@@ -614,7 +616,7 @@ export function DomainLogsPanel({ hostname, embedded = false }: DomainLogsPanelP
                           variant={row.type === "access" ? "secondary" : "outline"}
                           className="font-medium"
                         >
-                          {logTypeLabel(row.type)}
+                          {logTypeLabel(row.type, activeFilters.view)}
                         </Badge>
                       </TableCell>
                       <TableCell className="px-3 py-3 font-mono text-[13px] text-foreground">

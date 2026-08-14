@@ -156,6 +156,14 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "type must be one of all, access, or error"})
 			return
 		}
+		viewFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("view")))
+		if viewFilter == "" {
+			viewFilter = "requests"
+		}
+		if viewFilter != "requests" && viewFilter != "visits" {
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "view must be one of requests or visits"})
+			return
+		}
 
 		limit := 200
 		if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
@@ -178,10 +186,10 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			}
 
 			if typeFilter == "all" || typeFilter == "access" {
-				logs = append(logs, readDomainLog(record.Hostname, "access", record.Logs.Access, search, limit))
+				logs = append(logs, readDomainLog(record.Hostname, "access", record.Logs.Access, search, limit, viewFilter == "visits"))
 			}
 			if typeFilter == "all" || typeFilter == "error" {
-				logs = append(logs, readDomainLog(record.Hostname, "error", record.Logs.Error, search, limit))
+				logs = append(logs, readDomainLog(record.Hostname, "error", record.Logs.Error, search, limit, false))
 			}
 		}
 		sort.Strings(hostnames)
@@ -191,6 +199,7 @@ func (a *apiRoutes) registerDomainRoutes(r chi.Router) {
 			"filters": map[string]any{
 				"hostname": hostnameFilter,
 				"type":     typeFilter,
+				"view":     viewFilter,
 				"search":   search,
 				"limit":    limit,
 			},
@@ -2046,7 +2055,7 @@ func detectDomainPythonRuntimeVersion(ctx context.Context, interpreterPath strin
 	return ""
 }
 
-func readDomainLog(hostname string, logType string, filePath string, search string, limit int) domainLogResponse {
+func readDomainLog(hostname string, logType string, filePath string, search string, limit int, visitsOnly bool) domainLogResponse {
 	response := domainLogResponse{
 		Hostname: hostname,
 		Type:     logType,
@@ -2071,7 +2080,11 @@ func readDomainLog(hostname string, logType string, filePath string, search stri
 	modifiedAt := info.ModTime().UTC()
 	response.ModifiedAt = &modifiedAt
 
-	lines, totalMatches, truncated, err := tailMatchingLogLines(filePath, search, limit)
+	var include func(string) bool
+	if logType == "access" && visitsOnly {
+		include = isDomainPageVisit
+	}
+	lines, totalMatches, truncated, err := tailMatchingLogLines(filePath, search, limit, include)
 	if err != nil {
 		response.ReadError = err.Error()
 		return response
@@ -2083,7 +2096,7 @@ func readDomainLog(hostname string, logType string, filePath string, search stri
 	return response
 }
 
-func tailMatchingLogLines(filePath string, search string, limit int) ([]string, int, bool, error) {
+func tailMatchingLogLines(filePath string, search string, limit int, include func(string) bool) ([]string, int, bool, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, 0, false, err
@@ -2098,7 +2111,7 @@ func tailMatchingLogLines(filePath string, search string, limit int) ([]string, 
 	totalMatches := 0
 	for scanner.Scan() {
 		line := scanner.Text()
-		if search != "" && !strings.Contains(strings.ToLower(line), search) {
+		if (include != nil && !include(line)) || (search != "" && !strings.Contains(strings.ToLower(line), search)) {
 			continue
 		}
 
@@ -2117,6 +2130,63 @@ func tailMatchingLogLines(filePath string, search string, limit int) ([]string, 
 	}
 
 	return lines, totalMatches, totalMatches > limit, nil
+}
+
+func isDomainPageVisit(line string) bool {
+	var entry struct {
+		Request struct {
+			URI     string              `json:"uri"`
+			Headers map[string][]string `json:"headers"`
+		} `json:"request"`
+	}
+	if json.Unmarshal([]byte(line), &entry) == nil && entry.Request.URI != "" {
+		destination := domainLogHeader(entry.Request.Headers, "sec-fetch-dest")
+		if destination != "" {
+			return destination == "document"
+		}
+		if domainLogHeader(entry.Request.Headers, "sec-fetch-mode") == "navigate" {
+			return true
+		}
+		if accept := domainLogHeader(entry.Request.Headers, "accept"); strings.Contains(accept, "text/html") {
+			return true
+		}
+		return !isDomainResourcePath(entry.Request.URI)
+	}
+
+	parts := strings.SplitN(line, `"`, 3)
+	request := ""
+	if len(parts) > 1 {
+		request = parts[1]
+	}
+	fields := strings.Fields(request)
+	if len(fields) < 2 {
+		return true
+	}
+	return !isDomainResourcePath(fields[1])
+}
+
+func domainLogHeader(headers map[string][]string, name string) string {
+	for key, values := range headers {
+		if strings.EqualFold(key, name) && len(values) > 0 {
+			return strings.ToLower(values[0])
+		}
+	}
+	return ""
+}
+
+func isDomainResourcePath(rawURI string) bool {
+	parsed, err := url.Parse(rawURI)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(parsed.Path)) {
+	case ".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp",
+		".css", ".js", ".mjs", ".map", ".eot", ".otf", ".ttf", ".woff", ".woff2",
+		".mp3", ".mp4", ".mpeg", ".ogg", ".ogv", ".wav", ".webm":
+		return true
+	default:
+		return false
+	}
 }
 
 func deleteLinkedDomainDatabases(ctx context.Context, manager mariadb.Manager, hostname string) ([]string, error) {
