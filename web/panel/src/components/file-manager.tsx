@@ -580,6 +580,10 @@ export function FileManager({
 
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
+      if (!browserRef.current?.getClientRects().length) {
+        return;
+      }
+
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) {
         return;
