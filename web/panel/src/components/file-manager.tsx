@@ -1290,7 +1290,14 @@ export function FileManager({
     const isFileDrop = event.dataTransfer.types.includes("Files");
     const hasInternalPaths = event.dataTransfer.types.includes("application/x-flowpanel-paths");
 
-    if (!isFileDrop && !hasInternalPaths) {
+    if (isFileDrop) {
+      event.preventDefault();
+      setDropTargetPath(null);
+      setRootDropActive(true);
+      return;
+    }
+
+    if (!hasInternalPaths) {
       return;
     }
 
@@ -1304,7 +1311,8 @@ export function FileManager({
     setDropTargetPath(null);
 
     if (event.dataTransfer.files.length > 0) {
-      handleUploadSelection(event.dataTransfer.files, path);
+      setRootDropActive(false);
+      handleUploadSelection(event.dataTransfer.files);
       return;
     }
 
