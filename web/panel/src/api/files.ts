@@ -164,15 +164,17 @@ export function getFilePreviewUrl(path: string) {
 }
 
 export async function downloadEntry(path: string): Promise<string> {
-  const response = await fetch(getDownloadUrl(path), {
-    credentials: "include",
-  });
+  const fileName = getDownloadFilename(null, path);
+  const anchor = document.createElement("a");
 
-  if (!response.ok) {
-    throw await readFileApiError(response, "download entry");
-  }
+  anchor.href = getDownloadUrl(path);
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
 
-  return triggerDownload(response, path);
+  return fileName;
 }
 
 export async function downloadEntries(paths: string[]): Promise<string> {
