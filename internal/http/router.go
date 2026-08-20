@@ -783,8 +783,6 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			status, err := inspectPanelUpdate(r.Context(), app.Version)
 			if err != nil {
 				app.Logger.Warn("inspect panel update failed", zap.Error(err))
-				writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": "failed to check for panel updates"})
-				return
 			}
 			writeJSON(w, stdhttp.StatusOK, map[string]any{"update": status})
 		})
