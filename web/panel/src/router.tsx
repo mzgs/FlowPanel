@@ -231,10 +231,11 @@ function RootLayout() {
     queryFn: fetchSettings,
     enabled: Boolean(authQuery.data?.authenticated),
   });
+  const isOverviewPage = location.pathname === "/";
   const panelUpdateQuery = useQuery({
     queryKey: ["panel", "update"],
     queryFn: fetchPanelUpdate,
-    enabled: Boolean(authQuery.data?.authenticated),
+    enabled: Boolean(authQuery.data?.authenticated) && isOverviewPage,
   });
   const logoutMutation = useMutation({
     mutationFn: logout,
@@ -458,7 +459,7 @@ function RootLayout() {
             </div>
 
             <div className="flex items-center gap-2">
-              {panelUpdateQuery.data ? (
+              {isOverviewPage && panelUpdateQuery.data ? (
                 panelUpdateQuery.data.update_available && panelUpdateQuery.data.latest_version ? (
                   <Button
                     type="button"
