@@ -207,7 +207,12 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 			return
 		}
 
-		createdPaths, err := a.app.Files.Upload(r.FormValue("path"), r.MultipartForm.File["files"])
+		createdPaths, err := a.app.Files.Upload(
+			r.FormValue("path"),
+			r.MultipartForm.File["files"],
+			r.MultipartForm.Value["relative_paths"],
+			r.MultipartForm.Value["directory_paths"],
+		)
 		if err != nil {
 			writeFileError(w, err)
 			return

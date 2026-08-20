@@ -424,7 +424,7 @@ func chmodTree(currentPath string, mode fs.FileMode) error {
 	return os.Chmod(currentPath, mode)
 }
 
-func (s *Service) Upload(relPath string, headers []*multipart.FileHeader) ([]string, error) {
+func (s *Service) Upload(relPath string, headers []*multipart.FileHeader, relativePaths, directories []string) ([]string, error) {
 	parentAbsolutePath, _, entryType, err := s.resolveExisting(relPath)
 	if err != nil {
 		return nil, err
@@ -433,21 +433,47 @@ func (s *Service) Upload(relPath string, headers []*multipart.FileHeader) ([]str
 		return nil, ErrDirectoryExpected
 	}
 
-	createdPaths := make([]string, 0, len(headers))
-	for _, header := range headers {
+	if len(relativePaths) != 0 && len(relativePaths) != len(headers) {
+		return nil, ErrInvalidPath
+	}
+
+	createdPaths := make([]string, 0, len(headers)+len(directories))
+	for _, directory := range directories {
+		directory, err = validateUploadRelativePath(directory)
+		if err != nil {
+			return nil, err
+		}
+		targetPath := filepath.Join(parentAbsolutePath, filepath.FromSlash(directory))
+		createdDirectories, err := ensureUploadDirectories(parentAbsolutePath, targetPath)
+		if err != nil {
+			return nil, err
+		}
+		createdPaths = append(createdPaths, createdDirectories...)
+	}
+
+	for index, header := range headers {
 		if header == nil {
 			continue
 		}
 
-		baseName, err := validateBaseName(header.Filename)
+		relativePath := header.Filename
+		if len(relativePaths) != 0 {
+			relativePath = relativePaths[index]
+		}
+		relativePath, err = validateUploadRelativePath(relativePath)
 		if err != nil {
 			return nil, err
 		}
 
-		targetPath := filepath.Join(parentAbsolutePath, filepath.FromSlash(baseName))
+		targetPath := filepath.Join(parentAbsolutePath, filepath.FromSlash(relativePath))
 		if err := ensureWithinRoot(s.rootPath, targetPath); err != nil {
 			return nil, err
 		}
+		createdDirectories, err := ensureUploadDirectories(parentAbsolutePath, filepath.Dir(targetPath))
+		if err != nil {
+			return nil, err
+		}
+		createdPaths = append(createdPaths, createdDirectories...)
 		if _, err := os.Stat(targetPath); err == nil {
 			return nil, fs.ErrExist
 		} else if !errors.Is(err, fs.ErrNotExist) {
@@ -1056,6 +1082,51 @@ func validateBaseName(value string) (string, error) {
 		return "", ErrInvalidPath
 	}
 	return value, nil
+}
+
+func validateUploadRelativePath(value string) (string, error) {
+	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") || path.Clean(value) != value {
+		return "", ErrInvalidPath
+	}
+
+	parts := strings.Split(value, "/")
+	for index, part := range parts {
+		validated, err := validateBaseName(part)
+		if err != nil || validated != part {
+			return "", ErrInvalidPath
+		}
+		parts[index] = validated
+	}
+	return path.Join(parts...), nil
+}
+
+func ensureUploadDirectories(uploadRoot, targetDirectory string) ([]string, error) {
+	relativePath, err := filepath.Rel(uploadRoot, targetDirectory)
+	if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return nil, ErrInvalidPath
+	}
+	if relativePath == "." {
+		return nil, nil
+	}
+
+	currentPath := uploadRoot
+	createdPaths := make([]string, 0, strings.Count(relativePath, string(filepath.Separator))+1)
+	for _, name := range strings.Split(relativePath, string(filepath.Separator)) {
+		currentPath = filepath.Join(currentPath, name)
+		info, err := os.Lstat(currentPath)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			if err := os.Mkdir(currentPath, 0o755); err != nil {
+				return nil, err
+			}
+			createdPaths = append(createdPaths, currentPath)
+		case err != nil:
+			return nil, err
+		case !info.IsDir() || info.Mode()&os.ModeSymlink != 0:
+			return nil, ErrDirectoryExpected
+		}
+	}
+	return createdPaths, nil
 }
 
 func parentPath(value string) string {

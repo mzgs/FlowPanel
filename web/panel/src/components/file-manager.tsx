@@ -93,6 +93,17 @@ type DialogMode = "folder" | "file" | "rename" | null;
 type ClipboardMode = "copy" | "move" | null;
 type UploadProgressState = FileUploadProgress & { fileCount: number; startedAt: number };
 type MediaType = "image" | "video" | "audio";
+type UploadSelection = { files: File[]; relativePaths: string[]; directories: string[] };
+
+type DroppedEntry = {
+  isFile: boolean;
+  isDirectory: boolean;
+  name: string;
+  file: (success: (file: File) => void, failure?: (error: DOMException) => void) => void;
+  createReader: () => {
+    readEntries: (success: (entries: DroppedEntry[]) => void, failure?: (error: DOMException) => void) => void;
+  };
+};
 
 type MarqueeState = {
   active: boolean;
@@ -113,6 +124,60 @@ type ContextMenuState = {
 
 const VIEW_STORAGE_KEY = "flowpanel.files.view";
 const LAST_PATH_STORAGE_KEY = "flowpanel.files.last-path";
+
+async function collectDroppedUpload(dataTransfer: DataTransfer): Promise<UploadSelection> {
+  const entries = Array.from(dataTransfer.items)
+    .map((item) =>
+      (item as DataTransferItem & { webkitGetAsEntry?: () => DroppedEntry | null }).webkitGetAsEntry?.() as
+        | DroppedEntry
+        | null
+        | undefined,
+    )
+    .filter(Boolean) as DroppedEntry[];
+
+  if (entries.length === 0) {
+    const files = Array.from(dataTransfer.files);
+    return { files, relativePaths: files.map((file) => file.name), directories: [] };
+  }
+
+  const selection: UploadSelection = { files: [], relativePaths: [], directories: [] };
+  const readEntries = (entry: DroppedEntry) =>
+    new Promise<DroppedEntry[]>((resolve, reject) => {
+      const reader = entry.createReader();
+      const results: DroppedEntry[] = [];
+      const readBatch = () =>
+        reader.readEntries((batch) => {
+          if (batch.length === 0) {
+            resolve(results);
+            return;
+          }
+          results.push(...batch);
+          readBatch();
+        }, reject);
+      readBatch();
+    });
+
+  async function visit(entry: DroppedEntry, parentPath = "") {
+    const relativePath = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+    if (entry.isDirectory) {
+      selection.directories.push(relativePath);
+      for (const child of await readEntries(entry)) {
+        await visit(child, relativePath);
+      }
+      return;
+    }
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) => entry.file(resolve, reject));
+      selection.files.push(file);
+      selection.relativePaths.push(relativePath);
+    }
+  }
+
+  for (const entry of entries) {
+    await visit(entry);
+  }
+  return selection;
+}
 
 const editableExtensions = new Set([
   "bash",
@@ -389,6 +454,7 @@ export function FileManager({
   const queryClient = useQueryClient();
   const browserRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const folderUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const [currentPath, setCurrentPath] = useState(() => {
     if (initialPath !== undefined) {
@@ -772,7 +838,7 @@ export function FileManager({
   });
 
   const uploadMutation = useMutation({
-    mutationFn: ({ path, files }: { path: string; files: File[] }) => {
+    mutationFn: ({ path, files, relativePaths, directories }: UploadSelection & { path: string }) => {
       const fileCount = files.length;
       const startedAt = Date.now();
       setUploadProgress({
@@ -781,8 +847,12 @@ export function FileManager({
         fileCount,
         startedAt,
       });
-      return uploadFiles(path, files, (progress) =>
-        setUploadProgress({ ...progress, fileCount, startedAt }),
+      return uploadFiles(
+        path,
+        files,
+        (progress) => setUploadProgress({ ...progress, fileCount, startedAt }),
+        relativePaths,
+        directories,
       );
     },
     onSuccess: async () => {
@@ -1217,13 +1287,33 @@ export function FileManager({
     });
   }
 
-  function handleUploadSelection(files: FileList | null, targetPath = currentPath) {
+  function handleUploadSelection(
+    files: FileList | File[] | null,
+    targetPath = currentPath,
+    relativePaths?: string[],
+    directories: string[] = [],
+  ) {
     closeContextMenu();
-    if (!files || files.length === 0 || uploadMutation.isPending) {
+    if (!files || (files.length === 0 && directories.length === 0) || uploadMutation.isPending) {
       return;
     }
 
-    uploadMutation.mutate({ path: targetPath, files: Array.from(files) });
+    const selectedFiles = Array.from(files);
+    uploadMutation.mutate({
+      path: targetPath,
+      files: selectedFiles,
+      relativePaths: relativePaths ?? selectedFiles.map((file) => file.webkitRelativePath || file.name),
+      directories,
+    });
+  }
+
+  async function handleDroppedUpload(dataTransfer: DataTransfer, targetPath: string) {
+    try {
+      const selection = await collectDroppedUpload(dataTransfer);
+      handleUploadSelection(selection.files, targetPath, selection.relativePaths, selection.directories);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Failed to read the dropped folder."));
+    }
   }
 
   function beginMarquee(event: ReactMouseEvent<HTMLDivElement>) {
@@ -1314,9 +1404,9 @@ export function FileManager({
     event.preventDefault();
     setDropTargetPath(null);
 
-    if (event.dataTransfer.files.length > 0) {
+    if (event.dataTransfer.types.includes("Files")) {
       setRootDropActive(false);
-      handleUploadSelection(event.dataTransfer.files);
+      void handleDroppedUpload(event.dataTransfer, path);
       return;
     }
 
@@ -1355,10 +1445,10 @@ export function FileManager({
       return;
     }
 
-    if (event.dataTransfer.files.length > 0) {
+    if (event.dataTransfer.types.includes("Files")) {
       event.preventDefault();
       setRootDropActive(false);
-      handleUploadSelection(event.dataTransfer.files, currentPath);
+      void handleDroppedUpload(event.dataTransfer, currentPath);
     }
   }
 
@@ -1527,7 +1617,14 @@ export function FileManager({
                 onSelect={() => uploadInputRef.current?.click()}
               >
                 <Upload className="h-4 w-4" />
-                Upload
+                Upload files
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={uploadMutation.isPending}
+                onSelect={() => folderUploadInputRef.current?.click()}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Upload folder
               </DropdownMenuItem>
               {clipboardReady ? (
                 <DropdownMenuItem onSelect={() => void pasteInto(contextPasteTarget)}>
@@ -1639,17 +1736,30 @@ export function FileManager({
                       <FilePlus2 className="h-4 w-4" />
                       <span className="sr-only">New file</span>
                     </Button>
-                    <Button
-                      size="icon"
-                      className="size-8"
-                      aria-label="Upload"
-                      title="Upload"
-                      onClick={() => uploadInputRef.current?.click()}
-                      disabled={uploadMutation.isPending}
-                    >
-                      <Upload className="h-4 w-4" />
-                      <span className="sr-only">Upload</span>
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          size="icon"
+                          className="size-8"
+                          aria-label="Upload"
+                          title="Upload"
+                          disabled={uploadMutation.isPending}
+                        >
+                          <Upload className="h-4 w-4" />
+                          <span className="sr-only">Upload</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => uploadInputRef.current?.click()}>
+                          <Upload className="h-4 w-4" />
+                          Upload files
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => folderUploadInputRef.current?.click()}>
+                          <FolderOpen className="h-4 w-4" />
+                          Upload folder
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     {clipboardReady ? (
                       <Button
                         variant="secondary"
@@ -1957,6 +2067,19 @@ export function FileManager({
 
       <input
         ref={uploadInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          handleUploadSelection(event.target.files);
+          event.target.value = "";
+        }}
+      />
+      <input
+        ref={(input) => {
+          folderUploadInputRef.current = input;
+          input?.setAttribute("webkitdirectory", "");
+        }}
         type="file"
         multiple
         className="hidden"

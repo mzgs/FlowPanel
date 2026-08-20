@@ -129,11 +129,17 @@ export function uploadFiles(
   path: string,
   files: File[],
   onProgress?: (progress: FileUploadProgress) => void,
+  relativePaths: string[] = files.map((file) => file.webkitRelativePath || file.name),
+  directories: string[] = [],
 ): Promise<void> {
   const formData = new FormData();
   formData.set("path", path);
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
     formData.append("files", file);
+    formData.append("relative_paths", relativePaths[index]);
+  }
+  for (const directory of directories) {
+    formData.append("directory_paths", directory);
   }
 
   return new Promise((resolve, reject) => {
