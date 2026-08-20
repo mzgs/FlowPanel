@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -57,6 +58,10 @@ func (s *Service) checkDomainCertificate(ctx context.Context, hostname string, w
 	dialer := &net.Dialer{Timeout: 8 * time.Second}
 	rawConnection, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(hostname, "443"))
 	if err != nil {
+		var dnsError *net.DNSError
+		if errors.As(err, &dnsError) && dnsError.IsNotFound {
+			return
+		}
 		_ = s.Trigger(ctx, TriggerInput{Key: "certificate:domain:" + hostname, Severity: "critical", Title: hostname + " TLS unavailable", Message: err.Error()})
 		return
 	}
