@@ -254,46 +254,6 @@ func (s *Service) List(ctx context.Context) ([]Process, error) {
 	return s.refresh(ctx, pm2Path, nil)
 }
 
-func (s *Service) PauseForBackup(ctx context.Context) ([]int, error) {
-	pm2Path, installed := detectPM2Binary()
-	if !installed {
-		return nil, nil
-	}
-	processes, err := s.refresh(ctx, pm2Path, nil)
-	if err != nil {
-		return nil, err
-	}
-	paused := make([]int, 0, len(processes))
-	for _, process := range processes {
-		if process.ID < 0 || process.Status != "online" {
-			continue
-		}
-		if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, "stop", strconv.Itoa(process.ID)); err != nil {
-			resumeErr := s.ResumeAfterBackup(context.Background(), paused)
-			return nil, errors.Join(fmt.Errorf("stop PM2 process %q: %w", process.Name, err), resumeErr)
-		}
-		paused = append(paused, process.ID)
-	}
-	return paused, nil
-}
-
-func (s *Service) ResumeAfterBackup(ctx context.Context, processIDs []int) error {
-	if len(processIDs) == 0 {
-		return nil
-	}
-	pm2Path, installed := detectPM2Binary()
-	if !installed {
-		return errors.New("PM2 is not installed")
-	}
-	var resumeErrors []error
-	for _, processID := range processIDs {
-		if _, err := runInspectCommandWithTimeout(ctx, actionCommandTimeout, pm2Path, "start", strconv.Itoa(processID)); err != nil {
-			resumeErrors = append(resumeErrors, fmt.Errorf("restart PM2 process %d after backup: %w", processID, err))
-		}
-	}
-	return errors.Join(resumeErrors...)
-}
-
 func (s *Service) Logs(ctx context.Context, processID int) (string, error) {
 	pm2Path, installed := detectPM2Binary()
 	if !installed {

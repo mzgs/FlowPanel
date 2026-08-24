@@ -181,11 +181,6 @@ type PM2Syncer interface {
 	Sync(context.Context) ([]pm2.Process, error)
 }
 
-type siteBackupQuiescer interface {
-	PauseForBackup(context.Context) ([]int, error)
-	ResumeAfterBackup(context.Context, []int) error
-}
-
 type siteArchive struct {
 	Hostname string
 	RootPath string
@@ -1492,27 +1487,10 @@ func (s *Service) writeDockerArchive(ctx context.Context, tarWriter *tar.Writer,
 }
 
 func (s *Service) writeSiteArchives(ctx context.Context, tarWriter *tar.Writer, sites []siteArchive) error {
-	quiescer, canQuiesce := s.pm2.(siteBackupQuiescer)
-	var paused []int
-	if canQuiesce && len(sites) > 0 {
-		var err error
-		paused, err = quiescer.PauseForBackup(ctx)
-		if err != nil {
-			return fmt.Errorf("pause site processes for backup: %w", err)
-		}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	writeErr := writeSiteArchiveEntries(tarWriter, sites)
-	if len(paused) == 0 {
-		return writeErr
-	}
-	resumeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	resumeErr := quiescer.ResumeAfterBackup(resumeCtx, paused)
-	if resumeErr != nil {
-		resumeErr = fmt.Errorf("resume site processes after backup: %w", resumeErr)
-	}
-	return errors.Join(writeErr, resumeErr)
+	return writeSiteArchiveEntries(tarWriter, sites)
 }
 
 func writeSiteArchiveEntries(tarWriter *tar.Writer, sites []siteArchive) error {
