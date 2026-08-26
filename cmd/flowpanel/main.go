@@ -147,9 +147,30 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newServeCommand(), newStopCommand(), newRestartCommand(), newRepairCommand(), newUpdateCommand(), newStatusCommand(), newVersionCommand(), newCredentialsCommand(), newBackupCommand())
+	cmd.AddCommand(newServeCommand(), newProxyCommand(), newStopCommand(), newRestartCommand(), newRepairCommand(), newUpdateCommand(), newStatusCommand(), newVersionCommand(), newCredentialsCommand(), newBackupCommand())
 
 	return cmd
+}
+
+func newProxyCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    "proxy",
+		Short:  "Run the persistent FlowPanel traffic proxy",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := config.EnsureFlowPanelDataPath(); err != nil {
+				return err
+			}
+			_, writer, err := logging.NewRotating(os.Getenv("FLOWPANEL_ENV"), filepath.Join(config.FlowPanelDataPath(), "flowpanel-caddy.log"))
+			if err != nil {
+				return fmt.Errorf("build caddy logger: %w", err)
+			}
+			defer writer.Close()
+			logging.SetSecurityEventHandler(logging.ForwardSecurityEvents(os.Getenv("FLOWPANEL_SECURITY_EVENT_SOCKET")))
+			return caddy.RunProxy(cmd.Context(), os.Getenv("FLOWPANEL_CADDY_ADMIN_ADDR"))
+		},
+	}
 }
 
 func newServeCommand() *cobra.Command {
@@ -655,10 +676,10 @@ func stopInstalledService(ctx context.Context, w io.Writer) error {
 		if !pathExists("/etc/systemd/system/flowpanel.service") {
 			return nil
 		}
-		if err := runRootCommand(ctx, w, true, "systemctl", "stop", "flowpanel"); err != nil {
+		if err := runRootCommand(ctx, w, true, "systemctl", "stop", "flowpanel", "flowpanel.socket", "flowpanel-caddy"); err != nil {
 			return err
 		}
-		return runRootCommand(ctx, w, true, "systemctl", "disable", "flowpanel")
+		return runRootCommand(ctx, w, true, "systemctl", "disable", "flowpanel", "flowpanel.socket", "flowpanel-caddy")
 	case "darwin":
 		plist := "/Library/LaunchDaemons/" + macosLaunchdLabel + ".plist"
 		if !pathExists(plist) {
@@ -667,6 +688,9 @@ func stopInstalledService(ctx context.Context, w io.Writer) error {
 		if err := runRootCommand(ctx, w, true, "launchctl", "bootout", "system", plist); err != nil {
 			return err
 		}
+		proxyPlist := "/Library/LaunchDaemons/" + macosLaunchdLabel + ".caddy.plist"
+		_ = runRootCommand(ctx, w, true, "launchctl", "bootout", "system", proxyPlist)
+		_ = runRootCommand(ctx, w, true, "launchctl", "disable", "system/"+macosLaunchdLabel+".caddy")
 		return runRootCommand(ctx, w, true, "launchctl", "disable", "system/"+macosLaunchdLabel)
 	default:
 		return fmt.Errorf("uninstall is not supported on %s", runtime.GOOS)
@@ -700,9 +724,9 @@ func uninstallFilePaths() []string {
 	paths := []string{installedBinaryPath}
 	switch runtime.GOOS {
 	case "linux":
-		paths = append(paths, "/etc/systemd/system/flowpanel.service")
+		paths = append(paths, "/etc/systemd/system/flowpanel.service", "/etc/systemd/system/flowpanel.socket", "/etc/systemd/system/flowpanel-caddy.service")
 	case "darwin":
-		paths = append(paths, "/Library/LaunchDaemons/"+macosLaunchdLabel+".plist")
+		paths = append(paths, "/Library/LaunchDaemons/"+macosLaunchdLabel+".plist", "/Library/LaunchDaemons/"+macosLaunchdLabel+".caddy.plist")
 	}
 	return paths
 }
@@ -1771,6 +1795,18 @@ func runServer() error {
 			logger.Error("record WAF security event failed", zap.String("hostname", event.Hostname), zap.Error(err))
 		}
 	})
+	stopSecurityEvents, err := logging.ReceiveSecurityEvents(cfg.SecurityEventSocket, func(event logging.SecurityEvent) {
+		if _, err := eventService.RecordSecurity(context.Background(), events.SecurityInput{
+			Action: event.Action, Hostname: event.Hostname, URI: event.URI, ClientIP: event.ClientIP,
+			TransactionID: event.TransactionID, ExpiresAt: event.ExpiresAt,
+		}); err != nil {
+			logger.Error("record proxy security event failed", zap.String("hostname", event.Hostname), zap.Error(err))
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("listen for proxy security events: %w", err)
+	}
+	defer stopSecurityEvents()
 	settingsService := settings.NewService(stores.Settings)
 	phpManager.SetDefaultVersionResolver(func(ctx context.Context, status phpenv.Status) string {
 		record, err := settingsService.Get(ctx)
@@ -1811,6 +1847,7 @@ func runServer() error {
 		cfg.AdminTLSCertFile,
 		cfg.PublicHTTPAddr,
 		cfg.PublicHTTPSAddr,
+		cfg.CaddyAdminAddr,
 		phpManager,
 		phpMyAdminManager,
 		cfg.PHPMyAdminAddr,
@@ -1938,13 +1975,17 @@ func runServer() error {
 		server.TLSConfig = adminTLSConfig(cfg)
 	}
 
+	listener, err := adminListener(cfg.AdminListenAddr)
+	if err != nil {
+		return fmt.Errorf("open admin listener: %w", err)
+	}
 	serverErrCh := make(chan error, 1)
 	go func() {
 		logger.Info("admin server listening", zap.String("addr", cfg.AdminListenAddr), zap.Bool("tls", adminTLSEnabled(cfg)))
-		serve := server.ListenAndServe
+		serve := func() error { return server.Serve(listener) }
 		if adminTLSEnabled(cfg) {
 			serve = func() error {
-				return server.ListenAndServeTLS("", "")
+				return server.ServeTLS(listener, "", "")
 			}
 		}
 		if err := serve(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
@@ -1992,6 +2033,18 @@ func runServer() error {
 	logger.Info("flowpanel stopped")
 
 	return nil
+}
+
+func adminListener(address string) (net.Listener, error) {
+	pid, pidErr := strconv.Atoi(os.Getenv("LISTEN_PID"))
+	count, countErr := strconv.Atoi(os.Getenv("LISTEN_FDS"))
+	if pidErr == nil && countErr == nil && pid == os.Getpid() && count > 0 {
+		file := os.NewFile(3, "flowpanel-admin-listener")
+		listener, err := net.FileListener(file)
+		_ = file.Close()
+		return listener, err
+	}
+	return net.Listen("tcp", address)
 }
 
 func syncPM2AtStartup(manager pm2.Manager, logger *zap.Logger) {

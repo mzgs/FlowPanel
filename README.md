@@ -2,7 +2,7 @@
 
 FlowPanel is a self-hosted server control panel for managing websites, runtimes, databases, files, backups, scheduled jobs, and common server services from one web UI.
 
-The project is a Go service with an embedded React/Vite panel. The Go process serves the admin panel, stores state in SQLite, runs an embedded Caddy runtime for managed domains, and exposes APIs for operational tasks.
+The project is a Go service with an embedded React/Vite panel. The Go process serves the admin panel, stores state in SQLite, manages a persistent Caddy runtime for domains, and exposes APIs for operational tasks.
 
 ![FlowPanel dashboard featured image](docs/images/flowpanel-featured.png)
 
@@ -13,7 +13,7 @@ FlowPanel currently includes:
 - Admin authentication with installer-provisioned credentials
 - Dashboard with server details, resource charts, disk usage, site/database counts, and PM2 process status
 - Domain management for static, PHP, Node.js, Python, and reverse-proxy sites
-- Embedded Caddy routing for public HTTP/HTTPS traffic, panel proxying, caching, WAF, rate limits, IP rules, and auto-ban controls
+- Persistent Caddy routing for public HTTP/HTTPS traffic, panel proxying, caching, WAF, rate limits, IP rules, and auto-ban controls
 - PHP/PHP-FPM management, per-domain PHP settings, Composer access, and PHP app templates for WordPress, Symfony, Laravel, October CMS, CakePHP, CodeIgniter, and Slim
 - WordPress toolkit for status, core updates, plugins, themes, database details, and extension search/install actions
 - GitHub deployment settings with optional push webhooks and post-fetch scripts
@@ -101,8 +101,10 @@ FlowPanel is configured with environment variables.
 | `FLOWPANEL_ADMIN_LISTEN_ADDR` | `:8080` | Admin panel/API listen address. |
 | `FLOWPANEL_ADMIN_TLS_CERT_FILE` | empty | Admin TLS certificate path. When both TLS paths are configured but absent, FlowPanel generates an IP-aware self-signed certificate. |
 | `FLOWPANEL_ADMIN_TLS_KEY_FILE` | empty | Admin TLS private-key path. Must be configured with the certificate path. |
-| `FLOWPANEL_PUBLIC_HTTP_ADDR` | `:80` | Embedded Caddy HTTP listen address. |
-| `FLOWPANEL_PUBLIC_HTTPS_ADDR` | `:443` | Embedded Caddy HTTPS listen address. |
+| `FLOWPANEL_PUBLIC_HTTP_ADDR` | `:80` | Caddy HTTP listen address. |
+| `FLOWPANEL_PUBLIC_HTTPS_ADDR` | `:443` | Caddy HTTPS listen address. |
+| `FLOWPANEL_CADDY_ADMIN_ADDR` | empty | Local Caddy administration address. Installations use a permissioned Unix socket so Caddy can remain online across panel updates. |
+| `FLOWPANEL_SECURITY_EVENT_SOCKET` | empty | Unix datagram socket used by the persistent Caddy process to deliver security events to FlowPanel. |
 | `FLOWPANEL_PHPMYADMIN_ADDR` | `:32109` | Internal phpMyAdmin listen address. |
 | `FLOWPANEL_DB_PATH` | platform default | SQLite database path. |
 | `FLOWPANEL_SESSION_SECRET` | development secret | Must be explicitly set in production and at least 32 characters. |

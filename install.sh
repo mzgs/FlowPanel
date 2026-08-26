@@ -228,6 +228,36 @@ admin_panel_url() {
   esac
 }
 
+admin_health_url() {
+  env_file="$1"
+  addr="$(read_env_key "$env_file" FLOWPANEL_ADMIN_LISTEN_ADDR | sed "s/^['\"]//;s/['\"]$//")"
+  cert_file="$(read_env_key "$env_file" FLOWPANEL_ADMIN_TLS_CERT_FILE | sed "s/^['\"]//;s/['\"]$//")"
+  scheme="http"
+  [ -z "$cert_file" ] || scheme="https"
+  [ -n "$addr" ] || addr="0.0.0.0:8443"
+  case "$addr" in
+    :*) addr="127.0.0.1$addr" ;;
+    0.0.0.0:*) addr="127.0.0.1:${addr#0.0.0.0:}" ;;
+    "[::]:"*) addr="127.0.0.1:${addr##*:}" ;;
+  esac
+  printf '%s://%s/healthz\n' "$scheme" "$addr"
+}
+
+wait_for_panel() {
+  url="$(admin_health_url "$1")"
+  attempts="${2:-30}"
+  while [ "$attempts" -gt 0 ]; do
+    if command -v curl >/dev/null 2>&1; then
+      curl -kfsS --max-time 2 "$url" >/dev/null 2>&1 && return 0
+    else
+      wget -q --no-check-certificate -T 2 -O /dev/null "$url" >/dev/null 2>&1 && return 0
+    fi
+    attempts=$((attempts - 1))
+    sleep 1
+  done
+  return 1
+}
+
 print_success() {
   action="$1"
   service_command="$2"
@@ -296,7 +326,11 @@ install_binary() {
   download "$url" "$tmp_file"
 
   as_root mkdir -p "$BIN_DIR"
-  as_root install -m 0755 "$tmp_file" "$BIN_DIR/$APP"
+  if [ "$action" = "update" ] && [ -x "$BIN_DIR/$APP" ]; then
+    as_root cp -p "$BIN_DIR/$APP" "$BIN_DIR/$APP.previous"
+  fi
+  as_root install -m 0755 "$tmp_file" "$BIN_DIR/$APP.new"
+  as_root mv -f "$BIN_DIR/$APP.new" "$BIN_DIR/$APP"
   rm -f "$tmp_file"
   trap - EXIT INT TERM
 }
@@ -304,21 +338,6 @@ install_binary() {
 installed_version() {
   if [ -x "$BIN_DIR/$APP" ]; then
     "$BIN_DIR/$APP" version 2>/dev/null || true
-  fi
-}
-
-stop_linux_service() {
-  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$APP"; then
-    echo "Stopping running FlowPanel service..."
-    as_root systemctl stop "$APP"
-  fi
-}
-
-stop_macos_service() {
-  plist_file="/Library/LaunchDaemons/com.mzgs.flowpanel.plist"
-  if [ -f "$plist_file" ] && as_root launchctl print system/com.mzgs.flowpanel >/dev/null 2>&1; then
-    echo "Stopping running FlowPanel service..."
-    as_root launchctl bootout system "$plist_file" >/dev/null 2>&1 || true
   fi
 }
 
@@ -343,6 +362,8 @@ install_linux_service() {
   state_dir="/var/flowpanel"
   data_dir="$state_dir/data"
   service_file="/etc/systemd/system/$APP.service"
+  socket_file="/etc/systemd/system/$APP.socket"
+  proxy_service_file="/etc/systemd/system/$APP-caddy.service"
 
   as_root mkdir -p "$env_dir" "$data_dir"
 
@@ -377,6 +398,8 @@ EOF
       admin_password="$(read_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD)"
     fi
   fi
+  ensure_env_key "$env_file" FLOWPANEL_CADDY_ADMIN_ADDR "unix//run/flowpanel/caddy-admin.sock|0600" ""
+  ensure_env_key "$env_file" FLOWPANEL_SECURITY_EVENT_SOCKET "/run/flowpanel/security-events.sock" ""
   configure_admin_https "$env_file" "" "$env_dir/admin.crt" "$env_dir/admin.key"
   secure_install_permissions "$env_dir" "$env_file" "$data_dir" "$state_dir" "root:root"
 
@@ -384,7 +407,8 @@ EOF
 [Unit]
 Description=FlowPanel
 Wants=network-online.target
-After=network-online.target docker.service
+Requires=$APP.socket $APP-caddy.service
+After=network-online.target docker.service $APP.socket $APP-caddy.service
 
 [Service]
 Type=simple
@@ -399,9 +423,64 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
+  admin_addr="$(read_env_key "$env_file" FLOWPANEL_ADMIN_LISTEN_ADDR | sed "s/^['\"]//;s/['\"]$//")"
+  [ -n "$admin_addr" ] || admin_addr="0.0.0.0:8443"
+  as_root sh -c "cat > '$socket_file'" <<EOF
+[Unit]
+Description=FlowPanel admin listener
+
+[Socket]
+ListenStream=$admin_addr
+NoDelay=true
+Service=$APP.service
+
+[Install]
+WantedBy=sockets.target
+EOF
+
+  as_root sh -c "cat > '$proxy_service_file'" <<EOF
+[Unit]
+Description=FlowPanel persistent Caddy proxy
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=$env_file
+WorkingDirectory=$data_dir
+RuntimeDirectory=flowpanel
+ExecStart=$BIN_DIR/$APP proxy
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  proxy_was_active=false
+  systemctl is-active --quiet "$APP-caddy" && proxy_was_active=true
+
   as_root systemctl daemon-reload
-  as_root systemctl enable "$APP"
+  as_root systemctl enable "$APP" "$APP.socket" "$APP-caddy"
+  if ! systemctl is-active --quiet "$APP-caddy"; then
+    as_root systemctl stop "$APP" >/dev/null 2>&1 || true
+    as_root systemctl start "$APP-caddy"
+  fi
+  as_root systemctl start "$APP.socket"
   as_root systemctl restart "$APP"
+
+  if ! wait_for_panel "$env_file" 30; then
+    if [ "$action" = "update" ] && [ "$proxy_was_active" = true ] && [ -x "$BIN_DIR/$APP.previous" ]; then
+      echo "New FlowPanel release did not become healthy; restoring the previous binary..." >&2
+      as_root mv -f "$BIN_DIR/$APP.previous" "$BIN_DIR/$APP"
+      as_root systemctl restart "$APP"
+      wait_for_panel "$env_file" 15 || true
+    fi
+    echo "FlowPanel failed its post-update health check." >&2
+    exit 1
+  fi
+  as_root rm -f "$BIN_DIR/$APP.previous"
 
   print_success "$action" "systemctl status $APP" "$env_file" "$admin_username" "$admin_password" "$(installed_version)"
 }
@@ -415,6 +494,7 @@ install_macos_service() {
   data_dir="$state_dir/data"
   log_dir="/Library/Logs/FlowPanel"
   plist_file="/Library/LaunchDaemons/com.mzgs.flowpanel.plist"
+  proxy_plist_file="/Library/LaunchDaemons/com.mzgs.flowpanel.caddy.plist"
 
   as_root mkdir -p "$env_dir" "$data_dir" "$log_dir"
 
@@ -448,6 +528,8 @@ EOF
       admin_password="$(read_env_key "$env_file" FLOWPANEL_ADMIN_PASSWORD)"
     fi
   fi
+  ensure_env_key "$env_file" FLOWPANEL_CADDY_ADMIN_ADDR "'unix//var/run/flowpanel-caddy-admin.sock|0600'" "export "
+  ensure_env_key "$env_file" FLOWPANEL_SECURITY_EVENT_SOCKET "'/var/run/flowpanel-security-events.sock'" "export "
   configure_admin_https "$env_file" "export " "$env_dir/admin.crt" "$env_dir/admin.key"
   secure_install_permissions "$env_dir" "$env_file" "$data_dir" "$state_dir" "root:wheel"
 
@@ -478,13 +560,59 @@ EOF
 </plist>
 EOF
 
-  as_root chown root:wheel "$plist_file"
-  as_root chmod 644 "$plist_file"
+  as_root sh -c "cat > '$proxy_plist_file'" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mzgs.flowpanel.caddy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>. "$env_file"; exec "$BIN_DIR/$APP" proxy</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$data_dir</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$log_dir/caddy.log</string>
+  <key>StandardErrorPath</key>
+  <string>$log_dir/caddy.err.log</string>
+</dict>
+</plist>
+EOF
 
+  as_root chown root:wheel "$plist_file" "$proxy_plist_file"
+  as_root chmod 644 "$plist_file" "$proxy_plist_file"
+
+  proxy_was_active=false
+  as_root launchctl print system/com.mzgs.flowpanel.caddy >/dev/null 2>&1 && proxy_was_active=true
+  if [ "$proxy_was_active" = false ]; then
+    as_root launchctl bootout system "$plist_file" >/dev/null 2>&1 || true
+    as_root launchctl bootstrap system "$proxy_plist_file"
+    as_root launchctl enable system/com.mzgs.flowpanel.caddy
+  fi
   as_root launchctl bootout system "$plist_file" >/dev/null 2>&1 || true
   as_root launchctl bootstrap system "$plist_file"
   as_root launchctl enable system/com.mzgs.flowpanel
   as_root launchctl kickstart -k system/com.mzgs.flowpanel
+
+  if ! wait_for_panel "$env_file" 30; then
+    if [ "$action" = "update" ] && [ "$proxy_was_active" = true ] && [ -x "$BIN_DIR/$APP.previous" ]; then
+      echo "New FlowPanel release did not become healthy; restoring the previous binary..." >&2
+      as_root mv -f "$BIN_DIR/$APP.previous" "$BIN_DIR/$APP"
+      as_root launchctl kickstart -k system/com.mzgs.flowpanel
+      wait_for_panel "$env_file" 15 || true
+    fi
+    echo "FlowPanel failed its post-update health check." >&2
+    exit 1
+  fi
+  as_root rm -f "$BIN_DIR/$APP.previous"
 
   print_success "$action" "launchctl print system/com.mzgs.flowpanel" "$env_file" "$admin_username" "$admin_password" "$(installed_version)"
 }
@@ -494,14 +622,12 @@ arch="$(detect_arch)"
 case "$(uname -s)" in
   Linux)
     action="$(installed_action linux_installed)"
-    stop_linux_service
     install_binary linux "$arch" "$action"
     install_latest_composer || echo "Warning: Composer could not be upgraded; FlowPanel will continue with the installed version." >&2
     install_linux_service "$action"
     ;;
   Darwin)
     action="$(installed_action macos_installed)"
-    stop_macos_service
     install_binary darwin "$arch" "$action"
     install_latest_composer || echo "Warning: Composer could not be upgraded; FlowPanel will continue with the installed version." >&2
     install_macos_service "$action"

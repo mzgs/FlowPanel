@@ -49,6 +49,7 @@ type Runtime struct {
 	adminTLSCertFile string
 	publicHTTPAddr   string
 	publicHTTPSAddr  string
+	caddyAdminAddr   string
 	previewAddr      string
 	php              phpenv.Manager
 	phpMyAdmin       phpmyadmin.Manager
@@ -124,7 +125,8 @@ func NewRuntime(
 	adminListenAddr,
 	adminTLSCertFile,
 	publicHTTPAddr,
-	publicHTTPSAddr string,
+	publicHTTPSAddr,
+	caddyAdminAddr string,
 	phpManager phpenv.Manager,
 	phpMyAdminManager phpmyadmin.Manager,
 	phpMyAdminAddr string,
@@ -135,6 +137,7 @@ func NewRuntime(
 		adminTLSCertFile: strings.TrimSpace(adminTLSCertFile),
 		publicHTTPAddr:   strings.TrimSpace(publicHTTPAddr),
 		publicHTTPSAddr:  strings.TrimSpace(publicHTTPSAddr),
+		caddyAdminAddr:   strings.TrimSpace(caddyAdminAddr),
 		php:              phpManager,
 		phpMyAdmin:       phpMyAdminManager,
 		phpMyAdminAddr:   strings.TrimSpace(phpMyAdminAddr),
@@ -195,6 +198,14 @@ func (r *Runtime) Start(ctx context.Context) error {
 		}
 		r.previewAddr = previewAddr
 	}
+	if r.caddyAdminAddr != "" {
+		if err := inspectRemoteCaddy(ctx, r.caddyAdminAddr); err != nil {
+			return err
+		}
+		r.started = true
+		r.logger.Info("external caddy runtime connected", zap.String("admin_addr", r.caddyAdminAddr))
+		return nil
+	}
 
 	cfg, summary, err := buildConfig(
 		r.adminListenAddr,
@@ -211,11 +222,12 @@ func (r *Runtime) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build caddy config: %w", err)
 	}
+	r.prepareConfig(cfg)
 	rawConfig, err := encodeAndValidateConfig(cfg)
 	if err != nil {
 		return err
 	}
-	if err := loadRawConfig(rawConfig, true); err != nil {
+	if err := r.loadRawConfig(ctx, rawConfig, true); err != nil {
 		return err
 	}
 	r.rawJSON = append(r.rawJSON[:0], rawConfig...)
@@ -288,6 +300,7 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL st
 		if err != nil {
 			return fmt.Errorf("build caddy config: %w", err)
 		}
+		r.prepareConfig(cfg)
 		rawConfig, err := encodeAndValidateConfig(cfg)
 		if err != nil {
 			return err
@@ -328,6 +341,12 @@ func (r *Runtime) Sync(ctx context.Context, records []domain.Record, panelURL st
 	}
 }
 
+func (r *Runtime) prepareConfig(cfg *caddyv2.Config) {
+	if r.caddyAdminAddr != "" {
+		cfg.Admin = &caddyv2.AdminConfig{Listen: r.caddyAdminAddr}
+	}
+}
+
 func (r *Runtime) Stop(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -340,8 +359,10 @@ func (r *Runtime) Stop(ctx context.Context) error {
 		return nil
 	}
 
-	if err := caddyv2.Stop(); err != nil {
-		return fmt.Errorf("stop embedded caddy runtime: %w", err)
+	if r.caddyAdminAddr == "" {
+		if err := caddyv2.Stop(); err != nil {
+			return fmt.Errorf("stop embedded caddy runtime: %w", err)
+		}
 	}
 
 	r.started = false
@@ -685,6 +706,11 @@ func buildConfig(
 	if hasRateLimitEnabledRecords(records) {
 		cfg.AppsRaw["events"] = caddyconfig.JSON(caddyevents.App{}, nil)
 	}
+	rateLimitDomains, autoBanPolicies := securityPolicies(records)
+	cfg.AppsRaw["flowpanel_security"] = caddyconfig.JSON(flowlogging.SecurityPolicyApp{
+		RateLimitDomains: rateLimitDomains,
+		AutoBanPolicies:  autoBanPolicies,
+	}, nil)
 	if _, ok := httpApp.Servers["public"]; ok && mode == runtimeSyncModeHTTPSOnly {
 		cfg.AppsRaw["tls"] = caddyconfig.JSON(httpsOnlyTLSApp(httpApp.HTTPSPort), nil)
 	}
@@ -1328,10 +1354,13 @@ func parseTCPPort(address string) (int, error) {
 }
 
 func (r *Runtime) applyConfigWithFallback(rawConfig []byte) error {
-	if err := loadRawConfig(rawConfig, false); err == nil {
+	if err := r.loadRawConfig(context.Background(), rawConfig, false); err == nil {
 		return nil
 	} else if !isAddressInUseError(err) {
 		return err
+	}
+	if r.caddyAdminAddr != "" {
+		return errors.New("external caddy could not bind a configured listener")
 	}
 
 	r.logger.Warn("embedded caddy reload hit listener conflict, retrying with full restart")
@@ -1341,12 +1370,12 @@ func (r *Runtime) applyConfigWithFallback(rawConfig []byte) error {
 		return fmt.Errorf("stop embedded caddy runtime before retry: %w", err)
 	}
 
-	if err := loadRawConfig(rawConfig, true); err == nil {
+	if err := r.loadRawConfig(context.Background(), rawConfig, true); err == nil {
 		return nil
 	} else if len(previousConfig) == 0 {
 		return err
 	} else {
-		restoreErr := loadRawConfig(previousConfig, true)
+		restoreErr := r.loadRawConfig(context.Background(), previousConfig, true)
 		if restoreErr != nil {
 			return fmt.Errorf("load caddy config after restart: %v; restore previous config: %w", err, restoreErr)
 		}
@@ -1372,12 +1401,67 @@ func encodeAndValidateConfig(cfg *caddyv2.Config) ([]byte, error) {
 	return rawConfig, nil
 }
 
-func loadRawConfig(rawConfig []byte, forceReload bool) error {
+func (r *Runtime) loadRawConfig(ctx context.Context, rawConfig []byte, forceReload bool) error {
+	if r.caddyAdminAddr != "" {
+		return loadRemoteConfig(ctx, r.caddyAdminAddr, rawConfig, forceReload)
+	}
 	if err := caddyv2.Load(rawConfig, forceReload); err != nil {
 		return fmt.Errorf("load caddy config: %w", err)
 	}
 
 	return nil
+}
+
+func loadRemoteConfig(ctx context.Context, address string, rawConfig []byte, forceReload bool) error {
+	transport, targetHost := caddyAdminTransport(address)
+	target := targetHost + "/load"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(rawConfig))
+	if err != nil {
+		return fmt.Errorf("create caddy config request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if forceReload {
+		req.Header.Set("Cache-Control", "must-revalidate")
+	}
+	response, err := (&http.Client{Transport: transport, Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("load external caddy config: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+	return fmt.Errorf("load external caddy config: status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+}
+
+func inspectRemoteCaddy(ctx context.Context, address string) error {
+	transport, targetHost := caddyAdminTransport(address)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetHost+"/config/", nil)
+	if err != nil {
+		return fmt.Errorf("create caddy status request: %w", err)
+	}
+	response, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("connect to external caddy: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("connect to external caddy: status %d", response.StatusCode)
+}
+
+func caddyAdminTransport(address string) (*http.Transport, string) {
+	transport := &http.Transport{}
+	if strings.HasPrefix(address, "unix/") {
+		socketPath := strings.TrimPrefix(strings.SplitN(address, "|", 2)[0], "unix/")
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		}
+		return transport, "http://localhost"
+	}
+	return transport, "http://" + address
 }
 
 func isAddressInUseError(err error) bool {
@@ -1522,6 +1606,11 @@ func domainLoggingConfig(records []domain.Record) *caddyv2.Logging {
 }
 
 func configureSecurityPolicies(records []domain.Record) {
+	rateLimitDomains, autoBanPolicies := securityPolicies(records)
+	flowlogging.ConfigureSecurityPolicies(rateLimitDomains, autoBanPolicies)
+}
+
+func securityPolicies(records []domain.Record) (map[string]string, map[string]flowlogging.AutoBanPolicy) {
 	rateLimitDomains := make(map[string]string)
 	autoBanPolicies := make(map[string]flowlogging.AutoBanPolicy)
 	for _, record := range records {
@@ -1538,7 +1627,7 @@ func configureSecurityPolicies(records []domain.Record) {
 			}
 		}
 	}
-	flowlogging.ConfigureSecurityPolicies(rateLimitDomains, autoBanPolicies)
+	return rateLimitDomains, autoBanPolicies
 }
 
 func domainServerLogConfig(records []domain.Record) *caddyhttp.ServerLogConfig {

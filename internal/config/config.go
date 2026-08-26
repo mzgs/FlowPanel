@@ -12,20 +12,22 @@ import (
 const defaultDevelopmentSessionSecret = "development-session-secret-change-me-123456"
 
 type Config struct {
-	Env              string
-	AdminListenAddr  string
-	AdminTLSCertFile string
-	AdminTLSKeyFile  string
-	PublicHTTPAddr   string
-	PublicHTTPSAddr  string
-	PHPMyAdminAddr   string
-	ShutdownTimeout  time.Duration
-	Database         DatabaseConfig
-	Session          SessionConfig
-	InitialAdmin     InitialAdminConfig
-	Cron             CronConfig
-	GoogleDrive      GoogleDriveConfig
-	Firewall         FirewallConfig
+	Env                 string
+	AdminListenAddr     string
+	AdminTLSCertFile    string
+	AdminTLSKeyFile     string
+	PublicHTTPAddr      string
+	PublicHTTPSAddr     string
+	CaddyAdminAddr      string
+	SecurityEventSocket string
+	PHPMyAdminAddr      string
+	ShutdownTimeout     time.Duration
+	Database            DatabaseConfig
+	Session             SessionConfig
+	InitialAdmin        InitialAdminConfig
+	Cron                CronConfig
+	GoogleDrive         GoogleDriveConfig
+	Firewall            FirewallConfig
 }
 
 type DatabaseConfig struct {
@@ -83,14 +85,16 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		Env:              getEnv("FLOWPANEL_ENV", "development"),
-		AdminListenAddr:  getEnv("FLOWPANEL_ADMIN_LISTEN_ADDR", ":8080"),
-		AdminTLSCertFile: getEnv("FLOWPANEL_ADMIN_TLS_CERT_FILE", ""),
-		AdminTLSKeyFile:  getEnv("FLOWPANEL_ADMIN_TLS_KEY_FILE", ""),
-		PublicHTTPAddr:   getEnv("FLOWPANEL_PUBLIC_HTTP_ADDR", ":80"),
-		PublicHTTPSAddr:  getEnv("FLOWPANEL_PUBLIC_HTTPS_ADDR", ":443"),
-		PHPMyAdminAddr:   getEnv("FLOWPANEL_PHPMYADMIN_ADDR", ":32109"),
-		ShutdownTimeout:  shutdownTimeout,
+		Env:                 getEnv("FLOWPANEL_ENV", "development"),
+		AdminListenAddr:     getEnv("FLOWPANEL_ADMIN_LISTEN_ADDR", ":8080"),
+		AdminTLSCertFile:    getEnv("FLOWPANEL_ADMIN_TLS_CERT_FILE", ""),
+		AdminTLSKeyFile:     getEnv("FLOWPANEL_ADMIN_TLS_KEY_FILE", ""),
+		PublicHTTPAddr:      getEnv("FLOWPANEL_PUBLIC_HTTP_ADDR", ":80"),
+		PublicHTTPSAddr:     getEnv("FLOWPANEL_PUBLIC_HTTPS_ADDR", ":443"),
+		CaddyAdminAddr:      optionalEnv("FLOWPANEL_CADDY_ADMIN_ADDR"),
+		SecurityEventSocket: optionalEnv("FLOWPANEL_SECURITY_EVENT_SOCKET"),
+		PHPMyAdminAddr:      getEnv("FLOWPANEL_PHPMYADMIN_ADDR", ":32109"),
+		ShutdownTimeout:     shutdownTimeout,
 		Database: DatabaseConfig{
 			Path: getEnv("FLOWPANEL_DB_PATH", DefaultDatabasePath()),
 		},
@@ -120,6 +124,10 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func optionalEnv(key string) string {
+	return strings.TrimSpace(os.Getenv(key))
 }
 
 func (c Config) IsProduction() bool {

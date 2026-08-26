@@ -62,10 +62,15 @@ type SecurityEvent struct {
 }
 
 type AutoBanPolicy struct {
-	BlockedRequests int
-	Window          time.Duration
-	Ban             time.Duration
-	Allowed         []string
+	BlockedRequests int           `json:"blocked_requests"`
+	Window          time.Duration `json:"window"`
+	Ban             time.Duration `json:"ban"`
+	Allowed         []string      `json:"allowed,omitempty"`
+}
+
+type SecurityPolicyApp struct {
+	RateLimitDomains map[string]string        `json:"rate_limit_domains,omitempty"`
+	AutoBanPolicies  map[string]AutoBanPolicy `json:"auto_ban_policies,omitempty"`
 }
 
 type autoBanState struct {
@@ -93,7 +98,19 @@ func init() {
 	caddy.RegisterModule(SecurityWriter{})
 	caddy.RegisterModule(SecurityBlockHandler{})
 	caddy.RegisterModule(AutoBanHandler{})
+	caddy.RegisterModule(SecurityPolicyApp{})
 }
+
+func (SecurityPolicyApp) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{ID: "flowpanel_security", New: func() caddy.Module { return new(SecurityPolicyApp) }}
+}
+
+func (app SecurityPolicyApp) Start() error {
+	ConfigureSecurityPolicies(app.RateLimitDomains, app.AutoBanPolicies)
+	return nil
+}
+
+func (SecurityPolicyApp) Stop() error { return nil }
 
 func (CaddyWriter) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
@@ -193,6 +210,69 @@ func SetSecurityEventHandler(handler func(SecurityEvent)) {
 			}
 		}()
 	})
+}
+
+func ForwardSecurityEvents(socketPath string) func(SecurityEvent) {
+	socketPath = strings.TrimSpace(socketPath)
+	return func(event SecurityEvent) {
+		if socketPath == "" {
+			return
+		}
+		payload, err := json.Marshal(event)
+		if err != nil {
+			return
+		}
+		address, err := net.ResolveUnixAddr("unixgram", socketPath)
+		if err != nil {
+			return
+		}
+		connection, err := net.DialUnix("unixgram", nil, address)
+		if err != nil {
+			return
+		}
+		_, _ = connection.Write(payload)
+		_ = connection.Close()
+	}
+}
+
+func ReceiveSecurityEvents(socketPath string, handler func(SecurityEvent)) (func(), error) {
+	socketPath = strings.TrimSpace(socketPath)
+	if socketPath == "" {
+		return func() {}, nil
+	}
+	_ = os.Remove(socketPath)
+	address, err := net.ResolveUnixAddr("unixgram", socketPath)
+	if err != nil {
+		return nil, err
+	}
+	listener, err := net.ListenUnixgram("unixgram", address)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	go func() {
+		buffer := make([]byte, 8<<10)
+		for {
+			count, _, err := listener.ReadFromUnix(buffer)
+			if err != nil {
+				return
+			}
+			var event SecurityEvent
+			if json.Unmarshal(buffer[:count], &event) == nil && handler != nil {
+				handler(event)
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			_ = listener.Close()
+			_ = os.Remove(socketPath)
+		})
+	}, nil
 }
 
 func publishSecurityEvent(event SecurityEvent) {
