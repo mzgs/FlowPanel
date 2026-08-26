@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	maxFileUploadBytes     int64 = 8 << 30
-	multipartFormMemoryMax int64 = 8 << 20
+	maxFileUploadBytes      int64 = 8 << 30
+	maxFileContentBodyBytes int64 = 129 << 20
+	multipartFormMemoryMax  int64 = 8 << 20
 )
 
 func (a *apiRoutes) registerFileRoutes(r chi.Router) {
@@ -148,7 +149,7 @@ func (a *apiRoutes) registerFileRoutes(r chi.Router) {
 			Path    string `json:"path"`
 			Content string `json:"content"`
 		}
-		if err := decodeJSON(r, &input); err != nil {
+		if err := decodeJSONWithLimit(r, &input, maxFileContentBodyBytes); err != nil {
 			writeInvalidRequestBody(w)
 			return
 		}

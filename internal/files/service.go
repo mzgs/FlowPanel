@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	maxEditableFileSize     int64  = 1 << 20
+	maxEditableFileSize     int64  = 64 << 20
 	maxArchiveExpandedSize  uint64 = 32 << 30
 	maxArchiveEntries              = 200_000
 	maxZipDirectorySize     uint64 = 128 << 20
@@ -375,11 +375,15 @@ func (s *Service) WriteTextFile(relPath string, content string) error {
 		return ErrUnsupportedEntry
 	}
 
-	if !utf8.ValidString(content) {
+	data := []byte(content)
+	if int64(len(data)) > maxEditableFileSize {
+		return ErrEditableFileTooBig
+	}
+	if !isTextContent(data) {
 		return ErrBinaryFile
 	}
 
-	return os.WriteFile(absolutePath, []byte(content), 0o644)
+	return os.WriteFile(absolutePath, data, 0o644)
 }
 
 func (s *Service) SetPermissions(relPath string, permissions string, recursive bool) error {

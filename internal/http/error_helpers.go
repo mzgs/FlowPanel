@@ -79,7 +79,7 @@ func writeFileError(w stdhttp.ResponseWriter, err error) {
 	case errors.Is(err, filesvc.ErrBinaryFile):
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "file is not editable as text"})
 	case errors.Is(err, filesvc.ErrEditableFileTooBig):
-		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "file is too large to edit in the panel"})
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "file exceeds the 64 MiB panel editor limit"})
 	case errors.Is(err, filesvc.ErrInvalidTransfer):
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid move or copy operation"})
 	case errors.Is(err, filesvc.ErrInvalidPermissions):

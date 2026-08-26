@@ -13,7 +13,11 @@ const maxJSONBodyBytes = 1 << 20
 var errInvalidJSONBody = errors.New("invalid JSON body")
 
 func decodeJSON(r *stdhttp.Request, payload any) error {
-	r.Body = stdhttp.MaxBytesReader(nil, r.Body, maxJSONBodyBytes)
+	return decodeJSONWithLimit(r, payload, maxJSONBodyBytes)
+}
+
+func decodeJSONWithLimit(r *stdhttp.Request, payload any, maxBytes int64) error {
+	r.Body = stdhttp.MaxBytesReader(nil, r.Body, maxBytes)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(payload); err != nil {
