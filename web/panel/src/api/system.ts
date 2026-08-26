@@ -153,3 +153,20 @@ export async function updatePanel(): Promise<void> {
 
   await parseSystemResponse<{ ok: boolean }>(response);
 }
+
+async function restart(target: "panel" | "system"): Promise<void> {
+  const response = await fetch(`/api/${target}/restart`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  await parseSystemResponse<{ ok: boolean }>(response);
+}
+
+export function restartPanel(): Promise<void> {
+  return restart("panel");
+}
+
+export function restartServer(): Promise<void> {
+  return restart("system");
+}

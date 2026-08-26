@@ -419,6 +419,7 @@ export function SystemStatusCard({
   health,
   history,
   leftContent,
+  rightTopContent,
   siteCount,
   status,
 }: {
@@ -426,6 +427,7 @@ export function SystemStatusCard({
   health: OperationalHealth;
   history: SystemStatusSample[];
   leftContent?: ReactNode;
+  rightTopContent?: ReactNode;
   siteCount: number | null;
   status: SystemStatus;
 }) {
@@ -487,6 +489,7 @@ export function SystemStatusCard({
         {leftContent}
       </div>
       <div className="space-y-2.5">
+        {rightTopContent}
         <SystemOperationalCard health={health} history={history} status={status} />
         <ResourceUsageCard cpuPercent={cpuPercent} diskPercent={diskPercent} memoryPercent={memoryPercent} />
         <DiskUsageCard status={status} />

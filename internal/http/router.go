@@ -809,6 +809,24 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 			api.mutationEvent(r.Context(), "panel", "update", "panel", "flowpanel", "FlowPanel", "succeeded", fmt.Sprintf("Started FlowPanel update to v%s.", status.LatestVersion))
 			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
 		})
+		panelRestartHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if err := schedulePanelControlAction(restartPanelAction); err != nil {
+				app.Logger.Error("schedule panel restart failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to restart FlowPanel"})
+				return
+			}
+			api.mutationEvent(r.Context(), "panel", "restart", "panel", "flowpanel", "FlowPanel", "succeeded", "Scheduled a FlowPanel restart.")
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
+		})
+		serverRestartHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if err := schedulePanelControlAction(restartServerAction); err != nil {
+				app.Logger.Error("schedule server restart failed", zap.Error(err))
+				writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to restart server"})
+				return
+			}
+			api.mutationEvent(r.Context(), "system", "restart", "server", "local", "Server", "succeeded", "Scheduled a graceful server restart.")
+			writeJSON(w, stdhttp.StatusAccepted, map[string]any{"ok": true})
+		})
 		systemHistoryHandler := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if app.SystemMonitor == nil {
 				writeJSON(w, stdhttp.StatusOK, map[string]any{
@@ -846,6 +864,8 @@ func NewRouter(app *app.App) (stdhttp.Handler, error) {
 		r.Method(stdhttp.MethodGet, "/panel/update", panelUpdateHandler)
 		r.Method(stdhttp.MethodHead, "/panel/update", panelUpdateHandler)
 		r.Method(stdhttp.MethodPost, "/panel/update", panelUpdateStartHandler)
+		r.Method(stdhttp.MethodPost, "/panel/restart", panelRestartHandler)
+		r.Method(stdhttp.MethodPost, "/system/restart", serverRestartHandler)
 		r.Method(stdhttp.MethodGet, "/system/history", systemHistoryHandler)
 		r.Method(stdhttp.MethodHead, "/system/history", systemHistoryHandler)
 

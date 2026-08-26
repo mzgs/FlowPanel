@@ -62,6 +62,8 @@ import {
 import {
   fetchPanelUpdate,
   fetchSystemStatus,
+  restartPanel,
+  restartServer,
   updatePanel,
   type PanelUpdateStatus,
   type SystemStatus,
@@ -415,9 +417,13 @@ function DetailItem({ label, value, valueClassName = "" }: { label: string; valu
   );
 }
 
-function PanelUpdateControl() {
+type SystemControlAction = "panel" | "server";
+
+function SystemControlCard() {
   const [status, setStatus] = useState<PanelUpdateStatus | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [restartAction, setRestartAction] = useState<SystemControlAction | null>(null);
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -434,7 +440,7 @@ function PanelUpdateControl() {
   }, []);
 
   async function handleUpdate() {
-    if (updating) return;
+    if (!status || updating) return;
 
     setUpdating(true);
     try {
@@ -464,27 +470,101 @@ function PanelUpdateControl() {
     }
   }
 
-  if (!status) return null;
+  async function handleRestart() {
+    if (!restartAction || restarting) return;
 
-  const updateInProgress = updating || Boolean(status.updating);
+    const action = restartAction;
+    setRestarting(true);
+    try {
+      await (action === "panel" ? restartPanel() : restartServer());
+      setRestartAction(null);
+      toast.success(action === "panel" ? "FlowPanel is restarting." : "Server restart scheduled.");
+
+      if (action === "panel") {
+        for (let attempt = 0; attempt < 90; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+          try {
+            const response = await fetch("/healthz", { cache: "no-store" });
+            if (response.ok) {
+              window.location.reload();
+              return;
+            }
+          } catch {
+            // The panel is temporarily unreachable while its service restarts.
+          }
+        }
+        throw new Error("FlowPanel is taking longer than expected to restart. Reload the page in a moment.");
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Failed to restart ${action === "panel" ? "FlowPanel" : "the server"}.`));
+    } finally {
+      setRestarting(false);
+    }
+  }
+
+  const updateInProgress = updating || Boolean(status?.updating);
 
   return (
-    <div className="flex shrink-0 items-center gap-1.5">
-      <div className="text-xs font-medium text-[var(--app-text-muted)]">FlowPanel v{status.current_version}</div>
-      {status.update_available && status.latest_version ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7 shrink-0 rounded-full border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-semibold text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
-          disabled={updateInProgress}
-          onClick={() => void handleUpdate()}
-        >
-          {updateInProgress ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
-          {updateInProgress ? "Updating..." : `Update v${status.latest_version}`}
-        </Button>
-      ) : null}
-    </div>
+    <>
+      <section className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg-2)] px-3 py-2.5 shadow-[var(--app-shadow)]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[13px] font-semibold text-[var(--app-text)]">FlowPanel</div>
+            <div className="mt-0.5 text-[12px] text-[var(--app-text-muted)]">
+              {status ? `Version ${status.current_version}` : "Checking version..."}
+            </div>
+          </div>
+          {status?.update_available && status.latest_version ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 shrink-0 border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-semibold text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
+              disabled={updateInProgress || restarting}
+              onClick={() => void handleUpdate()}
+            >
+              {updateInProgress ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+              {updateInProgress ? "Updating..." : `Update to ${status.latest_version}`}
+            </Button>
+          ) : null}
+        </div>
+        <div className="mt-2.5 flex items-center gap-2 border-t border-[var(--app-border)] pt-2">
+          <Button
+            type="button"
+            variant="link"
+            className="h-auto p-0 text-[12px] text-[var(--app-text-muted)]"
+            disabled={updating || restarting}
+            onClick={() => setRestartAction("panel")}
+          >
+            Restart panel
+          </Button>
+          <span aria-hidden="true" className="text-[12px] text-[var(--app-border-strong)]">|</span>
+          <Button
+            type="button"
+            variant="link"
+            className="h-auto p-0 text-[12px] text-[var(--app-text-muted)]"
+            disabled={updating || restarting}
+            onClick={() => setRestartAction("server")}
+          >
+            Restart server
+          </Button>
+        </div>
+      </section>
+      <ActionConfirmDialog
+        open={restartAction !== null}
+        onOpenChange={(open) => {
+          if (!open && !restarting) setRestartAction(null);
+        }}
+        title={restartAction === "server" ? "Restart server?" : "Restart FlowPanel?"}
+        desc={restartAction === "server"
+          ? "The server will gracefully stop its services and reboot. All hosted sites will be briefly unavailable."
+          : "FlowPanel will restart gracefully. The dashboard will reconnect automatically when it is available."}
+        confirmText={restartAction === "server" ? "Restart server" : "Restart panel"}
+        destructive={restartAction === "server"}
+        isLoading={restarting}
+        handleConfirm={() => void handleRestart()}
+      />
+    </>
   );
 }
 
@@ -520,7 +600,6 @@ function SystemInfoCard({ status }: { status: SystemStatus | null }) {
             />
           ))}
         </div>
-        <PanelUpdateControl />
       </div>
     </div>
   );
@@ -1336,6 +1415,7 @@ export function DashboardPage() {
                   health={health}
                   history={systemStatusHistory}
                   leftContent={leftDashboardSection}
+                  rightTopContent={<SystemControlCard />}
                   siteCount={siteCount}
                   status={systemStatus}
                 />
