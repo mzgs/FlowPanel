@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
+  Database,
   Download,
   ExternalLink,
   FolderOpen,
@@ -1207,6 +1208,22 @@ export function DomainsPage() {
                                     />
                                   </Button>
                                 ) : null}
+                                <Button
+                                  asChild
+                                  variant="ghost"
+                                  size="icon"
+                                  className={tableActionButtonClassName}
+                                >
+                                  <a
+                                    href={`/phpmyadmin/domain/${encodeURIComponent(domain.hostname)}/`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    aria-label={`Open phpMyAdmin for ${domain.hostname}`}
+                                    title="Open phpMyAdmin"
+                                  >
+                                    <Database className="size-4" />
+                                  </a>
+                                </Button>
                                 <Button
                                   type="button"
                                   variant="ghost"
