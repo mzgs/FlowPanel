@@ -13,6 +13,16 @@ export type PHPMyAdminStatus = {
   remove_label?: string;
 };
 
+export function getPHPMyAdminURL(domain?: string, database?: string) {
+  const basePath = domain
+    ? `/phpmyadmin/domain/${encodeURIComponent(domain)}/`
+    : "/phpmyadmin/";
+
+  return database
+    ? `${basePath}index.php?route=/database/structure&db=${encodeURIComponent(database)}`
+    : basePath;
+}
+
 type PHPMyAdminStatusPayload = {
   phpmyadmin: PHPMyAdminStatus;
 };

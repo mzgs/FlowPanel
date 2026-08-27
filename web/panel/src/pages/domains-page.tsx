@@ -31,6 +31,11 @@ import {
   type DomainRecord,
 } from "@/api/domains";
 import { downloadEntry } from "@/api/files";
+import {
+  fetchMariaDBDatabases,
+  type MariaDBDatabase,
+} from "@/api/mariadb";
+import { getPHPMyAdminURL } from "@/api/phpmyadmin";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
 import { BackupRecordsDialog } from "@/components/backup-records-dialog";
 import { DomainFTPDialog } from "@/components/domain-ftp-dialog";
@@ -401,6 +406,7 @@ function getFormScriptPathValue(kind: DomainKind, scriptPath?: string) {
 export function DomainsPage() {
   const navigate = useNavigate();
   const [domains, setDomains] = useState<DomainRecord[]>([]);
+  const [databases, setDatabases] = useState<MariaDBDatabase[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [sitesBasePath, setSitesBasePath] = useState("");
   const [form, setForm] = useState<FormState>(initialFormState);
@@ -453,10 +459,12 @@ export function DomainsPage() {
 
     async function loadData() {
       try {
-        const [domainsResult, backupsResult] = await Promise.allSettled([
-          fetchDomains(),
-          fetchBackups(),
-        ]);
+        const [domainsResult, databasesResult, backupsResult] =
+          await Promise.allSettled([
+            fetchDomains(),
+            fetchMariaDBDatabases(),
+            fetchBackups(),
+          ]);
         if (!active) {
           return;
         }
@@ -470,6 +478,12 @@ export function DomainsPage() {
             getErrorMessage(domainsResult.reason, "Failed to load domains."),
           );
         }
+
+        setDatabases(
+          databasesResult.status === "fulfilled"
+            ? databasesResult.value.databases
+            : [],
+        );
 
         if (backupsResult.status === "fulfilled") {
           setBackups(backupsResult.value.backups);
@@ -1073,6 +1087,9 @@ export function DomainsPage() {
                         const backupCount =
                           siteBackups[domain.hostname]?.length ?? 0;
                         const port = getDomainPort(domain.kind, domain.target);
+                        const firstDatabase = databases.find(
+                          (database) => database.domain === domain.hostname,
+                        );
 
                         return (
                           <TableRow
@@ -1215,7 +1232,10 @@ export function DomainsPage() {
                                   className={tableActionButtonClassName}
                                 >
                                   <a
-                                    href={`/phpmyadmin/domain/${encodeURIComponent(domain.hostname)}/`}
+                                    href={getPHPMyAdminURL(
+                                      domain.hostname,
+                                      firstDatabase?.name,
+                                    )}
                                     target="_blank"
                                     rel="noreferrer"
                                     aria-label={`Open phpMyAdmin for ${domain.hostname}`}

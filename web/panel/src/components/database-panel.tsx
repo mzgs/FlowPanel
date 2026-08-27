@@ -29,7 +29,11 @@ import {
   type BackupRecord,
 } from "@/api/backups";
 import { fetchDomains, type DomainRecord } from "@/api/domains";
-import { fetchPHPMyAdminStatus, type PHPMyAdminStatus } from "@/api/phpmyadmin";
+import {
+  fetchPHPMyAdminStatus,
+  getPHPMyAdminURL,
+  type PHPMyAdminStatus,
+} from "@/api/phpmyadmin";
 import { Copy, Download, ExternalLink, Eye, EyeOff, LoaderCircle, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2 } from "@/components/icons/lucide-icons";
 import { ActionFeedbackIcon } from "@/components/action-feedback-icon";
 import { ActionConfirmDialog } from "@/components/action-confirm-dialog";
@@ -1025,9 +1029,7 @@ export function DatabasePanel({
               <ToolbarButton
                 href={
                   phpMyAdminStatus?.installed
-                    ? scopedDomain
-                      ? `/phpmyadmin/domain/${encodeURIComponent(scopedDomain)}/`
-                      : "/phpmyadmin/"
+                    ? getPHPMyAdminURL(scopedDomain, scopedDatabases[0]?.name)
                     : undefined
                 }
                 target="_blank"
