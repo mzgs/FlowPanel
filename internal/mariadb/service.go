@@ -121,11 +121,12 @@ type Status struct {
 }
 
 type DatabaseRecord struct {
-	Name     string `json:"name"`
-	Username string `json:"username"`
-	Host     string `json:"host"`
-	Domain   string `json:"domain,omitempty"`
-	Password string `json:"password,omitempty"`
+	Name      string `json:"name"`
+	Username  string `json:"username"`
+	Host      string `json:"host"`
+	Domain    string `json:"domain,omitempty"`
+	Password  string `json:"password,omitempty"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 type CreateDatabaseInput struct {
@@ -393,7 +394,13 @@ func (s *Service) SetRootPassword(ctx context.Context, password string) error {
 }
 
 func (s *Service) ListDatabases(ctx context.Context) ([]DatabaseRecord, error) {
-	databaseRows, err := s.queryRows(ctx, "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME ASC")
+	databaseRows, err := s.queryRows(ctx, `
+		SELECT s.SCHEMA_NAME, COALESCE(SUM(COALESCE(t.DATA_LENGTH, 0) + COALESCE(t.INDEX_LENGTH, 0)), 0)
+		FROM information_schema.SCHEMATA s
+		LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME
+		GROUP BY s.SCHEMA_NAME
+		ORDER BY s.SCHEMA_NAME ASC
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -414,10 +421,11 @@ func (s *Service) ListDatabases(ctx context.Context) ([]DatabaseRecord, error) {
 			continue
 		}
 
-		recordsByName[name] = DatabaseRecord{
-			Name: name,
-			Host: localhostHost,
+		var sizeBytes int64
+		if len(row) > 1 {
+			sizeBytes, _ = strconv.ParseInt(strings.TrimSpace(row[1]), 10, 64)
 		}
+		recordsByName[name] = DatabaseRecord{Name: name, Host: localhostHost, SizeBytes: sizeBytes}
 	}
 
 	for name, credential := range metadata {

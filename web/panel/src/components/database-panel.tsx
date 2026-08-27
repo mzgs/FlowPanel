@@ -120,6 +120,17 @@ function maskPassword(password: string) {
   return password ? "**********" : "";
 }
 
+function formatDatabaseSize(bytes: number) {
+  const gigabyte = 1024 ** 3;
+  const divisor = bytes >= gigabyte ? gigabyte : 1024 ** 2;
+  const unit = bytes >= gigabyte ? "GB" : "MB";
+  const size = Math.max(0, bytes) / divisor;
+
+  return `${size.toLocaleString("en-US", {
+    maximumFractionDigits: size < 1 ? 2 : 1,
+  })} ${unit}`;
+}
+
 const databaseTableHeaderCellClass = "h-9 px-3 font-semibold";
 const databaseTableBodyCellClass = "px-3 py-[5px] align-middle";
 const databaseTableActionHeaderCellClass = `${databaseTableHeaderCellClass} text-right`;
@@ -419,7 +430,7 @@ export function DatabasePanel({
   const rootPasswordCandidate = rootPasswordDraft.trim();
   const rootPasswordTooShort = rootPasswordCandidate.length > 0 && rootPasswordCandidate.length < 8;
   const mariaDBNotInstalled = mariaDBStatus !== null && !mariaDBStatus.server_installed;
-  const tableColumnCount = showDomainColumn ? 7 : 6;
+  const tableColumnCount = showDomainColumn ? 8 : 7;
 
   function handleGenerateRootPassword() {
     setRootPasswordDraft(generateRootPassword());
@@ -1063,13 +1074,14 @@ export function DatabasePanel({
             </div>
 
             <div className="overflow-x-auto">
-              <table className={cn(showDomainColumn ? "min-w-[1000px]" : "min-w-[880px]", "w-full text-left")}>
+              <table className={cn(showDomainColumn ? "min-w-[1080px]" : "min-w-[960px]", "w-full text-left")}>
                 <thead className="border-b border-[var(--app-border)] bg-[var(--app-surface)]">
                   <tr className="text-[13px] text-[var(--app-text-muted)]">
                     <th className={databaseTableHeaderCellClass}>Database name</th>
                     <th className={databaseTableHeaderCellClass}>Username</th>
                     <th className={databaseTableHeaderCellClass}>Password</th>
                     <th className={databaseTableHeaderCellClass}>Location</th>
+                    <th className={cn(databaseTableHeaderCellClass, "text-right")}>Size</th>
                     {showDomainColumn ? (
                       <th className={databaseTableHeaderCellClass}>Domain</th>
                     ) : null}
@@ -1135,6 +1147,9 @@ export function DatabasePanel({
                           ) : null}
                         </td>
                         <td className={databaseTableBodyCellClass}>{database.host || "localhost"}</td>
+                        <td className={cn(databaseTableBodyCellClass, "text-right tabular-nums text-[var(--app-text-muted)]")}>
+                          {formatDatabaseSize(database.size_bytes)}
+                        </td>
                         {showDomainColumn ? (
                           <td className={cn(databaseTableBodyCellClass, "text-[var(--app-text-muted)]")}>{database.domain || ""}</td>
                         ) : null}
