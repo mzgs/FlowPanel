@@ -127,7 +127,7 @@ function formatDatabaseSize(bytes: number) {
   const size = Math.max(0, bytes) / divisor;
 
   return `${size.toLocaleString("en-US", {
-    maximumFractionDigits: size < 1 ? 2 : 1,
+    maximumFractionDigits: unit === "MB" && size > 10 ? 0 : size < 1 ? 2 : 1,
   })} ${unit}`;
 }
 
