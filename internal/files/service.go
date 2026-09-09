@@ -478,12 +478,6 @@ func (s *Service) Upload(relPath string, headers []*multipart.FileHeader, relati
 			return nil, err
 		}
 		createdPaths = append(createdPaths, createdDirectories...)
-		if _, err := os.Stat(targetPath); err == nil {
-			return nil, fs.ErrExist
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return nil, err
-		}
-
 		if err := copyUploadedFile(targetPath, header); err != nil {
 			return nil, err
 		}
@@ -1202,24 +1196,36 @@ func copyUploadedFile(targetPath string, header *multipart.FileHeader) error {
 		return fmt.Errorf("%w: upload needs %d bytes but only %d bytes are free", ErrInsufficientStorage, header.Size, usage.Free)
 	}
 
-	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	permissions := fs.FileMode(0o644)
+	if info, err := os.Lstat(targetPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return ErrFileExpected
+		}
+		permissions = info.Mode().Perm()
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	target, err := os.CreateTemp(filepath.Dir(targetPath), ".upload-*")
 	if err != nil {
 		return err
 	}
-	success := false
 	defer func() {
 		_ = target.Close()
-		if !success {
-			_ = os.Remove(targetPath)
-		}
+		_ = os.Remove(target.Name())
 	}()
 
 	if _, err := io.Copy(target, source); err != nil {
 		return err
 	}
 
-	success = true
-	return nil
+	if err := target.Chmod(permissions); err != nil {
+		return err
+	}
+	if err := target.Close(); err != nil {
+		return err
+	}
+	return os.Rename(target.Name(), targetPath)
 }
 
 func movePath(sourcePath string, destinationPath string) error {
