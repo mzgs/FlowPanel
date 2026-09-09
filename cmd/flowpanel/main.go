@@ -1611,10 +1611,10 @@ func runBackupCreateCommand(input backup.CreateInput) error {
 		_ = logger.Sync()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelSetup()
 
-	dbConn, err := db.Open(ctx, cfg.Database.Path)
+	dbConn, err := db.Open(setupCtx, cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -1624,7 +1624,7 @@ func runBackupCreateCommand(input backup.CreateInput) error {
 
 	stores := newPanelStores(dbConn)
 	if err := ensureStores(
-		ctx,
+		setupCtx,
 		namedStore{name: "domain", store: stores.Domain},
 		namedStore{name: "auth", store: stores.Auth},
 		namedStore{name: "mariadb", store: stores.MariaDB},
@@ -1635,9 +1635,10 @@ func runBackupCreateCommand(input backup.CreateInput) error {
 	}
 
 	domainService := domain.NewService(stores.Domain)
-	if err := domainService.Load(ctx); err != nil {
+	if err := domainService.Load(setupCtx); err != nil {
 		return fmt.Errorf("load persisted domains: %w", err)
 	}
+	cancelSetup()
 	mariadbManager := mariadb.NewService(logger.Named("mariadb"), stores.MariaDB)
 	pm2Manager := pm2.NewService(logger.Named("pm2"), stores.PM2)
 	settingsService := settings.NewService(stores.Settings)
@@ -1654,7 +1655,7 @@ func runBackupCreateCommand(input backup.CreateInput) error {
 		googleDriveService,
 		pm2Manager,
 	)
-	record, err := backupService.Create(ctx, input)
+	record, err := backupService.Create(context.Background(), input)
 	if err != nil {
 		var validation backup.ValidationErrors
 		if errors.As(err, &validation) {

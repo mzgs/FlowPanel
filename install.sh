@@ -413,6 +413,8 @@ After=network-online.target docker.service $APP.socket $APP-caddy.service
 [Service]
 Type=simple
 EnvironmentFile=$env_file
+Environment=HOME=$state_dir
+Environment=XDG_CONFIG_HOME=$state_dir/.config
 WorkingDirectory=$data_dir
 ExecStart=$BIN_DIR/$APP serve
 Restart=on-failure
