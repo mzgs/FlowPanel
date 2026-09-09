@@ -2,7 +2,6 @@ package backup
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -17,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"flowpanel/internal/archiveutil"
 	"flowpanel/internal/dockercontainer"
 	"flowpanel/internal/domain"
 	"flowpanel/internal/googledrive"
@@ -24,12 +24,13 @@ import (
 	"flowpanel/internal/pm2"
 	"flowpanel/internal/settings"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/shirou/gopsutil/v4/disk"
 	"go.uber.org/zap"
 )
 
 const (
-	backupExtension             = ".tar.gz"
+	backupExtension             = ".tar.zst"
 	LocationLocal               = "local"
 	LocationGoogleDrive         = "google_drive"
 	maxManifestSize             = 1 << 20
@@ -285,7 +286,7 @@ func (s *Service) listLocalBackups() ([]Record, error) {
 
 	backups := make([]Record, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), backupExtension) {
+		if entry.IsDir() || !archiveutil.Supported(entry.Name()) {
 			continue
 		}
 
@@ -316,7 +317,7 @@ func (s *Service) removeIncompleteLocalBackups() error {
 	var cleanupErr error
 	for _, entry := range entries {
 		name := entry.Name()
-		isArchive := !entry.IsDir() && strings.HasSuffix(strings.ToLower(name), backupExtension+".tmp")
+		isArchive := !entry.IsDir() && strings.HasSuffix(name, ".tmp") && archiveutil.Supported(strings.TrimSuffix(name, ".tmp"))
 		isStagingDirectory := entry.IsDir() && strings.HasPrefix(name, ".flowpanel-backup-")
 		if !isArchive && !isStagingDirectory {
 			continue
@@ -485,8 +486,13 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		}
 		archiveWriter = &storageReserveWriter{writer: file, remaining: usage.Free - restoreDiskReserveBytes}
 	}
-	gzipWriter := gzip.NewWriter(archiveWriter)
-	tarWriter := tar.NewWriter(gzipWriter)
+	zstdWriter, err := zstd.NewWriter(archiveWriter)
+	if err != nil {
+		return Record{}, fmt.Errorf("open backup zstd stream: %w", err)
+	}
+	defer zstdWriter.Close()
+	tarWriter := tar.NewWriter(zstdWriter)
+	defer tarWriter.Close()
 
 	contents := make([]string, 0, 6)
 	if input.IncludePanelData {
@@ -516,30 +522,22 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		Requirements: requirements,
 	}, "", "  ")
 	if err != nil {
-		_ = tarWriter.Close()
-		_ = gzipWriter.Close()
 		return Record{}, fmt.Errorf("encode backup manifest: %w", err)
 	}
 
 	if err := writeTarBytes(tarWriter, "manifest.json", manifestPayload, createdAt); err != nil {
-		_ = tarWriter.Close()
-		_ = gzipWriter.Close()
 		return Record{}, err
 	}
 
 	if input.IncludePanelData {
 		update("Archiving panel data…", 60)
 		if err := s.writeDataArchive(tarWriter, snapshotPath, snapshotRelPath); err != nil {
-			_ = tarWriter.Close()
-			_ = gzipWriter.Close()
 			return Record{}, err
 		}
 	}
 	if input.IncludeDockerData {
 		update("Archiving Docker data…", 70)
 		if err := s.writeDockerArchive(ctx, tarWriter, dockerContainers, createdAt); err != nil {
-			_ = tarWriter.Close()
-			_ = gzipWriter.Close()
 			return Record{}, err
 		}
 	}
@@ -547,26 +545,21 @@ func (s *Service) createLocalArchive(ctx context.Context, input CreateInput, nam
 		update("Archiving site files…", 80)
 	}
 	if err := s.writeSiteArchives(ctx, tarWriter, sites); err != nil {
-		_ = tarWriter.Close()
-		_ = gzipWriter.Close()
 		return Record{}, err
 	}
 	if len(databaseDumps) > 0 {
 		update("Archiving database dumps…", 90)
 	}
 	if err := writeDatabaseDumps(tarWriter, databaseDumps, createdAt); err != nil {
-		_ = tarWriter.Close()
-		_ = gzipWriter.Close()
 		return Record{}, err
 	}
 
 	update("Finalizing archive…", 96)
 	if err := tarWriter.Close(); err != nil {
-		_ = gzipWriter.Close()
 		return Record{}, fmt.Errorf("close backup tar stream: %w", err)
 	}
-	if err := gzipWriter.Close(); err != nil {
-		return Record{}, fmt.Errorf("close backup gzip stream: %w", err)
+	if err := zstdWriter.Close(); err != nil {
+		return Record{}, fmt.Errorf("close backup zstd stream: %w", err)
 	}
 	if err := file.Close(); err != nil {
 		return Record{}, fmt.Errorf("close backup archive: %w", err)
@@ -718,7 +711,7 @@ func (s *Service) Preflight(ctx context.Context, id string, location string) (Re
 	}
 	defer download.Reader.Close()
 
-	snapshot, err := readBackupManifest(download.Reader, false)
+	snapshot, err := readBackupManifest(download.Reader, download.Size, false)
 	if err != nil {
 		return RestorePreflight{}, err
 	}
@@ -1053,7 +1046,7 @@ func (s *Service) restoreGoogleDriveBackup(ctx context.Context, id string, repor
 	defer os.RemoveAll(stagingPath)
 
 	name := strings.TrimSpace(download.Name)
-	if name == "" || filepath.Base(name) != name || !strings.HasSuffix(strings.ToLower(name), backupExtension) {
+	if name == "" || filepath.Base(name) != name || !archiveutil.Supported(name) {
 		return RestoreResult{}, ErrInvalidName
 	}
 	targetPath := filepath.Join(stagingPath, name)
@@ -1187,7 +1180,7 @@ func (s *Service) ensureBackupPath() error {
 		return fmt.Errorf("read backup directory %q: %w", s.backupPath, err)
 	}
 	for _, entry := range entries {
-		if entry.Type().IsRegular() && strings.HasSuffix(strings.ToLower(entry.Name()), backupExtension) {
+		if entry.Type().IsRegular() && archiveutil.Supported(entry.Name()) {
 			if err := os.Chmod(filepath.Join(s.backupPath, entry.Name()), 0o600); err != nil {
 				return fmt.Errorf("secure backup file %q: %w", entry.Name(), err)
 			}
@@ -1203,7 +1196,7 @@ func (s *Service) resolveBackupPath(name string) (string, error) {
 	}
 
 	name = strings.TrimSpace(name)
-	if name == "" || filepath.Base(name) != name || !strings.HasSuffix(strings.ToLower(name), backupExtension) {
+	if name == "" || filepath.Base(name) != name || !archiveutil.Supported(name) {
 		return "", ErrInvalidName
 	}
 
@@ -1634,13 +1627,15 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 	}
 	defer file.Close()
 
-	gzipReader, err := gzip.NewReader(file)
+	info, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("open backup archive gzip stream: %w", err)
+		return err
 	}
-	defer gzipReader.Close()
-
-	tarReader := tar.NewReader(gzipReader)
+	archiveReader, err := archiveutil.NewReader(file, info.Size(), maxRestoreArchiveEntries)
+	if err != nil {
+		return fmt.Errorf("open backup archive stream: %w", err)
+	}
+	defer archiveReader.Close()
 	var entryCount int
 	var expandedSize uint64
 	availableBytes := ^uint64(0)
@@ -1651,7 +1646,7 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 		availableBytes = usage.Free - restoreDiskReserveBytes
 	}
 	for {
-		header, err := tarReader.Next()
+		header, err := archiveReader.Next()
 		if err == io.EOF {
 			return nil
 		}
@@ -1703,7 +1698,7 @@ func extractBackupArchive(archivePath, targetRoot string) error {
 			if err != nil {
 				return fmt.Errorf("create restore file %q: %w", relativePath, err)
 			}
-			if _, err := io.Copy(file, tarReader); err != nil {
+			if _, err := io.Copy(file, archiveReader); err != nil {
 				_ = file.Close()
 				return fmt.Errorf("write restore file %q: %w", relativePath, err)
 			}
@@ -1777,22 +1772,24 @@ func validateImportedArchive(archivePath string) error {
 		return fmt.Errorf("open backup archive: %w", err)
 	}
 	defer file.Close()
-	_, err = readBackupManifest(file, true)
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	_, err = readBackupManifest(file, info.Size(), true)
 	return err
 }
 
-func readBackupManifest(reader io.Reader, validateAll bool) (manifest, error) {
-	gzipReader, err := gzip.NewReader(reader)
+func readBackupManifest(reader io.Reader, size int64, validateAll bool) (manifest, error) {
+	archiveReader, err := archiveutil.NewReader(reader, size, maxRestoreArchiveEntries)
 	if err != nil {
 		return manifest{}, ErrInvalidArchive
 	}
-	defer gzipReader.Close()
-
-	tarReader := tar.NewReader(gzipReader)
+	defer archiveReader.Close()
 	var snapshot manifest
 	manifestFound := false
 	for {
-		header, err := tarReader.Next()
+		header, err := archiveReader.Next()
 		if err == io.EOF {
 			break
 		}
@@ -1817,11 +1814,11 @@ func readBackupManifest(reader io.Reader, validateAll bool) (manifest, error) {
 		if relativePath != "manifest.json" {
 			continue
 		}
-		if manifestFound || header.Typeflag == tar.TypeDir || header.Size < 0 || header.Size > maxManifestSize {
+		if manifestFound || (header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA) || header.Size < 0 || header.Size > maxManifestSize {
 			return manifest{}, ErrInvalidArchive
 		}
 
-		manifestPayload, err := io.ReadAll(io.LimitReader(tarReader, maxManifestSize+1))
+		manifestPayload, err := io.ReadAll(io.LimitReader(archiveReader, maxManifestSize+1))
 		if err != nil {
 			return manifest{}, ErrInvalidArchive
 		}

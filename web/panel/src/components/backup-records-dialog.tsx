@@ -26,6 +26,7 @@ import {
   tableActionGroupClassName,
   tableDangerActionButtonClassName,
 } from "@/components/ui/table";
+import { backupArchiveAccept } from "@/lib/backup-records";
 import { formatBytes, formatDateTime } from "@/lib/format";
 
 type BackupCreateButtonProps = {
@@ -258,7 +259,7 @@ export function BackupRecordsDialog({
                     <input
                       id={uploadInputId}
                       type="file"
-                      accept=".sql,.zip,.tar.gz,.tgz,application/sql,application/zip,application/gzip"
+                      accept={`.sql,application/sql,${backupArchiveAccept}`}
                       className="sr-only"
                       disabled={uploadBusy}
                       onChange={(event) => {
@@ -273,7 +274,7 @@ export function BackupRecordsDialog({
             </div>
             {onUploadRestore ? (
               <DialogDescription>
-                Upload a .sql, .zip, or .tar.gz file to replace the current database contents.
+                Upload a .sql, .zip, .tar.gz, or .tar.zst file to replace the current database contents.
               </DialogDescription>
             ) : null}
           </DialogHeader>

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"flowpanel/internal/alerts"
+	"flowpanel/internal/archiveutil"
 	"flowpanel/internal/backup"
 	flowcron "flowpanel/internal/cron"
 
@@ -485,7 +486,7 @@ func (a *apiRoutes) registerBackupRoutes(r chi.Router) {
 		defer download.Reader.Close()
 
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", download.Name))
-		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Type", archiveutil.ContentType(download.Name))
 		if download.Size > 0 {
 			w.Header().Set("Content-Length", strconv.FormatInt(download.Size, 10))
 		}

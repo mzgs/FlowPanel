@@ -1,5 +1,16 @@
 import type { BackupRecord } from "@/api/backups";
 
+const backupArchiveExtensions = [
+  ".zip", ".tar.gz", ".tgz", ".gz", ".gzip",
+  ".tar.zst", ".tar.zstd", ".tzst", ".zst", ".zstd",
+];
+export const backupArchiveAccept = `${backupArchiveExtensions.join(",")},application/zip,application/gzip,application/x-gzip,application/zstd,application/octet-stream`;
+
+export function isBackupArchiveFileName(name: string) {
+  const normalizedName = name.trim().toLowerCase();
+  return backupArchiveExtensions.some((extension) => normalizedName.endsWith(extension));
+}
+
 const siteBackupPrefix = "flowpanel-site-";
 const siteBackupSeparator = "-backup";
 const databaseBackupPrefix = "flowpanel-database-";

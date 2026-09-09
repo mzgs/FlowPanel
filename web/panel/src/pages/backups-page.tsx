@@ -63,6 +63,7 @@ import {
   tableDangerActionButtonClassName,
   tableStateCellClassName,
 } from "@/components/ui/table";
+import { backupArchiveAccept, isBackupArchiveFileName } from "@/lib/backup-records";
 import { formatBytes, formatDateTime, formatUploadTimeRemaining } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -93,14 +94,8 @@ const initialScheduleForm: ScheduleFormState = {
   include_databases: true,
   location: "local",
 };
-const backupArchiveExtension = ".tar.gz";
 const maxBackupUploadBytes = 8 * 1024 * 1024 * 1024;
 type BackupImportProgressState = BackupUploadProgress & { startedAt: number };
-
-function isBackupArchiveFileName(name: string) {
-  const normalizedName = name.trim().toLowerCase();
-  return normalizedName.endsWith(backupArchiveExtension);
-}
 
 function formatScheduledBackupScope(record: ScheduledBackupRecord) {
   const parts: string[] = [];
@@ -639,7 +634,7 @@ export function BackupsPage() {
       return;
     }
     if (!isBackupArchiveFileName(file.name)) {
-      toast.error("Select a FlowPanel backup archive ending in .tar.gz.");
+      toast.error("Select a FlowPanel backup archive in ZIP, gzip, or Zstandard format.");
       return;
     }
     if (file.size > maxBackupUploadBytes) {
@@ -718,7 +713,7 @@ export function BackupsPage() {
       <input
         ref={importInputRef}
         type="file"
-        accept={`${backupArchiveExtension},application/gzip,application/x-gzip,application/octet-stream`}
+        accept={backupArchiveAccept}
         className="hidden"
         onChange={(event) => {
           void handleImportSelection(event.target.files);

@@ -3,7 +3,6 @@ package httpx
 import (
 	"archive/tar"
 	"archive/zip"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"path"
 	"strings"
 
+	"flowpanel/internal/archiveutil"
 	"flowpanel/internal/mariadb"
 
 	"github.com/go-chi/chi/v5"
@@ -60,7 +60,7 @@ func (a *apiRoutes) registerMariaDBDatabaseRestoreRoute(r chi.Router) {
 		}
 		file, header, err := r.FormFile("backup")
 		if err != nil {
-			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "upload one .sql, .zip, or .tar.gz file in the backup field"})
+			writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "upload one .sql, .zip, .tar.gz, or .tar.zst file in the backup field"})
 			return
 		}
 		defer file.Close()
@@ -94,7 +94,7 @@ func restoreUploadedDatabase(ctx context.Context, manager mariadb.Manager, datab
 	case strings.HasSuffix(lowerName, ".sql"):
 		return manager.RestoreDatabase(ctx, databaseName, file)
 	case strings.HasSuffix(lowerName, ".zip"):
-		entryCount, directorySize, err := inspectZipReaderDirectory(file, size)
+		entryCount, directorySize, err := archiveutil.InspectZipDirectory(file, size)
 		if err != nil || entryCount > maxDatabaseRestoreArchiveFiles || directorySize > dockerVolumeDirectoryMaxSize {
 			return databaseRestoreUploadError("ZIP archive directory exceeds safety limits")
 		}
@@ -126,8 +126,8 @@ func restoreUploadedDatabase(ctx context.Context, manager mariadb.Manager, datab
 		}
 		defer dump.Close()
 		return manager.RestoreDatabase(ctx, databaseName, dump)
-	case strings.HasSuffix(lowerName, ".tar.gz"), strings.HasSuffix(lowerName, ".tgz"):
-		names, err := tarGzipSQLNames(file)
+	case archiveutil.ContentType(lowerName) == "application/gzip", archiveutil.ContentType(lowerName) == "application/zstd":
+		names, err := compressedTarSQLNames(file)
 		if err != nil {
 			return err
 		}
@@ -136,62 +136,65 @@ func restoreUploadedDatabase(ctx context.Context, manager mariadb.Manager, datab
 			return err
 		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return databaseRestoreUploadError("failed to read the TAR.GZ archive")
+			return databaseRestoreUploadError("failed to read the compressed TAR archive")
 		}
-		gzipReader, err := gzip.NewReader(file)
+		compressedReader, err := archiveutil.OpenCompressed(file)
 		if err != nil {
-			return databaseRestoreUploadError("uploaded file is not a valid TAR.GZ archive")
+			return databaseRestoreUploadError("uploaded file is not a valid compressed TAR archive")
 		}
-		defer gzipReader.Close()
-		tarReader := tar.NewReader(gzipReader)
+		defer compressedReader.Close()
+		tarReader := tar.NewReader(compressedReader)
 		for {
 			header, err := tarReader.Next()
 			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
-				return databaseRestoreUploadError("uploaded file is not a valid TAR.GZ archive")
+				return databaseRestoreUploadError("uploaded file is not a valid compressed TAR archive")
 			}
 			if header.Name == selected && header.FileInfo().Mode().IsRegular() {
 				return manager.RestoreDatabase(ctx, databaseName, io.LimitReader(tarReader, header.Size))
 			}
 		}
-		return databaseRestoreUploadError("the selected SQL dump could not be read from the TAR.GZ archive")
+		return databaseRestoreUploadError("the selected SQL dump could not be read from the compressed TAR archive")
 	default:
-		return databaseRestoreUploadError("database backup must be a .sql, .zip, or .tar.gz file")
+		return databaseRestoreUploadError("database backup must be a .sql, .zip, .tar.gz, or .tar.zst file")
 	}
 }
 
-func tarGzipSQLNames(file multipart.File) ([]string, error) {
+func compressedTarSQLNames(file multipart.File) ([]string, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, databaseRestoreUploadError("failed to read the TAR.GZ archive")
+		return nil, databaseRestoreUploadError("failed to read the compressed TAR archive")
 	}
-	gzipReader, err := gzip.NewReader(file)
+	compressedReader, err := archiveutil.OpenCompressed(file)
 	if err != nil {
-		return nil, databaseRestoreUploadError("uploaded file is not a valid TAR.GZ archive")
+		return nil, databaseRestoreUploadError("uploaded file is not a valid compressed TAR archive")
 	}
-	defer gzipReader.Close()
+	defer compressedReader.Close()
 
 	var names []string
-	tarReader := tar.NewReader(gzipReader)
+	tarReader := tar.NewReader(compressedReader)
 	entryCount := 0
 	metadataSize := 0
 	for {
 		header, err := tarReader.Next()
 		if errors.Is(err, io.EOF) {
+			if _, err := io.Copy(io.Discard, compressedReader); err != nil {
+				return nil, databaseRestoreUploadError("uploaded file is not a valid compressed TAR archive")
+			}
 			return names, nil
 		}
 		if err != nil {
-			return nil, databaseRestoreUploadError("uploaded file is not a valid TAR.GZ archive")
+			return nil, databaseRestoreUploadError("uploaded file is not a valid compressed TAR archive")
 		}
 		entryCount++
 		metadataSize += len(header.Name)
 		if entryCount > maxDatabaseRestoreArchiveFiles || len(header.Name) > 4096 || metadataSize > dockerVolumeDirectoryMaxSize {
-			return nil, databaseRestoreUploadError("TAR.GZ archive contains too many files")
+			return nil, databaseRestoreUploadError("compressed TAR archive contains too many files")
 		}
 		if header.FileInfo().Mode().IsRegular() && strings.HasSuffix(strings.ToLower(header.Name), ".sql") {
 			if header.Size > maxFileUploadBytes {
-				return nil, databaseRestoreUploadError("SQL dump in the TAR.GZ archive exceeds the 8 GB limit")
+				return nil, databaseRestoreUploadError("SQL dump in the compressed TAR archive exceeds the 8 GB limit")
 			}
 			names = append(names, header.Name)
 		}
