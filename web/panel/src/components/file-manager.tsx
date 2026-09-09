@@ -227,7 +227,7 @@ function readStoredViewMode(): ViewMode {
   return window.localStorage.getItem(VIEW_STORAGE_KEY) === "grid" ? "grid" : "list";
 }
 
-function readStoredLastPath(enabled = true) {
+function readStoredLastPath(enabled = true, storageKey = LAST_PATH_STORAGE_KEY, rootPath = "") {
   if (typeof window === "undefined") {
     return null;
   }
@@ -236,7 +236,8 @@ function readStoredLastPath(enabled = true) {
     return null;
   }
 
-  return window.localStorage.getItem(LAST_PATH_STORAGE_KEY);
+  const path = window.localStorage.getItem(storageKey);
+  return path !== null && pathWithinRoot(path, rootPath) ? path : null;
 }
 
 function isEditableFile(item: FileEntry) {
@@ -451,6 +452,9 @@ export function FileManager({
   persistLastPath = true,
   className,
 }: FileManagerProps) {
+  const lastPathStorageKey = rootPath
+    ? `${LAST_PATH_STORAGE_KEY}:${normalizePath(rootPath)}`
+    : LAST_PATH_STORAGE_KEY;
   const queryClient = useQueryClient();
   const browserRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -458,7 +462,7 @@ export function FileManager({
 
   const [currentPath, setCurrentPath] = useState(() => {
     if (initialPath !== undefined) {
-      return initialPath;
+      return readStoredLastPath(persistLastPath, lastPathStorageKey, rootPath) ?? initialPath;
     }
 
     const pendingPath = consumePendingFilesPath();
@@ -466,7 +470,7 @@ export function FileManager({
       return pendingPath;
     }
 
-    const lastPath = readStoredLastPath(persistLastPath);
+    const lastPath = readStoredLastPath(persistLastPath, lastPathStorageKey, rootPath);
     return lastPath ?? "";
   });
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
@@ -575,10 +579,10 @@ export function FileManager({
       return;
     }
 
-    setCurrentPath(initialPath);
+    setCurrentPath(readStoredLastPath(persistLastPath, lastPathStorageKey, rootPath) ?? initialPath);
     setSearch("");
     clearSelection();
-  }, [initialPath]);
+  }, [initialPath, lastPathStorageKey, persistLastPath, rootPath]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -593,8 +597,8 @@ export function FileManager({
       return;
     }
 
-    window.localStorage.setItem(LAST_PATH_STORAGE_KEY, listing?.path ?? currentPath);
-  }, [currentPath, listing?.path, listingQuery.isSuccess, persistLastPath]);
+    window.localStorage.setItem(lastPathStorageKey, listing?.path ?? currentPath);
+  }, [currentPath, listing?.path, listingQuery.isSuccess, persistLastPath, lastPathStorageKey]);
 
   useEffect(() => {
     const available = new Set(itemOrder);
@@ -627,11 +631,11 @@ export function FileManager({
     }
 
     if (getErrorMessage(listingQuery.error, "").toLowerCase().includes("not found")) {
-      const storedLastPath = readStoredLastPath(persistLastPath);
+      const storedLastPath = readStoredLastPath(persistLastPath, lastPathStorageKey, rootPath);
       const fromLastPath = storedLastPath === currentPath;
 
       if (typeof window !== "undefined" && fromLastPath) {
-        window.localStorage.removeItem(LAST_PATH_STORAGE_KEY);
+        window.localStorage.removeItem(lastPathStorageKey);
       }
 
       setCurrentPath(normalizedRootPath);
@@ -642,7 +646,7 @@ export function FileManager({
         return;
       }
     }
-  }, [currentPath, listingQuery.error, listingQuery.isError, normalizedRootPath, persistLastPath]);
+  }, [currentPath, listingQuery.error, listingQuery.isError, normalizedRootPath, persistLastPath, lastPathStorageKey, rootPath]);
 
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {

@@ -3813,7 +3813,6 @@ export function DomainDetailPage() {
                         key={filesPath}
                         initialPath={filesPath}
                         rootPath={filesPath}
-                        persistLastPath={false}
                         className="min-h-0 [&>div]:px-0 [&>div]:pb-0 [&>div]:pt-0"
                       />
                     ) : (
