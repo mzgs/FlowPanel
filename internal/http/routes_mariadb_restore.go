@@ -72,8 +72,9 @@ func (a *apiRoutes) registerMariaDBDatabaseRestoreRoute(r chi.Router) {
 				return
 			}
 			a.app.Logger.Error("restore uploaded mariadb database failed", zap.String("database_name", databaseName), zap.String("file_name", header.Filename), zap.Error(err))
-			a.mutationEvent(r.Context(), "database", "restore", "database", databaseName, databaseName, "failed", "Failed to restore the uploaded database backup.")
-			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": "failed to restore database backup"})
+			message := fmt.Sprintf("Failed to restore the uploaded database backup: %v", err)
+			a.mutationEvent(r.Context(), "database", "restore", "database", databaseName, databaseName, "failed", message)
+			writeJSON(w, stdhttp.StatusInternalServerError, map[string]any{"error": message})
 			return
 		}
 
