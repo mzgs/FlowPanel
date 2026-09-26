@@ -25,6 +25,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if strings.TrimSpace(dsn) == "" {
 		return nil, fmt.Errorf("database path must not be empty")
 	}
+	dsn += "?_pragma=busy_timeout(5000)"
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
