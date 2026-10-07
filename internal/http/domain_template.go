@@ -19,6 +19,7 @@ import (
 	filesvc "flowpanel/internal/files"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
+	"flowpanel/internal/workload"
 )
 
 const domainTemplateActionTimeout = 10 * time.Minute
@@ -692,7 +693,7 @@ func runTemplateCommand(
 		output := executil.NewTailBuffer(executil.DefaultOutputLimit)
 		cmd.Stdout, cmd.Stderr = output, output
 
-		err := cmd.Run()
+		err := workload.Run(ctx, cmd)
 		return executedAsWorker, strings.TrimSpace(output.String()), err
 	}
 

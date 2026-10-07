@@ -400,6 +400,11 @@ EOF
   fi
   ensure_env_key "$env_file" FLOWPANEL_CADDY_ADMIN_ADDR "unix//run/flowpanel/caddy-admin.sock|0600" ""
   ensure_env_key "$env_file" FLOWPANEL_SECURITY_EVENT_SOCKET "/run/flowpanel/security-events.sock" ""
+  ensure_env_key "$env_file" FLOWPANEL_WORKLOAD_PROTECTION "true" ""
+  ensure_env_key "$env_file" FLOWPANEL_WORKLOAD_CPU_PERCENT "75" ""
+  ensure_env_key "$env_file" FLOWPANEL_WORKLOAD_MEMORY_PERCENT "70" ""
+  ensure_env_key "$env_file" FLOWPANEL_PHP_CPU_SHARE_PERCENT "15" ""
+  ensure_env_key "$env_file" FLOWPANEL_PHP_MEMORY_RESERVE_PERCENT "10" ""
   configure_admin_https "$env_file" "" "$env_dir/admin.crt" "$env_dir/admin.key"
   secure_install_permissions "$env_dir" "$env_file" "$data_dir" "$state_dir" "root:root"
 

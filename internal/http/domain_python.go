@@ -13,6 +13,7 @@ import (
 
 	"flowpanel/internal/domain"
 	"flowpanel/internal/executil"
+	"flowpanel/internal/workload"
 )
 
 const domainPythonRequirementsInstallTimeout = 15 * time.Minute
@@ -212,7 +213,7 @@ func runDomainPythonCommand(
 	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
 	cmd.Stdout, cmd.Stderr = output, output
 
-	if err := cmd.Run(); err != nil {
+	if err := workload.Run(ctx, cmd); err != nil {
 		message := strings.TrimSpace(output.String())
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"flowpanel/internal/executil"
+	"flowpanel/internal/workload"
 
 	"go.uber.org/zap"
 )
@@ -351,6 +352,15 @@ func (s *Service) InstallVersion(ctx context.Context, version string) error {
 	plan := detectVersionActionPlan(target)
 	if len(plan.installCmds) == 0 {
 		return fmt.Errorf("automatic PHP %s installation is not supported on %s", target, runtime.GOOS)
+	}
+	if workload.Enabled() {
+		service := "php" + target + "-fpm"
+		if plan.packageManager != "apt" {
+			service = remiFPMServiceName(target)
+		}
+		if err := workload.ProtectService(ctx, service+".service"); err != nil {
+			return err
+		}
 	}
 
 	s.logger.Info("installing php runtime",
@@ -1161,6 +1171,16 @@ func runCommandWithOptions(ctx context.Context, dir string, env []string, name s
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
+	base := filepath.Base(name)
+	if workload.Enabled() && base == "service" && len(args) > 1 && (args[1] == "start" || args[1] == "restart" || args[1] == "reload") {
+		return "", errors.New("protected PHP services require systemctl")
+	}
+	if workload.Enabled() && base == "systemctl" && len(args) > 1 && (args[0] == "start" || args[0] == "restart" || args[0] == "reload") {
+		service := strings.TrimSuffix(args[1], ".service") + ".service"
+		if err := workload.ProtectService(runCtx, service); err != nil {
+			return "", err
+		}
+	}
 
 	cmd := exec.CommandContext(runCtx, name, args...)
 	if strings.TrimSpace(dir) != "" {
@@ -1173,7 +1193,12 @@ func runCommandWithOptions(ctx context.Context, dir string, env []string, name s
 	cmd.Stdout = output
 	cmd.Stderr = output
 
-	err := cmd.Run()
+	var err error
+	if base == "systemctl" || base == "service" {
+		err = cmd.Run()
+	} else {
+		err = workload.Run(runCtx, cmd)
+	}
 	combinedOutput := strings.TrimSpace(output.String())
 	if err == nil {
 		return combinedOutput, nil

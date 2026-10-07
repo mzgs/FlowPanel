@@ -24,6 +24,7 @@ import (
 
 	"flowpanel/internal/config"
 	"flowpanel/internal/executil"
+	"flowpanel/internal/workload"
 )
 
 const (
@@ -425,7 +426,7 @@ func runPreviewCommand(ctx context.Context, name string, args ...string) (string
 	cmd.Stdout = output
 	cmd.Stderr = output
 
-	err := cmd.Run()
+	err := workload.Run(runCtx, cmd)
 	combinedOutput := strings.TrimSpace(output.String())
 	if err == nil {
 		return combinedOutput, nil

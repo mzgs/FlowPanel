@@ -14,6 +14,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/executil"
 	"flowpanel/internal/phpenv"
+	"flowpanel/internal/workload"
 )
 
 const composerActionTimeout = 10 * time.Minute
@@ -86,7 +87,7 @@ func runDomainComposerAction(
 		output := executil.NewTailBuffer(executil.DefaultOutputLimit)
 		cmd.Stdout, cmd.Stderr = output, output
 
-		err := cmd.Run()
+		err := workload.Run(runCtx, cmd)
 		return executedAsWorker, strings.TrimSpace(output.String()), err
 	}
 

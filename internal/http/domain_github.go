@@ -24,6 +24,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/executil"
 	"flowpanel/internal/settings"
+	"flowpanel/internal/workload"
 )
 
 const githubActionTimeout = 10 * time.Minute
@@ -650,7 +651,7 @@ func runGitHubPostFetchScript(ctx context.Context, targetPath string, script str
 	cmd.Stdout = output
 	cmd.Stderr = output
 
-	if err := cmd.Run(); err != nil {
+	if err := workload.Run(ctx, cmd); err != nil {
 		message := strings.TrimSpace(output.String())
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
@@ -717,7 +718,7 @@ func runGitCommand(
 	cmd.Stdout = output
 	cmd.Stderr = output
 
-	if err := cmd.Run(); err != nil {
+	if err := workload.Run(ctx, cmd); err != nil {
 		message := strings.TrimSpace(output.String())
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):

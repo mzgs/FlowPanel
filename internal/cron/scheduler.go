@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"flowpanel/internal/executil"
+	"flowpanel/internal/workload"
 
 	robfigcron "github.com/robfig/cron/v3"
 	"go.uber.org/zap"
@@ -463,7 +464,7 @@ func (s *Scheduler) executeJob(job Record) {
 	cmd := exec.CommandContext(commandCtx, commandName, commandArgs...)
 	output := executil.NewTailBuffer(64 << 10)
 	cmd.Stdout, cmd.Stderr = output, output
-	err := cmd.Run()
+	err := workload.Run(commandCtx, cmd)
 	finishedAt := time.Now()
 	duration := time.Since(startedAt)
 	trimmedOutput := strings.TrimSpace(output.String())

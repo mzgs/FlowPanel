@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"flowpanel/internal/executil"
+	"flowpanel/internal/workload"
 
 	"go.uber.org/zap"
 )
@@ -313,7 +314,7 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 		Environment:      cloneEnvironmentMap(input.Environment),
 	}
 
-	args := []string{"start", scriptPath}
+	args := []string{"start", scriptPath, "--exp-backoff-restart-delay", "1000", "--max-restarts", "10", "--min-uptime", "30000"}
 	if definition.Name != "" {
 		args = append(args, "--name", definition.Name)
 	}
@@ -919,7 +920,7 @@ func (s *Service) createMissingProcess(ctx context.Context, pm2Path string, defi
 		return nil
 	}
 
-	args := []string{"start", scriptPath}
+	args := []string{"start", scriptPath, "--exp-backoff-restart-delay", "1000", "--max-restarts", "10", "--min-uptime", "30000"}
 	if name := strings.TrimSpace(definition.Name); name != "" {
 		args = append(args, "--name", name)
 	}
@@ -1138,7 +1139,12 @@ func runCommand(ctx context.Context, environment map[string]string, name string,
 	cmd.Stdout = output
 	cmd.Stderr = output
 
-	err := cmd.Run()
+	var err error
+	if filepath.Base(name) == "pm2" {
+		err = runProtectedPM2(runCtx, cmd)
+	} else {
+		err = workload.Run(runCtx, cmd)
+	}
 	combinedOutput := strings.TrimSpace(output.String())
 	if err == nil {
 		return combinedOutput, nil

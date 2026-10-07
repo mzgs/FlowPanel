@@ -9,6 +9,7 @@ import (
 	"flowpanel/internal/config"
 	"flowpanel/internal/dockercontainer"
 	"flowpanel/internal/executil"
+	"flowpanel/internal/workload"
 	"fmt"
 	"io"
 	"math"
@@ -1493,8 +1494,15 @@ func createDockerContainer(ctx context.Context, image string) (dockerContainerLi
 
 	commandCtx, cancel := context.WithTimeout(ctx, dockerCreateCommandTimeout)
 	defer cancel()
+	if err := dockercontainer.PrepareProtection(commandCtx); err != nil {
+		return dockerContainerListItem{}, err
+	}
 
-	cmd := exec.CommandContext(commandCtx, "docker", "create", "--pull", "missing", "-q", image)
+	args := []string{"create", "--pull", "missing", "-q"}
+	if workload.Enabled() {
+		args = append(args, "--cgroup-parent", workload.AppsSlice, "--pids-limit", strconv.Itoa(workload.TasksMax), "--restart", "on-failure:5")
+	}
+	cmd := exec.CommandContext(commandCtx, "docker", append(args, image)...)
 	stdout := executil.NewTailBuffer(executil.DefaultOutputLimit)
 	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -1678,6 +1686,9 @@ func recreateDockerContainerWithConfig(
 	containerID string,
 	record dockerInspectRecord,
 ) (dockerContainerListItem, error) {
+	if err := dockercontainer.PrepareProtection(ctx); err != nil {
+		return dockerContainerListItem{}, err
+	}
 	args := dockercontainer.CreateArgs(record)
 	if err := deleteDockerContainer(ctx, containerID); err != nil {
 		return dockerContainerListItem{}, err
@@ -1738,6 +1749,15 @@ func runDockerContainerAction(ctx context.Context, containerID, action string) (
 
 	commandCtx, cancel := context.WithTimeout(ctx, dockerActionCommandTimeout)
 	defer cancel()
+	if action == "start" || action == "restart" {
+		record, err := inspectDockerContainerConfig(commandCtx, containerID)
+		if err != nil {
+			return dockerContainerListItem{}, err
+		}
+		if err := dockercontainer.CheckProtection(commandCtx, record); err != nil {
+			return dockerContainerListItem{}, err
+		}
+	}
 
 	cmd := exec.CommandContext(commandCtx, "docker", action, containerID)
 	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)

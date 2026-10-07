@@ -14,6 +14,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/executil"
 	"flowpanel/internal/pm2"
+	"flowpanel/internal/workload"
 )
 
 const domainApplicationBuildTimeout = 15 * time.Minute
@@ -92,7 +93,7 @@ func (a *apiRoutes) ensureDomainApplicationBinary(ctx context.Context, record do
 	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
 	cmd.Stdout = output
 	cmd.Stderr = output
-	if err := cmd.Run(); err != nil {
+	if err := workload.Run(runCtx, cmd); err != nil {
 		message := strings.TrimSpace(output.String())
 		switch {
 		case errors.Is(runCtx.Err(), context.DeadlineExceeded):

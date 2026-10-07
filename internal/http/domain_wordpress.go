@@ -25,6 +25,7 @@ import (
 	"flowpanel/internal/executil"
 	"flowpanel/internal/mariadb"
 	"flowpanel/internal/phpenv"
+	"flowpanel/internal/workload"
 )
 
 const wordPressActionTimeout = 10 * time.Minute
@@ -1018,7 +1019,7 @@ func runWordPressCommandWithWorker(
 		stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 
-		err := cmd.Run()
+		err := workload.Run(runCtx, cmd)
 		output := strings.TrimSpace(strings.Join([]string{stdout.String(), stderr.String()}, "\n"))
 		return stdout.Bytes(), output, executedAsWorker, err
 	}

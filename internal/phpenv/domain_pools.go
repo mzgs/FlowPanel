@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"flowpanel/internal/executil"
+	"flowpanel/internal/workload"
 
 	"go.uber.org/zap"
 )
@@ -78,6 +79,15 @@ func (s *Service) ReconcileDomainPools(ctx context.Context, inputs []DomainPoolI
 			status := s.StatusForVersion(ctx, version)
 			if !status.Ready {
 				return nil, fmt.Errorf("php-fpm %s is not ready: %s", version, status.Message)
+			}
+			if workload.Enabled() {
+				plan := detectVersionActionPlan(version)
+				if len(plan.startCmds) == 0 || len(plan.startCmds[0]) < 3 || filepath.Base(plan.startCmds[0][0]) != "systemctl" {
+					return nil, errors.New("protected PHP workers require a systemd service")
+				}
+				if err := workload.ProtectService(ctx, plan.startCmds[0][2]+".service"); err != nil {
+					return nil, err
+				}
 			}
 			dir, err := domainPoolConfigDirectory(version, status.FPMPath)
 			if err != nil {

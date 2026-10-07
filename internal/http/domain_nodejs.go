@@ -13,6 +13,7 @@ import (
 	"flowpanel/internal/domain"
 	"flowpanel/internal/executil"
 	"flowpanel/internal/nodejs"
+	"flowpanel/internal/workload"
 )
 
 const domainNPMInstallTimeout = 15 * time.Minute
@@ -75,7 +76,7 @@ func runDomainNPMInstall(
 	output := executil.NewTailBuffer(executil.DefaultOutputLimit)
 	cmd.Stdout, cmd.Stderr = output, output
 
-	if err := cmd.Run(); err != nil {
+	if err := workload.Run(runCtx, cmd); err != nil {
 		message := strings.TrimSpace(output.String())
 		switch {
 		case errors.Is(runCtx.Err(), context.DeadlineExceeded):

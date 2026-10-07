@@ -1457,6 +1457,13 @@ func (s *Service) writeDockerDataArchive(tarWriter *tar.Writer) error {
 }
 
 func (s *Service) writeDockerArchive(ctx context.Context, tarWriter *tar.Writer, records []dockercontainer.Record, modTime time.Time) error {
+	for _, record := range records {
+		if record.State.Running {
+			if err := dockercontainer.CheckProtection(ctx, record); err != nil {
+				return fmt.Errorf("verify Docker protection before stopping containers for backup: %w", err)
+			}
+		}
+	}
 	if err := dockercontainer.Stop(ctx, records); err != nil {
 		resumeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()

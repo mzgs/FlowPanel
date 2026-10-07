@@ -47,6 +47,7 @@ import (
 	"flowpanel/internal/settings"
 	"flowpanel/internal/systemmonitor"
 	"flowpanel/internal/taskmanager"
+	"flowpanel/internal/workload"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -1712,6 +1713,14 @@ func runServer() error {
 	)
 
 	startupCtx := context.Background()
+	if err := workload.Ensure(startupCtx); err != nil {
+		logger.Error("workload protection is unavailable; protected launches will be refused", zap.Error(err))
+	} else if workload.Enabled() {
+		logger.Info("workload CPU, memory and process budgets are active", zap.String("slice", workload.Slice))
+	}
+	if err := workload.ReconcilePHP(startupCtx); err != nil {
+		logger.Error("enroll PHP services in workload protection failed", zap.Error(err))
+	}
 
 	dbConn, err := db.Open(startupCtx, cfg.Database.Path)
 	if err != nil {
@@ -1939,7 +1948,10 @@ func runServer() error {
 	}
 	syncPM2AtStartup(pm2Manager, logger)
 	if err := caddyRuntime.Sync(context.Background(), domainService.List(), settingsRecord.PanelURL); err != nil {
-		return fmt.Errorf("sync embedded caddy runtime: %w", err)
+		if !workload.Enabled() {
+			return fmt.Errorf("sync embedded caddy runtime: %w", err)
+		}
+		logger.Error("sync domain workloads failed; keeping the admin panel available", zap.Error(err))
 	}
 	if err := ftpRuntime.Apply(context.Background(), ftp.Config{
 		Enabled:      settingsRecord.FTPEnabled,

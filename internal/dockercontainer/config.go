@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"flowpanel/internal/executil"
+	"flowpanel/internal/workload"
 )
 
 const (
@@ -49,6 +50,8 @@ type Config struct {
 }
 
 type HostConfig struct {
+	CgroupParent      string                   `json:"CgroupParent"`
+	PidsLimit         *int64                   `json:"PidsLimit"`
 	Binds             []string                 `json:"Binds"`
 	PortBindings      map[string][]PortBinding `json:"PortBindings"`
 	RestartPolicy     RestartPolicy            `json:"RestartPolicy"`
@@ -144,6 +147,9 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string, repo
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		return nil, errors.New("Docker is not installed on this server")
+	}
+	if err := PrepareProtection(ctx); err != nil {
+		return nil, err
 	}
 
 	type restoreRecord struct {
@@ -289,7 +295,15 @@ func PrepareVolumePermissions(ctx context.Context, record Record, source string)
 	if strings.HasPrefix(user, "-") || strings.ContainsAny(user, "\x00\r\n") {
 		return fmt.Errorf("Docker image uses an unsupported container user %q", user)
 	}
-	if _, err := dockerOutput(ctx, "run", "--rm", "--user", "0:0", "--entrypoint", "chown", "--volume", source+":/flowpanel-volume", record.Config.Image, "-R", user, "/flowpanel-volume"); err != nil {
+	if err := PrepareProtection(ctx); err != nil {
+		return err
+	}
+	args := []string{"run", "--rm", "--user", "0:0", "--entrypoint", "chown", "--volume", source + ":/flowpanel-volume"}
+	if workload.Enabled() {
+		args = append(args, "--cgroup-parent", workload.AppsSlice, "--pids-limit", strconv.Itoa(workload.TasksMax))
+	}
+	args = append(args, record.Config.Image, "-R", user, "/flowpanel-volume")
+	if _, err := dockerOutput(ctx, args...); err != nil {
 		return fmt.Errorf("prepare Docker volume %q for container user %q: %w", source, user, err)
 	}
 	return nil
@@ -336,6 +350,10 @@ func Start(ctx context.Context, records []Record) error {
 			startErrors = append(startErrors, errors.New("Docker backup contains an invalid container definition"))
 			continue
 		}
+		if err := CheckProtection(ctx, record); err != nil {
+			startErrors = append(startErrors, err)
+			continue
+		}
 		if _, err := dockerOutput(ctx, "start", name); err != nil {
 			startErrors = append(startErrors, fmt.Errorf("restart Docker container %q after backup: %w", name, err))
 		}
@@ -356,6 +374,22 @@ func CreateArgs(record Record) []string {
 	add("--workdir", record.Config.WorkingDir)
 	add("--user", record.Config.User)
 	add("--stop-signal", record.Config.StopSignal)
+	parent := record.HostConfig.CgroupParent
+	pids := record.HostConfig.PidsLimit
+	if workload.Enabled() {
+		parent = workload.AppsSlice
+		if pids == nil || *pids <= 0 || *pids > workload.TasksMax {
+			limit := int64(workload.TasksMax)
+			pids = &limit
+		}
+		if record.HostConfig.RestartPolicy.Name == "" {
+			record.HostConfig.RestartPolicy = RestartPolicy{Name: "on-failure", MaximumRetryCount: 5}
+		}
+	}
+	add("--cgroup-parent", parent)
+	if pids != nil && *pids != 0 {
+		add("--pids-limit", strconv.FormatInt(*pids, 10))
+	}
 	if record.Config.Tty {
 		args = append(args, "--tty")
 	}
