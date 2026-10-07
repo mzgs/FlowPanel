@@ -56,6 +56,8 @@ export type DockerContainerDetails = {
 };
 
 export type DockerContainerSettings = {
+  cpu_limit: number;
+  memory_limit_bytes: number;
   ports: DockerContainerPortMapping[];
   publish_all_ports: boolean;
   environment: EnvironmentVariable[];
@@ -346,6 +348,8 @@ export async function updateDockerContainerSettings(
     ports: DockerContainerPortMapping[];
     environment: EnvironmentVariable[];
     volumes: DockerContainerVolumeMapping[];
+    cpu_limit?: number;
+    memory_limit_bytes?: number;
   },
 ): Promise<DockerContainer> {
   const response = await fetch(`/api/docker/containers/${encodeURIComponent(containerID)}/settings`, {

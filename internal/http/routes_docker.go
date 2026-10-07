@@ -11,11 +11,13 @@ import (
 	"flowpanel/internal/executil"
 	"fmt"
 	"io"
+	"math"
 	stdhttp "net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -121,6 +123,8 @@ type saveDockerContainerImageRequest struct {
 }
 
 type dockerContainerSettings struct {
+	CPULimit             float64                      `json:"cpu_limit"`
+	MemoryLimitBytes     int64                        `json:"memory_limit_bytes"`
 	Ports                []dockerContainerPortMapping `json:"ports"`
 	Environment          []dockerEnvironmentVariable  `json:"environment"`
 	Volumes              []dockerVolumeMapping        `json:"volumes"`
@@ -133,9 +137,11 @@ type dockerContainerSettingsResponse struct {
 }
 
 type updateDockerContainerSettingsRequest struct {
-	Ports       []dockerContainerPortMapping `json:"ports"`
-	Environment *[]dockerEnvironmentVariable `json:"environment"`
-	Volumes     *[]dockerVolumeMapping       `json:"volumes"`
+	CPULimit         *float64                     `json:"cpu_limit"`
+	MemoryLimitBytes *int64                       `json:"memory_limit_bytes"`
+	Ports            []dockerContainerPortMapping `json:"ports"`
+	Environment      *[]dockerEnvironmentVariable `json:"environment"`
+	Volumes          *[]dockerVolumeMapping       `json:"volumes"`
 }
 
 type dockerEnvironmentVariable struct {
@@ -836,6 +842,7 @@ func (a *apiRoutes) registerDockerRoutes(r chi.Router) {
 				applyDockerContainerVolumes(&record, *input.Volumes),
 			)
 		}
+		fieldErrors = mergeDockerValidationErrors(fieldErrors, applyDockerContainerResourceLimits(&record, input))
 		if len(fieldErrors) > 0 {
 			writeValidationFailed(w, fieldErrors)
 			return
@@ -1078,12 +1085,22 @@ func inspectDockerContainerDetails(ctx context.Context, containerID string) (doc
 }
 
 func dockerContainerSettingsFromRecord(record dockerInspectRecord) dockerContainerSettings {
+	cpuLimit := float64(record.HostConfig.NanoCPUs) / 1e9
+	if cpuLimit == 0 && record.HostConfig.CPUQuota > 0 {
+		period := record.HostConfig.CPUPeriod
+		if period == 0 {
+			period = 100000
+		}
+		cpuLimit = float64(record.HostConfig.CPUQuota) / float64(period)
+	}
 	volumeSourceBasePath := ""
 	if path, err := dockerAutomaticVolumeBasePath(dockerAutomaticVolumeContainerName(record)); err == nil {
 		volumeSourceBasePath = path
 	}
 
 	return dockerContainerSettings{
+		CPULimit:             cpuLimit,
+		MemoryLimitBytes:     record.HostConfig.Memory,
 		Ports:                dockerContainerPortMappings(record),
 		Environment:          dockerContainerEnvironment(record),
 		Volumes:              dockerContainerVolumeMappings(record),
@@ -2045,6 +2062,33 @@ func parseDockerStatsBytes(value string) *int64 {
 
 	bytes := int64(parsed)
 	return &bytes
+}
+
+func applyDockerContainerResourceLimits(record *dockerInspectRecord, input updateDockerContainerSettingsRequest) map[string]string {
+	fieldErrors := make(map[string]string)
+	if input.CPULimit != nil {
+		limit := *input.CPULimit
+		if math.IsNaN(limit) || math.IsInf(limit, 0) || limit < 0 || (limit > 0 && limit < 0.01) || limit > float64(runtime.NumCPU()) {
+			fieldErrors["cpu_limit"] = fmt.Sprintf("Enter 0 for unlimited, or a CPU limit between 0.01 and %d cores.", runtime.NumCPU())
+		} else {
+			record.HostConfig.NanoCPUs = int64(math.Round(limit * 1e9))
+			record.HostConfig.CPUPeriod = 0
+			record.HostConfig.CPUQuota = 0
+		}
+	}
+	if input.MemoryLimitBytes != nil {
+		limit := *input.MemoryLimitBytes
+		switch {
+		case limit < 0 || (limit > 0 && limit < 6*1024*1024):
+			fieldErrors["memory_limit_bytes"] = "Enter 0 for unlimited, or at least 6 MiB of RAM."
+		case limit > 0 && limit < record.HostConfig.MemoryReservation:
+			fieldErrors["memory_limit_bytes"] = "RAM limit must be at least the container's existing memory reservation."
+		default:
+			record.HostConfig.Memory = limit
+			record.HostConfig.MemorySwap = limit
+		}
+	}
+	return fieldErrors
 }
 
 func applyDockerContainerPorts(record *dockerInspectRecord, requested []dockerContainerPortMapping) map[string]string {

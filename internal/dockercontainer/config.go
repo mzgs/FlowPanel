@@ -49,22 +49,30 @@ type Config struct {
 }
 
 type HostConfig struct {
-	Binds           []string                 `json:"Binds"`
-	PortBindings    map[string][]PortBinding `json:"PortBindings"`
-	RestartPolicy   RestartPolicy            `json:"RestartPolicy"`
-	NetworkMode     string                   `json:"NetworkMode"`
-	ExtraHosts      []string                 `json:"ExtraHosts"`
-	CapAdd          []string                 `json:"CapAdd"`
-	CapDrop         []string                 `json:"CapDrop"`
-	DNS             []string                 `json:"Dns"`
-	DNSSearch       []string                 `json:"DnsSearch"`
-	Tmpfs           map[string]string        `json:"Tmpfs"`
-	ShmSize         int64                    `json:"ShmSize"`
-	AutoRemove      bool                     `json:"AutoRemove"`
-	PublishAllPorts bool                     `json:"PublishAllPorts"`
-	ReadonlyRootfs  bool                     `json:"ReadonlyRootfs"`
-	Privileged      bool                     `json:"Privileged"`
-	Init            *bool                    `json:"Init"`
+	Binds             []string                 `json:"Binds"`
+	PortBindings      map[string][]PortBinding `json:"PortBindings"`
+	RestartPolicy     RestartPolicy            `json:"RestartPolicy"`
+	NetworkMode       string                   `json:"NetworkMode"`
+	ExtraHosts        []string                 `json:"ExtraHosts"`
+	CapAdd            []string                 `json:"CapAdd"`
+	CapDrop           []string                 `json:"CapDrop"`
+	DNS               []string                 `json:"Dns"`
+	DNSSearch         []string                 `json:"DnsSearch"`
+	Tmpfs             map[string]string        `json:"Tmpfs"`
+	ShmSize           int64                    `json:"ShmSize"`
+	NanoCPUs          int64                    `json:"NanoCpus"`
+	CPUPeriod         int64                    `json:"CpuPeriod"`
+	CPUQuota          int64                    `json:"CpuQuota"`
+	CPUShares         int64                    `json:"CpuShares"`
+	CpusetCpus        string                   `json:"CpusetCpus"`
+	Memory            int64                    `json:"Memory"`
+	MemorySwap        int64                    `json:"MemorySwap"`
+	MemoryReservation int64                    `json:"MemoryReservation"`
+	AutoRemove        bool                     `json:"AutoRemove"`
+	PublishAllPorts   bool                     `json:"PublishAllPorts"`
+	ReadonlyRootfs    bool                     `json:"ReadonlyRootfs"`
+	Privileged        bool                     `json:"Privileged"`
+	Init              *bool                    `json:"Init"`
 }
 
 type Mount struct {
@@ -371,6 +379,29 @@ func CreateArgs(record Record) []string {
 	}
 	if record.HostConfig.ShmSize > 0 {
 		add("--shm-size", strconv.FormatInt(record.HostConfig.ShmSize, 10))
+	}
+	if record.HostConfig.NanoCPUs > 0 {
+		add("--cpus", strconv.FormatFloat(float64(record.HostConfig.NanoCPUs)/1e9, 'f', -1, 64))
+	} else {
+		if record.HostConfig.CPUPeriod > 0 {
+			add("--cpu-period", strconv.FormatInt(record.HostConfig.CPUPeriod, 10))
+		}
+		if record.HostConfig.CPUQuota != 0 {
+			add("--cpu-quota", strconv.FormatInt(record.HostConfig.CPUQuota, 10))
+		}
+	}
+	if record.HostConfig.CPUShares > 0 {
+		add("--cpu-shares", strconv.FormatInt(record.HostConfig.CPUShares, 10))
+	}
+	add("--cpuset-cpus", record.HostConfig.CpusetCpus)
+	if record.HostConfig.Memory > 0 {
+		add("--memory", strconv.FormatInt(record.HostConfig.Memory, 10))
+	}
+	if record.HostConfig.MemorySwap != 0 {
+		add("--memory-swap", strconv.FormatInt(record.HostConfig.MemorySwap, 10))
+	}
+	if record.HostConfig.MemoryReservation > 0 {
+		add("--memory-reservation", strconv.FormatInt(record.HostConfig.MemoryReservation, 10))
 	}
 	entrypoint, entrypointArgs := commandParts(record.Config.Entrypoint)
 	add("--entrypoint", entrypoint)

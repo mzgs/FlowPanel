@@ -1725,6 +1725,7 @@ type DockerContainerSettingsDialogProps = {
     ports: DockerContainerPortMapping[],
     environment: EnvironmentVariable[],
     volumes: DockerContainerVolumeMapping[],
+    limits: { cpu_limit?: number; memory_limit_bytes?: number },
   ) => Promise<void>;
   onContainerChanged: (container: DockerContainer) => void;
 };
@@ -1741,11 +1742,15 @@ function DockerContainerSettingsDialog({
   const [ports, setPorts] = useState<DockerContainerPortMapping[]>([]);
   const [environment, setEnvironment] = useState<EnvironmentVariable[]>([]);
   const [volumes, setVolumes] = useState<DockerContainerVolumeMapping[]>([]);
+  const [cpuLimit, setCPULimit] = useState("");
+  const [memoryLimit, setMemoryLimit] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [uploadingVolumeIndex, setUploadingVolumeIndex] = useState<number | null>(null);
   const requestIDRef = useRef(0);
+  const cpuLimitValue = Number(cpuLimit);
+  const memoryLimitBytes = Math.round(Number(memoryLimit) * 1048576);
 
   useEffect(() => {
     requestIDRef.current += 1;
@@ -1782,6 +1787,8 @@ function DockerContainerSettingsDialog({
         setPorts(nextSettings.ports);
         setEnvironment(nextSettings.environment);
         setVolumes(nextSettings.volumes);
+        setCPULimit(nextSettings.cpu_limit ? String(nextSettings.cpu_limit) : "");
+        setMemoryLimit(nextSettings.memory_limit_bytes ? String(nextSettings.memory_limit_bytes / 1048576) : "");
       } catch (loadError) {
         if (requestIDRef.current !== requestID) {
           return;
@@ -1825,6 +1832,10 @@ function DockerContainerSettingsDialog({
             destination: volume.destination.trim(),
             read_only: volume.read_only,
           })),
+        {
+          cpu_limit: cpuLimitValue !== settings?.cpu_limit ? cpuLimitValue : undefined,
+          memory_limit_bytes: memoryLimitBytes !== settings?.memory_limit_bytes ? memoryLimitBytes : undefined,
+        },
       );
     } catch (saveError) {
       const dockerError = saveError as DockerApiError;
@@ -1856,7 +1867,9 @@ function DockerContainerSettingsDialog({
   const dirty = settings
     ? !sameDockerPortMappings(ports, settings.ports) ||
       !sameEnvironmentVariables(environment, settings.environment) ||
-      !sameDockerVolumeMappings(volumes, settings.volumes)
+      !sameDockerVolumeMappings(volumes, settings.volumes) ||
+      cpuLimitValue !== settings.cpu_limit ||
+      memoryLimitBytes !== settings.memory_limit_bytes
     : false;
   const canSave = !loading && !saving && uploadingVolumeIndex === null && container !== null && settings !== null && dirty;
   const portRows = getDockerPortSettingsRows(ports);
@@ -1875,7 +1888,7 @@ function DockerContainerSettingsDialog({
         <DialogHeader>
           <DialogTitle>Container settings</DialogTitle>
           <DialogDescription>
-            Change published ports, environment variables, and volume mappings for{" "}
+            Change resource limits, published ports, environment variables, and volume mappings for{" "}
             {container ? getContainerLabel(container) : "this container"}. Saving recreates the container with the new
             configuration.
           </DialogDescription>
@@ -1900,6 +1913,57 @@ function DockerContainerSettingsDialog({
               <LoaderCircle className="h-4 w-4 animate-spin" />
               Loading container settings...
             </div>
+          ) : null}
+
+          {!loading && settings ? (
+            <section className="space-y-2 border-b border-[var(--app-border)] pb-3">
+              <h3 className="text-sm font-medium">Resource limits</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label htmlFor="docker_cpu_limit" className="text-xs text-muted-foreground">CPU cores</label>
+                  <Input
+                    id="docker_cpu_limit"
+                    type="number"
+                    min="0.01"
+                    step="any"
+                    placeholder="Unlimited"
+                    value={cpuLimit}
+                    disabled={saving || uploadingVolumeIndex !== null}
+                    aria-invalid={Boolean(fieldErrors.cpu_limit)}
+                    onChange={(event) => {
+                      setError(null);
+                      setCPULimit(event.target.value);
+                      setFieldErrors((current) => ({ ...current, cpu_limit: "" }));
+                    }}
+                  />
+                  <FieldError message={fieldErrors.cpu_limit} />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="docker_memory_limit" className="text-xs text-muted-foreground">RAM (MiB)</label>
+                  <Input
+                    id="docker_memory_limit"
+                    type="number"
+                    min="6"
+                    max={Math.floor(Number.MAX_SAFE_INTEGER / 1048576)}
+                    step="any"
+                    placeholder="Unlimited"
+                    value={memoryLimit}
+                    disabled={saving || uploadingVolumeIndex !== null}
+                    aria-invalid={Boolean(fieldErrors.memory_limit_bytes)}
+                    onChange={(event) => {
+                      setError(null);
+                      setMemoryLimit(event.target.value);
+                      setFieldErrors((current) => ({ ...current, memory_limit_bytes: "" }));
+                    }}
+                  />
+                  <FieldError message={fieldErrors.memory_limit_bytes} />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Leave blank for unlimited. 1 CPU equals one core; 1024 MiB equals 1 GiB.
+                Setting a RAM limit disables swap and can stop the container if exceeded. Leave capacity for server services.
+              </p>
+            </section>
           ) : null}
 
           {!loading && settings && portRows.length === 0 ? (
@@ -3109,6 +3173,7 @@ export function DockerPage() {
     ports: DockerContainerPortMapping[],
     environment: EnvironmentVariable[],
     volumes: DockerContainerVolumeMapping[],
+    limits: { cpu_limit?: number; memory_limit_bytes?: number },
   ) {
     if (activeContainerID !== null) {
       return;
@@ -3119,7 +3184,7 @@ export function DockerPage() {
     clearContainerActionError(container.id);
 
     try {
-      const nextContainer = await updateDockerContainerSettings(container.id, { ports, environment, volumes });
+      const nextContainer = await updateDockerContainerSettings(container.id, { ports, environment, volumes, ...limits });
       clearContainerActionError(container.id);
       setContainers((current) =>
         sortDockerContainers([
