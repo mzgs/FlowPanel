@@ -314,19 +314,7 @@ func (s *Service) CreateProcess(ctx context.Context, input CreateProcessInput) (
 		Environment:      cloneEnvironmentMap(input.Environment),
 	}
 
-	args := []string{"start", scriptPath, "--exp-backoff-restart-delay", "1000", "--max-restarts", "10", "--min-uptime", "30000"}
-	if definition.Name != "" {
-		args = append(args, "--name", definition.Name)
-	}
-	if definition.WorkingDirectory != "" {
-		args = append(args, "--cwd", definition.WorkingDirectory)
-	}
-	if definition.Interpreter != "" {
-		args = append(args, "--interpreter", definition.Interpreter)
-	}
-	args = appendProcessArguments(args, definition.Arguments)
-
-	if _, err := runInspectCommandWithTimeoutAndEnv(ctx, actionCommandTimeout, definition.Environment, pm2Path, args...); err != nil {
+	if err := s.createMissingProcess(ctx, pm2Path, definition); err != nil {
 		return nil, err
 	}
 
@@ -920,29 +908,38 @@ func (s *Service) createMissingProcess(ctx context.Context, pm2Path string, defi
 		return nil
 	}
 
-	args := []string{"start", scriptPath, "--exp-backoff-restart-delay", "1000", "--max-restarts", "10", "--min-uptime", "30000"}
-	if name := strings.TrimSpace(definition.Name); name != "" {
-		args = append(args, "--name", name)
+	// min_uptime is an ecosystem setting, not a PM2 CLI option.
+	config := map[string]any{
+		"script":                    scriptPath,
+		"exp_backoff_restart_delay": 1000,
+		"max_restarts":              10,
+		"min_uptime":                30000,
 	}
-	if workingDirectory := strings.TrimSpace(definition.WorkingDirectory); workingDirectory != "" {
-		args = append(args, "--cwd", workingDirectory)
+	for key, value := range map[string]string{
+		"name":             definition.Name,
+		"cwd":              definition.WorkingDirectory,
+		"exec_interpreter": definition.Interpreter,
+	} {
+		if value = strings.TrimSpace(value); value != "" {
+			config[key] = value
+		}
 	}
-	if interpreter := strings.TrimSpace(definition.Interpreter); interpreter != "" {
-		args = append(args, "--interpreter", interpreter)
+	if len(definition.Arguments) > 0 {
+		config["args"] = definition.Arguments
 	}
-	args = appendProcessArguments(args, definition.Arguments)
-	if _, err := runInspectCommandWithTimeoutAndEnv(ctx, actionCommandTimeout, definition.Environment, pm2Path, args...); err != nil {
+	if len(definition.Environment) > 0 {
+		config["env"] = definition.Environment
+	}
+	file, err := os.CreateTemp("", "flowpanel-pm2-*.json")
+	if err != nil {
 		return err
 	}
-
-	return nil
-}
-
-func appendProcessArguments(command, arguments []string) []string {
-	if len(arguments) == 0 {
-		return command
+	defer os.Remove(file.Name())
+	if err := errors.Join(json.NewEncoder(file).Encode(config), file.Close()); err != nil {
+		return err
 	}
-	return append(append(command, "--"), arguments...)
+	_, err = runInspectCommandWithTimeoutAndEnv(ctx, actionCommandTimeout, definition.Environment, pm2Path, "start", file.Name())
+	return err
 }
 
 func (s *Service) inspectProcess(ctx context.Context, pm2Path string, processID int) (inspectedProcess, error) {
