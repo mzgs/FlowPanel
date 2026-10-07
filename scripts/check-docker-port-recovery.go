@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -52,8 +53,21 @@ func main() {
 case "$1" in
   context) echo unix:///var/run/docker.sock; exit 0 ;;
   ps) exit 0 ;;
+  inspect)
+    if [ -f "$CHECK_REPAIRED" ]; then
+      echo "$CHECK_AFTER"
+    else
+      echo "$CHECK_BEFORE"
+    fi
+    exit 0 ;;
+  network) echo "$1 $2 $3" >> "$CHECK_CALLS"; touch "$CHECK_REPAIRED"; exit 0 ;;
+  stop)
+    if [ -z "$CHECK_ERROR" ]; then
+      echo stop >> "$CHECK_CALLS"; touch "$CHECK_REPAIRED"; exit 0
+    fi ;;
 esac
 echo "$1" >> "$CHECK_CALLS"
+if [ -z "$CHECK_ERROR" ]; then exit 0; fi
 if [ -f "$CHECK_STATE" ] && [ "$CHECK_REPEAT" != true ]; then exit 0; fi
 touch "$CHECK_STATE"
 echo "$CHECK_ERROR" >&2
@@ -62,6 +76,8 @@ exit 1
 	must(os.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH")))
 	must(os.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock"))
 	must(os.Unsetenv("DOCKER_CONTEXT"))
+	must(os.Setenv("CHECK_BEFORE", "{}"))
+	must(os.Setenv("CHECK_AFTER", "{}"))
 	executable, err := os.Executable()
 	must(err)
 	for _, scenario := range []struct {
@@ -141,5 +157,62 @@ exit 1
 			panic(fmt.Sprintf("listener protection failed: %v", err))
 		}
 	}
-	fmt.Println("PASS: TCP/UDP recovery, restart-to-start, bounded retry, unrelated errors, stop and listener protection")
+	checkPublishedPorts(directory)
+	fmt.Println("PASS: port conflict recovery, listener protection, missing-network repair and published-port verification")
+}
+
+func checkPublishedPorts(directory string) {
+	configured := map[string][]dockercontainer.PortBinding{"8090/tcp": {{HostPort: "32772"}}}
+	published := map[string][]dockercontainer.PortBinding{"8090/tcp": {{HostIP: "0.0.0.0", HostPort: "32772"}}}
+	base := dockercontainer.Record{
+		State:      dockercontainer.StateRecord{Running: true},
+		HostConfig: dockercontainer.HostConfig{NetworkMode: "bridge", PortBindings: configured},
+	}
+	attached := base
+	attached.Network.Networks = map[string]json.RawMessage{"bridge": json.RawMessage(`{}`)}
+	autoRemove := attached
+	autoRemove.HostConfig.AutoRemove = true
+	host := base
+	host.HostConfig.NetworkMode = "host"
+	dynamic := base
+	dynamic.HostConfig.PortBindings = nil
+	dynamic.HostConfig.PublishAllPorts = true
+	dynamic.Config.ExposedPorts = map[string]any{"8090/tcp": nil}
+	must(os.Setenv("CHECK_ERROR", ""))
+	must(os.Setenv("CHECK_REPAIRED", filepath.Join(directory, "repaired")))
+	for _, scenario := range []struct {
+		before    dockercontainer.Record
+		after     map[string][]dockercontainer.PortBinding
+		calls     string
+		wantError bool
+	}{
+		{base, published, "start\nnetwork connect bridge\n", false},
+		{base, nil, "start\nnetwork connect bridge\n", true},
+		{attached, published, "start\nstop\nstart\n", false},
+		{autoRemove, nil, "start\n", true},
+		{host, nil, "start\n", false},
+		{dynamic, published, "start\nnetwork connect bridge\n", false},
+	} {
+		os.Remove(filepath.Join(directory, "repaired"))
+		os.Remove(filepath.Join(directory, "calls"))
+		before, err := json.Marshal(scenario.before)
+		must(err)
+		afterRecord := scenario.before
+		afterRecord.Network.Ports = scenario.after
+		after, err := json.Marshal(afterRecord)
+		must(err)
+		must(os.Setenv("CHECK_BEFORE", string(before)))
+		must(os.Setenv("CHECK_AFTER", string(after)))
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		actionErr := dockercontainer.RunAction(ctx, "temporary-check-container", "start")
+		cancel()
+		if (actionErr != nil) != scenario.wantError {
+			panic(fmt.Sprintf("unexpected published-port result: %v", actionErr))
+		}
+		calls, err := os.ReadFile(filepath.Join(directory, "calls"))
+		must(err)
+		if string(calls) != scenario.calls {
+			panic("unexpected network repair calls: " + string(calls))
+		}
+	}
 }

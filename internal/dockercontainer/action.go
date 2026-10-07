@@ -2,8 +2,10 @@ package dockercontainer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"regexp"
@@ -17,12 +19,89 @@ import (
 
 var portConflictPattern = regexp.MustCompile(`(?:failed to bind host port |listen (tcp|udp) )(\[[^\]]+\]|[^\s:]+):(\d+)(?:/(tcp|udp))?`)
 
-// RunAction reclaims only bindings reported as conflicting by Docker.
+// RunAction verifies published ports as well as reclaiming conflicting listeners.
 func RunAction(ctx context.Context, containerID, action string) error {
+	args := []string{action, containerID}
+	for repaired := false; ; repaired = true {
+		if err := runWithPortRecovery(ctx, args...); err != nil {
+			return err
+		}
+		if action != "start" && action != "restart" {
+			return nil
+		}
+		payload, err := dockerOutput(ctx, "inspect", "--type", "container", "--format", "{{json .}}", containerID)
+		if err != nil {
+			return err
+		}
+		var record Record
+		if err := json.Unmarshal([]byte(payload), &record); err != nil {
+			return fmt.Errorf("read Docker port bindings: %w", err)
+		}
+		missing := unpublishedPort(record)
+		if missing == "" {
+			return nil
+		}
+		if repaired || (record.HostConfig.AutoRemove && len(record.Network.Networks) > 0) {
+			return fmt.Errorf("Docker container is running, but port mapping %s is missing. Recreate the container in FlowPanel to rebuild its networking.", missing)
+		}
+		if len(record.Network.Networks) == 0 {
+			network := record.HostConfig.NetworkMode
+			if network == "" || network == "default" {
+				network = "bridge"
+			}
+			args = []string{"network", "connect", network, containerID}
+		} else {
+			// Rebuild an existing endpoint once without deleting the container.
+			if _, err := dockerOutput(ctx, "stop", containerID); err != nil {
+				return err
+			}
+			args = []string{"start", containerID}
+		}
+	}
+}
+
+func unpublishedPort(record Record) string {
+	network := record.HostConfig.NetworkMode
+	if !record.State.Running || network == "host" || network == "none" || strings.HasPrefix(network, "container:") {
+		return ""
+	}
+	bindings := record.HostConfig.PortBindings
+	if record.HostConfig.PublishAllPorts {
+		bindings = maps.Clone(bindings)
+		if bindings == nil {
+			bindings = make(map[string][]PortBinding)
+		}
+		for key := range record.Config.ExposedPorts {
+			if len(bindings[key]) == 0 {
+				bindings[key] = []PortBinding{{}}
+			}
+		}
+	}
+	for _, key := range sortedKeys(bindings) {
+		for _, expected := range bindings[key] {
+			found := false
+			for _, actual := range record.Network.Ports[key] {
+				ip := net.ParseIP(strings.Trim(actual.HostIP, "[]"))
+				hostMatches := expected.HostIP == actual.HostIP || (expected.HostIP == "" && ip != nil && ip.IsUnspecified())
+				if hostMatches && actual.HostPort != "" && (expected.HostPort == "" || expected.HostPort == actual.HostPort) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return publishValue(key, expected)
+			}
+		}
+	}
+	return ""
+}
+
+func runWithPortRecovery(ctx context.Context, args ...string) error {
+	recoverPorts := args[0] == "start" || args[0] == "restart" || (len(args) > 1 && args[0] == "network" && args[1] == "connect")
 	released := make(map[string]bool)
 	for {
-		_, err := dockerOutput(ctx, action, containerID)
-		if err == nil || ctx.Err() != nil || (action != "start" && action != "restart") {
+		_, err := dockerOutput(ctx, args...)
+		if err == nil || ctx.Err() != nil || !recoverPorts {
 			return err
 		}
 		message := err.Error()
@@ -51,8 +130,10 @@ func RunAction(ctx context.Context, containerID, action string) error {
 			return ctx.Err()
 		case <-time.After(150 * time.Millisecond):
 		}
-		// A failed restart has already stopped the container.
-		action = "start"
+		if args[0] == "restart" {
+			// A failed restart has already stopped the container.
+			args[0] = "start"
+		}
 	}
 }
 

@@ -96,7 +96,8 @@ type StateRecord struct {
 }
 
 type Network struct {
-	Ports map[string][]PortBinding `json:"Ports"`
+	Ports    map[string][]PortBinding   `json:"Ports"`
+	Networks map[string]json.RawMessage `json:"Networks"`
 }
 
 type PortBinding struct {
