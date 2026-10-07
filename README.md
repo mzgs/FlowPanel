@@ -2,6 +2,8 @@
 
 FlowPanel is a self-hosted server control panel for managing websites, runtimes, databases, files, backups, scheduled jobs, and common server services from one web UI.
 
+It is built for independent developers and small teams managing their own infrastructure. The goal is to make everyday deployment and maintenance easier, with the tools and operational context needed to investigate problems in one place.
+
 The project is a Go service with an embedded React/Vite panel. The Go process serves the admin panel, stores state in SQLite, manages a persistent Caddy runtime for domains, and exposes APIs for operational tasks.
 
 ![FlowPanel dashboard featured image](docs/images/flowpanel-featured.png)
@@ -28,6 +30,22 @@ FlowPanel currently includes:
 - FTP runtime, global FTP accounts, and domain FTP account management
 - Activity log, domain logs, system monitor, and Linux task-manager tools
 - Webhook and SMTP notifications for disk pressure, failed backups, repeated login failures, certificate expiry, and recovery events
+
+## Planned Claude integration
+
+**Status: planned. Claude integration is not implemented in the current release.**
+
+We plan to integrate the Claude API to help users troubleshoot the applications and servers they manage with FlowPanel. The initial focus is explaining failures and suggesting next steps using relevant logs and configuration selected by the administrator.
+
+Planned capabilities:
+
+- Explain deployment failures, application errors, and server logs in plain language.
+- Help investigate problems with Docker containers, PHP applications, and other managed runtimes.
+- Suggest configuration changes or diagnostic commands, with an explanation of what each step does.
+
+For example, a user investigating a failed deployment could ask Claude to review its logs, identify likely causes, and suggest checks to confirm the diagnosis.
+
+The first milestone is an assistant for diagnosis and recommendations. Administrators would control which context is shared with Claude, with credentials and other sensitive values redacted before submission. Any future ability to apply changes would require a preview and explicit administrator approval.
 
 ## Install / Update Latest Release
 
