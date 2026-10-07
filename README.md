@@ -104,7 +104,7 @@ or cancellation. PM2 uses restart backoff and PHP-FPM uses bounded service resta
 
 Within that ceiling, PHP-FPM versions share `flowpanel-workloads-php.slice` and
 everything else uses `flowpanel-workloads-apps.slice`. During CPU contention,
-PHP's default weight gives it 15% of the shared workload CPU capacity; idle CPU
+PHP's default weight gives it 20% of the shared workload CPU capacity; idle CPU
 shares can be borrowed, so PHP can use up to the full 75% host CPU ceiling when
 available. This is scheduler weighting, not a guaranteed response time or a
 dedicated CPU reservation.
@@ -146,7 +146,7 @@ FlowPanel is configured with environment variables.
 | `FLOWPANEL_WORKLOAD_PROTECTION` | Linux production: `true`; otherwise `false` | Enable systemd workload isolation; disabling leaves existing slice limits in place. |
 | `FLOWPANEL_WORKLOAD_CPU_PERCENT` | `75` | Combined workload CPU budget as a percentage of all cores, from 1 to 90. Restart FlowPanel after changing. |
 | `FLOWPANEL_WORKLOAD_MEMORY_PERCENT` | `70` | Combined workload RAM ceiling as a percentage of physical RAM, from 1 to 90. Throttling begins at six-sevenths of this ceiling. Restart FlowPanel after changing. |
-| `FLOWPANEL_PHP_CPU_SHARE_PERCENT` | `15` | PHP's relative share of the workload CPU budget during contention, from 1 to 90. Spare capacity can be borrowed. Restart FlowPanel after changing. |
+| `FLOWPANEL_PHP_CPU_SHARE_PERCENT` | `20` | PHP's relative share of the workload CPU budget during contention, from 1 to 90. Spare capacity can be borrowed. Restart FlowPanel after changing. |
 | `FLOWPANEL_PHP_MEMORY_RESERVE_PERCENT` | `10` | Physical RAM baseline protected for all PHP workers, from 1 to 90 and below the shared RAM ceiling. Other workloads' RAM cap is the shared ceiling minus this baseline. Restart FlowPanel after changing. |
 | `FLOWPANEL_ENV_FILE` | empty | Path to the protected service environment file used by the installer. |
 | `FLOWPANEL_ADMIN_LISTEN_ADDR` | `:8080` | Admin panel/API listen address. |

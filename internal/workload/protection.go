@@ -75,7 +75,7 @@ func Ensure(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	phpCPU, err := percentage("FLOWPANEL_PHP_CPU_SHARE_PERCENT", 15)
+	phpCPU, err := percentage("FLOWPANEL_PHP_CPU_SHARE_PERCENT", 20)
 	if err != nil {
 		return err
 	}
