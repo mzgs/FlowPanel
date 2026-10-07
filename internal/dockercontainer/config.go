@@ -222,7 +222,7 @@ func Restore(ctx context.Context, records []Record, managedDataRoot string, repo
 			continue
 		}
 		if item.record.State.Running {
-			if _, err := dockerOutput(ctx, "start", strings.TrimSpace(containerID)); err != nil {
+			if err := RunAction(ctx, strings.TrimSpace(containerID), "start"); err != nil {
 				restoreErrors = append(restoreErrors, fmt.Errorf("start restored Docker container %q: %w", item.name, err))
 				continue
 			}
@@ -354,7 +354,7 @@ func Start(ctx context.Context, records []Record) error {
 			startErrors = append(startErrors, err)
 			continue
 		}
-		if _, err := dockerOutput(ctx, "start", name); err != nil {
+		if err := RunAction(ctx, name, "start"); err != nil {
 			startErrors = append(startErrors, fmt.Errorf("restart Docker container %q after backup: %w", name, err))
 		}
 	}

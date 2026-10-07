@@ -1759,15 +1759,11 @@ func runDockerContainerAction(ctx context.Context, containerID, action string) (
 		}
 	}
 
-	cmd := exec.CommandContext(commandCtx, "docker", action, containerID)
-	stderr := executil.NewTailBuffer(executil.DefaultOutputLimit)
-	cmd.Stderr = stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := dockercontainer.RunAction(commandCtx, containerID, action); err != nil {
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 			return dockerContainerListItem{}, fmt.Errorf("Timed out while %s the Docker container.", dockerContainerActionPresentParticiple(action))
 		}
-		return dockerContainerListItem{}, formatDockerCommandError(stderr.String(), err)
+		return dockerContainerListItem{}, formatDockerCommandError("", err)
 	}
 	if action == "start" || action == "restart" {
 		if err := verifyDockerContainerStarted(commandCtx, containerID); err != nil {
