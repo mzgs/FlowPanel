@@ -6,7 +6,7 @@ usage() {
   cat <<'EOF'
 Usage: release-linux-amd64.sh [tag] [options]
 
-Builds the Linux amd64 binary and publishes it as a new GitHub release.
+Builds the Linux amd64 and arm64 binaries and publishes them as a new GitHub release.
 If tag is omitted, the next vMAJOR.MINOR.PATCH tag is selected automatically.
 If the requested tag already exists, the patch version is increased until an
 available tag is found.
@@ -15,7 +15,7 @@ Requirements: git, curl, go, npm, and an HTTPS GitHub token in .git/config.
 
 Options:
   --title <title>        Release title. Defaults to the tag.
-  --notes <notes>        Release notes. Defaults to "Linux amd64 release."
+  --notes <notes>        Release notes. Defaults to "Linux amd64 and arm64 release."
   --draft                Create the release as a draft.
   --prerelease           Mark the release as a prerelease.
   --dry-run              Build and print the release action without publishing.
@@ -156,7 +156,7 @@ api_request() {
 
 tag=""
 title=""
-notes="Linux amd64 release."
+notes="Linux amd64 and arm64 release."
 dry_run=0
 draft=false
 prerelease=false
@@ -206,7 +206,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-asset="dist/flowpanel-linux-amd64"
+assets=(dist/flowpanel-linux-amd64 dist/flowpanel-linux-arm64)
 commit="$(git rev-parse HEAD)"
 
 for cmd in git curl node go npm; do
@@ -244,30 +244,33 @@ if [[ "${ALLOW_DIRTY:-0}" != "1" && -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-echo "Building $asset"
-FLOWPANEL_VERSION="$tag" ./build.sh linux amd64
-
-if [[ ! -x "$asset" ]]; then
-  echo "expected executable asset was not created: $asset" >&2
-  exit 1
-fi
+for asset in "${assets[@]}"; do
+  echo "Building $asset"
+  FLOWPANEL_VERSION="$tag" ./build.sh linux "${asset##*-}"
+  if [[ ! -x "$asset" ]]; then
+    echo "expected executable asset was not created: $asset" >&2
+    exit 1
+  fi
+done
 
 if [[ "$dry_run" == "1" ]]; then
-  echo "Dry run: would create release $tag in $repo and upload $asset"
+  echo "Dry run: would create release $tag in $repo and upload ${assets[*]}"
   exit 0
 fi
 
 echo "Publishing $tag"
 release_json="$(api_request POST "https://api.github.com/repos/$repo/releases" "$(json_payload)")"
 upload_url="$(printf '%s' "$release_json" | json_field upload_url)"
-upload_url="${upload_url%\{*}?name=$(basename "$asset")"
+upload_url="${upload_url%\{*}"
 
-curl -fsS -X POST \
-  -H "Authorization: Bearer $token" \
-  -H "Accept: application/vnd.github+json" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary "@$asset" \
-  "$upload_url" >/dev/null
+for asset in "${assets[@]}"; do
+  curl -fsS -X POST \
+    -H "Authorization: Bearer $token" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary "@$asset" \
+    "$upload_url?name=$(basename "$asset")" >/dev/null
+done
 
-echo "Published $tag with $asset"
+echo "Published $tag with ${assets[*]}"

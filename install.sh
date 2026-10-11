@@ -323,7 +323,10 @@ install_binary() {
   else
     echo "Downloading FlowPanel latest release for $goos/$arch..."
   fi
-  download "$url" "$tmp_file"
+  if ! download "$url" "$tmp_file"; then
+    echo "Could not download $APP-$goos-$arch. Check that the latest release includes this asset: https://github.com/$REPO/releases/latest" >&2
+    exit 1
+  fi
 
   as_root mkdir -p "$BIN_DIR"
   if [ "$action" = "update" ] && [ -x "$BIN_DIR/$APP" ]; then

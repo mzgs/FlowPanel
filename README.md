@@ -108,6 +108,9 @@ Build a release binary:
 
 The output is written to `dist/`.
 
+Publish a Linux release with `./release-linux-amd64.sh`. Despite its filename,
+the script builds and uploads both `amd64` and `arm64` binaries for the installer.
+
 ## Configuration
 
 Linux production installations protect managed workloads with systemd and cgroup v2.
