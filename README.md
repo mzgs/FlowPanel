@@ -31,21 +31,7 @@ FlowPanel currently includes:
 - Activity log, domain logs, system monitor, and Linux task-manager tools
 - Webhook and SMTP notifications for disk pressure, failed backups, repeated login failures, certificate expiry, and recovery events
 
-## Planned Claude integration
-
-**Status: planned. Claude integration is not implemented in the current release.**
-
-We plan to integrate the Claude API to help users troubleshoot the applications and servers they manage with FlowPanel. The initial focus is explaining failures and suggesting next steps using relevant logs and configuration selected by the administrator.
-
-Planned capabilities:
-
-- Explain deployment failures, application errors, and server logs in plain language.
-- Help investigate problems with Docker containers, PHP applications, and other managed runtimes.
-- Suggest configuration changes or diagnostic commands, with an explanation of what each step does.
-
-For example, a user investigating a failed deployment could ask Claude to review its logs, identify likely causes, and suggest checks to confirm the diagnosis.
-
-The first milestone is an assistant for diagnosis and recommendations. Administrators would control which context is shared with Claude, with credentials and other sensitive values redacted before submission. Any future ability to apply changes would require a preview and explicit administrator approval.
+ 
 
 ## Install / Update Latest Release
 
