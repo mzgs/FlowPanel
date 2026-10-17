@@ -646,7 +646,7 @@ export function CronPage() {
       </div>
 
       <Dialog open={logsJob !== null} onOpenChange={(open) => (!open ? setLogsJobId(null) : null)}>
-        <DialogContent className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
+        <DialogContent className="h-[85dvh] max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
           <DialogHeader className="gap-3">
             <DialogTitle>{logsJob ? `${logsJob.name} logs` : "Execution logs"}</DialogTitle>
             <DialogDescription>
@@ -656,7 +656,7 @@ export function CronPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="min-h-0 overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)]">
+          <div className="min-h-0 overflow-y-auto rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text)] lg:overflow-hidden">
             {logsJob ? (
               sortedExecutions.length === 0 ? (
                 <div className="p-5 sm:p-6">
@@ -665,8 +665,8 @@ export function CronPage() {
                   </div>
                 </div>
               ) : (
-                <div className="grid min-h-[28rem] bg-[var(--app-surface)] lg:grid-cols-[300px_minmax(0,1fr)]">
-                  <aside className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] lg:border-b-0 lg:border-r">
+                <div className="grid bg-[var(--app-surface)] lg:h-full lg:min-h-0 lg:grid-cols-[300px_minmax(0,1fr)]">
+                  <aside className="flex min-h-0 min-w-0 flex-col border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] lg:border-b-0 lg:border-r">
                     <div className="border-b border-[var(--app-border)] px-4 py-3">
                       <div className="font-mono text-xs text-[var(--app-text)]">{logsJob.schedule}</div>
                       <p className="mt-1 line-clamp-2 break-all font-mono text-xs text-[var(--app-text-muted)]">
@@ -679,7 +679,7 @@ export function CronPage() {
                       <span>Latest first</span>
                     </div>
 
-                    <ScrollArea className="h-[18rem] lg:h-[calc(28rem-85px)]">
+                    <ScrollArea className="h-40 lg:h-0 lg:flex-1">
                       <div className="space-y-2 p-2">
                         {sortedExecutions.map((execution) => {
                           const badge = getExecutionBadge(execution);
@@ -714,10 +714,10 @@ export function CronPage() {
                     </ScrollArea>
                   </aside>
 
-                  <div className="flex min-h-[18rem] flex-col bg-[var(--app-surface)]">
+                  <div className="flex h-[32rem] min-h-0 min-w-0 flex-col overflow-y-auto bg-[var(--app-surface)] lg:h-full">
                     {selectedExecution ? (
                       <>
-                        <div className="border-b border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-4">
+                        <div className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="flex flex-wrap items-center gap-2">
                               {selectedExecutionBadge ? (
@@ -747,14 +747,14 @@ export function CronPage() {
                             </div>
                           </div>
 
-                          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                            <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3">
+                          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                            <div>
                               <div className="text-xs text-[var(--app-text-muted)]">Started</div>
                               <div className="mt-1 font-medium text-[var(--app-text)]">
                                 {formatDateTime(selectedExecution.started_at)}
                               </div>
                             </div>
-                            <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3">
+                            <div>
                               <div className="text-xs text-[var(--app-text-muted)]">Finished</div>
                               <div className="mt-1 font-medium text-[var(--app-text)]">
                                 {formatDateTime(selectedExecution.finished_at)}
@@ -763,13 +763,13 @@ export function CronPage() {
                           </div>
 
                           {selectedExecution.error ? (
-                            <p className="mt-4 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-3 text-sm text-destructive">
+                            <p className="mt-3 break-words text-sm text-destructive">
                               {selectedExecution.error}
                             </p>
                           ) : null}
                         </div>
 
-                        <div className="flex min-h-0 flex-1 flex-col bg-[var(--app-surface)] px-5 py-4">
+                        <div className="flex min-h-40 flex-1 flex-col bg-[var(--app-surface)] px-4 py-3">
                           <div className="mb-3 flex items-center justify-between gap-3">
                             <h3 className="text-sm font-medium text-[var(--app-text)]">Output</h3>
                             <span className="text-xs text-[var(--app-text-muted)]">
@@ -780,11 +780,9 @@ export function CronPage() {
                           </div>
 
                           {selectedExecution.output ? (
-                            <ScrollArea className="min-h-0 flex-1 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
-                              <pre className="p-4 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-[var(--app-text)]">
-                                {selectedExecution.output}
-                              </pre>
-                            </ScrollArea>
+                            <pre tabIndex={0} role="region" aria-label="Execution output" className="min-h-0 flex-1 overflow-auto bg-[var(--app-surface-muted)] p-3 font-mono text-xs leading-5 text-[var(--app-text)]">
+                              {selectedExecution.output}
+                            </pre>
                           ) : (
                             <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 text-sm text-[var(--app-text-muted)]">
                               No output captured.

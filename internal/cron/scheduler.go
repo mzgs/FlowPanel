@@ -32,7 +32,7 @@ var (
 
 const (
 	maxExecutionLogsPerJob = 10
-	maxExecutionOutputSize = 8000
+	maxExecutionOutputSize = 64 << 10
 	cronExecutionTimeout   = time.Hour
 )
 
@@ -462,19 +462,22 @@ func (s *Scheduler) executeJob(job Record) {
 	commandCtx, cancel := context.WithTimeout(context.Background(), cronExecutionTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(commandCtx, commandName, commandArgs...)
-	output := executil.NewTailBuffer(64 << 10)
+	output := executil.NewTailBuffer(maxExecutionOutputSize)
 	cmd.Stdout, cmd.Stderr = output, output
 	err := workload.Run(commandCtx, cmd)
 	finishedAt := time.Now()
 	duration := time.Since(startedAt)
 	trimmedOutput := strings.TrimSpace(output.String())
+	if output.Truncated() {
+		trimmedOutput = "[Output truncated; showing the last 64 KiB.]\n" + trimmedOutput
+	}
 	execution := ExecutionLog{
 		ID:         fmt.Sprintf("cron-run-%d", finishedAt.UnixNano()),
 		JobID:      job.ID,
 		StartedAt:  startedAt.UTC(),
 		FinishedAt: finishedAt.UTC(),
 		DurationMS: duration.Milliseconds(),
-		Output:     truncate(trimmedOutput, maxExecutionOutputSize),
+		Output:     trimmedOutput,
 	}
 
 	if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
