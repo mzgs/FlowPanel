@@ -545,54 +545,95 @@ func runDomainGitHubDeploy(
 		return domainGitHubDeployResult{}, fmt.Errorf("create domain document root: %w", err)
 	}
 
-	action := "updated"
 	gitDir := filepath.Join(targetPath, ".git")
 	if _, err := os.Stat(gitDir); errors.Is(err, os.ErrNotExist) {
-		if err := clearDirectoryContents(targetPath); err != nil {
+		if err := initializeGitRepositoryInPlace(runCtx, gitPath, targetPath, integration.RepositoryURL, branch, token, integration.PostFetchScript); err != nil {
 			return domainGitHubDeployResult{}, err
 		}
-		if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "init"); err != nil {
-			return domainGitHubDeployResult{}, err
-		}
-		action = "initialized"
+		return domainGitHubDeployResult{Action: "initialized"}, nil
 	} else if err != nil {
 		return domainGitHubDeployResult{}, fmt.Errorf("inspect git directory: %w", err)
-	}
-
-	remoteURL, err := runGitCommand(runCtx, gitPath, targetPath, token, "remote", "get-url", "origin")
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "no such remote") {
-		return domainGitHubDeployResult{}, err
-	}
-	if err != nil || strings.TrimSpace(remoteURL) != strings.TrimSpace(integration.RepositoryURL) {
-		remoteAction := "set-url"
-		if err != nil {
-			remoteAction = "add"
-		}
-		if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "remote", remoteAction, "origin", integration.RepositoryURL); err != nil {
+	} else {
+		remoteURL, err := runGitCommand(runCtx, gitPath, targetPath, token, "remote", "get-url", "origin")
+		switch {
+		case err == nil:
+			if strings.TrimSpace(remoteURL) != strings.TrimSpace(integration.RepositoryURL) {
+				if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "remote", "set-url", "origin", integration.RepositoryURL); err != nil {
+					return domainGitHubDeployResult{}, err
+				}
+			}
+		case strings.Contains(strings.ToLower(err.Error()), "no such remote"):
+			if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "remote", "add", "origin", integration.RepositoryURL); err != nil {
+				return domainGitHubDeployResult{}, err
+			}
+		default:
 			return domainGitHubDeployResult{}, err
 		}
 	}
 
-	remoteRef := "refs/remotes/origin/" + branch
-	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "fetch", "--depth", "1", "origin", "+refs/heads/"+branch+":"+remoteRef); err != nil {
+	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "fetch", "--depth", "1", "origin", branch); err != nil {
 		return domainGitHubDeployResult{}, err
 	}
 
-	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "checkout", "--force", "-B", branch, remoteRef); err != nil {
+	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "checkout", "--force", "-B", branch, "origin/"+branch); err != nil {
 		return domainGitHubDeployResult{}, err
 	}
-	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "reset", "--hard", remoteRef); err != nil {
+	if _, err := runGitCommand(runCtx, gitPath, targetPath, token, "reset", "--hard", "origin/"+branch); err != nil {
 		return domainGitHubDeployResult{}, err
 	}
 	if err := runGitHubPostFetchScript(runCtx, targetPath, integration.PostFetchScript); err != nil {
 		return domainGitHubDeployResult{}, err
 	}
 
-	return domainGitHubDeployResult{Action: action}, nil
+	return domainGitHubDeployResult{Action: "updated"}, nil
 }
 
 func branchForIntegration(integration domain.GitHubIntegration) string {
 	return strings.TrimSpace(integration.DefaultBranch)
+}
+
+func initializeGitRepositoryInPlace(
+	ctx context.Context,
+	gitPath string,
+	targetPath string,
+	repositoryURL string,
+	branch string,
+	token string,
+	postFetchScript string,
+) error {
+	if err := clearDirectoryContents(targetPath); err != nil {
+		return err
+	}
+	if _, err := runGitCommand(ctx, gitPath, targetPath, token, "init"); err != nil {
+		return err
+	}
+	if _, err := runGitCommand(ctx, gitPath, targetPath, token, "remote", "get-url", "origin"); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such remote") {
+			if _, err := runGitCommand(ctx, gitPath, targetPath, token, "remote", "add", "origin", repositoryURL); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	} else {
+		if _, err := runGitCommand(ctx, gitPath, targetPath, token, "remote", "set-url", "origin", repositoryURL); err != nil {
+			return err
+		}
+	}
+	if _, err := runGitCommand(ctx, gitPath, targetPath, token, "fetch", "--depth", "1", "origin", branch); err != nil {
+		return err
+	}
+	if _, err := runGitCommand(ctx, gitPath, targetPath, token, "checkout", "--force", "-B", branch, "origin/"+branch); err != nil {
+		return err
+	}
+	if _, err := runGitCommand(ctx, gitPath, targetPath, token, "reset", "--hard", "origin/"+branch); err != nil {
+		return err
+	}
+	if err := runGitHubPostFetchScript(ctx, targetPath, postFetchScript); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func runGitHubPostFetchScript(ctx context.Context, targetPath string, script string) error {
