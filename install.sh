@@ -370,6 +370,12 @@ install_linux_service() {
 
   as_root mkdir -p "$env_dir" "$data_dir"
 
+  # Restarting either control-plane service interrupts package operations.
+  as_root mkdir -p /etc/needrestart/conf.d
+  as_root tee /etc/needrestart/conf.d/flowpanel.conf >/dev/null <<'EOF'
+$nrconf{override_rc}{qr(^flowpanel(-caddy)?\.service$)} = 0;
+EOF
+
   if [ ! -f "$env_file" ]; then
     secret="$(random_secret)"
     admin_username="$(random_admin_username)"
@@ -421,6 +427,7 @@ After=network-online.target docker.service $APP.socket $APP-caddy.service
 [Service]
 Type=simple
 EnvironmentFile=$env_file
+Environment=DEBIAN_FRONTEND=noninteractive
 Environment=HOME=$state_dir
 Environment=XDG_CONFIG_HOME=$state_dir/.config
 WorkingDirectory=$data_dir

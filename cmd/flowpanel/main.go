@@ -725,7 +725,7 @@ func uninstallFilePaths() []string {
 	paths := []string{installedBinaryPath}
 	switch runtime.GOOS {
 	case "linux":
-		paths = append(paths, "/etc/systemd/system/flowpanel.service", "/etc/systemd/system/flowpanel.socket", "/etc/systemd/system/flowpanel-caddy.service")
+		paths = append(paths, "/etc/systemd/system/flowpanel.service", "/etc/systemd/system/flowpanel.socket", "/etc/systemd/system/flowpanel-caddy.service", "/etc/needrestart/conf.d/flowpanel.conf")
 	case "darwin":
 		paths = append(paths, "/Library/LaunchDaemons/"+macosLaunchdLabel+".plist", "/Library/LaunchDaemons/"+macosLaunchdLabel+".caddy.plist")
 	}
