@@ -725,6 +725,7 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 					a.app.Logger.Error("sync domains after php "+action+" failed", zap.Error(err))
 					failureMessage := map[string]string{
 						"install": "PHP installed but failed to republish domains.",
+						"update":  "PHP updated but failed to republish domains.",
 						"remove":  "PHP removed but failed to republish domains.",
 						"start":   "PHP started but failed to republish domains.",
 						"restart": "PHP restarted but failed to republish domains.",
@@ -739,6 +740,7 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 
 			messages := map[string]string{
 				"install": "Installed PHP.",
+				"update":  "Updated PHP.",
 				"remove":  "Removed PHP.",
 				"start":   "Started PHP.",
 				"stop":    "Stopped PHP.",
@@ -920,6 +922,9 @@ func (a *apiRoutes) registerPHPRoutes(r chi.Router) {
 			return a.app.PHP.RemoveVersion(ctx, version)
 		}
 		return a.app.PHP.Remove(ctx)
+	}))
+	r.Method(stdhttp.MethodPost, "/php/update", phpRuntimeHandler("update", func(ctx context.Context, version string) error {
+		return a.app.PHP.UpdateVersion(ctx, version)
 	}))
 	r.Method(stdhttp.MethodPost, "/php/start", phpRuntimeHandler("start", func(ctx context.Context, version string) error {
 		if strings.TrimSpace(version) != "" {

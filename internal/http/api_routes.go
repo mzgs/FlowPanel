@@ -270,6 +270,13 @@ func (a *apiRoutes) trackPHPStatus(status phpenv.Status) phpenv.Status {
 	case "install":
 		status.State = "installing"
 		status.Message = "PHP installation is running in the background."
+	case "update":
+		status.State = "updating"
+		status.Message = "PHP update is running in the background."
+		for i := range status.Versions {
+			status.Versions[i].State = status.State
+			status.Versions[i].UpdateAvailable = false
+		}
 	case "remove":
 		status.State = "removing"
 		status.Message = "PHP removal is running in the background."

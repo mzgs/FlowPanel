@@ -35,6 +35,8 @@ export type PHPRuntimeStatus = {
   php_installed: boolean;
   php_path?: string;
   php_version?: string;
+  update_available?: boolean;
+  latest_version?: string;
   extensions?: string[];
   fpm_installed: boolean;
   fpm_path?: string;
@@ -182,6 +184,15 @@ export async function installPHP(version?: string): Promise<PHPStatus> {
 export async function setDefaultPHPVersion(version: string): Promise<PHPStatus> {
   const response = await fetch(withVersion("/api/php/default", version), {
     method: "PUT",
+    credentials: "include",
+  });
+
+  return parsePHPResponse(response);
+}
+
+export async function updatePHP(version: string): Promise<PHPStatus> {
+  const response = await fetch(withVersion("/api/php/update", version), {
+    method: "POST",
     credentials: "include",
   });
 

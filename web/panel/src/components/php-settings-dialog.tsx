@@ -8,6 +8,7 @@ import {
   type PHPExtensionCatalogEntry,
   updatePHPSettings,
   updatePHPIni,
+  updatePHP,
   type PHPApiError,
   type PHPStatus,
   type PHPRuntimeStatus,
@@ -183,6 +184,7 @@ export function PHPSettingsDialog({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [settingDefault, setSettingDefault] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [installingExtensionId, setInstallingExtensionId] = useState<string | null>(null);
   const [extensionFilter, setExtensionFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -382,10 +384,31 @@ export function PHPSettingsDialog({
     }
   }
 
+  async function handleUpdate() {
+    if (!version || !status?.update_available) {
+      return;
+    }
+
+    setUpdating(true);
+    setError(null);
+    try {
+      onStatusChange(await updatePHP(version));
+      toast.success(`PHP updated to v${status.latest_version}.`);
+    } catch (updateError) {
+      const message = getErrorMessage(updateError, "PHP could not be updated.");
+      setError(message);
+      toast.error(message);
+      await refreshStatus();
+    } finally {
+      setUpdating(false);
+    }
+  }
+
   const runtimeLabel = version ? `PHP ${version}` : "PHP";
   const defaultSelected = version !== "" && defaultVersion?.trim() === version;
   const backgroundActionLabel = getPHPActionLabel(status?.state);
   const dialogBusy =
+    updating ||
     saving ||
     iniSaving ||
     settingDefault ||
@@ -431,31 +454,46 @@ export function PHPSettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="h-[min(760px,calc(100vh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-5 pt-4 sm:max-w-5xl sm:p-6 sm:pt-5">
         <DialogHeader className="gap-3 pb-0 pe-12">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <DialogTitle className="m-0 text-base leading-5">{runtimeLabel} settings</DialogTitle>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 gap-2 rounded-md px-3 text-xs"
-              onClick={() => void handleSetDefault()}
-              disabled={setDefaultDisabled}
-              title={!status?.ready ? "Start this runtime before making it the site default." : undefined}
-            >
-              {settingDefault ? (
-                <>
-                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                  Setting default
-                </>
-              ) : defaultSelected ? (
-                <>
-                  <CircleCheck className="h-3.5 w-3.5" />
-                  Default for sites
-                </>
-              ) : (
-                "Set as default"
-              )}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {status?.update_available && status.latest_version ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 gap-2 rounded-md px-3 text-xs"
+                  onClick={() => void handleUpdate()}
+                  disabled={dialogBusy || dirty || iniDirty}
+                  title={dirty || iniDirty ? "Save or discard your changes before updating PHP." : undefined}
+                >
+                  {updating ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+                  {updating ? "Updating..." : `Update to v${status.latest_version}`}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-2 rounded-md px-3 text-xs"
+                onClick={() => void handleSetDefault()}
+                disabled={setDefaultDisabled}
+                title={!status?.ready ? "Start this runtime before making it the site default." : undefined}
+              >
+                {settingDefault ? (
+                  <>
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    Setting default
+                  </>
+                ) : defaultSelected ? (
+                  <>
+                    <CircleCheck className="h-3.5 w-3.5" />
+                    Default for sites
+                  </>
+                ) : (
+                  "Set as default"
+                )}
+              </Button>
+            </div>
           </div>
         </DialogHeader>
 

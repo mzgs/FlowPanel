@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"flowpanel/internal/executil"
+	"flowpanel/internal/packageruntime"
 	"flowpanel/internal/workload"
 
 	"go.uber.org/zap"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -34,6 +36,7 @@ var supportedPHPVersions = []string{
 }
 
 var versionPattern = regexp.MustCompile(`\b(\d+\.\d+)`)
+var releaseVersionPattern = regexp.MustCompile(`\b\d+\.\d+\.\d+\b`)
 
 type Manager interface {
 	Status(context.Context) Status
@@ -43,6 +46,7 @@ type Manager interface {
 	ReconcileDomainPools(context.Context, []DomainPoolInput) (map[string]DomainPool, error)
 	Install(context.Context) error
 	InstallVersion(context.Context, string) error
+	UpdateVersion(context.Context, string) error
 	InstallExtension(context.Context, string) (Status, error)
 	InstallExtensionForVersion(context.Context, string, string) (RuntimeStatus, error)
 	Remove(context.Context) error
@@ -91,6 +95,8 @@ type RuntimeStatus struct {
 	PHPInstalled      bool     `json:"php_installed"`
 	PHPPath           string   `json:"php_path,omitempty"`
 	PHPVersion        string   `json:"php_version,omitempty"`
+	UpdateAvailable   bool     `json:"update_available"`
+	LatestVersion     string   `json:"latest_version,omitempty"`
 	Extensions        []string `json:"extensions,omitempty"`
 	extensionDir      string
 	FPMInstalled      bool     `json:"fpm_installed"`
@@ -393,6 +399,38 @@ func (s *Service) Remove(ctx context.Context) error {
 	return s.RemoveVersion(ctx, "")
 }
 
+func (s *Service) versionUpdater(version, phpPath string) *packageruntime.Service {
+	return packageruntime.NewService(s.logger, packageruntime.Definition{
+		Key:             "php" + version,
+		DisplayName:     "PHP " + version,
+		BinaryNames:     []string{phpPath},
+		VersionArgs:     []string{"-v"},
+		UpdateLabel:     "Update PHP " + version,
+		HomebrewFormula: brewFormulaForVersion(version),
+		APTPackages:     aptVersionPackages(version),
+		DNFPackages:     rpmVersionPackages(version),
+		YUMPackages:     rpmVersionPackages(version),
+	})
+}
+
+func (s *Service) UpdateVersion(ctx context.Context, version string) error {
+	version = NormalizeVersion(version)
+	if version == "" {
+		return errors.New("select a supported PHP version to update")
+	}
+	status := s.StatusForVersion(ctx, version)
+	if !status.UpdateAvailable {
+		return fmt.Errorf("no update is available for PHP %s", version)
+	}
+	if err := s.versionUpdater(version, status.PHPPath).Update(ctx); err != nil {
+		return err
+	}
+	if status.ServiceRunning {
+		return s.RestartVersion(ctx, version)
+	}
+	return nil
+}
+
 func (s *Service) RemoveVersion(ctx context.Context, version string) error {
 	target := s.resolveActionVersion(ctx, version)
 	plan := detectVersionActionPlan(target)
@@ -558,6 +596,15 @@ func (s *Service) inspectVersion(ctx context.Context, version string) RuntimeSta
 	status.StopLabel = plan.stopLabel
 	status.RestartAvailable = len(plan.restartCmds) > 0 && status.FPMInstalled && status.ServiceRunning
 	status.RestartLabel = plan.restartLabel
+	if status.PHPInstalled && status.FPMInstalled {
+		update := s.versionUpdater(version, status.PHPPath).Status(ctx)
+		latest := releaseVersionPattern.FindString(update.LatestVersion)
+		installed := releaseVersionPattern.FindString(status.PHPVersion)
+		if update.UpdateAvailable && NormalizeVersion(latest) == version && installed != "" && semver.Compare("v"+latest, "v"+installed) > 0 {
+			status.UpdateAvailable = true
+			status.LatestVersion = latest
+		}
+	}
 
 	switch {
 	case status.PHPInstalled && status.FPMInstalled && status.ListenAddress != "" && status.ServiceRunning:
