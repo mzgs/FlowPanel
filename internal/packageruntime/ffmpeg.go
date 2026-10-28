@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	ffmpegReleaseAPI  = "https://api.github.com/repos/yt-dlp/FFmpeg-Builds/releases/latest"
-	ffmpegReleaseURL  = "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/"
+	ffmpegReleaseAPI  = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
+	ffmpegReleaseURL  = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/"
 	ffmpegBinaryPath  = "/usr/local/bin/ffmpeg"
 	ffmpegReleasePath = "/usr/local/bin/.flowpanel-ffmpeg-release"
 )
@@ -28,13 +28,26 @@ func latestFFmpegRelease(ctx context.Context) (name, digest, version string, err
 	if err != nil {
 		return "", "", "", err
 	}
-	name = "ffmpeg-master-latest-" + arch + "-gpl.tar.xz"
+	var latestMajor, latestMinor int
 	for _, asset := range release.Assets {
-		if asset.Name == name && strings.HasPrefix(asset.Digest, "sha256:") && len(asset.Digest) == 71 {
-			return name, asset.Digest, release.Name, nil
+		branch, _, ok := strings.Cut(strings.TrimPrefix(asset.Name, "ffmpeg-n"), "-latest-")
+		var major, minor int
+		if _, err := fmt.Sscanf(branch, "%d.%d", &major, &minor); !ok || err != nil {
+			continue
+		}
+		expected := fmt.Sprintf("ffmpeg-n%d.%d-latest-%s-gpl-%d.%d.tar.xz", major, minor, arch, major, minor)
+		if asset.Name != expected || !strings.HasPrefix(asset.Digest, "sha256:") || len(asset.Digest) != 71 {
+			continue
+		}
+		if major > latestMajor || major == latestMajor && minor > latestMinor {
+			name, digest, version = asset.Name, asset.Digest, branch
+			latestMajor, latestMinor = major, minor
 		}
 	}
-	return "", "", "", fmt.Errorf("latest FFmpeg release does not contain %s with a SHA-256 digest", name)
+	if name == "" {
+		return "", "", "", fmt.Errorf("latest FFmpeg release does not contain a stable full GPL build for %s with a SHA-256 digest", arch)
+	}
+	return name, digest, version, nil
 }
 
 func installLatestFFmpeg(ctx context.Context) error {
