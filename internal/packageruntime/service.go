@@ -239,7 +239,7 @@ func NewFFmpegService(logger *zap.Logger) *Service {
 	return NewService(logger, Definition{
 		Key:             "ffmpeg",
 		DisplayName:     "FFmpeg",
-		BinaryNames:     []string{"ffmpeg"},
+		BinaryNames:     []string{ffmpegBinaryPath, "ffmpeg"},
 		VersionArgs:     []string{"-version"},
 		InstallLabel:    "Install FFmpeg",
 		UpdateLabel:     "Update FFmpeg",
@@ -300,7 +300,6 @@ func NewYTDLPService(logger *zap.Logger) *Service {
 		DNFPackages:     []string{"yt-dlp"},
 		YUMPackages:     []string{"yt-dlp"},
 		PacmanPackages:  []string{"yt-dlp"},
-		InstallFallback: retryYTDLPInstall,
 	})
 }
 
@@ -495,13 +494,17 @@ func (s *Service) Restart(ctx context.Context) error {
 }
 
 func detectActionPlan(definition Definition) actionPlan {
-	if definition.Key == "ytdlp" && runtime.GOOS == "linux" && os.Geteuid() == 0 {
+	if runtime.GOOS == "linux" && os.Geteuid() == 0 && (definition.Key == "ytdlp" || definition.Key == "ffmpeg") {
+		install, remove, inspectUpdate := installLatestYTDLP, removeYTDLP, inspectYTDLPUpdate
+		if definition.Key == "ffmpeg" {
+			install, remove, inspectUpdate = installLatestFFmpeg, removeFFmpeg, inspectFFmpegUpdate
+		}
 		return actionPlan{
 			packageManager:  "github",
-			installAction:   installLatestYTDLP,
-			updateAction:    installLatestYTDLP,
-			removeAction:    func(ctx context.Context) error { return removeYTDLP(ctx, definition) },
-			availableUpdate: inspectYTDLPUpdate,
+			installAction:   install,
+			updateAction:    install,
+			removeAction:    func(ctx context.Context) error { return remove(ctx, definition) },
+			availableUpdate: inspectUpdate,
 		}
 	}
 
@@ -756,6 +759,11 @@ func inspectVersion(ctx context.Context, binaryPath string, args ...string) (str
 		return "", err
 	}
 
+	fields := strings.Fields(strings.SplitN(output, "\n", 2)[0])
+	if len(fields) >= 3 && (fields[0] == "ffmpeg" || fields[0] == "ffprobe") && fields[1] == "version" {
+		return fields[2], nil
+	}
+
 	match := versionPattern.FindStringSubmatch(strings.TrimSpace(output))
 	if len(match) < 2 {
 		return "", errors.New("version could not be determined")
@@ -950,40 +958,6 @@ type mongoDBAPTRepository struct {
 	listEntry   string
 }
 
-func retryYTDLPInstall(ctx context.Context, plan actionPlan, err error) (bool, error) {
-	if err == nil || plan.packageManager != "apt" || !isMissingAPTPackageError(err) {
-		return false, nil
-	}
-	if !isUbuntuLikeLinux(parseOSReleaseFile("/etc/os-release")) {
-		return true, errors.New("automatic yt-dlp installation via apt requires an Ubuntu release with the yt-dlp PPA")
-	}
-
-	aptPath, ok := lookupCommand("apt-get")
-	if !ok {
-		return true, errors.New("apt-get is not available")
-	}
-	if err := runCommands(ctx, []string{aptPath, "install", "-y", "software-properties-common"}); err != nil {
-		return true, err
-	}
-
-	addRepositoryPath, ok := lookupCommand("add-apt-repository")
-	if !ok {
-		return true, errors.New("add-apt-repository is unavailable after installing software-properties-common")
-	}
-	if err := runCommands(
-		ctx,
-		[]string{addRepositoryPath, "-y", "ppa:tomtomtom/yt-dlp"},
-		[]string{aptPath, "update"},
-	); err != nil {
-		return true, err
-	}
-	if err := runCommands(ctx, plan.installCmds...); err != nil {
-		return true, err
-	}
-
-	return true, runCommands(ctx, plan.postInstallCmds...)
-}
-
 func retryMongoDBInstall(ctx context.Context, plan actionPlan, err error) (bool, error) {
 	if err == nil || plan.packageManager != "apt" || !isMissingAPTPackageError(err) {
 		return false, nil
@@ -1168,20 +1142,8 @@ func installLatestYTDLP(ctx context.Context) error {
 }
 
 func ensureYTDLPDependencies(ctx context.Context) (string, error) {
-	if _, installed := lookupFirstCommand("ffmpeg"); !installed {
-		definition := Definition{
-			Key:            "ytdlp-ffmpeg",
-			DisplayName:    "FFmpeg",
-			APTPackages:    []string{"ffmpeg"},
-			DNFPackages:    []string{"ffmpeg"},
-			YUMPackages:    []string{"ffmpeg"},
-			PacmanPackages: []string{"ffmpeg"},
-		}
-		commands := detectActionPlan(definition).installCmds
-		if len(commands) == 0 {
-			return "", errors.New("install FFmpeg before installing yt-dlp")
-		}
-		if err := runCommands(ctx, commands...); err != nil {
+	if _, installed := lookupFirstCommand(ffmpegBinaryPath, "ffmpeg"); !installed {
+		if err := installLatestFFmpeg(ctx); err != nil {
 			return "", fmt.Errorf("install FFmpeg for yt-dlp: %w", err)
 		}
 	}
@@ -1302,34 +1264,48 @@ func inspectYTDLPUpdate(ctx context.Context) (string, error) {
 		return "", err
 	}
 
+	release, err := inspectGitHubRelease(ctx, ytdlpReleaseAPI)
+	if err != nil {
+		return "", err
+	}
+	latestVersion := strings.TrimPrefix(strings.TrimSpace(release.TagName), "v")
+	if latestVersion == "" || latestVersion == currentVersion {
+		return "", nil
+	}
+	return latestVersion, nil
+}
+
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+	Name    string `json:"name"`
+	Assets  []struct {
+		Name   string `json:"name"`
+		Digest string `json:"digest"`
+	} `json:"assets"`
+}
+
+func inspectGitHubRelease(ctx context.Context, url string) (githubRelease, error) {
 	requestCtx, cancel := context.WithTimeout(ctx, statusCommandTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, ytdlpReleaseAPI, nil)
+	var release githubRelease
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("prepare yt-dlp release request: %w", err)
+		return release, fmt.Errorf("prepare GitHub release request: %w", err)
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("User-Agent", "FlowPanel")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("inspect latest yt-dlp release: %w", err)
+		return release, fmt.Errorf("inspect latest GitHub release: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("inspect latest yt-dlp release: unexpected status %s", response.Status)
+		return release, fmt.Errorf("inspect latest GitHub release: unexpected status %s", response.Status)
 	}
-
-	var payload struct {
-		TagName string `json:"tag_name"`
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&release); err != nil {
+		return release, fmt.Errorf("parse latest GitHub release: %w", err)
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&payload); err != nil {
-		return "", fmt.Errorf("parse latest yt-dlp release: %w", err)
-	}
-	latestVersion := strings.TrimPrefix(strings.TrimSpace(payload.TagName), "v")
-	if latestVersion == "" || latestVersion == currentVersion {
-		return "", nil
-	}
-	return latestVersion, nil
+	return release, nil
 }
 
 func removeYTDLP(ctx context.Context, definition Definition) error {

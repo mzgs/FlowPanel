@@ -20,7 +20,8 @@ FlowPanel currently includes:
 - WordPress toolkit for status, core updates, plugins, themes, database details, and extension search/install actions
 - GitHub deployment settings with optional push webhooks and post-fetch scripts
 - Node.js, Go, PM2, Docker, Redis, MongoDB, PostgreSQL, FFmpeg, ImageMagick, yt-dlp, MariaDB, and phpMyAdmin runtime controls
-- Linux yt-dlp installs include FFmpeg, the Deno JavaScript runtime, and EJS challenge-solver configuration
+- Linux yt-dlp and full GPL FFmpeg installs/updates download the latest GitHub release binaries (amd64/arm64; FFmpeg extraction requires tar with xz support)
+- Linux yt-dlp installs include FFmpeg and ffprobe, the Deno JavaScript runtime, and EJS challenge-solver configuration
 - Docker container, image, volume, network, log, exec, and Docker Hub search tools
 - MariaDB database/user management and database dump downloads
 - File manager with upload, download, edit, archive, extract, permissions, and transfer actions
