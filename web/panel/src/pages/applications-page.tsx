@@ -819,18 +819,18 @@ function LibraryTableRow({
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className={compactActionButtonClassName}
+            size="icon"
+            className="h-7 w-7"
             onClick={onRemove}
             disabled={runningAction !== null || !removeEnabled}
-            title={removeEnabled ? undefined : removeTitle}
+            aria-label={`Remove ${name}`}
+            title={removeEnabled ? `Remove ${name}` : removeTitle}
           >
             {runningAction === `remove-${actionKeyPrefix}` ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
             ) : (
               <Trash2 className="h-4 w-4" />
             )}
-            Remove
           </Button>
         </div>
       </TableCell>
